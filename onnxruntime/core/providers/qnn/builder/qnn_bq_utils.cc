@@ -7,6 +7,12 @@
 #include <string_view>
 #include <vector>
 
+#include <gsl/gsl>
+
+#include "HTP/QnnHtpDeviceConfigShared.h"
+#include "QnnTypes.h"
+
+#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 
@@ -19,6 +25,12 @@ namespace {
 // the MatMulNBits HTP constraints).
 const InlinedHashMap<uint32_t, int64_t> kHtpBQBitsAndBlockSizeMultipliers{
     {2, 16}, {4, 8}, {8, 4}};
+
+// HTP native BQ constraints.
+const QnnHtpDevice_Arch_t kHtpNativeBQMinArch = QNN_HTP_DEVICE_ARCH_V81;
+const InlinedHashSet<uint32_t> kHtpNativeBQBits{4};
+const InlinedHashSet<uint32_t> kHtpNativeBQBlockSize{32, 64, 128};
+const uint32_t kHtpNativeBQChannelMultiplier = 32;
 }  // namespace
 
 namespace bq {
@@ -148,6 +160,59 @@ Ort::Status AddFp16ToInt16QuantizeOutput(QnnModelWrapper& qnn_model_wrapper,
                                            int16_tensor_type, int16_qnn_data_type,
                                            std::move(int16_quant_param),
                                            std::move(output_shape), do_op_validation);
+}
+
+bool IsHTPSupportedNativeBQ(QnnHtpDevice_Arch_t htp_arch,
+                            Qnn_DataType_t act_data_type,
+                            uint32_t bitwidth,
+                            uint32_t block_size,
+                            uint32_t output_channel,
+                            gsl::span<const float> offsets) {
+  // HTP native BQ constraints (subject to change):
+  // - min HTP arch: 81
+  // - activation data type: QNN_DATATYPE_UFIXED_POINT_16
+  // - weight bitwidth: 4 bit
+  // - symmetric quantization: offset=0
+  // - block size: 32, 64, 128
+  // - output channel: multiplier of 32
+
+  // HTP arch.
+  if (htp_arch < kHtpNativeBQMinArch) {
+    return false;
+  }
+
+  // Activation data type.
+  if (act_data_type != QNN_DATATYPE_UFIXED_POINT_16) {
+    return false;
+  }
+
+  // Weight bitwidth.
+  if (kHtpNativeBQBits.find(bitwidth) == kHtpNativeBQBits.end()) {
+    return false;
+  }
+
+  // Symmetric quantization.
+  for (float offset : offsets) {
+    if (offset != 0.0f) {
+      return false;
+    }
+  }
+
+  // Block size.
+  if (kHtpNativeBQBlockSize.find(block_size) == kHtpNativeBQBlockSize.end()) {
+    return false;
+  }
+
+  // Output channel.
+  if (output_channel % kHtpNativeBQChannelMultiplier != 0) {
+    return false;
+  }
+
+#ifdef QNN_HTP_NATIVE_BQ_AVAILABLE
+  return true;
+#else
+  return false;
+#endif
 }
 
 }  // namespace bq

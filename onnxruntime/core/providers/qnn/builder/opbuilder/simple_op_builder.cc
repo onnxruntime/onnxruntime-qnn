@@ -329,7 +329,7 @@ Ort::Status ProcessVariadicToBinaryChain(QnnModelWrapper& qnn_model_wrapper,
     if (!inputs[i].quant_param.has_value()) {
       continue;
     }
-    const std::string dq_name = utils::UniqueNameGenerator().New(input_names[i], "_to_f32");
+    const std::string dq_name = input_names[i] + "_to_f32";
     RETURN_IF_ERROR(qnn_model_wrapper.AddDequantizeNode(input_names[i], dq_name, QNN_DATATYPE_FLOAT_32,
                                                         shapes[i], do_op_validation));
     input_names[i] = dq_name;
@@ -347,7 +347,7 @@ Ort::Status ProcessVariadicToBinaryChain(QnnModelWrapper& qnn_model_wrapper,
     std::string out_name;
 
     if (!is_last || output_quantized || needs_int64_cast) {
-      out_name = utils::UniqueNameGenerator().New(node_unit, "_fold" + std::to_string(i));
+      out_name = utils::NodeUnitBaseName(node_unit) + "_fold_" + std::to_string(i);
       RETURN_IF_NOT(add_tensor(out_name, QNN_TENSOR_TYPE_NATIVE, intermediate_dtype,
                                QnnQuantParamsWrapper(), std::vector<uint32_t>(running_shape)),
                     "AddTensorWrapper failed for fold output.");
@@ -377,7 +377,7 @@ Ort::Status ProcessVariadicToBinaryChain(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(utils::UniqueNameGenerator().New(node_unit, "_cast_int64"),
                                                   lhs_name, output.name, QNN_TENSOR_TYPE_APP_READ,
                                                   output_info.qnn_data_type, output_info.quant_param.Copy(),
-                                                  std::vector<uint32_t>(output_info.shape), false));
+                                                  std::vector<uint32_t>(output_info.shape), do_op_validation));
   }
 
   return Ort::Status();
@@ -427,6 +427,12 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     if (fold_status.IsOK()) {
       return Ort::Status();
     }
+    // Declines (e.g. an oversize per-tensor DQ left as a runtime op) are otherwise
+    // silent; log which node fell through and why.
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                ("QNN EP declined constant folding for node '" + node_unit.Name() +
+                 "': " + fold_status.GetErrorMessage())
+                    .c_str());
   }
 
   std::vector<std::string> param_tensor_names;

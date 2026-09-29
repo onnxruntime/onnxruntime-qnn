@@ -39,6 +39,7 @@ class GRUOpBuilder : public BaseOpBuilder {
                                  const Ort::Logger& logger,
                                  const bool& do_op_validation,
                                  const bool& is_bidirection,
+                                 const bool& use_fp_fallback,
                                  std::vector<std::string>& uni_gru_output_names) const;
   Ort::Status AddStridedSlice(QnnModelWrapper& qnn_model_wrapper,
                               const OrtNodeUnit& node_unit,
@@ -169,6 +170,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                              const Ort::Logger& logger,
                                              const bool& do_op_validation,
                                              const bool& is_bidirection,
+                                             const bool& use_fp_fallback,
                                              std::vector<std::string>& uni_gru_output_names) const {
   ORT_UNUSED_PARAMETER(logger);
   const auto& onnx_inputs = node_unit.Inputs();
@@ -184,7 +186,28 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
     if (onnx_outputs.size() > i && onnx_outputs[i].Exists()) {
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_outputs[i], output_tensor_infos[i]));
     } else {
+      // Absent optional output (Y or Y_h). For a plain fp GRU the default UNDEFINED quant_param is
+      // valid; mirror the input dtype so the pre-override default is consistent. For a QDQ group a
+      // missing output forces use_fp_fallback, whose override below resets this slot to FLOAT_32.
       output_tensor_infos[i].qnn_data_type = input_tensor_infos[0].qnn_data_type;
+    }
+  }
+
+  // fp-fallback: run the whole unrolled GRU subgraph in fp32. input_tensor_infos and
+  // output_tensor_infos are the single source of dtype/quant_param for every StridedSlice, GRU
+  // cell, Concat, Transpose and Reshape emitted below, so overriding them here degrades the entire
+  // subgraph to float. The boundary Dequantize (inputs) and Quantize (outputs) are added by the
+  // caller (ProcessAttributesAndOutputs).
+  if (use_fp_fallback) {
+    for (size_t i = 0; i < input_tensor_infos.size(); i++) {
+      if (onnx_inputs[i].Exists()) {
+        input_tensor_infos[i].qnn_data_type = QNN_DATATYPE_FLOAT_32;
+        input_tensor_infos[i].quant_param = QnnQuantParamsWrapper();
+      }
+    }
+    for (size_t i = 0; i < 2; i++) {
+      output_tensor_infos[i].qnn_data_type = QNN_DATATYPE_FLOAT_32;
+      output_tensor_infos[i].quant_param = QnnQuantParamsWrapper();
     }
   }
 
@@ -351,8 +374,13 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
 
   // If Y_h is a direct graph output for unidirectional, the last step can write it directly.
   const bool needs_y_h_output = !is_bidirection && onnx_outputs.size() > 1 && onnx_outputs[1].Exists();
-  const std::string y_h_out_name = needs_y_h_output ? onnx_outputs[1].name : "";
-  const bool y_h_is_graph_output = needs_y_h_output && qnn_model_wrapper.IsGraphOutput(y_h_out_name);
+  // In fp-fallback the last cell writes Y_h to an fp32 temp; ProcessAttributesAndOutputs adds the
+  // Quantize to the real u8 ONNX output. A temp is never a graph output.
+  const std::string y_h_out_name = !needs_y_h_output ? std::string()
+                                   : use_fp_fallback ? utils::UniqueNameGenerator().New(onnx_outputs[1].name, "_gru_fp32")
+                                                     : onnx_outputs[1].name;
+  const bool y_h_is_graph_output =
+      needs_y_h_output && !use_fp_fallback && qnn_model_wrapper.IsGraphOutput(y_h_out_name);
 
   for (uint32_t step = 0; step < seq_length; step++) {
     const bool is_last_step = (step == seq_length - 1);
@@ -479,6 +507,8 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
         // Y: Reshape [seq, batch, hidden] -> [seq, 1, batch, hidden]
         const std::string out_name = is_bidirection
                                          ? utils::UniqueNameGenerator().New(y_all, "_unsqueeze_" + direction)
+                                     : use_fp_fallback
+                                         ? utils::UniqueNameGenerator().New(onnx_outputs[i].name, "_gru_fp32")
                                          : onnx_outputs[i].name;
         RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(y_all, out_name,
                                                          {seq_length, batch_size, hidden_size},
@@ -503,42 +533,149 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
+namespace {
+
+// Decide whether a QDQ GRU group runs as a genuine quantized Gru or must be fp-degraded. HTP has two
+// native quantized Gru configs (HtpOpDefSupplement): an INT8 combo (X/W/R/initial_h u8) and an INT16
+// combo (X/initial_h u16, W/R u16-or-u8), both forward-only and both with an int32 (SFIXED_POINT_32)
+// bias -- no config takes a quantized-integer bias. Everything else -- a non-forward direction, a
+// missing optional output, or a non-supported input dtype (e.g. a non-int32 bias) -- is fp-degraded
+// (explicit Dequantize -> fp32 GRU -> Quantize, all on QNN) so the numeric result is still produced on
+// QNN. LBR=0 additionally fp-degrades the u8 combo (its u8 cell widens to a mixed-width QUint16Crouton
+// that fails HTP finalize, 1002); the u16 combo is already 16-bit with no such widening, so LBR=0 stays
+// native there.
+bool ShouldFpDegradeQdqGru(gsl::span<const TensorInfo> input_infos,
+                           gsl::span<const OrtNodeUnitIODef> inputs,
+                           gsl::span<const OrtNodeUnitIODef> outputs,
+                           const std::string& direction,
+                           int64_t linear_before_reset) {
+  const bool missing_output = !(outputs.size() >= 2 && outputs[0].Exists() && outputs[1].Exists());
+  const bool is_forward = direction == "forward";
+  auto dtype_at = [&](size_t i) { return input_infos[i].qnn_data_type; };
+  auto has_input = [&](size_t i) { return inputs.size() > i && inputs[i].Exists(); };
+  const bool genuine_u8_combo =
+      dtype_at(0) == QNN_DATATYPE_UFIXED_POINT_8 &&
+      dtype_at(1) == QNN_DATATYPE_UFIXED_POINT_8 &&
+      dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_8 &&
+      (!has_input(3) || dtype_at(3) == QNN_DATATYPE_SFIXED_POINT_32) &&
+      (!has_input(5) || dtype_at(5) == QNN_DATATYPE_UFIXED_POINT_8);
+  const bool genuine_u16_combo =
+      dtype_at(0) == QNN_DATATYPE_UFIXED_POINT_16 &&
+      (dtype_at(1) == QNN_DATATYPE_UFIXED_POINT_16 || dtype_at(1) == QNN_DATATYPE_UFIXED_POINT_8) &&
+      (dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_16 || dtype_at(2) == QNN_DATATYPE_UFIXED_POINT_8) &&
+      has_input(3) && dtype_at(3) == QNN_DATATYPE_SFIXED_POINT_32 &&
+      (!has_input(5) || dtype_at(5) == QNN_DATATYPE_UFIXED_POINT_16);
+  return ((linear_before_reset == 0) && !genuine_u16_combo) || !is_forward ||
+         missing_output || !(genuine_u8_combo || genuine_u16_combo);
+}
+
+}  // namespace
+
 Ort::Status GRUOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                       const OrtNodeUnit& node_unit,
                                                       std::vector<std::string>&& input_names,
                                                       const Ort::Logger& logger,
                                                       bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
+  const auto& outputs = node_unit.Outputs();
   OrtNodeAttrHelper node_helper(node_unit);
   std::string direction = node_helper.Get("direction", "forward");
   RETURN_IF_NOT(inputs.size() >= 3 && inputs.size() <= 6, "GRU should receive inputs ranging from 3 to 6!");
 
+  const bool is_qdq = node_unit.UnitType() == OrtNodeUnit::Type::QDQGroup;
+  const int64_t linear_before_reset = node_helper.Get("linear_before_reset", static_cast<int64_t>(0));
+
+  std::vector<TensorInfo> input_infos(inputs.size());
+  for (size_t i = 0; i < inputs.size(); i++) {
+    if (inputs[i].Exists()) {
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[i], input_infos[i]));
+    }
+  }
+
+  // The selector enforces structural QDQ well-formedness and folds the DQ -> GRU -> Q group;
+  // ShouldFpDegradeQdqGru() makes the op-semantic decision of whether this group runs as a genuine
+  // quantized Gru or is fp-degraded (explicit Dequantize -> fp32 GRU -> Quantize, all on QNN).
+  const bool use_fp_fallback =
+      is_qdq && ShouldFpDegradeQdqGru(input_infos, inputs, outputs, direction, linear_before_reset);
+
+  // fp-degrade input side: Dequantize each present quantized input to fp32 once (shared by both
+  // directions in the bidirectional case) and rewrite input_names in place. seq_lens (idx 4) is
+  // never quantized, so the IsQuantized() guard leaves it untouched.
+  if (use_fp_fallback) {
+    for (size_t i = 0; i < input_names.size(); i++) {
+      if (!inputs[i].Exists() || input_names[i].empty() || !input_infos[i].quant_param.IsQuantized()) {
+        continue;
+      }
+      const std::string dq_name = utils::UniqueNameGenerator().New(input_names[i], "_gru_to_f32");
+      RETURN_IF_ERROR(qnn_model_wrapper.AddDequantizeNode(input_names[i], dq_name, QNN_DATATYPE_FLOAT_32,
+                                                          input_infos[i].shape, do_op_validation));
+      input_names[i] = dq_name;
+    }
+  }
+
   if (direction == "bidirectional") {
     std::vector<std::string> fwd_out, rev_out;
-    RETURN_IF_ERROR(AddUnidirectionGRU(qnn_model_wrapper, node_unit, "forward", input_names, logger, do_op_validation, true, fwd_out));
-    RETURN_IF_ERROR(AddUnidirectionGRU(qnn_model_wrapper, node_unit, "reverse", input_names, logger, do_op_validation, true, rev_out));
+    RETURN_IF_ERROR(AddUnidirectionGRU(qnn_model_wrapper, node_unit, "forward", input_names, logger,
+                                       do_op_validation, true, use_fp_fallback, fwd_out));
+    RETURN_IF_ERROR(AddUnidirectionGRU(qnn_model_wrapper, node_unit, "reverse", input_names, logger,
+                                       do_op_validation, true, use_fp_fallback, rev_out));
     for (size_t i = 0; i < 2; i++) {
       TensorInfo output_info = {};
-      if (node_unit.Outputs().size() > i && node_unit.Outputs()[i].Exists()) {
-        RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[i], output_info));
-        std::string name = node_unit.Outputs()[i].name;
-        std::vector<std::string> cp;
-        RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), name,
-                                               static_cast<uint32_t>(output_info.shape.size() - 3),
-                                               QNN_OP_CONCAT_PARAM_AXIS, cp));
-        Qnn_TensorType_t tt = qnn_model_wrapper.IsGraphOutput(name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-        QnnTensorWrapper tw(name, tt, output_info.qnn_data_type, output_info.quant_param.Copy(),
-                            std::vector<uint32_t>(output_info.shape));
-        RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tw)), "Failed to add Concat output.");
-        RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_CONCAT),
-                                                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CONCAT,
-                                                      {fwd_out[i], rev_out[i]}, {name}, std::move(cp), do_op_validation),
-                      "Failed to create Concat node.");
+      if (outputs.size() > i && outputs[i].Exists()) {
+        RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[i], output_info));
+        const std::string& name = outputs[i].name;
+        const uint32_t concat_axis = static_cast<uint32_t>(output_info.shape.size() - 3);
+        const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(name);
+        if (use_fp_fallback) {
+          // Concat the two fp32 direction temps into an fp32 temp, then Quantize to the u8 ONNX output.
+          const std::string concat_fp = utils::UniqueNameGenerator().New(name, "_gru_concat_f32");
+          std::vector<std::string> cp;
+          RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), concat_fp,
+                                                 concat_axis, QNN_OP_CONCAT_PARAM_AXIS, cp));
+          QnnTensorWrapper tw(concat_fp, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                              QnnQuantParamsWrapper(), std::vector<uint32_t>(output_info.shape));
+          RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tw)), "Failed to add fp32 Concat output.");
+          RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_CONCAT),
+                                                        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CONCAT,
+                                                        {fwd_out[i], rev_out[i]}, {concat_fp}, std::move(cp), do_op_validation),
+                        "Failed to create fp32 Concat node.");
+          RETURN_IF_ERROR(qnn_model_wrapper.AddQuantizeNode(
+              concat_fp, name, is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
+              output_info.qnn_data_type, output_info.quant_param.Copy(), output_info.shape, do_op_validation));
+        } else {
+          std::vector<std::string> cp;
+          RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), name,
+                                                 concat_axis, QNN_OP_CONCAT_PARAM_AXIS, cp));
+          Qnn_TensorType_t tt = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+          QnnTensorWrapper tw(name, tt, output_info.qnn_data_type, output_info.quant_param.Copy(),
+                              std::vector<uint32_t>(output_info.shape));
+          RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tw)), "Failed to add Concat output.");
+          RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_CONCAT),
+                                                        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CONCAT,
+                                                        {fwd_out[i], rev_out[i]}, {name}, std::move(cp), do_op_validation),
+                        "Failed to create Concat node.");
+        }
       }
     }
   } else {
     std::vector<std::string> uni_out;
-    RETURN_IF_ERROR(AddUnidirectionGRU(qnn_model_wrapper, node_unit, direction, input_names, logger, do_op_validation, false, uni_out));
+    RETURN_IF_ERROR(AddUnidirectionGRU(qnn_model_wrapper, node_unit, direction, input_names, logger,
+                                       do_op_validation, false, use_fp_fallback, uni_out));
+    if (use_fp_fallback) {
+      // uni_out holds fp32 temps (or "" for an absent output). Quantize each present output to its
+      // u8 ONNX name.
+      for (size_t i = 0; i < 2; i++) {
+        if (outputs.size() > i && outputs[i].Exists()) {
+          TensorInfo output_info = {};
+          RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[i], output_info));
+          const std::string& name = outputs[i].name;
+          const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(name);
+          RETURN_IF_ERROR(qnn_model_wrapper.AddQuantizeNode(
+              uni_out[i], name, is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
+              output_info.qnn_data_type, output_info.quant_param.Copy(), output_info.shape, do_op_validation));
+        }
+      }
+    }
   }
   return Ort::Status();
 }

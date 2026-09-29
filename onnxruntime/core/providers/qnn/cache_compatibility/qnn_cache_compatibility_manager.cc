@@ -88,9 +88,14 @@ Ort::Status GetHtpUsrDrvInfo(QnnBackendManager* qnn_backend_manager,
                              const uint32_t htp_arch,
                              /*out*/ QnnVersion& sdk_version,
                              /*out*/ bool& is_htp_usr_drv) {
-  RETURN_IF_ERROR(htp_usr_drv::IsHtpUsrDrvEnabled(qnn_backend_manager->GetBackendLibDir(),
-                                                  htp_arch,
-                                                  is_htp_usr_drv));
+  if (qnn_backend_manager->IsBackendHostMode()) {
+    // HNRD is unsupported if backend is configured to host mode.
+    is_htp_usr_drv = false;
+  } else {
+    RETURN_IF_ERROR(htp_usr_drv::IsHtpUsrDrvEnabled(qnn_backend_manager->GetBackendLibDir(),
+                                                    htp_arch,
+                                                    is_htp_usr_drv));
+  }
 
   // There is no way to query HNRD's backend API version with current APIs. Fortunately, since backend API versions are
   // bumped along with SDK versions, adopt SDK versions in HNRD scenarios, which can be extracted from driver's file
@@ -446,7 +451,8 @@ Ort::Status QnnCacheCompatibilityManager::ValidateCompatibilityInfoV2(const QnnC
       const uint32_t cache_htp_arch = cache_info.htp_archs[idx];
       const uint32_t cache_vtcm_mb = cache_info.vtcm_mbs.size() > 0 ? cache_info.vtcm_mbs[idx] : kVtcmMbUnset;
 
-      if ((cache_htp_arch < kHtpV6xAndV7xBreakageArch && runtime_htp_arch >= kHtpV6xAndV7xBreakageArch) ||
+      // Deliberately bypass unspecified cache HTP arch to allow scenario that user only provides SoC model.
+      if ((cache_htp_arch != 0 && cache_htp_arch < kHtpV6xAndV7xBreakageArch && runtime_htp_arch >= kHtpV6xAndV7xBreakageArch) ||
           cache_htp_arch > runtime_htp_arch ||
           cache_vtcm_mb > runtime_vtcm_mb) {
         cache_compatibility = OrtCompiledModelCompatibility_EP_UNSUPPORTED;
