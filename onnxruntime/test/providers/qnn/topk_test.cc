@@ -304,6 +304,15 @@ TEST_F(QnnHTPBackendTests, TopK_QDQ_U8_FoldsQDQIntoQuantizedTopK) {
                        /*opset_version=*/19,
                        ExpectedEPNodeAssignment::All);
 
+  // TestQDQModelAccuracy issues GTEST_SKIP() internally on HTP arch <= 68 (see
+  // CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64 in qnn_test_utils.h). GTEST_SKIP in a
+  // helper returns from the helper only, not from this TEST_F body, so without
+  // this guard the JSON asserts below would run on an empty dump dir and fail
+  // spuriously (same pattern as conv/matmul/resize/softmax graph tests).
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
   // `qdq_in_dq` is the DequantizeLinear feeding TopK; folding it in is what keeps TopK quantized.
   AssertOpInQnnGraph(json_qnn_graph_dir, "TopK", 1);
   AssertNodeNotInQnnGraph(json_qnn_graph_dir, "qdq_in_dq");

@@ -18,6 +18,16 @@ namespace onnxruntime {
 namespace qnn {
 
 namespace {
+bool ShouldUseSymmetricU16ForMatMul(float input1_scale) {
+  constexpr float kMaximumValueQuantError = 0.1f;
+
+  // Re-encoding U16 as U8 increases the value-domain quantization step from
+  // input1_scale to input1_scale * 65535 / 255. A value can move
+  // by at most half of that U8 step when it is rounded. Keep symmetric U16
+  // when that error exceeds the 10% value-domain budget.
+  const float u8_half_step = input1_scale * 65535.0f / 255.0f / 2.0f;
+  return u8_half_step > kMaximumValueQuantError;
+}
 // Detects a block-quantized MatMul weight (ONNX MatMul input[1]).
 // Accepts weight rank 2–4: shape [..., K, N] where any leading dims beyond K/N must equal 1
 // (i.e. reshapeable to [1, 1, K, N]). Per ONNX opset 21 the scale has the same rank as the
@@ -358,11 +368,12 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   //                         |
   //     input_1_uint16 -----+
   //
-  // For dynamic weights, QNN graph that passes validation:
-  //     input_0_uint16 ---------------------------> MatMul ---> output_uint16
-  //                                                   ^
-  //                                                   |
-  //     input_1_uint16_asym --> Convert(uint16_sym) --+
+  // Dynamic asymmetric U16 input[1] uses the value-domain U16-to-U8 error gate:
+  //     input_0_uint16 ----------------------------------> MatMul ---> output_uint16
+  //                                                        ^
+  //                                                        |
+  //     input_1_uint16_low_error --> Convert(uint8_asym) -+
+  //     input_1_uint16_high_error --> Convert(uint16_sym) -+
   //
   // For static weights, QNN graph that passes validation:
   //     input_0_uint16 ---------------------> MatMul ---> output_uint16
@@ -388,15 +399,18 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
       // QNN offsets negate ONNX zero points, so symmetric uint16 uses -32768.
       constexpr int32_t kSymmetricU16Offset = -32768;
       if (quant_param.scaleOffsetEncoding.offset != kSymmetricU16Offset) {
+        const bool use_symmetric_u16 =
+            ShouldUseSymmetricU16ForMatMul(quant_param.scaleOffsetEncoding.scale);
         RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
                                                convert_input_name,
                                                convert_output_name,
                                                input_info_1.qnn_data_type,
-                                               QNN_DATATYPE_UFIXED_POINT_16,
+                                               use_symmetric_u16 ? QNN_DATATYPE_UFIXED_POINT_16
+                                                                 : QNN_DATATYPE_UFIXED_POINT_8,
                                                quant_param.scaleOffsetEncoding.offset,
                                                quant_param.scaleOffsetEncoding.scale,
                                                input_1_shape,
-                                               true,  // symmetric
+                                               use_symmetric_u16,
                                                do_op_validation));
         input_names.push_back(convert_output_name);
       } else {
@@ -878,15 +892,15 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                      op_output_quant_param.Copy(),
                                                      op_output_shape, do_op_validation));
   } else {
-    QnnTensorWrapper op_output_tensor_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
-                                              op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(op_output_tensor_wrapper)),
-                  "Failed to add output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW, qnn_op_type,
-                                                  std::move(input_names), {op_output_name},
-                                                  std::move(param_tensor_names), do_op_validation),
-                  "Failed to add fused Matmul node.");
+    const Qnn_DataType_t activation_qnn_data_type =
+        qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+    RETURN_IF_ERROR(utils::AddOpWithQuantizedOutput(qnn_model_wrapper, utils::UniqueNameGenerator().New(node_unit),
+                                                    qnn_op_type, std::move(input_names),
+                                                    std::move(param_tensor_names), op_output_name,
+                                                    op_output_tensor_type, output_info.qnn_data_type,
+                                                    op_output_quant_param.Copy(),
+                                                    std::vector<uint32_t>(op_output_shape),
+                                                    activation_qnn_data_type, do_op_validation));
   }
 
   if (reshape_output) {

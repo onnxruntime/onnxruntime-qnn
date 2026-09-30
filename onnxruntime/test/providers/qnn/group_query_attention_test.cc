@@ -38,8 +38,15 @@ namespace onnxruntime {
 namespace test {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+#if (defined(__aarch64__) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#define BUILD_HTP_GQA_TESTS 1
+#endif
 
-#if (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#if defined(_M_ARM64)
+#define BUILD_GPU_GQA_TESTS 1
+#endif
+
+#if defined(BUILD_HTP_GQA_TESTS) || defined(BUILD_GPU_GQA_TESTS)
 
 template <typename T, typename M>
 struct GqaTestConfig {
@@ -382,6 +389,9 @@ static void RunGQATest(const GqaTestConfig<T, M>& config) {
                                                  qnn_outputs, config.tensor_verifier));
 }
 
+#endif  // defined(BUILD_HTP_GQA_TESTS) || defined(BUILD_GPU_GQA_TESTS)
+
+#if defined(BUILD_HTP_GQA_TESTS)
 class ScopedGqaOpAffinityConfig {
  public:
   explicit ScopedGqaOpAffinityConfig(const std::string& contents, const std::string& tag = CurrentTestTag())
@@ -706,9 +716,9 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_OpAffinity_MissingConfigFile_Sess
   ASSERT_TRUE(session_failed);
 }
 
-#endif  // (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#endif  // BUILD_HTP_GQA_TESTS
 
-#if defined(_M_ARM64)
+#if defined(BUILD_GPU_GQA_TESTS)
 //
 // GPU tests:
 //
@@ -815,7 +825,7 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_SharedMemoryAllocat
 }
 
 #endif  // defined(_WIN32)
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // BUILD_GPU_GQA_TESTS
 #endif  // QNN_GROUP_QUERY_ATTENTION_AVAILABLE
 }  // namespace test
 }  // namespace onnxruntime

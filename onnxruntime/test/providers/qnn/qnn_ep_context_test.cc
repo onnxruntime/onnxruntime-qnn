@@ -2275,6 +2275,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   Ort::SessionOptions so2;
   so2.SetLogId("so2");
   so2.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+  so2.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
   so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
 
   EXPECT_TRUE(2 == ctx_model_paths.size());
@@ -2324,7 +2325,8 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 #endif
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
+TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
@@ -2393,6 +2395,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
   Ort::SessionOptions so2;
   so2.SetLogId("so2");
   so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+  so2.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
 
   EXPECT_TRUE(2 == ctx_model_paths.size());
 #ifdef _WIN32
@@ -4129,6 +4132,44 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeRespected) {
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+#if defined(_WIN32) && defined(_M_ARM64)
+
+TEST_F(QnnHTPBackendTests, CrossDevicePrepare) {
+#ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+  GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+#endif
+
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
+  const uint32_t htp_arch = static_cast<uint32_t>(platform_attrs.htp_arch);
+
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
+  const std::string output_model_file = "mul_1_ctx.onnx";
+  std::filesystem::remove(output_model_file);
+
+  ProviderOptions provider_options = {{"backend_type", "htp"},
+                                      {"enable_htp_cross_device_prepare", "1"},
+                                      {"htp_arch", htp_arch == 73 ? "81" : "73"},
+                                      {"num_graph_prepare_threads", "1"}};
+
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+    ASSERT_TRUE(std::filesystem::exists(output_model_file));
+  }
+
+  std::filesystem::remove(output_model_file);
+}
+
+#endif  // defined(_WIN32) && defined(_M_ARM64)
 
 }  // namespace test
 }  // namespace onnxruntime
