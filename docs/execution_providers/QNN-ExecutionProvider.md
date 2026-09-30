@@ -1638,7 +1638,19 @@ Refers to the [EPContext design doc](https://onnxruntime.ai/docs/execution-provi
 
 Note: QNN EP requires **Linux x86_64** or **Windows x86_64** platform.
 
-Additionally, if user creates the QNN context binary (`qnn_ctx.bin`) with weight sharing using the QNN toolchain (`qnn-context-binary-generator`), they can use a script to generate the wrapper Onnx model from the context:  [gen_qnn_ctx_onnx_model.py](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/qnn/gen_qnn_ctx_onnx_model.py). The script creates multiple `model_x_ctx.onnx` files, each containing an `EPContext` node that references the shared `qnn_ctx.bin` file. Each `EPContext` node specifies a unique node name, referring to different Qnn graph from the QNN context.
+Additionally, a user can use [gen_qnn_ctx_onnx_model.py](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/qnn/gen_qnn_ctx_onnx_model.py) to generate wrapper ONNX models from an existing QNN context binary (`qnn_ctx.bin`). The required tools are:
+
+* A Python 3 executable with the `onnx` package installed.
+* The QAIRT host executable `qnn-context-binary-utility` (`qnn-context-binary-utility.exe` on Windows), which the script uses to extract graph metadata.
+* `qnn-context-binary-generator` only when the context binary has not been created yet. It is not required to wrap an existing `.bin` file.
+
+With the QAIRT host tools directory on `PATH`, run the script as follows:
+
+```bash
+python gen_qnn_ctx_onnx_model.py --qnn_bin qnn_ctx.bin
+```
+
+Use `--qnn_context_binary_utility /path/to/qnn-context-binary-utility` when the utility is not on `PATH`. On Windows, use the `.exe` from the QAIRT `bin/x86_64-windows-msvc` directory; on Linux, use the executable from `bin/x86_64-linux-clang`. The existing `--qnn_json` option remains available for pre-generated converter or context-binary metadata. The script creates multiple `model_x_ctx.onnx` files, each containing an `EPContext` node for a different QNN graph in the shared context binary.
 
 
 ## Usage
@@ -1991,7 +2003,7 @@ Use the QAIRT SDK to build the base model and adapter binary sections. The exact
 * A main QNN context binary (e.g. `<graph>_quantized.serialized.bin`).
 * One adapter binary section per use case (`<graph>_<adapter>.bin`), plus a `<graph>_default_adapter.bin` for the no-adapter (base) state.
 
-Wrap the main context binary in an EPContext ONNX model so QNN EP can load it, using the reference script [gen_qnn_ctx_onnx_model.py](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/qnn/gen_qnn_ctx_onnx_model.py). The script needs the graph's input/output metadata, extracted from the context binary with the QAIRT `qnn-context-binary-utility` tool (`--qnn_json`). The generated wrapper ONNX names its EPContext node after the QNN graph; that name is the graph name used in `qnn.lora_config` at runtime.
+Wrap the main context binary in an EPContext ONNX model so QNN EP can load it, using the reference script [gen_qnn_ctx_onnx_model.py](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/qnn/gen_qnn_ctx_onnx_model.py). The script automatically extracts the graph's input/output metadata with the QAIRT `qnn-context-binary-utility` tool when `--qnn_json` is omitted. The generated wrapper ONNX names its EPContext node after the QNN graph; that name is the graph name used in `qnn.lora_config` at runtime.
 
 ### Runtime usage
 
