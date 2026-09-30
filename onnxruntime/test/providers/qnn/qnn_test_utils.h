@@ -214,17 +214,6 @@ std::vector<float> GetFloatDataInRange(float min_val, float max_val, size_t num_
  */
 std::vector<float> GetSequentialFloatData(const std::vector<int64_t>& shape, float start = 0.0f, float step = 1.0f);
 
-/**
- * Returns an int64 vector of index values in [0, bound), cycling through the
- * range so that the same shape can be used for a gather axis of size `bound`.
- *
- * \param shape The tensor shape used to determine the number of values.
- * \param bound Exclusive upper bound of the generated values; must be > 0.
- * \param step The step size, applied modulo `bound`.
- * \return A vector of int64 index values.
- */
-std::vector<int64_t> GetSequentialIntData(const std::vector<int64_t>& shape, int64_t bound, int64_t step = 1);
-
 // Class that defines an input that can be created with ModelTestBuilder.
 // Defines whether the input is an initializer and if the data should be randomized or if
 // set to an explicit value.

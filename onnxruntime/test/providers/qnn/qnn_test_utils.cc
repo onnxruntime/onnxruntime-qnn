@@ -114,28 +114,6 @@ std::vector<float> GetSequentialFloatData(const std::vector<int64_t>& shape, flo
   return data;
 }
 
-std::vector<int64_t> GetSequentialIntData(const std::vector<int64_t>& shape, int64_t bound, int64_t step) {
-  if (shape.empty() || bound <= 0) {
-    return {};
-  }
-
-  int64_t count = 1;
-  for (auto dim : shape) {
-    count *= dim;
-  }
-
-  std::vector<int64_t> data;
-  data.reserve(static_cast<size_t>(count));
-
-  int64_t val = 0;
-  for (int64_t i = 0; i < count; i++) {
-    data.push_back(val);
-    val = (val + step) % bound;
-  }
-
-  return data;
-}
-
 TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& input_def) {
   if (input_def.IsRawData()) {
     std::vector<Ort::Float16_t> input_data_fp16;

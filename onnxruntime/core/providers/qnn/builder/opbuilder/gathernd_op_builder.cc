@@ -139,7 +139,7 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   const auto& indices_dims = indices_tensor_wrapper.GetTensorDims();
 
   // ONNX GatherND output shape:
-  //   data[:num_batch_dims] ++ indices[:-1] ++ data[num_batch_dims + indices.back():]
+  //   data[:num_batch_dims] ++ indices[num_batch_dims:-1] ++ data[num_batch_dims + indices.back():]
   const auto num_batch_dims = static_cast<size_t>(batch_dims);
   const size_t index_tuple_size = indices_dims.back();
   const size_t first_trailing_data_dim = num_batch_dims + index_tuple_size;
@@ -150,8 +150,8 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   for (size_t i = 0; i < num_batch_dims && i < data_dims.size(); ++i) {
     qnn_output_shape.push_back(data_dims[i]);
   }
-  // Index dims except the innermost index-tuple dim, and except the leading
-  // `batch_dims` -- those are the batch dims and must not be counted twice.
+  // Index dims except the leading batch dims (already emitted above) and the
+  // innermost index-tuple dim.
   for (size_t i = num_batch_dims; i < indices_dims.size() - 1; ++i) {
     qnn_output_shape.push_back(indices_dims[i]);
   }

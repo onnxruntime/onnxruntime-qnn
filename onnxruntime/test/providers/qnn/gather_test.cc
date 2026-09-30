@@ -454,19 +454,17 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesDynamicInt64_BatchDims0) {
       ExpectedEPNodeAssignment::All);
 }
 
-// Non-QDQ model, GatherND with batch_dims = 2 and a singleton index tuple
-// (last index dim == 1). Shape mirrors the stereo/warp gather that TF lowers
-// to this pattern (e.g. HITNet WarpImageWithHypotheses, tetracode#21607).
-// The ONNX output rank is q + r - k - 1 - b = 4 + 4 - 1 - 1 - 2 = 4; the
-// batch dims must appear exactly once, so the QNN output must not re-emit
-// indices' leading batch dims.
+// Non-QDQ model, GatherND with batch_dims = 2 and a singleton index tuple (k = 1).
+// Ranks and batch_dims match the stereo/warp gather that TF lowers to this
+// pattern (e.g. HITNet WarpImageWithHypotheses, tetracode#21607); the batch dims
+// must appear in the output exactly once, so the QNN output must not re-emit
+// indices' leading batch dims. Output rank = q + r - k - 1 - b = 4 + 4 - 1 - 1 - 2.
 TEST_F(QnnHTPBackendTests, GatherNDOp_IndicesStaticInt64_BatchDims2) {
-  const std::vector<int64_t> data_shape{1, 7, 40, 16};
   RunOpTest<float, int64_t>(
       "GatherND",
-      TestInputDef<float>(data_shape, true, GetSequentialFloatData(data_shape, 1.0f, 1.0f)),
-      // 1*7*12 = 84 index tuples, cycling within [0, 40) of the gather axis.
-      TestInputDef<int64_t>({1, 7, 12, 1}, true, GetSequentialIntData({1, 7, 12, 1}, 40)),
+      TestInputDef<float>({2, 3, 4, 5}, true, GetSequentialFloatData({2, 3, 4, 5}, 1.0f, 1.0f)),
+      // 2*3*2 = 12 index tuples, each within [0, 4) of the gather axis.
+      TestInputDef<int64_t>({2, 3, 2, 1}, true, {0, 1, 2, 3, 0, 1, 2, 3, 1, 0, 3, 2}),
       {test::MakeAttribute("batch_dims", static_cast<int64_t>(2))},
       13,
       ExpectedEPNodeAssignment::All);
@@ -475,22 +473,22 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_IndicesStaticInt64_BatchDims2) {
 // Same batch_dims = 2 configuration on the QDQ path: the gather must stay on
 // the NPU and input/output quantization params must still match.
 TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesStaticInt64_BatchDims2) {
-  const std::vector<int64_t> data_shape{1, 7, 40, 16};
   RunQDQGatherNDOpTest<uint8_t, int64_t>(
-      TestInputDef<float>(data_shape, false, GetSequentialFloatData(data_shape, 1.0f, 1.0f)),
-      TestInputDef<int64_t>({1, 7, 12, 1}, true, GetSequentialIntData({1, 7, 12, 1}, 40)),
+      TestInputDef<float>({2, 3, 4, 5}, false, GetSequentialFloatData({2, 3, 4, 5}, 1.0f, 1.0f)),
+      TestInputDef<int64_t>({2, 3, 2, 1}, true, {0, 1, 2, 3, 0, 1, 2, 3, 1, 0, 3, 2}),
       {test::MakeAttribute("batch_dims", static_cast<int64_t>(2))},
       13,
       ExpectedEPNodeAssignment::All);
 }
 
-// batch_dims = 1 with a multi-element index tuple (k = 2), which gathers
-// slices rather than elements: output rank = q + r - k - 1 - b = 3 + 4 - 2 - 1 - 1.
+// batch_dims = 1 with a multi-element index tuple (k = 2), which gathers slices
+// rather than elements. Output rank = q + r - k - 1 - b = 3 + 4 - 2 - 1 - 1.
+// Column 0 indexes data dim 1 (size 4), column 1 indexes data dim 2 (size 5).
 TEST_F(QnnHTPBackendTests, GatherNDOp_IndicesStaticInt64_BatchDims1_MultiIndexTuple) {
   RunOpTest<float, int64_t>(
       "GatherND",
       TestInputDef<float>({2, 4, 5, 3}, true, GetSequentialFloatData({2, 4, 5, 3}, 1.0f, 1.0f)),
-      TestInputDef<int64_t>({2, 3, 2}, true, {0, 1, 1, 2, 2, 3, 3, 0, 0, 1, 1, 2}),
+      TestInputDef<int64_t>({2, 3, 2}, true, {0, 0, 1, 1, 2, 2, 3, 3, 0, 1, 1, 2}),
       {test::MakeAttribute("batch_dims", static_cast<int64_t>(1))},
       13,
       ExpectedEPNodeAssignment::All);
