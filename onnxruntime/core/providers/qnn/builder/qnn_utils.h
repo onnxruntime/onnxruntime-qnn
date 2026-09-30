@@ -735,6 +735,24 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             bool output_symmetric,
                             bool do_op_validation);
 
+// Adds `output_name` and the op producing it. HTP Conv/MatMul/FullyConnected only emit their activation's
+// datatype, so a 16-bit activation with an 8-bit output is built as the op into a 16-bit intermediate
+// spanning exactly the output's range, followed by a Convert into `output_name`. HTP also lacks float32
+// kernels for a quantized weight, so a float32 activation with a quantized weight runs the op in float16
+// between Casts.
+Ort::Status AddOpWithQuantizedOutput(QnnModelWrapper& qnn_model_wrapper,
+                                     const std::string& node_name,
+                                     const std::string& op_type,
+                                     std::vector<std::string>&& input_names,
+                                     std::vector<std::string>&& param_tensor_names,
+                                     const std::string& output_name,
+                                     Qnn_TensorType_t output_tensor_type,
+                                     Qnn_DataType_t output_qnn_data_type,
+                                     QnnQuantParamsWrapper&& output_quant_param,
+                                     std::vector<uint32_t>&& output_shape,
+                                     Qnn_DataType_t activation_qnn_data_type,
+                                     bool do_op_validation);
+
 /**
  * Get permutation to transpose given axis to the last one.
  *
