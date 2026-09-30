@@ -523,6 +523,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 #endif
 
+  // Callback function for QNN logging.
+  static void QnnLogging(const char* format, QnnLog_Level_t level, uint64_t timestamp, va_list argument_parameter);
+
   // Shared implementation for InitializeQnnLog / InitializeQnnValidatorLog.
   Ort::Status InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
                                      Qnn_LogHandle_t& log_handle,
