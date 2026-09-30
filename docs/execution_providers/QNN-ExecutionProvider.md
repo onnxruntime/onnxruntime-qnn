@@ -327,6 +327,7 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 
 |`"htp_share_resource_optimization"`|Description|
 |---|---|
+|Not specified|Default. Falls back to `enable_vtcm_backup_buffer_sharing`; HTP resource sharing remains disabled unless the legacy option is set to `'1'`.|
 |'0'|Enable HTP resource sharing for sequential graph execution with virtual address and memory optimization. Requires QNN API version >= 2.26.|
 |'1'|Enable HTP resource sharing for sequential graph execution with memory optimization but without virtual address optimization. Requires QNN API version >= 2.26.|
 
