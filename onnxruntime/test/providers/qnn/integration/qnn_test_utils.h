@@ -8,12 +8,12 @@
 //   - MakeQnnHtpSessionOptions: builds Ort::SessionOptions targeting the QNN HTP backend.
 //   - MakeValueInfo1D / 2D / 3D / 4D: builders for Ort::ValueInfo with the given rank.
 //
-// Guarded the same way as integration test files: only compiled on Linux non-minimal
-// builds. See integration/README.md for the file-structure conventions.
+// Guarded the same way as integration test files: compiled on supported non-minimal
+// Linux and Windows builds. See integration/README.md for platform requirements.
 
 #pragma once
 
-#if !defined(ORT_MINIMAL_BUILD) && defined(__linux__)
+#if !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))
 
 #include <cstdint>
 #include <memory>
@@ -28,15 +28,39 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
+inline const ORTCHAR_T* QnnEpLibraryName() {
+#ifdef _WIN32
+  return ORT_TSTR("onnxruntime_providers_qnn.dll");
+#else
+  return ORT_TSTR("libonnxruntime_providers_qnn.so");
+#endif
+}
+
+inline const char* QnnHtpBackendLibraryName() {
+#ifdef _WIN32
+  return "QnnHtp.dll";
+#else
+  return "libQnnHtp.so";
+#endif
+}
+
+inline OrtHardwareDeviceType QnnHtpDeviceType() {
+  // x86 hosts expose the HTP emulator as a CPU-type virtual device.
+#if defined(__linux__) || (defined(_WIN32) && defined(_M_X64))
+  return OrtHardwareDeviceType_CPU;
+#else
+  return OrtHardwareDeviceType_NPU;
+#endif
+}
+
 // RAII: registers the QNN EP plugin on construction, unregisters on destruction.
 struct RegisteredQnnEp {
   std::string name;
   bool valid = false;
 
   explicit RegisteredQnnEp(const std::string& registration_name) : name(registration_name) {
-    const ORTCHAR_T* kLibPath = ORT_TSTR("libonnxruntime_providers_qnn.so");
     try {
-      ort_env->RegisterExecutionProviderLibrary(name.c_str(), kLibPath);
+      ort_env->RegisterExecutionProviderLibrary(name.c_str(), QnnEpLibraryName());
       valid = true;
     } catch (const Ort::Exception&) {
     }
@@ -56,24 +80,24 @@ struct RegisteredQnnEp {
 };
 
 // Build Ort::SessionOptions targeting the QNN HTP backend.
-// On Linux x86-64, libQnnHtp.so runs as a simulator and supports full graph
-// compilation and execution. On Linux AArch64, real HTP hardware is used.
-// Returns false if the HTP device is not found (libQnnHtp.so unavailable).
+// x86 hosts expose the HTP emulator as a CPU-type virtual device. Linux and
+// Windows Arm64 select a real NPU device when one is available.
+// Returns false if the matching QNN EP device or HTP backend is unavailable.
 inline bool MakeQnnHtpSessionOptions(const RegisteredQnnEp& ep, Ort::SessionOptions& out_opts) {
   const OrtApi& api = Ort::GetApi();
   std::vector<Ort::ConstEpDevice> ep_devices = ort_env->GetEpDevices();
 
-  // On Linux x86-64, the HTP simulator registers as OrtHardwareDeviceType_CPU.
+  const OrtHardwareDeviceType target_device_type = QnnHtpDeviceType();
   const OrtEpDevice* target = nullptr;
   for (const Ort::ConstEpDevice& dev : ep_devices) {
     if (api.EpDevice_EpName(dev) != ep.name) continue;
-    if (api.HardwareDevice_Type(api.EpDevice_Device(dev)) != OrtHardwareDeviceType_CPU) continue;
+    if (api.HardwareDevice_Type(api.EpDevice_Device(dev)) != target_device_type) continue;
     target = dev;
     break;
   }
   if (!target) return false;
 
-  const std::unordered_map<std::string, std::string> provider_opts{{"backend_path", "libQnnHtp.so"}};
+  const std::unordered_map<std::string, std::string> provider_opts{{"backend_path", QnnHtpBackendLibraryName()}};
   try {
     out_opts.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(target)}, provider_opts);
   } catch (const Ort::Exception&) {
@@ -167,4 +191,4 @@ inline Ort::ValueInfo MakeValueInfo4D(const char* name, ONNXTensorElementDataTyp
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && defined(__linux__)
+#endif  // !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))
