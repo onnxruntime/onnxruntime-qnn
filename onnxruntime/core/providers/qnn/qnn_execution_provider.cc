@@ -3694,7 +3694,13 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
+    qnn_backend_manager_->SetupBackend(/*load_from_cached_context=*/true,
+                                       /*need_load_system_lib=*/true,
+                                       /*share_ep_contexts=*/false,
+                                       /*htp_share_resource_optimization=*/-1,
+                                       /*enable_file_mapped_weights=*/false,
+                                       /*rpcmem_library=*/nullptr,
+                                       dummy_map);
   }
 
   status = qnn_cache_compatibility_manager_->ValidateCompatibilityInfo(info, *model_compatibility);
@@ -3717,7 +3723,13 @@ OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevic
                                                           OrtDeviceEpIncompatibilityDetails* details) noexcept {
   // This function is always called by temporary QnnEp, so no need to check if backend is already setup.
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-  Ort::Status status = qnn_backend_manager_->SetupBackend(false, false, false, false, false, nullptr, dummy_map);
+  Ort::Status status = qnn_backend_manager_->SetupBackend(/*load_from_cached_context=*/false,
+                                                          /*need_load_system_lib=*/false,
+                                                          /*share_ep_contexts=*/false,
+                                                          /*htp_share_resource_optimization=*/-1,
+                                                          /*enable_file_mapped_weights=*/false,
+                                                          /*rpcmem_library=*/nullptr,
+                                                          dummy_map);
 
   if (!status.IsOK()) {
     const std::string error_message = status.GetErrorMessage();
