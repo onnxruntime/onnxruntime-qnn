@@ -4,7 +4,6 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <filesystem>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,9 +26,10 @@ namespace {
 //   true  -> Mul(hsig_out, input)   (HardSigmoid output is Inputs()[0])
 //   false -> Mul(input, hsig_out)   (HardSigmoid output is Inputs()[1])
 // Both orderings are mathematically equivalent and must fuse identically.
-GetTestModelFn BuildHardSigmoidMulTestCase(const TestInputDef<float>& input_def, bool hardsigmoid_first) {
+template <typename FloatType>
+GetTestModelFn BuildHardSigmoidMulTestCase(const TestInputDef<FloatType>& input_def, bool hardsigmoid_first) {
   return [input_def, hardsigmoid_first](ModelTestBuilder& builder) -> void {
-    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<FloatType>(builder, "input", input_def);
 
     // HardSigmoid uses QNN's required alpha=1/6, beta=0.5 so the fusion is eligible.
     std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
@@ -46,17 +46,31 @@ GetTestModelFn BuildHardSigmoidMulTestCase(const TestInputDef<float>& input_def,
   };
 }
 
-ProviderOptions GetHtpProviderOptions(const std::filesystem::path& json_qnn_graph_dir) {
+TestInputDef<float> MakeHardSigmoidAccuracyInputDef() {
+  std::vector<float> input_data = {-8.0f, -2.0f, 0.0f, 0.5f, 0.9f, 1.1f, 3.3f, 8.0f,
+                                   -7.0f, 0.0f, 0.2f, 0.4f, 0.8f, 2.1f, 4.3f, 7.0f};
+  return TestInputDef<float>({2, 2, 2, 2}, false, input_data);
+}
+
+ProviderOptions GetHtpProviderOptions(const std::filesystem::path& json_qnn_graph_dir,
+                                      bool enable_htp_fp16_precision = true) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["enable_htp_fp16_precision"] = "1";
+  if (enable_htp_fp16_precision) {
+    provider_options["enable_htp_fp16_precision"] = "1";
+  }
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   return provider_options;
+}
+
+void AssertHardSwishFusion(const std::filesystem::path& json_qnn_graph_dir) {
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", /*count=*/0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/1);
 }
 
 // Runs the model and asserts the HardSigmoid+Mul pair fused into a single HardSwish:
@@ -77,11 +91,53 @@ void RunAndAssertFused(const TestInputDef<float>& input_def, bool hardsigmoid_fi
                                        // fp16 (QNN) vs fp32 (CPU EP).
                                        ElementwiseAbsoluteVerifier(0.01f)});
 
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", /*count=*/0);
-  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/1);
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
+  AssertHardSwishFusion(json_qnn_graph_dir);
 }
 
 }  // namespace
+
+// Test FP32 fusion of HardSigmoid into HardSwish on the HTP backend with
+// enable_htp_fp16_precision enabled.
+TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto input_def = MakeHardSigmoidAccuracyInputDef();
+  RunAndAssertFused(input_def, /*hardsigmoid_first=*/true,
+                    "HardSigmoidFusedIntoHardSwish_FP32_as_FP16");
+}
+
+// Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
+TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "HardSigmoidFusedIntoHardSwish_FP16";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options =
+      GetHtpProviderOptions(json_qnn_graph_dir, /*enable_htp_fp16_precision=*/false);
+  auto input_def = MakeHardSigmoidAccuracyInputDef();
+  auto input_fp16_def = ConvertToFP16InputDef(input_def);
+
+  auto model_fp32_fn = BuildHardSigmoidMulTestCase(input_def, /*hardsigmoid_first=*/true);
+  auto model_fp16_fn = BuildHardSigmoidMulTestCase(input_fp16_def, /*hardsigmoid_first=*/true);
+
+  TestFp16ModelAccuracy(model_fp32_fn,
+                        model_fp16_fn,
+                        provider_options,
+                        /*opset_version=*/18,
+                        ExpectedEPNodeAssignment::All,
+                        0.005f);
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
+  AssertHardSwishFusion(json_qnn_graph_dir);
+}
 
 // HardSigmoid -> Mul(input, hsig_out): HardSigmoid output is the SECOND Mul input.
 // This is the ordering the original same_root_input check already handled.
@@ -94,9 +150,8 @@ TEST_F(QnnHTPBackendTests, HardSigmoidMulFusion_NormalOrder_Fuses) {
 // HardSigmoid -> Mul(hsig_out, input): HardSigmoid output is the FIRST Mul input.
 // Reproduces the copy-paste bug: the same_root_input check compared Mul.Inputs()[0]
 // against the HardSigmoid input on both sides of the ||, so this (valid) ordering
-// failed to match and the pattern was NOT fused. Existing accuracy tests use this
-// ordering but only assert EP assignment (which passes whether or not fusion occurs),
-// so the missed fusion went undetected. This asserts the fusion actually happens.
+// failed to match and the pattern was NOT fused. This asserts the regression path
+// directly against the generated QNN graph.
 TEST_F(QnnHTPBackendTests, HardSigmoidMulFusion_ReversedOrder_Fuses) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto input_def = TestInputDef<float>({1, 2, 2, 4}, false, GetFloatDataInRange(-5.0f, 5.0f, 16));
