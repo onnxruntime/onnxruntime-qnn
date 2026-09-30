@@ -269,9 +269,7 @@ static void ParseHtpGraphFinalizationOptimizationMode(
   } else {
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_WARNING,
-                ("Invalid HTP graph finalization optimization mode: " + htp_graph_finalization_opt_mode_string +
-                 ". Falling back to default (0).")
-                    .c_str());
+                ("Invalid HTP graph finalization optimization mode: " + htp_graph_finalization_opt_mode_string).c_str());
   }
 }
 
