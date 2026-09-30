@@ -28,12 +28,6 @@ void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
                              const std::string& node_name);
 
-// Total bytes of FP32 STATIC tensors in the compiled QNN graph JSON, i.e. the DLC cost of
-// constant folding. Use Below to assert a large weight stayed compact, Above to assert an
-// expected fold actually materialized.
-void AssertFp32StaticBytesBelow(const std::filesystem::path& dump_dir, size_t max_bytes);
-void AssertFp32StaticBytesAbove(const std::filesystem::path& dump_dir, size_t min_bytes);
-
 // Asserts that the tensor `tensor_name` in the compiled QNN graph JSON
 // (root["graph"]["tensors"][tensor_name]["dims"]) has shape == `expected_dims`.
 // Use to verify post-fusion ranks/shapes — e.g. that a Transpose's input/output
