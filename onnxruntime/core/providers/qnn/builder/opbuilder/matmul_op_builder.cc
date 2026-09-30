@@ -588,8 +588,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnConv2D(QnnModelWrapper& qnn_mode
     RETURN_IF_NOT(input_info_1.is_initializer, "LPBQ Conv2D lowering requires weight to be static initializer");
     std::vector<uint8_t> unpacked_tensor;
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info_1.initializer_tensor, unpacked_tensor));
-    RETURN_IF_ERROR(bq::RegisterWeightAsConv1x1Filter(qnn_model_wrapper, org_input_1_name, input_info_1,
-                                                      std::move(unpacked_tensor), input_names));
+    RETURN_IF_ERROR(bq::RegisterLPBQWeightAsConv1x1Filter(qnn_model_wrapper, org_input_1_name, input_info_1,
+                                                          std::move(unpacked_tensor), input_names));
   }
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 16 && QNN_API_VERSION_MINOR <= 18)

@@ -214,9 +214,8 @@ static Ort::Status ProcessBqFp16Bias(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(utils::DequantizeInt32BiasToFp16(raw_bias_bytes, bias_scale_vals, fp16_bias_bytes));
 
   const std::string fp16_bias_name = bias_def.name + "_fp16";
-  return utils::AddStaticBiasTensor(qnn_model_wrapper, fp16_bias_name, bias_info.shape,
-                                    QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
-                                    std::move(fp16_bias_bytes), input_names);
+  return qnn_model_wrapper.AddStaticBiasTensor(fp16_bias_name, bias_info.shape, QNN_DATATYPE_FLOAT_16,
+                                               QnnQuantParamsWrapper(), std::move(fp16_bias_bytes), input_names);
 }
 
 Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,

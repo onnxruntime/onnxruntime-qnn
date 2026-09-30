@@ -216,11 +216,11 @@ bool IsHTPSupportedNativeBQ(QnnHtpDevice_Arch_t htp_arch,
 #endif
 }
 
-Ort::Status RegisterWeightAsConv1x1Filter(QnnModelWrapper& qnn_model_wrapper,
-                                          const std::string& weight_name,
-                                          const TensorInfo& weight_info,
-                                          std::vector<uint8_t> weight_data,
-                                          std::vector<std::string>& input_names) {
+Ort::Status RegisterLPBQWeightAsConv1x1Filter(QnnModelWrapper& qnn_model_wrapper,
+                                              const std::string& weight_name,
+                                              const TensorInfo& weight_info,
+                                              std::vector<uint8_t> weight_data,
+                                              std::vector<std::string>& input_names) {
   RETURN_IF_NOT(weight_info.shape.size() == 2,
                 "LPBQ 1x1 filter lowering requires weight to be rank-2 [K, N]");
   RETURN_IF_NOT(weight_info.quant_param.IsLPBQ(),
