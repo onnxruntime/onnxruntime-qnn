@@ -4136,10 +4136,9 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeRespected) {
 #if defined(_WIN32) && defined(_M_ARM64)
 
 TEST_F(QnnHTPBackendTests, CrossDevicePrepare) {
-#ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+#if !defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
   GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
-#endif
-
+#else
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
   const uint32_t htp_arch = static_cast<uint32_t>(platform_attrs.htp_arch);
@@ -4167,6 +4166,7 @@ TEST_F(QnnHTPBackendTests, CrossDevicePrepare) {
   }
 
   std::filesystem::remove(output_model_file);
+#endif
 }
 
 #endif  // defined(_WIN32) && defined(_M_ARM64)
