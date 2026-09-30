@@ -44,7 +44,7 @@ struct QnnModelMinimalTestContext {
 
   QnnModelMinimalTestContext() {
     qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnHtp.so";
+    cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -66,7 +66,7 @@ struct QnnModelMinimalTestContext {
 // QnnModelHtpTestContext
 //
 // Full context for tests that need a real QNN HTP backend (ComposeGraph,
-// FinalizeGraphs, etc.). Loads libQnnHtp.so and runs SetupBackend.
+// FinalizeGraphs, etc.). Loads the platform HTP backend and runs SetupBackend.
 // On x86_64 the validation path works but execution requires HTP hardware.
 // Tests should call GTEST_SKIP() when IsValid() returns false.
 // ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ struct QnnModelHtpTestContext {
     };
 
     qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnHtp.so";
+    cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;

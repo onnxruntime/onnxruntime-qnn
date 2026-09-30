@@ -1431,21 +1431,22 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_Validation_OutputNotInMap_ReturnsFa
 
 // ── ValidateQnnNode with real QNN HTP backend ─────────────────────
 //
-// These tests dlopen libQnnHtp.so and create a real Qnn_BackendHandle_t so that
+// These tests load the platform HTP backend and create a real Qnn_BackendHandle_t so that
 // QnnGraphOpValidation / backendValidateOpConfig exercises the actual SDK path.
-// On Linux x86-64 (the unit-test host), HTP supports validation but not graph
+// On host builds, HTP supports validation but not graph
 // execution — these tests intentionally exercise only the validation path.
 //
-// libQnnHtp.so is part of the QAIRT SDK that is required to build the EP, so
-// it must be present at test time. A missing library indicates a CI/environment
-// configuration error and fails the test (ASSERT_TRUE) rather than skipping.
+// The HTP backend is part of the QAIRT SDK. Tests skip cleanly when it is not
+// available on the host.
 
 // ValidateQnnNode succeeds for a valid Relu op on the HTP backend.
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (success path).
 // Uses UFIXED_POINT_8 with per-tensor quant params — the representative HTP production path.
 TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
   QnnRealHtpBackendContext backend;
-  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available — QAIRT SDK must be installed in CI";
+  if (!backend.IsValid()) {
+    GTEST_SKIP() << QnnHtpBackendLibraryName() << " not available";
+  }
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
@@ -1476,7 +1477,9 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (failure path).
 TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_InvalidOpType_Fails) {
   QnnRealHtpBackendContext backend;
-  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available — QAIRT SDK must be installed in CI";
+  if (!backend.IsValid()) {
+    GTEST_SKIP() << QnnHtpBackendLibraryName() << " not available";
+  }
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
@@ -1887,7 +1890,7 @@ static const void* g_tensor_raw_data = nullptr;
 
 OrtStatus* StubGraphGetModelPathEmpty(const OrtGraph*,
                                       const ORTCHAR_T** model_path) noexcept {
-  static const ORTCHAR_T empty_path[] = "";
+  static const ORTCHAR_T empty_path[] = ORT_TSTR("");
   *model_path = empty_path;
   return nullptr;
 }
