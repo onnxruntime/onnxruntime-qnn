@@ -119,7 +119,12 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
 
   ProviderOptions provider_options =
       GetHtpProviderOptions(json_qnn_graph_dir, /*enable_htp_fp16_precision=*/false);
-  auto input_def = MakeHardSigmoidAccuracyInputDef();
+  // TestFp16ModelAccuracy uses relative error, which is undefined at an exact-zero reference.
+  // Keep this FP16-specific input away from zero; the FP32-as-FP16 test above uses an absolute
+  // verifier and still covers exact-zero inputs.
+  auto input_def = TestInputDef<float>({2, 2, 2, 2}, false,
+                                       {-8.0f, -2.0f, -0.1f, 0.5f, 0.9f, 1.1f, 3.3f, 8.0f,
+                                        -7.0f, 0.1f, 0.2f, 0.4f, 0.8f, 2.1f, 4.3f, 7.0f});
   auto input_fp16_def = ConvertToFP16InputDef(input_def);
 
   auto model_fp32_fn = BuildHardSigmoidMulTestCase(input_def, /*hardsigmoid_first=*/true);
