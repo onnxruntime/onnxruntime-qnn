@@ -42,6 +42,7 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | `qnn_ep_profiler_test.cc` | `QnnUnit_EpProfilerTest` | `qnn_ep_profiler.cc` (ORT API v25+) |
 | `ort_api_test.cc` | `QnnUnit_OrtApiTest` | `ort_api.cc` |
 | `qnn_backend_manager_test.cc` | `QnnUnit_BackendManagerTest` (stub, no real lib) / `QnnUnit_BackendManagerHtpTest` (loads a real backend, skips when unavailable) | `builder/qnn_backend_manager.cc` |
+| `qnn_backend_system_dlc_plugin_test.cc` | `QnnUnit_BackendSystemDlcPluginTest` (stubbed QNN System API) / `QnnUnit_BackendSystemDlcPluginHtpTest` (loads a real backend + `libQnnSystem.so`, skips when unavailable) | `builder/qnn_backend_system_dlc_plugin.cc` |
 | `qnn_backend_profiling_manager_test.cc` | `QnnUnit_BackendProfilingManagerTest` | `builder/qnn_backend_profiling_manager.cc` |
 | `onnx_ctx_model_helper_test.cc` | `QnnUnit_OnnxCtxModelHelperTest` | `builder/onnx_ctx_model_helper.cc` |
 | `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderTest` | `qnn_execution_provider.cc` |

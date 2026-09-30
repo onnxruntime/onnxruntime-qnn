@@ -127,7 +127,9 @@ struct QnnRealHtpBackendManagerContext {
   Qnn_BackendHandle_t backend_handle = nullptr;
   Qnn_ContextHandle_t context_handle = nullptr;
 
-  QnnRealHtpBackendManagerContext() {
+  // need_load_system_lib additionally loads libQnnSystem.so so that the manager's
+  // QNN system interface (SystemContext / SystemLog / SystemDlc) is populated.
+  explicit QnnRealHtpBackendManagerContext(bool need_load_system_lib = false) {
 #ifndef _WIN32
     qnn::QnnBackendManagerConfig cfg;
     cfg.backend_path = "libQnnHtp.so";
@@ -145,7 +147,7 @@ struct QnnRealHtpBackendManagerContext {
 
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
     auto status = manager_->SetupBackend(/*load_from_cached_context=*/false,
-                                         /*need_load_system_lib=*/false,
+                                         need_load_system_lib,
                                          /*share_ep_contexts=*/false,
                                          /*htp_share_resource_optimization=*/-1,
                                          /*enable_file_mapped_weights=*/false,
@@ -166,6 +168,9 @@ struct QnnRealHtpBackendManagerContext {
   ~QnnRealHtpBackendManagerContext() = default;
 
   bool IsValid() const { return initialized_; }
+
+  // Underlying manager; nullptr when !IsValid().
+  qnn::QnnBackendManager* Manager() { return manager_.get(); }
 
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnRealHtpBackendManagerContext);
 
