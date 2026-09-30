@@ -23,6 +23,7 @@ namespace qnn {
 
 // Forward declarations
 class BF16ConversionGuard;
+class IGraphEmitter;
 class OpTraceCollector;
 // Prevent QnnBackendManager change triggering op builder rebuild on incremental build.
 class QnnBackendManager;
@@ -60,7 +61,8 @@ class QnnModelWrapper {
                   const ModelSettings& model_settings,
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
                   OpTraceCollector* op_trace_collector = nullptr,
-                  bool is_post_layout_transform = false);
+                  bool is_post_layout_transform = false,
+                  IGraphEmitter* graph_emitter = nullptr);
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
   ~QnnModelWrapper() = default;
@@ -568,6 +570,7 @@ class QnnModelWrapper {
   const OrtGraph& ort_graph_;
   const Ort::Logger& logger_;
   const QnnBackendManager& qnn_backend_manager_;
+  IGraphEmitter* graph_emitter_ = nullptr;
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string graph_name_ = "";
   // QNN context that holds the QNN graph referenced by `graph_`

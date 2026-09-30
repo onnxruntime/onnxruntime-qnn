@@ -14,6 +14,7 @@
 
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/i_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -30,10 +31,12 @@ QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
                                  const ModelSettings& model_settings,
                                  std::unordered_map<std::string, std::string>* tensor_name_overrides,
                                  OpTraceCollector* op_trace_collector,
-                                 bool is_post_layout_transform)
+                                 bool is_post_layout_transform,
+                                 IGraphEmitter* graph_emitter)
     : ort_graph_(ort_graph),
       logger_(logger),
       qnn_backend_manager_(qnn_backend_manager),
+      graph_emitter_(graph_emitter),
       graph_inputs_(graph_inputs),
       graph_outputs_(graph_outputs),
       model_settings_(model_settings),
@@ -73,15 +76,29 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
   }
 
   const auto& qnn_interface = qnn_backend_manager_.GetQnnInterface();
-  auto rt = qnn_interface.graphCreate(context, graph_name.c_str(), graph_configs, &graph_);
-  if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-    rt = qnn_interface.graphRetrieve(context, graph_name.c_str(), &graph_);
+  if (graph_emitter_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                ("[QAIRT C++ API] CreateGraph via QairtGraphEmitter: " + graph_name).c_str());
+    Ort::Status s = graph_emitter_->CreateGraph(context, graph_name.c_str(), graph_configs, graph_);
+    if (!s.IsOK()) {
+      s = graph_emitter_->RetrieveGraph(context, graph_name.c_str(), graph_);
+      if (!s.IsOK()) {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to create Qnn graph via emitter: " + graph_name + ". " + s.GetErrorMessage()).c_str());
+        return false;
+      }
+    }
+  } else {
+    auto rt = qnn_interface.graphCreate(context, graph_name.c_str(), graph_configs, &graph_);
     if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
-                  ("Failed to create Qnn graph: " + graph_name + ". " +
-                   utils::FormatQnnError(qnn_interface, rt))
-                      .c_str());
-      return false;
+      rt = qnn_interface.graphRetrieve(context, graph_name.c_str(), &graph_);
+      if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to create Qnn graph: " + graph_name + ". " +
+                     utils::FormatQnnError(qnn_interface, rt))
+                        .c_str());
+        return false;
+      }
     }
   }
 
@@ -226,11 +243,20 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
         it->second.SetResolvedTensorName(*name);
       }
       std::string error_string;
-      auto rt = it->second.CreateQnnGraphTensor(qnn_backend_manager_.GetQnnInterface(),
-                                                graph_,
-                                                qnn_node_name,
-                                                qnn_tensor_id_map_,
-                                                error_string);
+      bool rt;
+      if (graph_emitter_) {
+        rt = it->second.CreateQnnGraphTensor(*graph_emitter_,
+                                             graph_,
+                                             qnn_node_name,
+                                             qnn_tensor_id_map_,
+                                             error_string);
+      } else {
+        rt = it->second.CreateQnnGraphTensor(qnn_backend_manager_.GetQnnInterface(),
+                                             graph_,
+                                             qnn_node_name,
+                                             qnn_tensor_id_map_,
+                                             error_string);
+      }
       if (!rt) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
         return false;
@@ -257,11 +283,20 @@ bool QnnModelWrapper::CreateQnnParamTensors(const std::string& qnn_node_name,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Add parameter tensor: " + it->second.GetName()).c_str());
     if (!do_op_validation) {
       std::string error_string;
-      auto rt = it->second.CreateQnnGraphParam(qnn_backend_manager_.GetQnnInterface(),
-                                               graph_,
-                                               qnn_node_name,
-                                               qnn_tensor_id_map_,
-                                               error_string);
+      bool rt;
+      if (graph_emitter_) {
+        rt = it->second.CreateQnnGraphParam(*graph_emitter_,
+                                            graph_,
+                                            qnn_node_name,
+                                            qnn_tensor_id_map_,
+                                            error_string);
+      } else {
+        rt = it->second.CreateQnnGraphParam(qnn_backend_manager_.GetQnnInterface(),
+                                            graph_,
+                                            qnn_node_name,
+                                            qnn_tensor_id_map_,
+                                            error_string);
+      }
       if (!rt) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
         return false;
@@ -294,7 +329,11 @@ Ort::Status QnnModelWrapper::ValidateQnnNode(const std::string& node_name,
 
 Ort::Status QnnModelWrapper::ValidateQnnNode(QnnOpConfigWrapper& op_config, std::string& error_msg) const {
   bool ok;
-  if (qnn_backend_manager_.GetQnnValidatorBackendHandle() != nullptr) {
+  if (graph_emitter_) {
+    ok = op_config.QnnGraphOpValidation(*graph_emitter_,
+                                        qnn_backend_manager_.GetQnnBackendHandle(),
+                                        error_msg);
+  } else if (qnn_backend_manager_.GetQnnValidatorBackendHandle() != nullptr) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Op validation using validator backend (e.g. HTP).");
 
     ok = op_config.QnnGraphOpValidation(qnn_backend_manager_.GetQnnValidatorInterface(),
@@ -702,11 +741,21 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
       }
 
       std::string error;
-      if (!it->second.CreateQnnGraphTensor(qnn_backend_manager_.GetQnnInterface(),
-                                           graph_,
-                                           io_type,
-                                           qnn_tensor_id_map_,
-                                           error)) {
+      bool ok;
+      if (graph_emitter_) {
+        ok = it->second.CreateQnnGraphTensor(*graph_emitter_,
+                                             graph_,
+                                             io_type,
+                                             qnn_tensor_id_map_,
+                                             error);
+      } else {
+        ok = it->second.CreateQnnGraphTensor(qnn_backend_manager_.GetQnnInterface(),
+                                             graph_,
+                                             io_type,
+                                             qnn_tensor_id_map_,
+                                             error);
+      }
+      if (!ok) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
                     (std::string("Failed to pre-register ") + io_type + ": " + name + ". " + error).c_str());
         return false;
@@ -720,6 +769,10 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
 }
 
 bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
+  if (graph_emitter_) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                "[QAIRT C++ API] ComposeQnnGraph — routing tensors/nodes through QairtGraphEmitter");
+  }
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Compose Qnn Graph.");
   if (qnn_op_property_list_.empty()) {
     return false;
@@ -771,7 +824,12 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     std::string error_msg;
-    bool rt = op_config_wrapper.CreateQnnGraphOp(qnn_backend_manager_.GetQnnInterface(), graph_, error_msg);
+    bool rt;
+    if (graph_emitter_) {
+      rt = op_config_wrapper.CreateQnnGraphOp(*graph_emitter_, graph_, error_msg);
+    } else {
+      rt = op_config_wrapper.CreateQnnGraphOp(qnn_backend_manager_.GetQnnInterface(), graph_, error_msg);
+    }
     if (!rt) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_msg.c_str());
       return false;

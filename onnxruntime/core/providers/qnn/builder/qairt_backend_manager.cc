@@ -6,6 +6,7 @@
 #include "core/providers/qnn/builder/qairt_backend_manager.h"
 
 #include "QairtCpp/QairtApi.hpp"
+#include <cstdio>
 
 namespace onnxruntime {
 namespace qnn {
@@ -14,7 +15,6 @@ namespace qnn {
 const QNN_INTERFACE_VER_TYPE QairtBackendManager::null_interface_{};
 const Qnn_BackendHandle_t QairtBackendManager::null_backend_handle_ = nullptr;
 const Qnn_ContextHandle_t QairtBackendManager::null_context_handle_ = nullptr;
-const Qnn_ProfileHandle_t QairtBackendManager::null_profile_handle_ = nullptr;
 
 std::unique_ptr<QairtBackendManager> QairtBackendManager::Create(const Config& config,
                                                                   Ort::Status& status) {
@@ -27,6 +27,8 @@ std::unique_ptr<QairtBackendManager> QairtBackendManager::Create(const Config& c
 }
 
 Ort::Status QairtBackendManager::Initialize(const Config& config) {
+  fprintf(stderr, "[QAIRT C++ API] QairtBackendManager::Initialize — loading backend: %s\n", config.backend_lib_path.c_str());
+  fflush(stderr);
   backend_type_ = config.backend_type;
 
   try {
@@ -74,22 +76,25 @@ Ort::Status QairtBackendManager::Initialize(const Config& config) {
                             .c_str());
   }
 
+  fprintf(stderr, "[QAIRT C++ API] QairtBackendManager::Initialize — SUCCESS (backend=%s, context created)\n",
+          config.backend_lib_path.c_str());
+  fflush(stderr);
   return Ort::Status();
 }
 
-const QNN_INTERFACE_VER_TYPE& QairtBackendManager::GetQnnInterface() {
+const QNN_INTERFACE_VER_TYPE& QairtBackendManager::GetQnnInterface() const {
   return null_interface_;
 }
 
-const QNN_INTERFACE_VER_TYPE& QairtBackendManager::GetQnnValidatorInterface() {
+const QNN_INTERFACE_VER_TYPE& QairtBackendManager::GetQnnValidatorInterface() const {
   return null_interface_;
 }
 
-const Qnn_BackendHandle_t& QairtBackendManager::GetQnnBackendHandle() {
+const Qnn_BackendHandle_t& QairtBackendManager::GetQnnBackendHandle() const {
   return null_backend_handle_;
 }
 
-const Qnn_BackendHandle_t& QairtBackendManager::GetQnnValidatorBackendHandle() {
+const Qnn_BackendHandle_t& QairtBackendManager::GetQnnValidatorBackendHandle() const {
   return null_backend_handle_;
 }
 
@@ -97,20 +102,34 @@ const Qnn_ContextHandle_t& QairtBackendManager::GetQnnContext(int /*index*/) {
   return null_context_handle_;
 }
 
-QnnBackendType QairtBackendManager::GetQnnBackendType() {
+QnnBackendType QairtBackendManager::GetQnnBackendType() const {
   return backend_type_;
 }
 
-const Qnn_ProfileHandle_t& QairtBackendManager::GetQnnProfileHandle() {
-  return null_profile_handle_;
-}
-
-std::unique_ptr<unsigned char[]> QairtBackendManager::GetContextBinaryBuffer(
-    uint64_t& written_buffer_size) {
-  // ponytail: context binary serialization via QAIRT C++ API. Implement when
-  // context caching is wired up. For now return null — EP skips caching gracefully.
-  written_buffer_size = 0;
-  return nullptr;
+Ort::Status QairtBackendManager::GetContextBinaryBuffer(bool /*is_multi_soc_buffer*/,
+                                                        unsigned char** context_buffer,
+                                                        uint64_t& buffer_size) {
+  buffer_size = 0;
+  *context_buffer = nullptr;
+  if (contexts_.empty()) {
+    return Ort::Status();
+  }
+  try {
+    uint64_t binary_size = contexts_[0]->getBinarySize();
+    if (binary_size == 0) {
+      return Ort::Status();
+    }
+    auto buffer = new unsigned char[binary_size];
+    buffer_size = contexts_[0]->getBinary(buffer, binary_size);
+    *context_buffer = buffer;
+    return Ort::Status();
+  } catch (const qairt::Exception& e) {
+    buffer_size = 0;
+    *context_buffer = nullptr;
+    return MAKE_EP_FAIL(("QairtBackendManager::GetContextBinaryBuffer failed: " +
+                         std::string(e.what()))
+                            .c_str());
+  }
 }
 
 Ort::Status QairtBackendManager::LoadCachedQnnContextFromBuffer(
@@ -119,19 +138,10 @@ Ort::Status QairtBackendManager::LoadCachedQnnContextFromBuffer(
     const std::string& /*context_bin_filepath*/,
     std::string /*node_name*/,
     std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& /*qnn_models*/,
-    int64_t /*max_spill_fill_size*/) {
-  // ponytail: context-from-binary via QAIRT C++ API (Backend::createContextFromBinary).
-  // Implement when cached context path is tested end-to-end.
+    int64_t /*max_spill_fill_size*/,
+    const qnn::EpContextIoDispatch& /*io_dispatch*/,
+    bool /*is_multi_soc_buffer*/) {
   return MAKE_EP_FAIL("QairtBackendManager::LoadCachedQnnContextFromBuffer not yet implemented");
-}
-
-Ort::Status QairtBackendManager::SetHtpPowerConfigs(uint32_t /*htp_power_config_client_id*/,
-                                                    HtpPerformanceMode /*htp_performance_mode*/,
-                                                    uint32_t /*rpc_polling_time*/,
-                                                    uint32_t /*rpc_control_latency*/) {
-  // ponytail: QAIRT C++ API has no HTP power config equivalent yet.
-  // Return OK — power config is best-effort (EP logs warning but doesn't fail session).
-  return Ort::Status();
 }
 
 }  // namespace qnn

@@ -40,26 +40,25 @@ class QairtBackendManager final : public IBackendManager {
   QairtBackendManager& operator=(const QairtBackendManager&) = delete;
 
   // IBackendManager — C handle accessors return null sentinels.
-  const QNN_INTERFACE_VER_TYPE& GetQnnInterface() override;
-  const QNN_INTERFACE_VER_TYPE& GetQnnValidatorInterface() override;
-  const Qnn_BackendHandle_t& GetQnnBackendHandle() override;
-  const Qnn_BackendHandle_t& GetQnnValidatorBackendHandle() override;
+  const QNN_INTERFACE_VER_TYPE& GetQnnInterface() const override;
+  const QNN_INTERFACE_VER_TYPE& GetQnnValidatorInterface() const override;
+  const Qnn_BackendHandle_t& GetQnnBackendHandle() const override;
+  const Qnn_BackendHandle_t& GetQnnValidatorBackendHandle() const override;
   const Qnn_ContextHandle_t& GetQnnContext(int index = 0) override;
-  QnnBackendType GetQnnBackendType() override;
-  const Qnn_ProfileHandle_t& GetQnnProfileHandle() override;
+  QnnBackendType GetQnnBackendType() const override;
 
-  std::unique_ptr<unsigned char[]> GetContextBinaryBuffer(uint64_t& written_buffer_size) override;
+  Ort::Status GetContextBinaryBuffer(bool is_multi_soc_buffer,
+                                     unsigned char** context_buffer,
+                                     uint64_t& buffer_size) override;
   Ort::Status LoadCachedQnnContextFromBuffer(
       char* buffer,
       uint64_t buffer_length,
       const std::string& context_bin_filepath,
       std::string node_name,
       std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
-      int64_t max_spill_fill_size) override;
-  Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                                 HtpPerformanceMode htp_performance_mode,
-                                 uint32_t rpc_polling_time,
-                                 uint32_t rpc_control_latency) override;
+      int64_t max_spill_fill_size,
+      const qnn::EpContextIoDispatch& io_dispatch,
+      bool is_multi_soc_buffer = false) override;
 
   // QAIRT-specific accessors for QairtGraphEmitter construction.
   qairt::Api& GetApi() { return *api_; }
@@ -81,7 +80,6 @@ class QairtBackendManager final : public IBackendManager {
   static const QNN_INTERFACE_VER_TYPE null_interface_;
   static const Qnn_BackendHandle_t null_backend_handle_;
   static const Qnn_ContextHandle_t null_context_handle_;
-  static const Qnn_ProfileHandle_t null_profile_handle_;
 };
 
 }  // namespace qnn

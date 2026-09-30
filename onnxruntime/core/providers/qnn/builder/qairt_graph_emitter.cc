@@ -10,6 +10,7 @@
 #include "QairtCpp/QairtApi.hpp"
 
 #include <stdexcept>
+#include <cstdio>
 
 #define QAIRT_RETURN_IF_ERROR(expr) \
   do {                              \
@@ -27,6 +28,8 @@ Ort::Status QairtGraphEmitter::CreateGraph(Qnn_ContextHandle_t /*ctx*/,
                                            const char* name,
                                            const QnnGraph_Config_t** /*configs*/,
                                            Qnn_GraphHandle_t& out) {
+  fprintf(stderr, "[QAIRT C++ API] QairtGraphEmitter::CreateGraph — graph: %s\n", name);
+  fflush(stderr);
   try {
     auto graph_config = api_.make<qairt::GraphConfiguration>();
     auto graph = context_.createGraph(name, graph_config);
@@ -187,6 +190,8 @@ Ort::Status QairtGraphEmitter::ValidateOp(Qnn_BackendHandle_t /*backend*/,
 
 Ort::Status QairtGraphEmitter::FinalizeGraph(Qnn_GraphHandle_t /*graph*/,
                                              Qnn_ProfileHandle_t /*profile*/) {
+  fprintf(stderr, "[QAIRT C++ API] QairtGraphEmitter::FinalizeGraph\n");
+  fflush(stderr);
   try {
     // ponytail: profile handle ignored — QAIRT profile is set via GraphConfiguration
     // or passed to execute(). Add profile forwarding when perf infra wires up.
@@ -212,6 +217,8 @@ Qnn_ErrorHandle_t QairtGraphEmitter::ExecuteGraph(Qnn_GraphHandle_t /*graph*/,
                                                   uint32_t n_outputs,
                                                   Qnn_ProfileHandle_t /*profile*/,
                                                   Qnn_SignalHandle_t /*signal*/) {
+  fprintf(stderr, "[QAIRT C++ API] QairtGraphEmitter::ExecuteGraph (inputs=%u, outputs=%u)\n", n_inputs, n_outputs);
+  fflush(stderr);
   try {
     std::vector<qairt::Tensor> qairt_inputs;
     qairt_inputs.reserve(n_inputs);
