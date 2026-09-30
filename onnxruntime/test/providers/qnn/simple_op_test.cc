@@ -2222,7 +2222,6 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_FP16) {
                 kOnnxDomain);
 }
 
-
 // Test RandomUniformLike + Add operation on HTP backend
 TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
   // Create a function that builds the test model: input -> RandomUniformLike -> Add -> output
