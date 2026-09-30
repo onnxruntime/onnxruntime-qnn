@@ -115,32 +115,6 @@ pip install onnxruntime-qnn==2.7.0
 
 ---
 
-## Generate an EPContext model from a QNN context binary
-
-Use [gen_qnn_ctx_onnx_model.py](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/qnn/gen_qnn_ctx_onnx_model.py) to wrap an existing QNN context binary in an ONNX model. The script needs:
-
-- A Python 3 executable with the `onnx` package installed.
-- The QAIRT host executable `qnn-context-binary-utility` (`qnn-context-binary-utility.exe` on Windows) to read graph metadata from the context binary.
-- `qnn-context-binary-generator` only if you still need to create the QNN context binary; it is not needed when the `.bin` file already exists.
-
-With the QAIRT host tools directory on `PATH`, the complete conversion is:
-
-```bash
-python gen_qnn_ctx_onnx_model.py --qnn_bin qnn_ctx.bin
-```
-
-If the utility is not on `PATH`, pass its location explicitly:
-
-```bash
-python gen_qnn_ctx_onnx_model.py \
-  --qnn_bin qnn_ctx.bin \
-  --qnn_context_binary_utility /path/to/qnn-context-binary-utility
-```
-
-On Windows, use the `.exe` path from the QAIRT `bin/x86_64-windows-msvc` directory. On Linux, use the executable from `bin/x86_64-linux-clang`.
-
----
-
 ## Resources
 
 | Topic | Link |
