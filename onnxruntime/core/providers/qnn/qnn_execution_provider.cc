@@ -280,7 +280,7 @@ static void ParseVtcmSize(const std::string& vtcm_size_in_mb_string,
   if (!TryParseInteger(vtcm_size_in_mb_string, parsed) || parsed <= 0) {
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_WARNING,
-                ("Invalid vtcm_mb: '" + vtcm_size_in_mb_string + "'. Ignoring.").c_str());
+                ("Invalid vtcm_mb: " + vtcm_size_in_mb_string + " will be skipped").c_str());
     return;
   }
   vtcm_size_in_mb = parsed;
@@ -324,6 +324,10 @@ static void ParseSocModel(const std::string& soc_model_string, uint32_t& soc_mod
                  "'. Expected a numeric ID (e.g. 43, 69) or a chip name (e.g. SM8550, SM8750).")
                     .c_str());
     return;
+  }
+
+  if (parsed < 0) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("Invalid soc_model: " + soc_model_string).c_str());
   }
   soc_model = parsed;
 }
