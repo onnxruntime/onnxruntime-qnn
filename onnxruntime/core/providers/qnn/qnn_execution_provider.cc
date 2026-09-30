@@ -326,9 +326,6 @@ static void ParseSocModel(const std::string& soc_model_string, uint32_t& soc_mod
     return;
   }
 
-  if (parsed < 0) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("Invalid soc_model: " + soc_model_string).c_str());
-  }
   soc_model = parsed;
 }
 
