@@ -73,8 +73,9 @@ void RunAndAssertFused(const TestInputDef<float>& input_def, bool hardsigmoid_fi
   RunQnnModelTest(BuildHardSigmoidMulTestCase(input_def, hardsigmoid_first),
                   provider_options,
                   /*opset_version=*/18,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/0.01f);  // fp16 (QNN) vs fp32 (CPU EP).
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       // fp16 (QNN) vs fp32 (CPU EP).
+                                       ElementwiseAbsoluteVerifier(0.01f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", /*count=*/0);
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseNeuron", /*count=*/1);
