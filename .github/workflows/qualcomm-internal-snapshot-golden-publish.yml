@@ -145,7 +145,7 @@ jobs:
 
           git_sha="$(git rev-parse --short=10 HEAD)"
           utc_date="$(date -u +%Y%m%d)"
-          archive_path="${BUILD_ARTIFACTORY_REPO}/${REPO_SUBPATH_INPUT}/archive/${utc_date}-${git_sha}/goldens.zip"
+          archive_path="${BUILD_ARTIFACTORY_REPO}/${REPO_SUBPATH_INPUT}/archive/${utc_date}-${git_sha}-gh${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}/goldens.zip"
           latest_path="${BUILD_ARTIFACTORY_REPO}/${REPO_SUBPATH_INPUT}/latest/goldens.zip"
           download_dir="${GITHUB_WORKSPACE}/goldens_artifactory_validation"
           rm -rf "${download_dir}"
