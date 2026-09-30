@@ -108,11 +108,11 @@ bool IsHTPSupportedNativeBQ(QnnHtpDevice_Arch_t htp_arch,
 // Precondition: weight_info.shape == [K, N] and weight_info.quant_param.IsLPBQ().
 // Unsqueezes [K, N] → [1, 1, K, N] and updates the LPBQ quant axis (1 → 3).
 // Pushes the registered tensor name to input_names.
-Ort::Status RegisterWeightAsConv1x1Filter(QnnModelWrapper& qnn_model_wrapper,
-                                          const std::string& weight_name,
-                                          const TensorInfo& weight_info,
-                                          std::vector<uint8_t> weight_data,
-                                          std::vector<std::string>& input_names);
+Ort::Status RegisterLPBQWeightAsConv1x1Filter(QnnModelWrapper& qnn_model_wrapper,
+                                              const std::string& weight_name,
+                                              const TensorInfo& weight_info,
+                                              std::vector<uint8_t> weight_data,
+                                              std::vector<std::string>& input_names);
 
 // Creates a QNN Conv2D node (stride=1, pad=0, dilation=1, group=1) for LPBQ/BwFloatBlock lowering.
 // Registers the Conv2D output tensor with conv2d_output_name, conv2d_output_shape, and
