@@ -150,8 +150,9 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   for (size_t i = 0; i < num_batch_dims && i < data_dims.size(); ++i) {
     qnn_output_shape.push_back(data_dims[i]);
   }
-  // All indices dims except the innermost index-tuple dim.
-  for (size_t i = 0; i < indices_dims.size() - 1; ++i) {
+  // Index dims except the innermost index-tuple dim, and except the leading
+  // `batch_dims` -- those are the batch dims and must not be counted twice.
+  for (size_t i = num_batch_dims; i < indices_dims.size() - 1; ++i) {
     qnn_output_shape.push_back(indices_dims[i]);
   }
   // Trailing (un-indexed) data dims.
