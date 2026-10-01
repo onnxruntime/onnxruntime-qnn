@@ -99,6 +99,7 @@ struct MockNodeUnitImpl {
   // deque: push_back never invalidates existing element addresses.
   std::deque<FakeValueInfo> vis;
   std::deque<FakeNode> nodes;
+  std::deque<FakeOpAttr> attrs;
   OrtApi ctor_api{};
   std::unique_ptr<OrtNodeUnit> unit;
   // Constructed last, destroyed first: routes global Ort::GetApi() to ctor_api
@@ -161,7 +162,8 @@ inline MockNodeUnit MakeMockNodeUnit(
     std::string name = "",
     std::string domain = "",
     int since_version = 1,
-    size_t index = 0) {
+    size_t index = 0,
+    std::vector<FakeOpAttr> attrs = {}) {
   auto impl = std::make_unique<detail::MockNodeUnitImpl>();
   InstallFakeGraphApiStubs(impl->ctor_api);
 
@@ -184,6 +186,11 @@ inline MockNodeUnit MakeMockNodeUnit(
   node.id = index;
   node.inputs = make_slots(inputs);
   node.outputs = make_slots(outputs);
+  for (auto& attr : attrs) {
+    const std::string attr_name = attr.name;
+    impl->attrs.push_back(std::move(attr));
+    node.attrs.emplace(attr_name, &impl->attrs.back());
+  }
   impl->nodes.push_back(std::move(node));
 
   const OrtNode* node_ptr = impl->nodes.back().AsNode();
