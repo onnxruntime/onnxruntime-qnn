@@ -249,6 +249,39 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
 
 }  // namespace
 
+/// @brief Check whether the Softmax axis is the last input dimension.
+/// @param qnn_model_wrapper QNN model wrapper used to query tensor metadata.
+/// @param mul Multiply node unit.
+/// @param softmax Softmax node unit.
+/// @param ort_api ORT API interface.
+/// @return true if the axis is the last dimension, false if it is valid but non-last,
+///         or std::nullopt if the axis/rank cannot be determined.
+std::optional<bool> IsSoftmaxAxisLast(QnnModelWrapper& qnn_model_wrapper,
+                                      const OrtNodeUnit& mul,
+                                      const OrtNodeUnit& softmax,
+                                      const OrtApi& ort_api) {
+  const std::optional<size_t> scalar_input_index = GetMulScalarInputIndex(mul, ort_api);
+  if (!scalar_input_index.has_value()) return std::nullopt;
+
+  const size_t non_scalar_input_index = 1U - scalar_input_index.value();
+  const OrtNodeUnitIODef& softmax_input = mul.Inputs()[non_scalar_input_index];
+
+  TensorInfo input_info = {};
+  if (Ort::Status status = qnn_model_wrapper.GetTensorInfo(softmax_input, input_info);
+      !status.IsOK() || input_info.shape.empty()) {
+    return std::nullopt;
+  }
+
+  const std::optional<uint32_t> axis = GetPositiveSoftmaxAxis(mul, softmax, ort_api);
+  if (!axis.has_value() || axis.value() >= input_info.shape.size()) {
+    return std::nullopt;
+  }
+
+  const uint32_t last_axis = static_cast<uint32_t>(input_info.shape.size() - 1);
+
+  return axis.value() == last_axis;
+}
+
 std::unique_ptr<IQnnNodeGroup> ScaleSoftmaxFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& mul_node_unit,
@@ -273,6 +306,13 @@ std::unique_ptr<IQnnNodeGroup> ScaleSoftmaxFusion::TryFusion(
   const OrtNodeUnit* softmax = GetOnlyChildOfType(qnn_model_wrapper, mul_node_unit, child_op_types,
                                                   node_to_node_unit, node_unit_to_qnn_node_group);
   if (softmax == nullptr) {
+    return nullptr;
+  }
+
+  const std::optional<bool> axis_is_last =
+      IsSoftmaxAxisLast(qnn_model_wrapper, mul_node_unit, *softmax, ort_api);
+
+  if (!axis_is_last.has_value() || !axis_is_last.value()) {
     return nullptr;
   }
 
