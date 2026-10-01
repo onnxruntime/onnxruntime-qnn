@@ -4,6 +4,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
@@ -11,6 +12,10 @@
 #include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
 #include "onnxruntime_config.h"
+
+namespace onnxruntime::qnn {
+class RpcMemLibrary;
+}  // namespace onnxruntime::qnn
 
 namespace onnxruntime {
 
@@ -21,6 +26,23 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // Effective ORT API version: min(runtime, compile-time). Set by CreateEpFactories after
   // construction. Used by QnnEp to gate features that require a minimum runtime version.
   uint32_t effective_api_version_ = ORT_API_VERSION;
+
+  // Loads RPCMEM on first use. This is intentionally factory-owned so an allocator
+  // created through OrtEnv before session creation and a QnnEp share one library handle.
+  // ORT releases environment allocators before unloading their EP factory, so a
+  // deferred allocator may safely retain a callback to this factory.
+  std::shared_ptr<qnn::RpcMemLibrary> GetOrCreateRpcMemLibrary(std::string& error_message) const;
+
+  // Creates the HTP allocator used by both the factory and QnnEp ABI
+  // callbacks. If rpcmem_library is null, RPCMEM loading is deferred until the
+  // first allocation.
+  OrtStatus* CreateHtpSharedMemoryAllocator(const OrtMemoryInfo* memory_info,
+                                            std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
+                                            OrtAllocator** allocator) const noexcept;
+
+  const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
+    return host_accessible_memory_info_.get();
+  }
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEpFactory* this_ptr) noexcept;
@@ -41,6 +63,10 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
                                               _In_ const OrtLogger* logger,
                                               _Out_ OrtEp** ep) noexcept;
   static void ORT_API_CALL ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp* ep) noexcept;
+  static OrtStatus* ORT_API_CALL CreateAllocatorImpl(_In_ OrtEpFactory* this_ptr,
+                                                     _In_ const OrtMemoryInfo* memory_info,
+                                                     _In_opt_ const OrtKeyValuePairs* allocator_options,
+                                                     _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept;
   static void ORT_API_CALL ReleaseAllocatorImpl(OrtEpFactory* /*this*/, OrtAllocator* allocator) noexcept;
   static OrtStatus* ORT_API_CALL CreateDataTransferImpl(OrtEpFactory* this_ptr,
                                                         OrtDataTransferImpl** data_transfer) noexcept;
@@ -67,7 +93,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
       _Out_writes_all_(num_domains) OrtCustomOpDomain** domains,
       _In_ size_t num_domains) noexcept;
 
-  // const OrtApi& ort_api;
   const std::string ep_name_;                         // EP name
   const std::string vendor_{"Qualcomm"};              // EP vendor name
   const std::string ep_version_{ORT_QNN_EP_VERSION};  // EP version
@@ -75,15 +100,21 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // Qualcomm vendor ID. Refer to the ACPI ID registry (search Qualcomm): https://uefi.org/ACPI_ID_List
   const uint32_t vendor_id_{'Q' | ('C' << 8) | ('O' << 16) | ('M' << 24)};
 
-  // CPU allocator so we can control the arena behavior. optional as ORT always provides a CPU allocator if needed.
   using MemoryInfoUniquePtr = std::unique_ptr<OrtMemoryInfo, std::function<void(OrtMemoryInfo*)>>;
   MemoryInfoUniquePtr host_accessible_memory_info_;
 
+  // Created on the first allocation or opted-in session request. Merely
+  // registering the factory and its environment allocator must remain usable on
+  // hosts without RPCMEM (for example, offline context generation on x86).
+  mutable std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_;
+  mutable std::mutex rpcmem_library_mutex_;
+
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
+  std::vector<OrtEpDevice*> gpu_ep_devices_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
-  // This is an actual NPU hardware but unable to be detected by ORT Core (e.g., Makena).
+  // Actual NPU hardware that ORT Core did not enumerate (e.g. Makena without DXCore).
   HardwareDeviceUniquePtr undetected_npu_hw_device_;
 
   // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
