@@ -196,6 +196,39 @@ jobs:
       testdata_archive_artifact_name: testdata-zip
       target_py_vsn: ${{ inputs.target_py_vsn }}
 
+  windows-x86_64-qnn-integration:
+    if: ${{ inputs.do_all }}
+    needs: [path-filter]
+    runs-on: ["self-hosted", "windows", "X64", "Build"]
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Initialize submodules
+        if: ${{ needs['path-filter'].outputs.code == 'true' }}
+        run: git submodule update --init --recursive
+
+      - name: Build Windows x86_64 QNN integration-test binary
+        if: ${{ needs['path-filter'].outputs.code == 'true' }}
+        run: |
+          python.exe qcom\build_and_test.py build_ort_windows_x86_64 --config Release
+
+      - name: Run QnnInteg tests
+        if: ${{ needs['path-filter'].outputs.code == 'true' }}
+        run: |
+          $qairtSdkRoot = (Get-Content build\windows-x86_64\qairt-sdk-path-Release.txt).Trim()
+          $qnnHtpDir = Join-Path $qairtSdkRoot 'lib\x86_64-windows-msvc'
+          if (-not (Test-Path (Join-Path $qnnHtpDir 'QnnHtp.dll'))) {
+            throw "QnnHtp.dll not found at $qnnHtpDir"
+          }
+          $env:PATH = "$qnnHtpDir;$env:PATH"
+          & build\windows-x86_64\Release\onnxruntime_provider_test.exe --gtest_filter="QnnInteg_*" --gtest_brief=1
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
   lint:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
