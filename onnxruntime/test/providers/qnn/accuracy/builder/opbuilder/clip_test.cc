@@ -25,11 +25,11 @@
 // which conflict with the QNN-EP-internal kOnnxDomain copy that
 // clip_test.cc receives via infra/qnn_unit_test_utils.h → ort_api.h.
 //
-// Whole file gated on QNN_EP_ACCURACY_UT (enabled together with
-// ENABLE_COVERAGE on Linux x86_64 — see cmake/onnxruntime_unittests.cmake).
+// Whole file gated on QNN_EP_ACCURACY_UT (enabled for QNN provider-test
+// builds; see cmake/onnxruntime_unittests.cmake).
 // When OFF, file compiles to nothing.
 
-#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS && QNN_EP_ACCURACY_UT
+#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_ACCURACY_UT
 
 #include <cstdint>
 #include <numeric>
@@ -379,4 +379,4 @@ INSTANTIATE_TEST_SUITE_P(
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS && QNN_EP_ACCURACY_UT
+#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_ACCURACY_UT
