@@ -54,7 +54,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
 
 **Ordering / priority** — `TryQnnFusions()` tries each factory **in vector order and returns the first non-null result**. For shared starting ops, **the more specific fusion must come first** (e.g. `TryFusion4` before `TryFusion3` before `TryFusion2`).
 
-**Starting-NodeUnit gate** — `TryQnnFusions()` only fires for `SingleNode`-type NodeUnits, with a hardcoded exception list (`Gather`/`MatMul`/`Erf`/`Reshape`) for ops that may start from a QDQ group. **If your starting op can appear as a QDQ group, you must add it to this list** or your `TryFusion` is never called.
+**Starting-NodeUnit gate** — `TryQnnFusions()` only fires for `SingleNode`-type NodeUnits, with a hardcoded exception list (`Gather`/`MatMul`/`Gemm`/`Erf`/`Tanh`/`Reshape`/`Concat`) for ops that may start from a QDQ group. **If your starting op can appear as a QDQ group, you must add it to this list** or your `TryFusion` is never called.
 
 **Double-claim prevention is two-layered:**
 1. The dispatcher skips a starting NodeUnit already in `node_unit_to_qnn_node_group` *before* trying any fusion.
@@ -90,7 +90,7 @@ Canonical structure:
 
 ### `SingleNode` vs `QDQGroup` and how fusions see quant params
 
-A `NodeUnit` is either `SingleNode` (one node) or `QDQGroup` (`DQ*→target→Q*`). `GetNode()` returns the target op in both cases; the wrapping quantizers are reached via `GetDQNodes()` / `GetQNodes()` (as `GetChildNodeUnitAllowQdq()` does in [utils.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/utils.cc)). Because most helpers reject `QDQGroup` neighbors, fusions normally operate on standalone float nodes; only the four gate-listed starting ops (§2) may anchor a fusion from a `QDQGroup`.
+A `NodeUnit` is either `SingleNode` (one node) or `QDQGroup` (`DQ*→target→Q*`). `GetNode()` returns the target op in both cases; the wrapping quantizers are reached via `GetDQNodes()` / `GetQNodes()` (as `GetChildNodeUnitAllowQdq()` does in [utils.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/utils.cc)). Because most helpers reject `QDQGroup` neighbors, fusions normally operate on standalone float nodes; only the gate-listed starting ops (§2) may anchor a fusion from a `QDQGroup`.
 
 ### Traversal helpers ([utils.h](../onnxruntime/core/providers/qnn/builder/qnn_node_group/utils.h) / [utils.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/utils.cc))
 
@@ -188,6 +188,7 @@ If `AddToModelBuilder` returns non-OK during Compile, the error is logged at ERR
 | `ReduceMean` | `LayerNormFusion` | Full LayerNorm expansion → QNN LayerNorm |
 | `Einsum` | `ReshapeEinsumReshapeNodeGroup` | `Reshape→Einsum→Reshape` (6D) → Reshape+DepthToSpace+Transpose |
 | `Reshape` | `SpaceToDepthFusion`, then `Rank6ToRank5Fusion` | SpaceToDepth lowering; rank-6 `Reshape→Transpose→Reshape` → rank-5 |
+| `Concat` | `SliceConcatSpaceToDepthFusion` | Strided `Slice` tiling (4 tiles) + `Concat(axis=1)` → `PreT + SpaceToDepth(DCR,block=2) + [Gather] + PostT` |
 | `Transpose` | `ChannelShuffleFusion`, then `TransposeReshapeTransposeFusion` | ChannelShuffle (5-node); `Transpose→Reshape→Transpose` → Reshape |
 | *(dynamic)* | `UDOQDQFusion` | `DQ→UDO→Q` → QNN custom op, via `registerUDO` |
 

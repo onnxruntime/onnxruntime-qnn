@@ -162,10 +162,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
-  void InitQnnHtpGraphConfigs(
-      const qnn::HtpGraphConfigs_t& configs,
-      qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
-
   std::unique_ptr<qnn::QnnSerializerConfig> InitQnnSerializerConfig() const;
 
   std::string FormatEPConfigKey(const std::string& key) const {
@@ -196,7 +192,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // RAII guard to complete backend setup and release resource during exit.
   // This is expected to be used in GetCapability and Compile for multi-SoC EP context.
   struct ScopedPerSocQnnBackendSetup {
-    explicit ScopedPerSocQnnBackendSetup(const QnnEp& ep) : ep_(ep) {};
+    explicit ScopedPerSocQnnBackendSetup(const QnnEp& ep) : ep_(ep) {}
     ~ScopedPerSocQnnBackendSetup();
     ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ScopedPerSocQnnBackendSetup);
 
@@ -303,6 +299,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
 
   qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  OrtMemoryInfo* registered_memory_info_ = nullptr;
 
   // Model compatibility.
   std::shared_ptr<qnn::QnnCacheCompatibilityManager> qnn_cache_compatibility_manager_ = nullptr;

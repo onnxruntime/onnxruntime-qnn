@@ -56,6 +56,23 @@ TEST_F(QnnCPUBackendTests, RMSNorm3D) {
                     ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnHTPBackendTests, RMSNormBroadcastScale) {
+  // HTP computes in fp16; this also covers the f16 ones-gamma path.
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  auto input_def = TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64));
+  auto scale_def = TestInputDef<float>({2, 1, 8}, false, GetFloatDataInRange(0.9f, 1.1f, 16));
+  auto attrs = {test::MakeAttribute("axis", static_cast<int64_t>(-1))};
+  TestFp16ModelAccuracy(
+      BuildOpTestCase<float>("rms_norm", "RMSNormalization", {input_def, scale_def}, {}, attrs),
+      BuildOpTestCase<Ort::Float16_t>("rms_norm", "RMSNormalization",
+                                      {ConvertToFP16InputDef(input_def), ConvertToFP16InputDef(scale_def)}, {}, attrs),
+      provider_options,
+      23,
+      ExpectedEPNodeAssignment::All);
+}
+
 template <typename InputQType, typename ScaleQType>
 GetTestQDQModelFn<InputQType> BuildQDQRMSNormTestCase(const TestInputDef<float>& input_def,
                                                       const TestInputDef<float>& scale_def,
@@ -246,6 +263,21 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank2Scale_LeadingOnes) {
 TEST_F(QnnHTPBackendTests, RMSNorm_Rank4Scale_LeadingOnes) {
   RunRMSNormFp32Test(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 18)),
                      TestInputDef<float>({1, 1, 1, 3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
+                     {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                     ExpectedEPNodeAssignment::All);
+}
+
+// FP32 model at FP16 precision: covers the FLOAT_32 ones-gamma that the FP16-model test does not.
+TEST_F(QnnHTPBackendTests, RMSNormBroadcastScale_FP32_StaticScale) {
+  RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
+                     TestInputDef<float>({2, 1, 8}, true, GetFloatDataInRange(0.9f, 1.1f, 16)),
+                     {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                     ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, RMSNormBroadcastScale_FP32_DynamicScale) {
+  RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
+                     TestInputDef<float>({2, 1, 8}, false, GetFloatDataInRange(0.9f, 1.1f, 16)),
                      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                      ExpectedEPNodeAssignment::All);
 }
