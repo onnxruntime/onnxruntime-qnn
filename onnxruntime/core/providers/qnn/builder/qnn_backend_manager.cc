@@ -2047,12 +2047,12 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   if (1 == graph_count) {
     // in case the EPContext node is generated from script
     // the graph name from the context binary may not match the EPContext node name
-    auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
+    auto qnn_model = std::make_unique<qnn::QnnModel>(shared_from_this(), api_ptrs_);
     RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[0], context));
     qnn_models.emplace(node_name, std::move(qnn_model));
   } else {
     for (uint32_t i = 0; i < graph_count; ++i) {
-      auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
+      auto qnn_model = std::make_unique<qnn::QnnModel>(shared_from_this(), api_ptrs_);
       RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[i], context));
       qnn_models.emplace(graphs_info[i].graphInfoV1.graphName, std::move(qnn_model));
     }

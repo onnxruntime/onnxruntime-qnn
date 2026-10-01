@@ -48,9 +48,9 @@ struct QnnModelContext {
 
 class QnnModel {
  public:
-  QnnModel(QnnBackendManager* qnn_backend_manager,
+  QnnModel(std::shared_ptr<QnnBackendManager> qnn_backend_manager,
            const ApiPtrs& api_ptrs)
-      : qnn_backend_manager_(qnn_backend_manager),
+      : qnn_backend_manager_(std::move(qnn_backend_manager)),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}) {
     qnn_backend_type_ = qnn_backend_manager_->GetQnnBackendType();
   }
@@ -204,7 +204,7 @@ class QnnModel {
 
  private:
   std::unique_ptr<GraphInfo> graph_info_;
-  QnnBackendManager* qnn_backend_manager_ = nullptr;
+  std::shared_ptr<QnnBackendManager> qnn_backend_manager_;
   GraphInputOutputInfo graph_inputs_;
   GraphInputOutputInfo graph_outputs_;
   std::vector<QnnTensorInfo> qnn_input_infos_;

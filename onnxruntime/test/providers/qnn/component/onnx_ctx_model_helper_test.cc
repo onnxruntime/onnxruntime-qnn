@@ -810,7 +810,7 @@ struct CreateEpCtxNodeTestContext {
     ApiPtrs api_ptrs{ort_api, ep_api, editor_api};
     manager = qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
     if (!manager) return;
-    model = std::make_unique<qnn::QnnModel>(manager.get(), api_ptrs);
+    model = std::make_unique<qnn::QnnModel>(manager, api_ptrs);
   }
 
   bool IsValid() const { return model != nullptr; }

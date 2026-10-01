@@ -2524,7 +2524,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     const std::string fused_node_name = Ort::ConstNode(fused_node).GetName();
 
     std::unique_ptr<qnn::QnnModel> qnn_model = std::make_unique<qnn::QnnModel>(
-        qnn_backend_manager_.get(), ApiPtrs{ort_api, ep_api, model_editor_api});
+        qnn_backend_manager_, ApiPtrs{ort_api, ep_api, model_editor_api});
 
     qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
         QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
