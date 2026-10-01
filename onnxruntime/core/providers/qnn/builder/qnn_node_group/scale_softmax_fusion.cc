@@ -71,12 +71,12 @@ std::optional<size_t> GetMulScalarInputIndex(const OrtNodeUnit& mul, const OrtAp
   bool is_x_scalar = (x_dims_count == 0);
   bool is_y_scalar = (y_dims_count == 0);
 
-  if (is_y_scalar) {
-    return 1U;
-  } else if (is_x_scalar) {
-    return 0U;
+  // ScaleSoftmax requires exactly one scalar scale input and one non-scalar data input.
+  if (is_x_scalar == is_y_scalar) {
+    return std::nullopt;
   }
-  return std::nullopt;
+
+  return is_y_scalar ? 1U : 0U;
 }
 
 /// @brief Get the axis for softmax
