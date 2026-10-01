@@ -1825,6 +1825,7 @@ void OrtSelectorManager::CreateSelectors() {
       {"Asin", {}},
       {"Atan", {}},
       {"AveragePool", {}},
+      {"Buffer", {}},
       {"Ceil", {}},
       {"Cos", {}},
       {"DepthToSpace", {}},

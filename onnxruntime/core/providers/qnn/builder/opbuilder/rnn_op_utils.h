@@ -13,7 +13,7 @@
 
 namespace onnxruntime {
 namespace qnn {
-namespace rnn_details {
+namespace rnn_utils {
 
 // Inserts a StridedSlice QNN node to extract a slice from input_name into output_name.
 // Used by GRU and StatefulGru builders.
@@ -68,21 +68,30 @@ bool ShouldFpDegradeQdqGru(gsl::span<const TensorInfo> input_infos,
                            const std::string& direction,
                            int64_t linear_before_reset);
 
-// Parameterizes the optional stateful reset input for AddUnidirectionGRU/LSTM.
-// Pass kNoReset() for the standard GRU/LSTM (no stateful reset slot).
+// Parameterizes the stateful reset input for AddUnidirectionGRU/LSTM.
+// Standard GRU/LSTM have no QNN reset input. Stateful BlockOps use either their ONNX reset input
+// or a synthesized false tensor. This is required because an omitted BlockOp reset means false,
+// whereas an omitted QNN GRU/LSTM reset input defaults to true.
 struct ResetInput {
-  std::string onnx_name;  // empty = no reset
-  size_t qnn_slot{0};     // QNN input slot index (ignored when onnx_name is empty)
+  std::string onnx_name;  // Empty when the BlockOp reset input is omitted.
+  size_t qnn_slot{0};
+  bool materialize_false_reset_input{false};
+
+  bool RequiresQnnResetInput() const { return !onnx_name.empty() || materialize_false_reset_input; }
 };
-inline ResetInput kNoReset() { return {"", 0}; }
+// Standard GRU/LSTM do not expose a reset input, so their QNN node has no reset slot.
+inline ResetInput NoQnnResetInput() { return {"", 0, false}; }
+
+// Stateful BlockOps with an omitted reset still require a QNN reset slot carrying false.
+inline ResetInput QnnResetInputWithSynthesizedFalse(size_t qnn_slot) { return {"", qnn_slot, true}; }
 
 // Performs the ONNX->QNN unidirectional GRU lowering: standard GRU is decomposed into time-step
-// cells, while StatefulGru with a reset input uses one native multi-time-step QNN GRU. Used by
-// GRUOpBuilder (base) and StatefulGruOpBuilder (adds reset slot).
+// cells, while StatefulGru uses one native multi-time-step QNN GRU so QNN can retain state across
+// inference calls. Used by GRUOpBuilder (base) and StatefulGruOpBuilder (adds reset slot).
 //
-// qnn_input_count: size of the QNN GRU input vector. Pass 14 for standard GRU and StatefulGru
-//   without reset; pass 15 only when StatefulGru supplies reset at slot 14.
-// reset: optional stateful reset input; pass kNoReset() for the standard GRU.
+// qnn_input_count: size of the QNN GRU input vector. Pass 14 for standard GRU; StatefulGru always
+//   passes 15 so QNN input 14 can carry either the ONNX reset input or the BlockOp false default.
+// reset: stateful reset input; pass NoQnnResetInput() for the standard GRU.
 Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                const OrtNodeUnit& node_unit,
                                const std::string& direction,
@@ -99,8 +108,8 @@ Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
 // reordering, bias summation, zero-bias/initial-state stubs, bidirectional Concat. Used by
 // LSTMOpBuilder (base) and StatefulLstmOpBuilder (adds reset slot).
 //
-// reset: optional stateful reset input; pass kNoReset() for the standard LSTM.
-//   The QNN LSTM input vector is always size 25; the reset occupies slot 24 (kQnnLstmResetInputIndex).
+// reset: stateful reset input; pass NoQnnResetInput() for the standard LSTM. StatefulLstm uses the
+// 25-slot QNN vector and occupies slot 24 with its ONNX reset input or a false default tensor.
 Ort::Status AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrapper,
                                 const OrtNodeUnit& node_unit,
                                 const std::string& direction,
@@ -111,6 +120,6 @@ Ort::Status AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrapper,
                                 const ResetInput& reset,
                                 std::vector<std::string>& uni_lstm_output_names) ORT_MUST_USE_RESULT;
 
-}  // namespace rnn_details
+}  // namespace rnn_utils
 }  // namespace qnn
 }  // namespace onnxruntime

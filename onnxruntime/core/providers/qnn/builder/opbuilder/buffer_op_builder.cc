@@ -59,6 +59,13 @@ Ort::Status BufferOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                            const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
+  const auto& inputs = node_unit.Inputs();
+  const auto& outputs = node_unit.Outputs();
+  RETURN_IF_NOT(inputs.size() >= 1 && inputs.size() <= kQtiAiswBufferResetInputIndex + 1,
+                "QNN EP: Buffer expects one activation input and an optional reset input.");
+  RETURN_IF_NOT(inputs[0].Exists(), "QNN EP: Buffer activation input is required.");
+  RETURN_IF_NOT(outputs.size() == 1 && outputs[0].Exists(), "QNN EP: Buffer requires exactly one output.");
+
   OrtNodeAttrHelper node_helper(node_unit);
 
   const int64_t mode = node_helper.Get("mode", static_cast<int64_t>(QNN_OP_BUFFER_MODE_BLOCKING));
@@ -66,24 +73,65 @@ Ort::Status BufferOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                     mode == QNN_OP_BUFFER_MODE_NON_BLOCKING_LEFT ||
                     mode == QNN_OP_BUFFER_MODE_NON_BLOCKING_RIGHT,
                 "QNN EP: Buffer mode must be 0 (BLOCKING), 1 (NON_BLOCKING_LEFT), or 2 (NON_BLOCKING_RIGHT).");
-  // HTP constraint: mode 0 (BLOCKING) is not supported; only NON_BLOCKING_LEFT (1) and
-  // NON_BLOCKING_RIGHT (2) are accepted.
-  const QnnBackendType backend_type = qnn_model_wrapper.GetQnnBackendType();
-  RETURN_IF(IsNpuBackend(backend_type) && mode == QNN_OP_BUFFER_MODE_BLOCKING,
-            "QNN EP: Buffer mode 0 (BLOCKING) is not supported on HTP. Use mode 1 or 2.");
-
   RETURN_IF_NOT(node_helper.HasAttr("buffer_size"), "QNN EP: Buffer requires the mandatory 'buffer_size' attribute.");
-  RETURN_IF_NOT(node_helper.Get("buffer_size", static_cast<int64_t>(0)) > 0,
+  const int64_t buffer_size = node_helper.Get("buffer_size", static_cast<int64_t>(0));
+  RETURN_IF_NOT(buffer_size > 0,
                 "QNN EP: Buffer 'buffer_size' must be greater than 0.");
   RETURN_IF_NOT(node_helper.HasAttr("buffer_dim"), "QNN EP: Buffer requires the mandatory 'buffer_dim' attribute.");
 
-  // buffer_dim must be a valid axis of the input tensor.
-  const auto& inputs = node_unit.Inputs();
+  // MasterOpDef common constraints: buffer_dim must be a valid axis, buffer_size must hold a
+  // whole number of input frames, and stride must remove whole frames within the buffer.
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "QNN EP: Cannot get Buffer input shape.");
   const int64_t buffer_dim = node_helper.Get("buffer_dim", static_cast<int64_t>(0));
   RETURN_IF_NOT(buffer_dim >= 0 && buffer_dim < static_cast<int64_t>(input_shape.size()),
                 "QNN EP: Buffer 'buffer_dim' is out of range for the input tensor rank.");
+  const uint32_t input_frame_count = input_shape[static_cast<size_t>(buffer_dim)];
+  RETURN_IF_NOT(input_frame_count > 0, "QNN EP: Buffer input frame count must be greater than 0.");
+  RETURN_IF_NOT(buffer_size % input_frame_count == 0,
+                "QNN EP: Buffer 'buffer_size' must be evenly divisible by the input frame count.");
+
+  const int64_t stride = node_helper.Get("stride", static_cast<int64_t>(1));
+  RETURN_IF_NOT(stride >= static_cast<int64_t>(input_frame_count) && stride <= buffer_size,
+                "QNN EP: Buffer 'stride' must be in the range [input frame count, buffer_size].");
+  RETURN_IF_NOT(stride % input_frame_count == 0,
+                "QNN EP: Buffer 'stride' must be evenly divisible by the input frame count.");
+
+  const QnnBackendType backend_type = qnn_model_wrapper.GetQnnBackendType();
+  if (IsNpuBackend(backend_type)) {
+    // HtpOpDefSupplement restrictions do not apply to non-HTP backends.
+    RETURN_IF(mode == QNN_OP_BUFFER_MODE_BLOCKING,
+              "QNN EP: Buffer mode 0 (BLOCKING) is not supported on HTP. Use mode 1 or 2.");
+
+    TensorInfo input_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
+    TensorInfo output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
+    // FLOAT_32 is converted to the supported FLOAT_16 native Buffer path below. All other
+    // application-visible types must map directly to an HTP Buffer configuration.
+    const bool is_supported_buffer_type = input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32 ||
+                                          input_info.qnn_data_type == QNN_DATATYPE_FLOAT_16 ||
+                                          input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+                                          input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16;
+    RETURN_IF_NOT(is_supported_buffer_type,
+                  "QNN EP: HTP Buffer supports FP16, U8, or U16 activations (FP32 is cast to FP16).");
+    RETURN_IF_NOT(input_info.qnn_data_type == output_info.qnn_data_type,
+                  "QNN EP: HTP Buffer input and output must have the same data type.");
+    const bool is_quantized_buffer = input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+                                     input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16;
+    RETURN_IF(is_quantized_buffer && input_shape.size() > 4,
+              "QNN EP: HTP quantized Buffer input rank must not exceed 4.");
+  }
+
+  if (inputs.size() > kQtiAiswBufferResetInputIndex && inputs[kQtiAiswBufferResetInputIndex].Exists()) {
+    TensorInfo reset_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[kQtiAiswBufferResetInputIndex], reset_info));
+    RETURN_IF_NOT(reset_info.qnn_data_type == QNN_DATATYPE_BOOL_8,
+                  "QNN EP: Buffer reset input must have QNN BOOL_8 data type.");
+    // GetOnnxShape normalizes an ONNX 0D scalar to QNN's one-element scalar representation.
+    RETURN_IF_NOT(reset_info.shape == std::vector<uint32_t>{1},
+                  "QNN EP: Buffer reset input must be a scalar.");
+  }
 
   return Ort::Status();
 }
@@ -117,10 +165,6 @@ Ort::Status BufferOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   // receives its reset signal; leave it off otherwise (matching the handling of a
   // missing reset input).
   if (inputs.size() > kQtiAiswBufferResetInputIndex && inputs[kQtiAiswBufferResetInputIndex].Exists()) {
-    TensorInfo reset_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[kQtiAiswBufferResetInputIndex], reset_info));
-    RETURN_IF_NOT(reset_info.qnn_data_type == QNN_DATATYPE_BOOL_8,
-                  "QNN EP: Buffer reset input must have QNN BOOL_8 data type.");
     RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[kQtiAiswBufferResetInputIndex], logger, input_names));
   }
 

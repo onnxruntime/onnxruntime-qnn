@@ -511,12 +511,6 @@ void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
                           Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
   ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), registration_name, ExpectedEPNodeAssignment::All));
 
-  auto reset_it = helper.feeds_.find(reset_input_name);
-  ASSERT_NE(reset_it, helper.feeds_.end()) << "Missing reset input: " << reset_input_name;
-  ASSERT_EQ(reset_it->second.GetTypeInfo().GetTensorTypeAndShapeInfo().GetElementType(), ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
-  ASSERT_EQ(reset_it->second.GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().size(), 0U);
-  bool* reset = reset_it->second.GetTensorMutableData<bool>();
-
   const auto run_and_copy_outputs = [&]() {
     std::vector<Ort::Value> outputs;
     RunWithEP(scoped.session(), Ort::RunOptions{nullptr}, helper.feeds_, outputs);
@@ -528,6 +522,19 @@ void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
     }
     return output_bytes;
   };
+
+  if (reset_input_name == nullptr) {
+    const auto first = run_and_copy_outputs();
+    const auto state_retained = run_and_copy_outputs();
+    EXPECT_NE(first, state_retained) << "An omitted BlockOp reset defaults to false and must retain state.";
+    return;
+  }
+
+  auto reset_it = helper.feeds_.find(reset_input_name);
+  ASSERT_NE(reset_it, helper.feeds_.end()) << "Missing reset input: " << reset_input_name;
+  ASSERT_EQ(reset_it->second.GetTypeInfo().GetTensorTypeAndShapeInfo().GetElementType(), ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
+  ASSERT_EQ(reset_it->second.GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().size(), 0U);
+  bool* reset = reset_it->second.GetTensorMutableData<bool>();
 
   *reset = true;
   const auto reset_first = run_and_copy_outputs();

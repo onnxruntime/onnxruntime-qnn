@@ -911,9 +911,10 @@ void VerifyQnnEpModelAssignment(const std::string& model_data,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
                                 OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR);
 
-// Runs a stateful QNN model in one session with reset=true, false, true. The reset input must be
-// a BOOL scalar model input. The model must have an output that is sensitive to retained state:
-// the first and third results must match, while the second must differ.
+// Runs a stateful QNN model in one session. With a reset input it runs true, false, true and
+// verifies that reset restores the initial state. Without one it runs twice and verifies that the
+// BlockOp default reset=false retains state. The model must have an output sensitive to retained
+// state. Pass nullptr for reset_input_name when the model omits the optional reset input.
 void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
                                     const char* log_id,
                                     const ProviderOptions& provider_options,

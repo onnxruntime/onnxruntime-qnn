@@ -47,24 +47,23 @@ void _BuildBufferTestCase(ModelTestBuilder& builder,
                           const int64_t buffer_dim,
                           const int64_t mode,
                           const int64_t stride,
+                          const bool has_reset,
                           const std::vector<QuantParams<InputType>>& output_qparams) {
   static constexpr bool kIsFp16 = std::is_same<InputType, Ort::Float16_t>::value;
   static constexpr bool kIsU8 = std::is_same<InputType, uint8_t>::value;
   static constexpr bool kIsU16 = std::is_same<InputType, uint16_t>::value;
+  static constexpr bool kIsS8 = std::is_same<InputType, int8_t>::value;
+  static constexpr bool kIsQuantized = kIsU8 || kIsU16 || kIsS8;
 
   std::string x_name;
   if constexpr (kIsFp16) {
     TestInputDef<Ort::Float16_t> fp16_def = ConvertToFP16InputDef(X_def);
     MakeTestInput(builder, "X", fp16_def);
     x_name = "X";
-  } else if constexpr (kIsU8) {
+  } else if constexpr (kIsQuantized) {
     MakeTestInput(builder, "X", X_def);
-    QuantParams<uint8_t> qparams = GetTestInputQuantParams<uint8_t>(X_def);
-    x_name = AddQDQNodePair<uint8_t>(builder, "qdq_X", "X", qparams.scale, qparams.zero_point);
-  } else if constexpr (kIsU16) {
-    MakeTestInput(builder, "X", X_def);
-    QuantParams<uint16_t> qparams = GetTestInputQuantParams<uint16_t>(X_def);
-    x_name = AddQDQNodePair<uint16_t>(builder, "qdq_X", "X", qparams.scale, qparams.zero_point);
+    QuantParams<InputType> qparams = GetTestInputQuantParams<InputType>(X_def);
+    x_name = AddQDQNodePair<InputType>(builder, "qdq_X", "X", qparams.scale, qparams.zero_point);
   } else {
     MakeTestInput(builder, "X", X_def);
     x_name = "X";
@@ -82,7 +81,7 @@ void _BuildBufferTestCase(ModelTestBuilder& builder,
 
   // Output
   std::string y_out;
-  if constexpr (kIsU8 || kIsU16) {
+  if constexpr (kIsQuantized) {
     y_out = "buf_Y";
     // Declare the intermediate float32 tensor consumed by the Q node. This allows the QNN EP
     // to obtain the Buffer output shape without relying on custom-op shape inference.
@@ -103,15 +102,17 @@ void _BuildBufferTestCase(ModelTestBuilder& builder,
     y_out = "Y";
   }
 
-  builder.AddNode("buf", "Buffer", {x_name}, {y_out}, kQtiAiswDomain, attrs);
+  std::vector<std::string> input_names = {x_name};
+  if (has_reset) {
+    builder.MakeInput<bool>("buffer_reset", {}, {false});
+    input_names.push_back("buffer_reset");
+  }
+  builder.AddNode("buf", "Buffer", input_names, {y_out}, kQtiAiswDomain, attrs);
 
   QNN_TEST_UNUSED_PARAMETER(output_qparams);
-  if constexpr (kIsU8) {
-    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_Y", y_out,
-                                                   output_qparams[0].scale, output_qparams[0].zero_point);
-  } else if constexpr (kIsU16) {
-    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "qdq_Y", y_out,
-                                                    output_qparams[0].scale, output_qparams[0].zero_point);
+  if constexpr (kIsQuantized) {
+    AddQDQNodePairWithOutputAsGraphOutput<InputType>(
+        builder, "qdq_Y", y_out, output_qparams[0].scale, output_qparams[0].zero_point);
   }
 }
 
@@ -122,7 +123,8 @@ static GetTestModelFn BuildBufferTestCase(const TestInputDef<float>& X_def,
                                           const int64_t mode,
                                           const int64_t stride = 1) {
   return [X_def, buffer_size, buffer_dim, mode, stride](ModelTestBuilder& builder) {
-    _BuildBufferTestCase<InputType>(builder, X_def, buffer_size, buffer_dim, mode, stride, {});
+    _BuildBufferTestCase<InputType>(builder, X_def, buffer_size, buffer_dim, mode, stride,
+                                    /*has_reset=*/false, {});
   };
 }
 
@@ -131,10 +133,12 @@ static GetTestQDQModelFn<InputQType> BuildQDQBufferTestCase(const TestInputDef<f
                                                             const int64_t buffer_size,
                                                             const int64_t buffer_dim,
                                                             const int64_t mode,
-                                                            const int64_t stride = 1) {
-  return [X_def, buffer_size, buffer_dim, mode, stride](
+                                                            const int64_t stride = 1,
+                                                            const bool has_reset = false) {
+  return [X_def, buffer_size, buffer_dim, mode, stride, has_reset](
              ModelTestBuilder& builder, std::vector<QuantParams<InputQType>>& output_qparams) {
-    _BuildBufferTestCase<InputQType>(builder, X_def, buffer_size, buffer_dim, mode, stride, output_qparams);
+    _BuildBufferTestCase<InputQType>(builder, X_def, buffer_size, buffer_dim, mode, stride,
+                                     has_reset, output_qparams);
   };
 }
 
@@ -199,6 +203,7 @@ static void RunHtpQDQBufferOpTest(const TestInputDef<float>& X_def,
                                   const int64_t mode,
                                   ExpectedEPNodeAssignment expected_ep_assignment,
                                   const int64_t stride = 1,
+                                  const bool has_reset = false,
                                   int opset = 21) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -210,7 +215,7 @@ static void RunHtpQDQBufferOpTest(const TestInputDef<float>& X_def,
   std::vector<QuantParams<QuantType>> out_qparams_vec = {GetTestInputQuantParams<QuantType>(X_def)};
 
   GetTestQDQModelFn<QuantType> qdq_fn = BuildQDQBufferTestCase<QuantType>(
-      X_def, buffer_size, buffer_dim, mode, stride);
+      X_def, buffer_size, buffer_dim, mode, stride, has_reset);
 
   GetTestModelFn model_fn = [qdq_fn, &out_qparams_vec](ModelTestBuilder& builder) {
     qdq_fn(builder, out_qparams_vec);
@@ -225,10 +230,10 @@ static void RunHtpQDQBufferOpTest(const TestInputDef<float>& X_def,
 
 // mode=1 (NON_BLOCKING_LEFT) — minimal 1D input
 TEST_F(QnnHTPBackendTests, Buffer_Fp16_mode1_non_blocking_left) {
-  // Input shape [8], buffer_size=4, buffer_dim=0, mode=1 (NON_BLOCKING_LEFT), stride=1
+  // Input shape [1], buffer_size=4, buffer_dim=0, mode=1 (NON_BLOCKING_LEFT), stride=1
   // Output shape: [4] (dim[0] replaced by buffer_size)
   RunHtpFp16BufferOpTest(
-      TestInputDef<float>({8}, false, -1.0f, 1.0f),  // X
+      TestInputDef<float>({1}, false, -1.0f, 1.0f),  // X: one frame per invocation
       4,                                             // buffer_size
       0,                                             // buffer_dim
       1,                                             // mode = NON_BLOCKING_LEFT
@@ -238,7 +243,7 @@ TEST_F(QnnHTPBackendTests, Buffer_Fp16_mode1_non_blocking_left) {
 // mode=2 (NON_BLOCKING_RIGHT) — minimal 1D input
 TEST_F(QnnHTPBackendTests, Buffer_Fp16_mode2_non_blocking_right) {
   RunHtpFp16BufferOpTest(
-      TestInputDef<float>({8}, false, -1.0f, 1.0f),  // X
+      TestInputDef<float>({1}, false, -1.0f, 1.0f),  // X
       4,                                             // buffer_size
       0,                                             // buffer_dim
       2,                                             // mode = NON_BLOCKING_RIGHT
@@ -247,9 +252,9 @@ TEST_F(QnnHTPBackendTests, Buffer_Fp16_mode2_non_blocking_right) {
 
 // mode=1 with 2D input, buffer_dim=1
 TEST_F(QnnHTPBackendTests, Buffer_Fp16_mode1_2d_input) {
-  // Input [3, 8], buffer_size=4, buffer_dim=1 → output [3, 4]
+  // Input [3, 1], buffer_size=4, buffer_dim=1 → output [3, 4]
   RunHtpFp16BufferOpTest(
-      TestInputDef<float>({3, 8}, false, -1.0f, 1.0f),  // X
+      TestInputDef<float>({3, 1}, false, -1.0f, 1.0f),  // X
       4,                                                // buffer_size
       1,                                                // buffer_dim
       1,                                                // mode = NON_BLOCKING_LEFT
@@ -263,7 +268,7 @@ TEST_F(QnnHTPBackendTests, Buffer_Fp16_mode1_2d_input) {
 // INT8 (QDQ u8), mode=1
 TEST_F(QnnHTPBackendTests, Buffer_QDQ_u8_mode1_non_blocking_left) {
   RunHtpQDQBufferOpTest<uint8_t>(
-      TestInputDef<float>({8}, false, -1.0f, 1.0f),  // X
+      TestInputDef<float>({1}, false, -1.0f, 1.0f),  // X
       4,                                             // buffer_size
       0,                                             // buffer_dim
       1,                                             // mode = NON_BLOCKING_LEFT
@@ -273,7 +278,7 @@ TEST_F(QnnHTPBackendTests, Buffer_QDQ_u8_mode1_non_blocking_left) {
 // INT16 (QDQ u16), mode=1
 TEST_F(QnnHTPBackendTests, Buffer_QDQ_u16_mode1_non_blocking_left) {
   RunHtpQDQBufferOpTest<uint16_t>(
-      TestInputDef<float>({8}, false, -1.0f, 1.0f),  // X
+      TestInputDef<float>({1}, false, -1.0f, 1.0f),  // X
       4,                                             // buffer_size
       0,                                             // buffer_dim
       1,                                             // mode = NON_BLOCKING_LEFT
@@ -283,7 +288,7 @@ TEST_F(QnnHTPBackendTests, Buffer_QDQ_u16_mode1_non_blocking_left) {
 // INT8, mode=2
 TEST_F(QnnHTPBackendTests, Buffer_QDQ_u8_mode2_non_blocking_right) {
   RunHtpQDQBufferOpTest<uint8_t>(
-      TestInputDef<float>({8}, false, -1.0f, 1.0f),  // X
+      TestInputDef<float>({1}, false, -1.0f, 1.0f),  // X
       4,                                             // buffer_size
       0,                                             // buffer_dim
       2,                                             // mode = NON_BLOCKING_RIGHT
@@ -298,12 +303,96 @@ TEST_F(QnnHTPBackendTests, Buffer_QDQ_u8_mode2_non_blocking_right) {
 TEST_F(QnnHTPBackendTests, Buffer_Fp16_mode0_blocking_Unsupported) {
   EXPECT_THROW(
       RunHtpFp16BufferOpTest(
-          TestInputDef<float>({8}, false, -1.0f, 1.0f),  // X
+          TestInputDef<float>({1}, false, -1.0f, 1.0f),  // X
           4,                                             // buffer_size
           0,                                             // buffer_dim
           0,                                             // mode = BLOCKING (unsupported on HTP)
           ExpectedEPNodeAssignment::None),
       Ort::Exception);
+}
+
+static GetTestModelFn BuildBufferWithInvalidArityCase(bool has_extra_input, bool has_extra_output) {
+  return [has_extra_input, has_extra_output](ModelTestBuilder& builder) {
+    auto x_def = ConvertToFP16InputDef(TestInputDef<float>({1}, false, -1.0f, 1.0f));
+    MakeTestInput(builder, "X", x_def);
+    std::vector<std::string> input_names = {"X"};
+    if (has_extra_input) {
+      builder.MakeInput<bool>("buffer_reset", {}, {false});
+      MakeTestInput(builder, "unexpected_input", x_def);
+      input_names.push_back("buffer_reset");
+      input_names.push_back("unexpected_input");
+    }
+
+    builder.MakeOutput<Ort::Float16_t>("Y", {{4}});
+    std::vector<std::string> output_names = {"Y"};
+    if (has_extra_output) {
+      builder.MakeOutput<Ort::Float16_t>("unexpected_output", {{4}});
+      output_names.push_back("unexpected_output");
+    }
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs = {
+        builder.MakeScalarAttribute("buffer_size", static_cast<int64_t>(4)),
+        builder.MakeScalarAttribute("buffer_dim", static_cast<int64_t>(0)),
+        builder.MakeScalarAttribute("mode", static_cast<int64_t>(1)),
+        builder.MakeScalarAttribute("stride", static_cast<int64_t>(1))};
+    builder.AddNode("invalid_buffer", "Buffer", input_names, output_names, kQtiAiswDomain, attrs);
+  };
+}
+
+TEST_F(QnnHTPBackendTests, Buffer_extra_input_Unsupported) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  EXPECT_THROW(
+      RunQnnOnlyBufferModel(BuildBufferWithInvalidArityCase(/*has_extra_input=*/true, /*has_extra_output=*/false),
+                            provider_options, ExpectedEPNodeAssignment::None, 21),
+      Ort::Exception);
+}
+
+TEST_F(QnnHTPBackendTests, Buffer_extra_output_Unsupported) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  EXPECT_THROW(
+      RunQnnOnlyBufferModel(BuildBufferWithInvalidArityCase(/*has_extra_input=*/false, /*has_extra_output=*/true),
+                            provider_options, ExpectedEPNodeAssignment::None, 21),
+      Ort::Exception);
+}
+
+TEST_F(QnnHTPBackendTests, Buffer_Fp16_buffer_size_not_divisible_by_input_frames_Unsupported) {
+  EXPECT_THROW(
+      RunHtpFp16BufferOpTest(
+          TestInputDef<float>({3}, false, -1.0f, 1.0f),  // buffer_size=4 is not divisible by 3 frames
+          4, 0, 1, ExpectedEPNodeAssignment::None),
+      Ort::Exception);
+}
+
+TEST_F(QnnHTPBackendTests, Buffer_Fp16_stride_outside_master_opdef_range_Unsupported) {
+  EXPECT_THROW(
+      RunHtpFp16BufferOpTest(
+          TestInputDef<float>({2}, false, -1.0f, 1.0f),  // stride=1 is below one input frame
+          4, 0, 1, ExpectedEPNodeAssignment::None, 1),
+      Ort::Exception);
+}
+
+TEST_F(QnnHTPBackendTests, Buffer_QDQ_u8_rank5_Unsupported) {
+  EXPECT_THROW(
+      RunHtpQDQBufferOpTest<uint8_t>(
+          TestInputDef<float>({1, 1, 1, 1, 1}, false, -1.0f, 1.0f),
+          4, 0, 1, ExpectedEPNodeAssignment::None),
+      Ort::Exception);
+}
+
+TEST_F(QnnHTPBackendTests, Buffer_QDQ_s8_Unsupported) {
+  EXPECT_THROW(
+      RunHtpQDQBufferOpTest<int8_t>(
+          TestInputDef<float>({1}, false, -1.0f, 1.0f),
+          4, 0, 1, ExpectedEPNodeAssignment::None),
+      Ort::Exception);
+}
+
+TEST_F(QnnHTPBackendTests, Buffer_QDQ_u8_with_reset) {
+  RunHtpQDQBufferOpTest<uint8_t>(
+      TestInputDef<float>({1}, false, -1.0f, 1.0f),
+      4, 0, 1, ExpectedEPNodeAssignment::All, 1, /*has_reset=*/true);
 }
 
 // ============================================================

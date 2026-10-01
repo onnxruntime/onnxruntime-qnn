@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/opbuilder/rnn_op_utils.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -11,7 +12,7 @@
 
 namespace onnxruntime {
 namespace qnn {
-namespace rnn_details {
+namespace rnn_utils {
 
 Ort::Status DeriveNumDirectionsConcatAxis(const std::vector<uint32_t>& shape, uint32_t& axis) {
   RETURN_IF_NOT(shape.size() >= 3,
@@ -56,6 +57,68 @@ bool ShouldFpDegradeQdqGru(gsl::span<const TensorInfo> input_infos,
          missing_output || !(genuine_u8_combo || genuine_u16_combo);
 }
 
+namespace {
+
+Ort::Status EmitStridedSlice(QnnModelWrapper& qnn_model_wrapper,
+                             const OrtNodeUnit& node_unit,
+                             const std::string& input_name,
+                             const std::string& output_name,
+                             const std::vector<uint32_t>& input_shape,
+                             const std::vector<uint32_t>& output_shape,
+                             const std::vector<std::vector<int32_t>>& ranges,
+                             const uint32_t& begin_mask,
+                             const uint32_t& end_mask,
+                             const uint32_t& shrink_axes,
+                             const uint32_t& new_axes_mask,
+                             const Qnn_DataType_t& tensor_data_type,
+                             const QnnQuantParamsWrapper& quantize_param,
+                             bool do_op_validation,
+                             bool is_for_input,
+                             bool is_for_output,
+                             const char* input_error_message) {
+  QnnTensorWrapper input_tensorwrapper(input_name, is_for_input ? QNN_TENSOR_TYPE_APP_WRITE : QNN_TENSOR_TYPE_NATIVE,
+                                       tensor_data_type, quantize_param.Copy(), std::vector<uint32_t>(input_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), input_error_message);
+
+  const std::string node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_STRIDED_SLICE);
+  std::vector<uint32_t> ranges_data;
+  for (size_t i = 0; i < ranges.size(); i++) {
+    for (size_t j = 0; j < 3; j++) {
+      ranges_data.emplace_back(SafeInt<uint32_t>(ranges[i][j]));
+    }
+  }
+  QnnParamWrapper ranges_param_wrapper(node_unit.Index(), node_name, QNN_OP_STRIDED_SLICE_PARAM_RANGES,
+                                       {static_cast<uint32_t>(ranges.size()), 3}, std::move(ranges_data), true);
+  std::vector<std::string> param_names = {ranges_param_wrapper.GetParamTensorName()};
+  qnn_model_wrapper.AddParamWrapper(std::move(ranges_param_wrapper));
+
+  // begin_mask
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, begin_mask,
+                                         QNN_OP_STRIDED_SLICE_PARAM_BEGIN_MASK, param_names));
+  // end_mask
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, end_mask,
+                                         QNN_OP_STRIDED_SLICE_PARAM_END_MASK, param_names));
+  // shrink_axes
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, shrink_axes,
+                                         QNN_OP_STRIDED_SLICE_PARAM_SHRINK_AXES, param_names));
+  // new_axes_mask
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, new_axes_mask,
+                                         QNN_OP_STRIDED_SLICE_PARAM_NEW_AXES_MASK, param_names));
+
+  // outputs
+  QnnTensorWrapper output_tensorwrapper(output_name, is_for_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
+                                        tensor_data_type, quantize_param.Copy(), std::vector<uint32_t>(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
+                "Failed to add output tensor for inserted StridedSlice.");
+  // addNode
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_STRIDED_SLICE,
+                                                {input_name}, {output_name}, std::move(param_names), do_op_validation),
+                "Failed to create manually inserted Qnn StridedSlice node.");
+  return Ort::Status();
+}
+
+}  // namespace
+
 Ort::Status AddStridedSlice(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
                             const std::string& input_name,
@@ -76,40 +139,10 @@ Ort::Status AddStridedSlice(QnnModelWrapper& qnn_model_wrapper,
     return Ort::Status();
   }
 
-  QnnTensorWrapper input_tensorwrapper(input_name, is_for_input ? QNN_TENSOR_TYPE_APP_WRITE : QNN_TENSOR_TYPE_NATIVE,
-                                       tensor_data_type, quantize_param.Copy(), std::vector<uint32_t>(input_shape));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)),
-                "Failed to add input tensor for inserted StridedSlice.");
-
-  const std::string node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_STRIDED_SLICE);
-  std::vector<uint32_t> ranges_data;
-  for (size_t i = 0; i < ranges.size(); i++) {
-    for (size_t j = 0; j < 3; j++) {
-      ranges_data.emplace_back(SafeInt<uint32_t>(ranges[i][j]));
-    }
-  }
-  QnnParamWrapper ranges_param_wrapper(node_unit.Index(), node_name, QNN_OP_STRIDED_SLICE_PARAM_RANGES,
-                                       {static_cast<uint32_t>(ranges.size()), 3}, std::move(ranges_data), true);
-  std::vector<std::string> param_names = {ranges_param_wrapper.GetParamTensorName()};
-  qnn_model_wrapper.AddParamWrapper(std::move(ranges_param_wrapper));
-
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, begin_mask,
-                                         QNN_OP_STRIDED_SLICE_PARAM_BEGIN_MASK, param_names));
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, end_mask,
-                                         QNN_OP_STRIDED_SLICE_PARAM_END_MASK, param_names));
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, shrink_axes,
-                                         QNN_OP_STRIDED_SLICE_PARAM_SHRINK_AXES, param_names));
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, new_axes_mask,
-                                         QNN_OP_STRIDED_SLICE_PARAM_NEW_AXES_MASK, param_names));
-
-  QnnTensorWrapper output_tensorwrapper(output_name, is_for_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
-                                        tensor_data_type, quantize_param.Copy(), std::vector<uint32_t>(output_shape));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
-                "Failed to add output tensor for inserted StridedSlice.");
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_STRIDED_SLICE,
-                                                {input_name}, {output_name}, std::move(param_names), do_op_validation),
-                "Failed to create manually inserted Qnn StridedSlice node.");
-  return Ort::Status();
+  return EmitStridedSlice(qnn_model_wrapper, node_unit, input_name, output_name, input_shape, output_shape, ranges,
+                          begin_mask, end_mask, shrink_axes, new_axes_mask, tensor_data_type, quantize_param,
+                          do_op_validation, is_for_input, is_for_output,
+                          "Failed to add input tensor for inserted StridedSlice.");
 }
 
 Ort::Status AddStridedSliceOrReshape(QnnModelWrapper& qnn_model_wrapper,
@@ -137,59 +170,21 @@ Ort::Status AddStridedSliceOrReshape(QnnModelWrapper& qnn_model_wrapper,
                                                      tensor_data_type, quantize_param.Copy(), quantize_param.Copy(),
                                                      do_op_validation, is_for_input, is_for_output));
   } else {
-    QnnTensorWrapper input_tensorwrapper(input_name, is_for_input ? QNN_TENSOR_TYPE_APP_WRITE : QNN_TENSOR_TYPE_NATIVE,
-                                         tensor_data_type, quantize_param.Copy(), std::vector<uint32_t>(input_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)),
-                  "Failed to add input tensor for inserted StridedSlice or Reshape.");
-
-    const std::string node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_STRIDED_SLICE);
-    std::vector<uint32_t> ranges_data;
-    for (size_t i = 0; i < ranges.size(); i++) {
-      for (size_t j = 0; j < 3; j++) {
-        ranges_data.emplace_back(SafeInt<uint32_t>(ranges[i][j]));
-      }
-    }
-    QnnParamWrapper ranges_param_wrapper(node_unit.Index(), node_name, QNN_OP_STRIDED_SLICE_PARAM_RANGES,
-                                         {static_cast<uint32_t>(ranges.size()), 3}, std::move(ranges_data), true);
-    std::vector<std::string> param_names = {ranges_param_wrapper.GetParamTensorName()};
-    qnn_model_wrapper.AddParamWrapper(std::move(ranges_param_wrapper));
-
-    // begin_mask
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, begin_mask,
-                                           QNN_OP_STRIDED_SLICE_PARAM_BEGIN_MASK, param_names));
-
-    // end_mask
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, end_mask,
-                                           QNN_OP_STRIDED_SLICE_PARAM_END_MASK, param_names));
-
-    // shrink_axes
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, shrink_axes,
-                                           QNN_OP_STRIDED_SLICE_PARAM_SHRINK_AXES, param_names));
-
-    // new_axes_mask
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, new_axes_mask,
-                                           QNN_OP_STRIDED_SLICE_PARAM_NEW_AXES_MASK, param_names));
-
-    // outputs
-    QnnTensorWrapper output_tensorwrapper(output_name, is_for_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
-                                          tensor_data_type, quantize_param.Copy(), std::vector<uint32_t>(output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
-                  "Failed to add output tensor for inserted StridedSlice.");
-    // addNode
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_STRIDED_SLICE,
-                                                  {input_name}, {output_name}, std::move(param_names), do_op_validation),
-                  "Failed to create manually inserted Qnn StridedSlice node.");
+    RETURN_IF_ERROR(EmitStridedSlice(qnn_model_wrapper, node_unit, input_name, output_name, input_shape, output_shape,
+                                     ranges, begin_mask, end_mask, shrink_axes, new_axes_mask, tensor_data_type,
+                                     quantize_param, do_op_validation, is_for_input, is_for_output,
+                                     "Failed to add input tensor for inserted StridedSlice or Reshape."));
   }
   return Ort::Status();
 }
 
-// Lowers GRU to QNN. Standard GRU, and StatefulGru without reset, are unrolled across time steps;
-// StatefulGru with reset uses one native multi-time-step QNN Gru so reset is applied once per inference.
+// Lowers GRU to QNN. Standard GRU is unrolled across time steps; StatefulGru uses one native
+// multi-time-step QNN Gru so state and reset are applied once per inference.
 // Each unrolled QNN Gru cell processes the full batch with input shape [1, batch, input] (seq=1,
 // time_major=true), avoiding a batch-element loop.
 //
-// qnn_input_count: size of the QNN GRU input vector (14 for standard GRU, 15 for StatefulGru with reset).
-// reset: optional stateful reset input; pass kNoReset() for the standard GRU builder.
+// qnn_input_count: size of the QNN GRU input vector (14 for standard GRU, 15 for StatefulGru).
+// reset: stateful reset input; pass NoQnnResetInput() for the standard GRU builder.
 Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                const OrtNodeUnit& node_unit,
                                const std::string& direction,
@@ -255,7 +250,7 @@ Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   const uint32_t batch_size = layout == 0 ? input_tensor_infos[0].shape[1] : input_tensor_infos[0].shape[0];
   const uint32_t seq_length = layout == 0 ? input_tensor_infos[0].shape[0] : input_tensor_infos[0].shape[1];
   const int32_t direction_idx = input_tensor_infos[1].shape[0] < 2 || direction == "forward" ? 0 : 1;
-  const bool has_reset = !reset.onnx_name.empty();
+  const bool has_reset = reset.RequiresQnnResetInput();
   const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   const bool is_ir_backend = IsIrBackend(qnn_model_wrapper.GetQnnBackendType());
 
@@ -353,11 +348,24 @@ Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
       for (size_t i = 0; i < 6; i++) qnn_gru_input_names[qnn_idx[i]] = zero_bias_name;
     }
   }
-  // Optional stateful reset input: wire into the designated QNN slot if provided.
+  // Stateful BlockOps default reset to false, while QNN defaults an omitted reset input to true.
+  // Materialize the BlockOp default so omission preserves QNN's internal state across inferences.
   if (has_reset) {
     RETURN_IF_NOT(reset.qnn_slot < qnn_gru_input_names.size(),
                   "QNN EP: stateful reset slot out of range for GRU input vector.");
-    qnn_gru_input_names[reset.qnn_slot] = reset.onnx_name;
+    if (reset.onnx_name.empty()) {
+      const std::string default_reset_name =
+          utils::UniqueNameGenerator().New(node_unit, "_GRU_default_reset_false_" + direction);
+      // Keep the synthesized value consistent with ONNX scalar inputs: GetOnnxShape lowers 0D
+      // tensors to QNN's one-element scalar representation.
+      QnnTensorWrapper default_reset(default_reset_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_BOOL_8,
+                                     QnnQuantParamsWrapper(), std::vector<uint32_t>{1}, std::vector<uint8_t>{0});
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(default_reset)),
+                    "Failed to add default false reset tensor for StatefulGru.");
+      qnn_gru_input_names[reset.qnn_slot] = default_reset_name;
+    } else {
+      qnn_gru_input_names[reset.qnn_slot] = reset.onnx_name;
+    }
   }
   // initial_h: ONNX in[5] [num_directions, batch_size, hidden_size] -> [1, batch_size, hidden_size]
   std::string initial_h_name;
@@ -387,7 +395,7 @@ Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
     }
   }
 
-  // QAIRT lowers StatefulGru with reset as one native multi-time-step QNN GRU.
+  // QAIRT lowers StatefulGru as one native multi-time-step QNN GRU.
   // QNN owns the state across inferences, so reset must be connected once to
   // in[14], not copied to each of ORT's per-timestep GRU cells.
   if (has_reset) {
@@ -640,7 +648,7 @@ Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-// reset: optional stateful reset input; pass kNoReset() for the standard LSTM builder.
+// reset: stateful reset input; pass NoQnnResetInput() for the standard LSTM builder.
 Ort::Status AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrapper,
                                 const OrtNodeUnit& node_unit,
                                 const std::string& direction,
@@ -694,8 +702,8 @@ Ort::Status AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrapper,
   // so that a serialized DLC can faithfully mirror the HTP monolithic graph — otherwise an
   // IR-produced DLC (always unrolled) could not be compared against the HTP monolithic one.
   // All other backends (CPU/GPU) have no monolithic kernel and always use the unrolled lowering.
-  // StatefulLstm selects the multi-time-step path automatically on HTP and IR when reset is present.
-  const bool has_reset = !reset.onnx_name.empty();
+  // StatefulLstm selects the 3D, reset-capable path on HTP and IR.
+  const bool has_reset = reset.RequiresQnnResetInput();
   const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   const bool is_ir_backend = IsIrBackend(qnn_model_wrapper.GetQnnBackendType());
   const bool reset_requires_multi_time_steps_lstm = has_reset && (is_npu_backend || is_ir_backend);
@@ -703,15 +711,14 @@ Ort::Status AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrapper,
   if (reset_requires_multi_time_steps_lstm &&
       !qnn_model_wrapper.GetModelSettings().enable_htp_monolithic_lstm) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
-                ("QNN EP: enabling multi-time-step path automatically for StatefulLstm node '" +
-                 node_name + "' because a reset input is present.")
+                ("QNN EP: selecting the 3D reset-capable LSTM path for StatefulLstm node '" +
+                 node_name + "'.")
                     .c_str());
   }
 
-  // StatefulLstm reset is a QNN 3D-LSTM input. Selecting the unrolled 2D path
-  // would silently drop reset, so StatefulLstm must use the multi-time-step path
-  // on HTP and IR whenever reset is present. Preserve the provider option's original
-  // behavior for both HTP/NPU and IR.
+  // StatefulLstm reset is a QNN 3D-LSTM input. Selecting the unrolled 2D path would silently
+  // drop reset, so StatefulLstm uses the multi-time-step path on HTP and IR. The provider option
+  // still independently controls the HTP monolithic-LSTM optimization graph configuration.
   const bool enable_htp_monolithic_lstm =
       ((is_npu_backend || is_ir_backend) && qnn_model_wrapper.GetModelSettings().enable_htp_monolithic_lstm);
   const bool multi_time_steps_lstm =
@@ -1041,12 +1048,24 @@ Ort::Status AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrapper,
     }
   }
 
-  // QAIRT's unrolled LSTM lowering ignores reset. Pass it through only to the
-  // multi-time-step LSTM, where it is QNN input[24].
+  // QAIRT's unrolled LSTM lowering ignores reset. Pass the explicit or BlockOp-default reset only
+  // to the multi-time-step LSTM, where it is QNN input[24].
   if (has_reset && multi_time_steps_lstm) {
     RETURN_IF_NOT(reset.qnn_slot < qnn_lstm_input_names.size(),
                   "QNN EP: stateful reset slot out of range for LSTM input vector.");
-    qnn_lstm_input_names[reset.qnn_slot] = reset.onnx_name;
+    if (reset.onnx_name.empty()) {
+      const std::string default_reset_name =
+          utils::UniqueNameGenerator().New(node_unit, "_LSTM_default_reset_false_" + direction);
+      // Keep the synthesized value consistent with ONNX scalar inputs: GetOnnxShape lowers 0D
+      // tensors to QNN's one-element scalar representation.
+      QnnTensorWrapper default_reset(default_reset_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_BOOL_8,
+                                     QnnQuantParamsWrapper(), std::vector<uint32_t>{1}, std::vector<uint8_t>{0});
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(default_reset)),
+                    "Failed to add default false reset tensor for StatefulLstm.");
+      qnn_lstm_input_names[reset.qnn_slot] = default_reset_name;
+    } else {
+      qnn_lstm_input_names[reset.qnn_slot] = reset.onnx_name;
+    }
   } else if (has_reset) {
     RETURN_IF_NOT(false,
                   "QNN EP: StatefulLstm reset requires the multi-time-step LSTM path; "
@@ -1207,6 +1226,6 @@ Ort::Status AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-}  // namespace rnn_details
+}  // namespace rnn_utils
 }  // namespace qnn
 }  // namespace onnxruntime

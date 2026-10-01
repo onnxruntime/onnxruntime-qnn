@@ -436,6 +436,28 @@ TEST_F(QnnHTPBackendTests, StatefulLSTM_Fp16_sanity_forward_wo_B) {
       ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnHTPBackendTests, StatefulLSTM_Fp16_forward_Y_only) {
+  constexpr uint32_t batch_size = 3, hidden_size = 4, input_size = 5, seq_len = 6;
+  RunHtpFp16StatefulLSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),
+      TestInputDef<float>({1, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),
+      TestInputDef<float>({1, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),
+      std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+      /*has_Y=*/true, /*has_Y_h=*/false, /*has_Y_c=*/false,
+      "forward", hidden_size, ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, StatefulLSTM_Fp16_bidirectional_Y_h_only) {
+  constexpr uint32_t batch_size = 3, hidden_size = 4, input_size = 5, seq_len = 6;
+  RunHtpFp16StatefulLSTMOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),
+      TestInputDef<float>({2, 4 * hidden_size, input_size}, false, -1.0f, 1.0f),
+      TestInputDef<float>({2, 4 * hidden_size, hidden_size}, false, -1.0f, 1.0f),
+      std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+      /*has_Y=*/false, /*has_Y_h=*/true, /*has_Y_c=*/false,
+      "bidirectional", hidden_size, ExpectedEPNodeAssignment::All);
+}
+
 // ============================================================
 // HTP QDQ Tests (INT8 / INT16)
 // ============================================================
@@ -668,8 +690,9 @@ TEST_F(QnnHTPBackendTests, StatefulLSTM_Fp16_input_forget_Unsupported) {
 
 // Builds a minimal StatefulLstm model with the reset input present as a BOOL false initializer.
 static GetTestModelFn BuildStatefulLSTMWithResetCase(uint32_t seq_len, uint32_t batch_size,
-                                                     uint32_t input_size, uint32_t hidden_size) {
-  return [seq_len, batch_size, input_size, hidden_size](ModelTestBuilder& builder) {
+                                                     uint32_t input_size, uint32_t hidden_size,
+                                                     bool include_reset = true) {
+  return [seq_len, batch_size, input_size, hidden_size, include_reset](ModelTestBuilder& builder) {
     // Fixed non-zero input/recurrent weights make the second invocation depend on
     // the hidden/cell state retained from the first, rather than relying on random data.
     MakeTestInput(builder, "X", TestInputDef<float>({seq_len, batch_size, input_size}, false, std::vector<float>(seq_len * batch_size * input_size, 0.25f)));
@@ -679,9 +702,11 @@ static GetTestModelFn BuildStatefulLSTMWithResetCase(uint32_t seq_len, uint32_t 
     // in[0..7]: X, W, R, empty (B), empty (sequence_lens), empty (initial_h), empty (initial_c), empty (P)
     std::vector<std::string> input_names = {"X", "W", "R", "", "", "", "", ""};
 
-    // in[8]: reset — BOOL scalar false. Exercises qnn_lstm_input_names[kQnnLstmResetInputIndex].
-    builder.MakeInput<bool>("slstm_reset", {}, {false});
-    input_names.push_back("slstm_reset");
+    if (include_reset) {
+      // in[8]: reset — BOOL scalar false. Exercises qnn_lstm_input_names[kQnnLstmResetInputIndex].
+      builder.MakeInput<bool>("slstm_reset", {}, {false});
+      input_names.push_back("slstm_reset");
+    }
 
     builder.MakeOutput<float>("Y", {{{static_cast<int64_t>(seq_len), 1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
     builder.MakeOutput<float>("Y_h", {{{1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
@@ -709,6 +734,16 @@ TEST_F(QnnHTPBackendTests, StatefulLSTM_Fp16_reset_restores_initial_state) {
   provider_options["backend_type"] = "htp";
   VerifyQnnStatefulResetBehavior(BuildStatefulLSTMWithResetCase(5, 1, 3, 4), "StatefulLSTM_ResetBehavior",
                                  provider_options, 13, "slstm_reset");
+}
+
+TEST_F(QnnHTPBackendTests, StatefulLSTM_Fp16_omitted_reset_retains_state) {
+  QNN_SKIP_TEST_ON_LINUX_X86_64("qti_aisw StatefulLstm requires HTP hardware; not supported on the x86_64 simulator.");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  VerifyQnnStatefulResetBehavior(BuildStatefulLSTMWithResetCase(5, 1, 3, 4, false),
+                                 "StatefulLSTM_OmittedResetBehavior", provider_options, 13, nullptr);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

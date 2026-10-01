@@ -372,6 +372,17 @@ TEST_F(QnnHTPBackendTests, StatefulGRU_Fp32_sanity_forward_wo_B) {
       0);
 }
 
+TEST_F(QnnHTPBackendTests, StatefulGRU_Fp32_forward_Y_only) {
+  constexpr uint32_t batch_size = 3, hidden_size = 4, input_size = 5, seq_len = 6;
+  RunHtpFp32StatefulGRUOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),
+      TestInputDef<float>({1, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),
+      TestInputDef<float>({1, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),
+      std::nullopt, std::nullopt,
+      /*has_Y=*/true, /*has_Y_h=*/false, "forward", hidden_size,
+      ExpectedEPNodeAssignment::All, 0);
+}
+
 // ============================================================
 // HTP QDQ tests. INT8 with linear_before_reset=0 is fp-degraded; the INT16 case is native.
 // ============================================================
@@ -467,6 +478,17 @@ TEST_F(QnnHTPBackendTests, StatefulGRU_QDQ_u16_sanity_forward) {
       ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnHTPBackendTests, StatefulGRU_QDQ_u8_missing_Y_h_fallback) {
+  constexpr uint32_t batch_size = 3, hidden_size = 4, input_size = 5, seq_len = 6;
+  RunHtpQDQStatefulGRUOpTest<uint8_t>(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),
+      TestInputDef<float>({1, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),
+      TestInputDef<float>({1, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),
+      std::nullopt, std::nullopt,
+      /*has_Y=*/true, /*has_Y_h=*/false, "forward", hidden_size,
+      ExpectedEPNodeAssignment::All, /*linear_before_reset=*/1);
+}
+
 // ============================================================
 // Bidirectional FP16/FP32 is supported. A bidirectional QDQ group is fp-degraded because native
 // INT8/INT16 Gru is forward-only; a non-QDQ quantized StatefulGru remains unsupported.
@@ -494,6 +516,71 @@ TEST_F(QnnHTPBackendTests, StatefulGRU_Fp32_bidirectional) {
       ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnHTPBackendTests, StatefulGRU_Fp32_bidirectional_Y_h_only) {
+  constexpr uint32_t batch_size = 3, hidden_size = 4, input_size = 5, seq_len = 6;
+  RunHtpFp32StatefulGRUOpTest(
+      TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),
+      TestInputDef<float>({2, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),
+      TestInputDef<float>({2, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),
+      std::nullopt, std::nullopt,
+      /*has_Y=*/false, /*has_Y_h=*/true, "bidirectional", hidden_size,
+      ExpectedEPNodeAssignment::All);
+}
+
+static GetTestModelFn BuildStatefulGRUWithInvalidArityCase(bool has_extra_input, bool has_extra_output) {
+  return [has_extra_input, has_extra_output](ModelTestBuilder& builder) {
+    constexpr int64_t kBatchSize = 1;
+    constexpr int64_t kHiddenSize = 2;
+    constexpr int64_t kInputSize = 3;
+    constexpr int64_t kSequenceLength = 4;
+    MakeTestInput(builder, "X", TestInputDef<float>({kSequenceLength, kBatchSize, kInputSize}, false, -1.0f, 1.0f));
+    MakeTestInput(builder, "W", TestInputDef<float>({1, 3 * kHiddenSize, kInputSize}, false, -1.0f, 1.0f));
+    MakeTestInput(builder, "R", TestInputDef<float>({1, 3 * kHiddenSize, kHiddenSize}, false, -1.0f, 1.0f));
+
+    std::vector<std::string> input_names = {"X", "W", "R"};
+    if (has_extra_input) {
+      // Keep the StatefulGru reset slot empty, then populate index 7. The common placeholder
+      // accepts it, so GruBaseOpBuilder must enforce StatefulGru's seven-input maximum.
+      MakeTestInput(builder, "unexpected_input", TestInputDef<float>({1}, false, -1.0f, 1.0f));
+      input_names = {"X", "W", "R", "", "", "", "", "unexpected_input"};
+    }
+
+    builder.MakeOutput<float>("Y", {{{kSequenceLength, 1, kBatchSize, kHiddenSize}}});
+    builder.MakeOutput<float>("Y_h", {{{1, kBatchSize, kHiddenSize}}});
+    std::vector<std::string> output_names = {"Y", "Y_h"};
+    if (has_extra_output) {
+      builder.MakeOutput<float>("unexpected_output", {{{1, kBatchSize, kHiddenSize}}});
+      output_names.push_back("unexpected_output");
+    }
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs = {
+        builder.MakeStringAttribute("direction", "forward"),
+        builder.MakeScalarAttribute("hidden_size", kHiddenSize),
+        builder.MakeScalarAttribute("linear_before_reset", static_cast<int64_t>(0))};
+    builder.AddNode("invalid_sgru", "StatefulGru", input_names, output_names, kQtiAiswDomain, attrs);
+  };
+}
+
+TEST_F(QnnHTPBackendTests, StatefulGRU_extra_input_Unsupported) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  EXPECT_THROW(
+      RunQnnOnlyStatefulGRUModel(
+          BuildStatefulGRUWithInvalidArityCase(/*has_extra_input=*/true, /*has_extra_output=*/false),
+          provider_options, ExpectedEPNodeAssignment::None, 21),
+      Ort::Exception);
+}
+
+TEST_F(QnnHTPBackendTests, StatefulGRU_extra_output_Unsupported) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  EXPECT_THROW(
+      RunQnnOnlyStatefulGRUModel(
+          BuildStatefulGRUWithInvalidArityCase(/*has_extra_input=*/false, /*has_extra_output=*/true),
+          provider_options, ExpectedEPNodeAssignment::None, 21),
+      Ort::Exception);
+}
+
 // ============================================================
 // Reset-input tests: verify that the reset slot (ONNX in[6] -> QNN in[14]) is wired correctly.
 // Tests leave reset=false (do not reset state) and only verify EP node assignment, since the
@@ -502,8 +589,9 @@ TEST_F(QnnHTPBackendTests, StatefulGRU_Fp32_bidirectional) {
 
 // Builds a minimal StatefulGru model with the reset input present as a BOOL false initializer.
 static GetTestModelFn BuildStatefulGRUWithResetCase(uint32_t seq_len, uint32_t batch_size,
-                                                    uint32_t input_size, uint32_t hidden_size) {
-  return [seq_len, batch_size, input_size, hidden_size](ModelTestBuilder& builder) {
+                                                    uint32_t input_size, uint32_t hidden_size,
+                                                    bool include_reset = true) {
+  return [seq_len, batch_size, input_size, hidden_size, include_reset](ModelTestBuilder& builder) {
     // Fixed non-zero input/recurrent weights make the second invocation depend on
     // the hidden state retained from the first, rather than relying on random data.
     MakeTestInput(builder, "X", TestInputDef<float>({seq_len, batch_size, input_size}, false, std::vector<float>(seq_len * batch_size * input_size, 0.25f)));
@@ -513,9 +601,11 @@ static GetTestModelFn BuildStatefulGRUWithResetCase(uint32_t seq_len, uint32_t b
     // in[0..5]: X, W, R, empty (B), empty (sequence_lens), empty (initial_h)
     std::vector<std::string> input_names = {"X", "W", "R", "", "", ""};
 
-    // in[6]: reset — BOOL scalar false. Exercises qnn_gru_input_names[kQnnGruResetInputIndex].
-    builder.MakeInput<bool>("sgru_reset", {}, {false});
-    input_names.push_back("sgru_reset");
+    if (include_reset) {
+      // in[6]: reset — BOOL scalar false. Exercises qnn_gru_input_names[kQnnGruResetInputIndex].
+      builder.MakeInput<bool>("sgru_reset", {}, {false});
+      input_names.push_back("sgru_reset");
+    }
 
     builder.MakeOutput<float>("Y", {{{static_cast<int64_t>(seq_len), 1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
     builder.MakeOutput<float>("Y_h", {{{1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
@@ -543,6 +633,16 @@ TEST_F(QnnHTPBackendTests, StatefulGRU_Fp32_reset_restores_initial_state) {
   provider_options["backend_type"] = "htp";
   VerifyQnnStatefulResetBehavior(BuildStatefulGRUWithResetCase(5, 1, 3, 4), "StatefulGRU_ResetBehavior",
                                  provider_options, 21, "sgru_reset");
+}
+
+TEST_F(QnnHTPBackendTests, StatefulGRU_Fp32_omitted_reset_retains_state) {
+  QNN_SKIP_TEST_ON_LINUX_X86_64("qti_aisw StatefulGru requires HTP hardware; not supported on the x86_64 simulator.");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  VerifyQnnStatefulResetBehavior(BuildStatefulGRUWithResetCase(5, 1, 3, 4, false),
+                                 "StatefulGRU_OmittedResetBehavior", provider_options, 21, nullptr);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
