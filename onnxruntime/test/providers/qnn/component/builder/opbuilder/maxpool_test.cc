@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 //
-// Component-level unit tests for PoolOpBuilder's MaxPool support boundaries.
+// Component-level unit tests for MaxPool-specific PoolOpBuilder support boundaries.
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
@@ -50,27 +50,7 @@ TEST(QnnUnit_MaxPool_ComponentTest, Rank5_Htp_Unsupported) {
   ExpectRank5MaxPoolHtpRejection();
 }
 
-TEST(QnnUnit_MaxPool_ComponentTest, OptionalIndicesOutput_Unsupported) {
-  const IOpBuilder* builder = GetOpBuilder("MaxPool");
-  ASSERT_NE(builder, nullptr);
-
-  OpBuilderTestContext ctx;
-  auto wrapper = MakeHtpStubWrapper(ctx);
-  auto input = MakeMockIODef("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-                             std::vector<int64_t>{1, 2, 3, 3});
-  auto values = MakeMockIODef("values", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-                              std::vector<int64_t>{1, 2, 1, 1});
-  auto indices = MakeMockIODef("indices", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
-                               std::vector<int64_t>{1, 2, 1, 1});
-  auto node_unit = MakeMockNodeUnit("MaxPool", {input}, {values, indices}, "maxpool_indices");
-  auto status = builder->IsOpSupported(*wrapper, node_unit, ctx.ort_logger);
-
-  EXPECT_FALSE(status.IsOK());
-  EXPECT_NE(std::string(status.GetErrorMessage()).find("QNN Pool only supports 1 output"), std::string::npos);
-}
-
 }  // namespace test
 }  // namespace onnxruntime
-
 
 #endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
