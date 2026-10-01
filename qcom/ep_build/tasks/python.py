@@ -21,6 +21,7 @@ from ..task import (
 )
 from ..tools import (
     PythonExecutableArchT,
+    get_genai_models_root,
     get_model_zoo_root,
     get_onnx_models_root,
     get_python_executable,
@@ -405,6 +406,32 @@ class OrtWheelGpuModelTestTask(OrtWheelModelTestTask):
                 **os.environ,
                 "ORT_MODEL_ZOO_TEST_ROOTS": str(get_model_zoo_root(venv) / "winml-cert-gpu"),
                 "ORT_MODEL_ZOO_BACKEND": "gpu",
+            },
+        )
+
+
+class OrtWheelGenieModelTestTask(OrtWheelModelTestTask):
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        target_arch: TargetArchT,
+        config: BuildConfigT,
+        py_version: TargetPyVersionT,
+    ) -> None:
+        super().__init__(
+            group_name,
+            venv,
+            target_arch,
+            config,
+            py_version,
+            [
+                str(REPO_ROOT / "qcom" / "model_test" / "genie_model_test.py"),
+            ],
+            get_test_env=lambda: {
+                **os.environ,
+                "ORT_MODEL_ZOO_TEST_ROOTS": str(get_genai_models_root(venv)),
+                "ORT_MODEL_ZOO_BACKEND": "genie",
             },
         )
 
