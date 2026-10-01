@@ -60,11 +60,11 @@ def _write_json(tmp_path, obj, fname="snap.json"):
 
 
 # Canonical accuracy case lists.
-PLAIN = "QnnUnit_Accuracy_ClipPlainTest"
-QDQF = "QnnUnit_Accuracy_ClipQDQFloatTest"
-SNAP_PLAIN = "QnnUnit_Snapshot_ClipPlainTest"
-SNAP_QDQF = "QnnUnit_Snapshot_ClipQDQFloatTest"
-SESS_QDQF = "QnnUnit_SessionSnapshot_ClipQDQFloatTest"
+PLAIN = "QnnAcc_Clip_AccuracyTest"
+QDQF = "QnnAcc_Clip_Accuracy_QDQFloatTest"
+SNAP_PLAIN = "QnnSnapshot_Clip_OpBuilderTest"
+SNAP_QDQF = "QnnSnapshot_Clip_OpBuilder_QDQFloatTest"
+SESS_QDQF = "QnnSnapshot_Clip_Session_QDQFloatTest"
 
 
 # ===========================================================================
@@ -106,11 +106,11 @@ def test_derive_from_session_snapshot():
 
 def test_derive_from_bare_snapshot_suite():
     # Op-first naming with no variant suffix has no underscore between the
-    # tier token and "Test" (e.g. QnnUnit_Clip_SnapshotTest). Regression test
+    # tier token and "Test" (e.g. QnnSnapshot_Clip_OpBuilderTest). Regression test
     # for a bug where the tier regex required underscores on both sides and
     # silently left bare suites unmapped (-> R_UNMAPPED false-positive).
-    assert gate.derive_accuracy_suite("QnnUnit_Clip_SnapshotTest") == "QnnUnit_Clip_AccuracyTest"
-    assert gate.derive_accuracy_suite("QnnUnit_Clip_SessionSnapshotTest") == "QnnUnit_Clip_AccuracyTest"
+    assert gate.derive_accuracy_suite("QnnSnapshot_Clip_OpBuilderTest") == "QnnAcc_Clip_AccuracyTest"
+    assert gate.derive_accuracy_suite("QnnSnapshot_Clip_SessionTest") == "QnnAcc_Clip_AccuracyTest"
 
 
 # ===========================================================================
@@ -118,10 +118,10 @@ def test_derive_from_bare_snapshot_suite():
 # ===========================================================================
 def test_parse_accuracy_list():
     text = (
-        "QnnUnit_Accuracy_ClipPlainTest.\n"
+        "QnnAcc_Clip_AccuracyTest.\n"
         "  Case/Clip_f32  # GetParam() = 64-byte object <...>\n"
         "  Case/Clip_int32\n"
-        "QnnUnit_Accuracy_ClipQDQFloatTest.\n"
+        "QnnAcc_Clip_Accuracy_QDQFloatTest.\n"
         "  Case/Clip_U8_Rank4\n"
     )
     cases = gate.parse_accuracy_list(text)

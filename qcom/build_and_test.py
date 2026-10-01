@@ -817,17 +817,28 @@ class TaskLibrary:
 
     if is_host_linux() and is_host_x86_64():
 
-        @public_task("Build with coverage and generate diff coverage report against main (Linux x86_64)")
-        @depends(["coverage_linux_x86_64"])
+        @public_task("Generate coverage and diff reports from an existing Linux x86_64 coverage build")
+        @depends(["create_venv"])
         def diff_coverage_linux_x86_64(self, plan: Plan) -> str:
             build_dir = REPO_ROOT / "build" / "linux-x86_64"
             return plan.add_step(
-                GenerateDiffCoverageTask(
-                    "Generating diff coverage report (Linux x86_64)",
-                    self.__venv_path,
-                    build_dir,
+                CompositeTask(
+                    "Coverage report and diff from existing build",
+                    [
+                        GenerateCoverageTask(
+                            "Generating HTML coverage report",
+                            self.__venv_path,
+                            build_dir,
+                        ),
+                        GenerateDiffCoverageTask(
+                            "Generating diff coverage report (Linux x86_64)",
+                            self.__venv_path,
+                            build_dir,
+                        ),
+                    ],
                 )
             )
+
 
     @task
     def docker_build_manylinux_2_34_aarch64(self, plan: Plan) -> str:

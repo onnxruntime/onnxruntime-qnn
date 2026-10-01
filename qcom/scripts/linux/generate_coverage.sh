@@ -43,22 +43,21 @@ skip_accuracy=false
 #     tests + any other Qnn suite. Defined by EXCLUSION so new suites land here
 #     automatically. Non-zero exit fails this script.
 #   - snapshot phase (NON-gating): re-runs the migrated ops through the builder and
-#     compares the emitted graph against goldens (the QnnUnit_*_Snapshot* /
-#     QnnUnit_*_SessionSnapshot* suites). It re-exercises the full builder path so
+#     compares the emitted graph against goldens (the QnnSnapshot_* suites). It re-exercises the full builder path so
 #     it contributes builder coverage. A golden byte-mismatch (graph-structure
 #     drift) logs a warning but does NOT fail this script: structure drift is a
 #     routing signal for the accuracy tier, not a build failure. Writes a gtest
 #     JSON report that the accuracy-routing gate (accuracy_gate.py) reads
 #     per-case to decide which accuracy tests to route. It MUST run before
 #     accuracy.
-#   - accuracy phase (GATING): a subset of QnnUnit_*_Accuracy* — the
+#   - accuracy phase (GATING): a subset of QnnAcc_* — the
 #     numerical-correctness gate. Non-zero exit fails this script. The run-set is
 #     computed by accuracy_gate.py from the snapshot JSON above + the golden
 #     store's version manifest ($QNN_UT_SNAPSHOT_GOLDEN_DIR/manifest.json): skip
 #     a case only when its paired snapshot passed AND the manifest version
 #     matches the current QAIRT version; run the rest. If the gate cannot decide
 #     (no snapshot JSON, no/absent manifest, or any gate error) it falls back to
-#     the safe baseline "QnnUnit_*_Accuracy*" (run everything) so coverage is
+#     the safe baseline "QnnAcc_*" (run everything) so coverage is
 #     never silently dropped.
 #
 # Note on coverage attribution: accuracy runs the same session-compile builder
@@ -71,12 +70,12 @@ skip_accuracy=false
 # gtest filter grammar: a single '-' separates the positive section from the
 # negative section; ':'-joined patterns after that '-' are ALL negative (do NOT
 # prefix each with its own '-', or they become literal, never-matching patterns).
-component_filter="*Qnn*:-QnnUnit_*_Snapshot*:QnnUnit_*_SessionSnapshot*:QnnUnit_*_Accuracy*"
-snapshot_filter="QnnUnit_*_Snapshot*:QnnUnit_*_SessionSnapshot*"
+component_filter="*Qnn*:-QnnSnapshot_*:QnnAcc_*"
+snapshot_filter="QnnSnapshot_*"
 # Default accuracy filter: the safe baseline (run every accuracy test). Replaced
 # at runtime by accuracy_gate.py's computed run-set when a snapshot JSON exists;
 # retained verbatim as the fallback whenever the gate cannot decide.
-accuracy_filter="QnnUnit_*_Accuracy*"
+accuracy_filter="QnnAcc_*"
 
 for arg in "$@"; do
     case "${arg}" in
@@ -246,8 +245,7 @@ run_test_phase() {
 }
 
 # Snapshot-phase JSON report path. The accuracy-routing gate reads it per-case to
-# decide which accuracy tests to run. Holds the QnnUnit_*_Snapshot* /
-# QnnUnit_*_SessionSnapshot* per-case results.
+# decide which accuracy tests to run. Holds QnnSnapshot_* per-case results.
 snapshot_json="${build_dir}/${config}/snapshot_results.json"
 
 # Accuracy-routing gate artifacts.
@@ -260,11 +258,11 @@ gate_summary_file="${build_dir}/${config}/accuracy_gate_summary.txt"
 # the resulting gtest filter to stdout. The golden store root is $QNN_UT_SNAPSHOT_GOLDEN_DIR
 # (same var the snapshot tests read); an empty/absent manifest there means
 # version-mismatch => full run. On ANY failure (no snapshot JSON, list-tests
-# error, gate error, empty filter) this echoes the safe baseline "QnnUnit_*_Accuracy*"
+# error, gate error, empty filter) this echoes the safe baseline "QnnAcc_*"
 # so a gate malfunction never silently drops accuracy coverage. All diagnostics go
 # to stderr (log_* write to fd 2) so they never contaminate the captured filter.
 compute_accuracy_filter() {
-    local fallback="QnnUnit_*_Accuracy*"
+    local fallback="QnnAcc_*"
     if [ ! -f "${snapshot_json}" ]; then
         log_warn "Accuracy gate: snapshot JSON ${snapshot_json} absent — running all accuracy tests."
         echo "${fallback}"
@@ -274,7 +272,7 @@ compute_accuracy_filter() {
     # binary itself, so we hand it the --gtest_list_tests output here.
     if ! ( cd "${build_dir}/${config}"
            export LD_LIBRARY_PATH="${build_dir}/${config}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-           ./onnxruntime_provider_test --gtest_filter='QnnUnit_*_Accuracy*' --gtest_list_tests
+           ./onnxruntime_provider_test --gtest_filter='QnnAcc_*' --gtest_list_tests
          ) > "${accuracy_list_file}" 2>/dev/null; then
         log_warn "Accuracy gate: --gtest_list_tests failed — running all accuracy tests."
         echo "${fallback}"

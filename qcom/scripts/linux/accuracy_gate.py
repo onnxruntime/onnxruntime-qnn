@@ -4,7 +4,7 @@
 #
 # Accuracy-routing gate for QNN EP unit tests (PR4).
 #
-# Decides which QnnUnit_Accuracy_* cases the coverage run must execute, given
+# Decides which QnnAcc_* cases the coverage run must execute, given
 # the snapshot-phase results and the golden store's version manifest. The core
 # invariant: a FIXED QNN backend version means an unchanged graph structure
 # means unchanged numerics -- so accuracy may be skipped for a case ONLY when
@@ -42,16 +42,17 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 # gtest full name = "<suite>.<name>", e.g.
-#   QnnUnit_Clip_Snapshot_QDQFloatTest.Case/Clip_f32
-# The snapshot->accuracy mapping swaps the tier token in the suite and keeps
-# everything else verbatim, including the trailing "Test" and any variant
-# suffix (see clip_specs.h: names are aligned by construction). The tier
-# token has no trailing underscore of its own -- suites come in both a bare
-# form ("..._SnapshotTest") and a variant form ("..._Snapshot_QDQFloatTest"),
-# so matching must not require an underscore after the token. SessionSnapshot
-# is listed before Snapshot so the alternation's leftmost-match doesn't stop
-# at the "Snapshot" substring inside "SessionSnapshot".
+# gtest full name = "<suite>.<name>", e.g.
+#   QnnSnapshot_Clip_OpBuilder_QDQFloatTest.Case/Clip_f32
+# The legacy tier-first snapshot suites encode the op before the source tier.
+# Both OpBuilder and Session snapshots map to the same QnnAcc_<Op>_Accuracy
+# suite; an optional variant suffix is retained.
+#
+# The QnnUnit token-replacement fallback remains for a future naming migration.
 _SNAPSHOT_TIER_RE = re.compile(r"_(?:SessionSnapshot|Snapshot)")
+_LEGACY_SNAPSHOT_SUITE_RE = re.compile(
+    r"^QnnSnapshot_(?P<op>.+?)_(?:OpBuilder|Session)(?P<variant>_.*)?Test$"
+)
 
 # Snapshot status buckets.
 PASSED = "PASSED"
@@ -183,12 +184,16 @@ def parse_accuracy_list(text: str) -> list[tuple[str, str]]:
 def derive_accuracy_suite(snapshot_suite: str) -> str:
     """Map a snapshot suite name to its paired accuracy suite name.
 
-    QnnUnit_Clip_SnapshotTest              -> QnnUnit_Clip_AccuracyTest
-    QnnUnit_Clip_Snapshot_QDQFloatTest     -> QnnUnit_Clip_Accuracy_QDQFloatTest
-    QnnUnit_Clip_SessionSnapshot_QDQFloat.. -> QnnUnit_Clip_Accuracy_QDQFloat..
-    """
-    return _SNAPSHOT_TIER_RE.sub("_Accuracy", snapshot_suite, count=1)
+    QnnSnapshot_Clip_OpBuilderTest              -> QnnAcc_Clip_AccuracyTest
+    QnnSnapshot_Clip_OpBuilder_QDQFloatTest     -> QnnAcc_Clip_Accuracy_QDQFloatTest
+    QnnSnapshot_Clip_Session_QDQFloatTest       -> QnnAcc_Clip_Accuracy_QDQFloatTest
 
+    A QnnUnit token-replacement fallback is retained for a future naming migration.
+    """
+    legacy = _LEGACY_SNAPSHOT_SUITE_RE.match(snapshot_suite)
+    if legacy:
+        return f"QnnAcc_{legacy.group('op')}_Accuracy{legacy.group('variant') or ''}Test"
+    return _SNAPSHOT_TIER_RE.sub("_Accuracy", snapshot_suite, count=1)
 
 def load_manifest_versions(golden_root: str | None) -> ToolVersions:
     """Read qairt_version + ort_version from <golden_root>/manifest.json.
@@ -368,7 +373,7 @@ def run_gate(
 # Outputs
 # ---------------------------------------------------------------------------
 # Matches no real test so an empty run-set does NOT degrade to "run everything".
-_EMPTY_FILTER_SENTINEL = "QnnUnit_Accuracy_ZZZ_NoCasesSelected.None"
+_EMPTY_FILTER_SENTINEL = "QnnAcc_ZZZ_NoCasesSelected.None"
 
 
 def build_gtest_filter(run_set: list[CaseDecision]) -> str:
