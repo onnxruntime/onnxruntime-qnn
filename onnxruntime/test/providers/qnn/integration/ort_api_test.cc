@@ -15,10 +15,9 @@
 //
 // Models are built inline via the Ort C++ model editor wrappers (Ort::Model,
 // Ort::Graph, Ort::Node, Ort::ValueInfo) — no dependency on op-builder test
-// infrastructure.  Sessions use the QNN HTP backend (Linux x86-64 simulator);
-// tests skip when unavailable.
+// infrastructure. Sessions use the QNN HTP backend and skip when unavailable.
 
-#if !defined(ORT_MINIMAL_BUILD) && defined(__linux__)
+#if !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))
 
 #include <cstdint>
 #include <cstring>
@@ -46,10 +45,10 @@ class QnnInteg_OrtApiTest : public ::testing::Test {
       GTEST_SKIP() << "OrtModelEditorApi not available (minimal build)";
 
     ep_ = std::make_unique<RegisteredQnnEp>("QNNExecutionProvider");
-    ASSERT_TRUE(ep_->valid) << "libonnxruntime_providers_qnn.so not available — CI configuration error";
+    ASSERT_TRUE(ep_->valid) << "QNN EP plugin library not available — CI configuration error";
 
     ASSERT_TRUE(MakeQnnHtpSessionOptions(*ep_, session_opts_))
-        << "QNN HTP EP device not found (libQnnHtp.so not available) — CI configuration error";
+        << "QNN HTP EP device not found (HTP backend unavailable) — CI configuration error";
   }
 
   std::unique_ptr<RegisteredQnnEp> ep_;
@@ -81,14 +80,14 @@ TEST_F(QnnInteg_OrtApiTest, QDQGroup_CoversGetQDQIODefs) {
 
   // Initializers: scale (float32 = 0.01), zp (uint8 = 0)
   {
-    int64_t shape[] = {};
+    const std::vector<int64_t> shape;
     auto scale_val = Ort::Value::CreateTensor<float>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *scale_val.GetTensorMutableData<float>() = 0.01f;
     graph.AddInitializer("scale", scale_val, false);
 
     auto zp_val = Ort::Value::CreateTensor<uint8_t>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *zp_val.GetTensorMutableData<uint8_t>() = 0;
     graph.AddInitializer("zp", zp_val, false);
   }
@@ -324,14 +323,14 @@ TEST_F(QnnInteg_OrtApiTest, StandaloneDQ_CoversDequantizeLinearBranch) {
 
   // Initializers: scale (float = 0.1), zp (uint8 = 0)
   {
-    int64_t shape[] = {};
+    const std::vector<int64_t> shape;
     auto scale_val = Ort::Value::CreateTensor<float>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *scale_val.GetTensorMutableData<float>() = 0.1f;
     graph.AddInitializer("scale", scale_val, false);
 
     auto zp_val = Ort::Value::CreateTensor<uint8_t>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *zp_val.GetTensorMutableData<uint8_t>() = 0;
     graph.AddInitializer("zp", zp_val, false);
   }
@@ -384,14 +383,14 @@ TEST_F(QnnInteg_OrtApiTest, StandaloneQ_CoversQuantizeLinearBranch) {
 
   // Initializers: scale (float = 0.1), zp (uint8 = 0)
   {
-    int64_t shape[] = {};
+    const std::vector<int64_t> shape;
     auto scale_val = Ort::Value::CreateTensor<float>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *scale_val.GetTensorMutableData<float>() = 0.1f;
     graph.AddInitializer("scale", scale_val, false);
 
     auto zp_val = Ort::Value::CreateTensor<uint8_t>(
-        Ort::AllocatorWithDefaultOptions(), shape, 0);
+        Ort::AllocatorWithDefaultOptions(), shape.data(), 0);
     *zp_val.GetTensorMutableData<uint8_t>() = 0;
     graph.AddInitializer("zp", zp_val, false);
   }
@@ -567,4 +566,4 @@ TEST_F(QnnInteg_OrtApiTest, ConvTransposeAttr_CoversOrtNodeAttrHelperFoundInt32V
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && defined(__linux__)
+#endif  // !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))
