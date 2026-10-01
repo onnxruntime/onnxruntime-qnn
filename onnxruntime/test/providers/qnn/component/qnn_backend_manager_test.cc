@@ -16,7 +16,7 @@
 //   - QnnSerializerConfig (CreateIr / CreateSaver / GetBackendPath / SetGraphName / Configure)
 //   - SetupBackend: load-failure paths (stub) + config permutations against real HTP
 //     (priority / device / profiling), serializer backends (Saver / Ir)
-//   - SetContextPriority / ResetContextPriority, SetProfilingLevelETW
+//   - SetContextPriority / ResetContextPriority, QnnBackendProfilingManager::SetProfilingLevelETW
 //   - ResetQnnLogLevel (before setup + after setup)
 //   - GetContextBinaryBuffer (before setup + after setup) / LoadCachedQnnContextFromBuffer
 //   - ParseLoraConfig file I/O error paths
@@ -50,7 +50,8 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeManager(
     const std::string& backend_path,
     const ApiPtrs& api_ptrs,
     const Ort::Logger& logger,
-    bool skip_version_check = true) {
+    bool skip_version_check = true,
+    bool configure_host_mode = false) {
   qnn::QnnBackendManagerConfig cfg;
   cfg.backend_path = backend_path;
   cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -58,7 +59,27 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeManager(
   cfg.htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
   cfg.soc_model = 0;
   cfg.skip_qnn_version_check = skip_version_check;
+  cfg.configure_host_mode = configure_host_mode;
   return qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
+}
+
+// ---------------------------------------------------------------------------
+// Group 0: IsBackendHostMode — pure getter, no QNN lib needed
+// ---------------------------------------------------------------------------
+
+TEST(QnnUnit_BackendManagerTest, IsBackendHostMode_DefaultConfig_ReturnsFalse) {
+  StubApiEnv env;
+  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+  EXPECT_FALSE(manager->IsBackendHostMode());
+}
+
+TEST(QnnUnit_BackendManagerTest, IsBackendHostMode_ConfigureHostModeTrue_ReturnsTrue) {
+  StubApiEnv env;
+  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger,
+                             /*skip_version_check=*/true, /*configure_host_mode=*/true);
+  ASSERT_NE(manager, nullptr);
+  EXPECT_TRUE(manager->IsBackendHostMode());
 }
 
 // ---------------------------------------------------------------------------
@@ -330,9 +351,9 @@ TEST(QnnUnit_BackendManagerTest, ConstGetters_CallableOnConstManager) {
   static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnDeviceHandle),
                                     const qnn::QnnBackendManager&>,
                 "GetQnnDeviceHandle must be const");
-  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnProfileHandle),
-                                    const qnn::QnnBackendManager&>,
-                "GetQnnProfileHandle must be const");
+  static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendProfilingManager::HasProfileHandle),
+                                    const qnn::QnnBackendProfilingManager&>,
+                "HasProfileHandle must be const");
   static_assert(std::is_invocable_v<decltype(&qnn::QnnBackendManager::GetQnnBackendType),
                                     const qnn::QnnBackendManager&>,
                 "GetQnnBackendType must be const");
@@ -345,7 +366,8 @@ TEST(QnnUnit_BackendManagerTest, ConstGetters_CallableOnConstManager) {
   EXPECT_EQ(const_manager.GetQnnBackendHandle(), nullptr);
   EXPECT_EQ(const_manager.GetQnnValidatorBackendHandle(), nullptr);
   EXPECT_EQ(const_manager.GetQnnDeviceHandle(), nullptr);
-  EXPECT_EQ(const_manager.GetQnnProfileHandle(), nullptr);
+  EXPECT_FALSE(const_manager.GetProfilingManager().HasProfileHandle());
+  EXPECT_FALSE(const_manager.GetProfilingManager().OrtProfilingActive());
   EXPECT_EQ(const_manager.GetQnnBackendType(), qnn::QnnBackendType::CPU);
   EXPECT_EQ(const_manager.GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
   EXPECT_EQ(const_manager.GetQnnInterface().backendCreate,
@@ -374,7 +396,8 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeHTPManager(
     qnn::ProfilingLevel profiling_level = qnn::ProfilingLevel::OFF,
     qnn::ProfilingLevel profiling_level_etw = qnn::ProfilingLevel::OFF,
     QnnHtpDevice_Arch_t htp_arch = QNN_HTP_DEVICE_ARCH_NONE,
-    bool skip_version_check = true) {
+    bool skip_version_check = true,
+    bool configure_host_mode = false) {
   qnn::QnnBackendManagerConfig cfg;
   cfg.backend_path = "libQnnHtp.so";
   cfg.profiling_level = profiling_level;
@@ -384,6 +407,7 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeHTPManager(
   cfg.htp_arch = htp_arch;
   cfg.soc_model = soc_model;
   cfg.skip_qnn_version_check = skip_version_check;
+  cfg.configure_host_mode = configure_host_mode;
   return qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
 }
 
@@ -470,6 +494,26 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithVersionCheck_Succeeds
   ASSERT_NE(manager, nullptr);
   auto status = SetupBackendHtp(*manager);
   ASSERT_TRUE(status.IsOK()) << "SetupBackend failed: " << status.GetErrorMessage();
+  EXPECT_EQ(manager->GetQnnBackendType(), qnn::QnnBackendType::HTP);
+}
+
+// ---------------------------------------------------------------------------
+// HTP backend — cross device preparation (SetGlobalConfig)
+// ---------------------------------------------------------------------------
+
+// configure_host_mode=true drives SetGlobalConfig() to set
+// QNN_GLOBAL_CONFIG_OPTION_MACHINE_TYPE_HOST via globalConfigSet during SetupBackend.
+TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithHostModeConfigured_Succeeds) {
+  StubApiEnv env;
+  auto manager = MakeHTPManager(env.api_ptrs, env.logger,
+                                qnn::ContextPriority::NORMAL, 0,
+                                qnn::ProfilingLevel::OFF, qnn::ProfilingLevel::OFF,
+                                QNN_HTP_DEVICE_ARCH_NONE, /*skip_version_check=*/true,
+                                /*configure_host_mode=*/true);
+  ASSERT_NE(manager, nullptr);
+  ASSERT_TRUE(manager->IsBackendHostMode());
+  auto status = SetupBackendHtp(*manager);
+  ASSERT_TRUE(status.IsOK()) << "SetupBackend with host mode configured failed: " << status.GetErrorMessage();
   EXPECT_EQ(manager->GetQnnBackendType(), qnn::QnnBackendType::HTP);
 }
 
@@ -655,7 +699,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_EtwLevelHigherThanMain_Us
 }
 
 // SetProfilingLevelETW releases and re-creates the profile handle.
-TEST_F(QnnUnit_BackendManagerHtpTest, SetProfilingLevelETW_HTP_ChangesLevel) {
+TEST_F(QnnUnit_BackendManagerHtpTest, ProfilingManager_SetProfilingLevelETW_HTP_ChangesLevel) {
   StubApiEnv env;
   auto manager = MakeHTPManager(env.api_ptrs, env.logger,
                                 qnn::ContextPriority::NORMAL, 0,
@@ -666,8 +710,8 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetProfilingLevelETW_HTP_ChangesLevel) {
     ASSERT_TRUE(s.IsOK()) << "SetupBackend failed: " << s.GetErrorMessage();
   }
 
-  EXPECT_TRUE(manager->SetProfilingLevelETW(qnn::ProfilingLevel::BASIC).IsOK());
-  EXPECT_TRUE(manager->SetProfilingLevelETW(qnn::ProfilingLevel::OFF).IsOK());
+  EXPECT_TRUE(manager->GetProfilingManager().SetProfilingLevelETW(qnn::ProfilingLevel::BASIC, env.logger).IsOK());
+  EXPECT_TRUE(manager->GetProfilingManager().SetProfilingLevelETW(qnn::ProfilingLevel::OFF, env.logger).IsOK());
 }
 
 // After SetupBackend each ORT log level maps to a different QNN log level.

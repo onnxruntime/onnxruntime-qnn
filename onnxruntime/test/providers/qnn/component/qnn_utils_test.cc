@@ -1039,21 +1039,45 @@ TEST(QnnUnit_UtilsTest, GetPermToLastAxis_AxisOutOfRangeFails) {
 }
 
 // =============================================================================
-// CheckBiasScaleMatch — tolerance logic
+// CheckBiasScaleMatch
 // =============================================================================
 
 TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_ExactMatchReturnsTrue) {
-  EXPECT_TRUE(qnn::utils::CheckBiasScaleMatch(0.006f, 0.02f, 0.3f));
+  EXPECT_TRUE(qnn::utils::CheckBiasScaleMatch(0.02f * 0.3f, 0.02f, 0.3f));
 }
 
-TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_WithinToleranceReturnsTrue) {
-  // expected = 0.02f * 0.3f = 0.006f; diff = 1e-6f < default 1e-5f
-  EXPECT_TRUE(qnn::utils::CheckBiasScaleMatch(0.006001f, 0.02f, 0.3f));
+TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_OffByTwoStepsReturnsFalse) {
+  // The comparison is exact, so even a two-step difference means the bias was not quantized at this
+  // Conv's accumulator scale and gets requantized
+  constexpr float expected = 0.02f * 0.3f;
+  const float off_by_two_steps = std::nextafter(std::nextafter(expected, 1.0f), 1.0f);
+  EXPECT_NE(off_by_two_steps, expected);
+  EXPECT_FALSE(qnn::utils::CheckBiasScaleMatch(off_by_two_steps, 0.02f, 0.3f));
 }
 
-TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_OutsideToleranceReturnsFalse) {
-  // expected = 0.006f; diff = 0.001f >> 1e-5f
-  EXPECT_FALSE(qnn::utils::CheckBiasScaleMatch(0.007f, 0.02f, 0.3f));
+TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_GrosslyWrongScaleReturnsFalse) {
+  EXPECT_FALSE(qnn::utils::CheckBiasScaleMatch(0.01f, 0.02f, 0.3f));
+}
+
+// A real encoding mismatch can be small. OSNet has such a Conv, 0.043% off, and its bias is still
+// folded in at the wrong scale on device
+TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_SmallButRealMismatchReturnsFalse) {
+  EXPECT_FALSE(qnn::utils::CheckBiasScaleMatch(0.02f * 0.3f * 0.99957f, 0.02f, 0.3f));
+}
+
+TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_DoubledTinyScaleReturnsFalse) {
+  constexpr float weights_scale = 6.2e-08f / 0.001f;
+  constexpr float activation_scale = 0.001f;  // expected bias scale = 6.2e-08f
+  EXPECT_FALSE(qnn::utils::CheckBiasScaleMatch(2.019f * 6.2e-08f, weights_scale, activation_scale));
+}
+
+// Falls out of the exact comparison, no special case needed: 0 == 0 * activation_scale.
+TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_BothScalesZeroReturnsTrue) {
+  EXPECT_TRUE(qnn::utils::CheckBiasScaleMatch(0.0f, 0.0f, 0.3f));
+}
+
+TEST(QnnUnit_UtilsTest, CheckBiasScaleMatch_ZeroBiasScaleWithNonZeroExpectedReturnsFalse) {
+  EXPECT_FALSE(qnn::utils::CheckBiasScaleMatch(0.0f, 0.02f, 0.3f));
 }
 
 // =============================================================================
