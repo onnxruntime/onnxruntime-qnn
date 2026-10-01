@@ -77,8 +77,18 @@ Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const Ort
 
         if (op_type != nullptr && std::string(op_type) == EPCONTEXT_OP) {
           OrtNodeAttrHelper node_helper(*node);
-          dlc_path = qnn::utils::GetLowercaseString(node_helper.Get(EP_DLC_CONTEXT, ""));
-          if (dlc_path != "") {
+          const std::string extracted_dlc_path = node_helper.Get(EP_DLC_CONTEXT, "");
+          if (!extracted_dlc_path.empty()) {
+            const std::filesystem::path candidate_path(extracted_dlc_path);
+            RETURN_IF(candidate_path.has_root_path(),
+                      "The file path in ep_dlc_context must be relative to the model directory.");
+
+            for (const auto& component : candidate_path) {
+              RETURN_IF(component == "..",
+                        "The file path in ep_dlc_context must not point outside the model directory.");
+            }
+
+            dlc_path = extracted_dlc_path;
             return Ort::Status();
           }
         }
@@ -86,6 +96,28 @@ Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const Ort
     }
   }
   return MAKE_EP_FAIL("Failed to extract dlc_path from EP_CONTEXT node");
+}
+
+Ort::Status ResolveEpContextDlcPath(const std::filesystem::path& model_directory,
+                                    const std::filesystem::path& relative_dlc_path,
+                                    std::filesystem::path& resolved_dlc_path) {
+  std::error_code error_code;
+  const auto canonical_model_directory = std::filesystem::weakly_canonical(model_directory, error_code);
+  RETURN_IF(error_code, "Failed to resolve the model directory: ", error_code.message());
+
+  const auto candidate_path = std::filesystem::weakly_canonical(model_directory / relative_dlc_path, error_code);
+  RETURN_IF(error_code, "Failed to resolve the DLC path: ", error_code.message());
+
+  const auto path_relative_to_model = candidate_path.lexically_relative(canonical_model_directory);
+  RETURN_IF(path_relative_to_model.empty() || path_relative_to_model.has_root_path(),
+            "The file path in ep_dlc_context must be within the model directory.");
+  for (const auto& component : path_relative_to_model) {
+    RETURN_IF(component == "..",
+              "The file path in ep_dlc_context must be within the model directory.");
+  }
+
+  resolved_dlc_path = candidate_path;
+  return Ort::Status();
 }
 
 Ort::Status GetMainContextNode(const OrtGraph** graphs,

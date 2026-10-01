@@ -15,12 +15,14 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "HTP/QnnHtpDevice.h"
+#include <gsl/gsl_util>
 
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
@@ -57,6 +59,7 @@ using qnn::MAIN_CONTEXT;
 using qnn::MAX_SIZE;
 using qnn::ParseIoNameOverrides;
 using qnn::QnnModelLookupTable;
+using qnn::ResolveEpContextDlcPath;
 using qnn::SOURCE;
 using qnn::TryGetMaxSpillFillSize;
 
@@ -314,12 +317,10 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_DlcNodeNoPathAttr_Retur
   EXPECT_FALSE(status.IsOK());
 }
 
-TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_DlcNodeWithPath_ReturnsLowercasedPath) {
+TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_DlcNodeWithPath_PreservesPathCase) {
   CtxHelperTestContext ctx;
   FakeOpAttr source = FakeOpAttr::MakeString(SOURCE, "qnn");
   FakeOpAttr ctx_type = FakeOpAttr::MakeString(EP_CONTEXT_TYPE, "dlc");
-  // Mixed-case input pins the source's GetLowercaseString call; an
-  // already-lowercase input could not distinguish it.
   FakeOpAttr dlc_ctx = FakeOpAttr::MakeString(EP_DLC_CONTEXT, "Path/To/Model.DLC");
   FakeNode node{"ep_ctx", "EPContext", "", 1, {}, {}};
   node.attrs[SOURCE] = &source;
@@ -330,8 +331,103 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_DlcNodeWithPath_Returns
   std::string dlc_path;
   auto status = GetEpContextDlcPath(graphs, 1, ctx.api, dlc_path);
   EXPECT_TRUE(status.IsOK());
-  EXPECT_EQ(dlc_path, "path/to/model.dlc");
+  EXPECT_EQ(dlc_path, "Path/To/Model.DLC");
 }
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, ResolveEpContextDlcPath_PathWithinModelDirectory_ReturnsResolvedPath) {
+  const auto model_directory = std::filesystem::temp_directory_path() / "qnn_ep_context_dlc_path_valid";
+  std::error_code error_code;
+  std::filesystem::create_directories(model_directory, error_code);
+  ASSERT_FALSE(error_code);
+  auto cleanup = gsl::finally([&model_directory]() {
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(model_directory, cleanup_error);
+  });
+
+  std::filesystem::path resolved_dlc_path;
+  const auto status = ResolveEpContextDlcPath(model_directory, "subdirectory/model.dlc", resolved_dlc_path);
+
+  EXPECT_TRUE(status.IsOK());
+  EXPECT_EQ(resolved_dlc_path, std::filesystem::weakly_canonical(model_directory / "subdirectory/model.dlc"));
+}
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, ResolveEpContextDlcPath_SymlinkOutsideModelDirectory_ReturnsError) {
+  const auto test_directory = std::filesystem::temp_directory_path() / "qnn_ep_context_dlc_path_symlink";
+  const auto model_directory = test_directory / "model";
+  const auto outside_directory = test_directory / "outside";
+  std::error_code error_code;
+  std::filesystem::create_directories(model_directory, error_code);
+  ASSERT_FALSE(error_code);
+  std::filesystem::create_directories(outside_directory, error_code);
+  ASSERT_FALSE(error_code);
+  auto cleanup = gsl::finally([&test_directory]() {
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(test_directory, cleanup_error);
+  });
+
+  std::filesystem::create_directory_symlink(outside_directory, model_directory / "link", error_code);
+  if (error_code) {
+    GTEST_SKIP() << "Unable to create a directory symlink: " << error_code.message();
+  }
+
+  std::filesystem::path resolved_dlc_path;
+  const auto status = ResolveEpContextDlcPath(model_directory, "link/model.dlc", resolved_dlc_path);
+
+  EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_AbsolutePath_ReturnsError) {
+  CtxHelperTestContext ctx;
+  FakeOpAttr source = FakeOpAttr::MakeString(SOURCE, "qnn");
+  FakeOpAttr ctx_type = FakeOpAttr::MakeString(EP_CONTEXT_TYPE, "dlc");
+  FakeOpAttr dlc_ctx = FakeOpAttr::MakeString(EP_DLC_CONTEXT, "/outside/model.dlc");
+  FakeNode node{"ep_ctx", "EPContext", "", 1, {}, {}};
+  node.attrs[SOURCE] = &source;
+  node.attrs[EP_CONTEXT_TYPE] = &ctx_type;
+  node.attrs[EP_DLC_CONTEXT] = &dlc_ctx;
+  FakeGraph g{{node}, {}, {}, {}};
+  const OrtGraph* graphs[] = {g.AsGraph()};
+  std::string dlc_path;
+  auto status = GetEpContextDlcPath(graphs, 1, ctx.api, dlc_path);
+  EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_ParentTraversal_ReturnsError) {
+  CtxHelperTestContext ctx;
+  FakeOpAttr source = FakeOpAttr::MakeString(SOURCE, "qnn");
+  FakeOpAttr ctx_type = FakeOpAttr::MakeString(EP_CONTEXT_TYPE, "dlc");
+  FakeOpAttr dlc_ctx = FakeOpAttr::MakeString(EP_DLC_CONTEXT, "../outside/model.dlc");
+  FakeNode node{"ep_ctx", "EPContext", "", 1, {}, {}};
+  node.attrs[SOURCE] = &source;
+  node.attrs[EP_CONTEXT_TYPE] = &ctx_type;
+  node.attrs[EP_DLC_CONTEXT] = &dlc_ctx;
+  FakeGraph g{{node}, {}, {}, {}};
+  const OrtGraph* graphs[] = {g.AsGraph()};
+  std::string dlc_path;
+  auto status = GetEpContextDlcPath(graphs, 1, ctx.api, dlc_path);
+  EXPECT_FALSE(status.IsOK());
+}
+
+#ifdef _WIN32
+TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_WindowsRootedPaths_ReturnError) {
+  for (const std::string& invalid_path : {R"(\\server\share\model.dlc)", R"(C:\model.dlc)",
+                                          R"(C:model.dlc)", R"(\model.dlc)"}) {
+    CtxHelperTestContext ctx;
+    FakeOpAttr source = FakeOpAttr::MakeString(SOURCE, "qnn");
+    FakeOpAttr ctx_type = FakeOpAttr::MakeString(EP_CONTEXT_TYPE, "dlc");
+    FakeOpAttr dlc_ctx = FakeOpAttr::MakeString(EP_DLC_CONTEXT, invalid_path);
+    FakeNode node{"ep_ctx", "EPContext", "", 1, {}, {}};
+    node.attrs[SOURCE] = &source;
+    node.attrs[EP_CONTEXT_TYPE] = &ctx_type;
+    node.attrs[EP_DLC_CONTEXT] = &dlc_ctx;
+    FakeGraph g{{node}, {}, {}, {}};
+    const OrtGraph* graphs[] = {g.AsGraph()};
+    std::string dlc_path;
+    auto status = GetEpContextDlcPath(graphs, 1, ctx.api, dlc_path);
+    EXPECT_FALSE(status.IsOK()) << invalid_path;
+  }
+}
+#endif
 
 TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_SecondGraphHasDlcNode_ReturnsPath) {
   CtxHelperTestContext ctx;

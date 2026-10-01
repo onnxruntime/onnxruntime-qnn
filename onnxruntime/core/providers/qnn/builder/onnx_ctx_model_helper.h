@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -50,6 +51,9 @@ bool IsOrtGraphHasCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& o
 
 Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const OrtApi& ort_api,
                                 std::string& dlc_path);
+Ort::Status ResolveEpContextDlcPath(const std::filesystem::path& model_directory,
+                                    const std::filesystem::path& relative_dlc_path,
+                                    std::filesystem::path& resolved_dlc_path);
 
 Ort::Status GetMainContextNode(const OrtGraph** graphs,
                                size_t count,

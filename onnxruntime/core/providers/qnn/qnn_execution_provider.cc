@@ -3063,7 +3063,8 @@ OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
   // Extract the DLC information
   std::string dlc_path;
   RETURN_IF_NOT_OK(qnn::GetEpContextDlcPath(graphs, count, ep->ort_api, dlc_path));
-  std::filesystem::path dlc_extracted_path(parent_path / dlc_path);
+  std::filesystem::path dlc_extracted_path;
+  RETURN_IF_NOT_OK(qnn::ResolveEpContextDlcPath(parent_path, dlc_path, dlc_extracted_path));
 
   // Populate the Genie APIs
   const GenieApi& genie_api_ = ep->genie_api_loader_->Get();
