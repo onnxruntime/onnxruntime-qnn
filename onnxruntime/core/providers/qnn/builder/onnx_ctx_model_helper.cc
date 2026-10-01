@@ -120,6 +120,12 @@ Ort::Status ResolveEpContextBinaryPath(const std::filesystem::path& model_direct
   return Ort::Status();
 }
 
+Ort::Status ResolveEpContextDlcPath(const std::filesystem::path& model_directory,
+                                    const std::filesystem::path& relative_dlc_path,
+                                    std::filesystem::path& resolved_dlc_path) {
+  return ResolveEpContextBinaryPath(model_directory, relative_dlc_path, resolved_dlc_path);
+}
+
 Ort::Status GetMainContextNode(const OrtGraph** graphs,
                                size_t count,
                                const OrtApi& ort_api,
