@@ -289,6 +289,33 @@ TEST_F(QnnHTPBackendTests, SliceEmptyOutputOnHTP) {
                   13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
+
+// A zero-sized Slice cannot be elided when its output is consumed outside the Slice -> Concat
+// pattern. In this case it is a graph output, so the Slice must fall back to the CPU EP.
+TEST_F(QnnHTPBackendTests, SliceEmptyGraphOutputFallsBackOnHTP) {
+  GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("input0", {2, 3}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+
+    builder.Make1DInitializer<int64_t>("starts", {2});
+    builder.Make1DInitializer<int64_t>("ends", {2});
+    builder.Make1DInitializer<int64_t>("axes", {0});
+    builder.Make1DInitializer<int64_t>("steps", {1});
+
+    builder.MakeOutput("Y");
+    builder.AddNode("Slice",
+                    "Slice",
+                    {"input0", "starts", "ends", "axes", "steps"},
+                    {"Y"});
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  RunQnnModelTest(model_fn,
+                  provider_options,
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None});
+}
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
