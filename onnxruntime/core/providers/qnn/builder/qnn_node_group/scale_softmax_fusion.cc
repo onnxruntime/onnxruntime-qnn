@@ -34,10 +34,10 @@ constexpr char kOpSoftmax[] = "Softmax";
 static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& mul_node_unit,
                                          const OrtNodeUnit& softmax_node_unit, bool validate);
 
-/// @brief Get the index of the scalar input in the mul node
+/// @brief Get the index of the sole scalar input in the Mul node.
 /// @param mul Multiply node unit
 /// @param ort_api ORT API interface
-/// @return The index of the scalar input (0 or 1) if found, otherwise std::nullopt
+/// @return The scalar input index (0 or 1) if exactly one input is scalar; otherwise std::nullopt.
 std::optional<size_t> GetMulScalarInputIndex(const OrtNodeUnit& mul, const OrtApi& ort_api) {
   // Get inputs of mul node
   size_t num_inputs = 0;
