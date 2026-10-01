@@ -26,6 +26,24 @@
 namespace onnxruntime {
 namespace test {
 
+namespace {
+
+template <typename Tag, typename Tag::type Member>
+struct QnnModelPrivateMember {
+  friend typename Tag::type GetQnnModelPrivateMember(Tag) { return Member; }
+};
+
+struct SetupTensorsTag {
+  using type = Ort::Status (qnn::QnnModel::*)(std::vector<qnn::QnnTensorInfo>&,
+                                              const std::vector<qnn::QnnTensorWrapper>&,
+                                              bool);
+  friend type GetQnnModelPrivateMember(SetupTensorsTag);
+};
+
+template struct QnnModelPrivateMember<SetupTensorsTag, &qnn::QnnModel::SetupTensors>;
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // QnnModelMinimalTestContext
 //
@@ -227,6 +245,64 @@ TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_Basic_PopulatesInputsOutputs) {
 
   auto status = ctx.model->SetGraphInputOutputInfo(mc);
   EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
+}
+
+TEST(QnnUnit_ModelTest, SetupTensors_SparseOutputIndex_ReturnsCompactedTensorInfo) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+  FakeValueInfo output0{"output0", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  FakeValueInfo output1{"output1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  FakeGraph graph{{}, {}, {&output0, &output1}, {}};
+  FakeNode fused{"fused", "QnnPartition_0", "", 13, {}, {&output0, &output1}};
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names{"output0", "output1"};
+  qnn::ModelSettings settings{};
+  qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+                                     &input_names, &output_names, &settings};
+  ASSERT_TRUE(ctx.model->SetGraphInputOutputInfo(model_context).IsOK());
+
+  std::vector<qnn::QnnTensorWrapper> tensor_wrappers;
+  tensor_wrappers.emplace_back("output1", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  std::vector<qnn::QnnTensorInfo> tensor_infos;
+  const auto setup_tensors = GetQnnModelPrivateMember(SetupTensorsTag{});
+
+  const auto status = ((*ctx.model).*setup_tensors)(tensor_infos, tensor_wrappers, false);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  ASSERT_EQ(tensor_infos.size(), 1u);
+  EXPECT_EQ(tensor_infos[0].tensor_wrapper, &tensor_wrappers[0]);
+  EXPECT_EQ(tensor_infos[0].ort_index, 1u);
+}
+
+TEST(QnnUnit_ModelTest, SetupTensors_OutputCountLessThanTensorWrapperCount_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+  FakeValueInfo output0{"output0", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  FakeGraph graph{{}, {}, {&output0}, {}};
+  FakeNode fused{"fused", "QnnPartition_0", "", 13, {}, {&output0}};
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names{"output0"};
+  qnn::ModelSettings settings{};
+  qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+                                     &input_names, &output_names, &settings};
+  ASSERT_TRUE(ctx.model->SetGraphInputOutputInfo(model_context).IsOK());
+
+  std::vector<qnn::QnnTensorWrapper> tensor_wrappers;
+  tensor_wrappers.emplace_back("output0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  tensor_wrappers.emplace_back("output1", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  std::vector<qnn::QnnTensorInfo> tensor_infos;
+  const auto setup_tensors = GetQnnModelPrivateMember(SetupTensorsTag{});
+
+  const auto status = ((*ctx.model).*setup_tensors)(tensor_infos, tensor_wrappers, false);
+  EXPECT_FALSE(status.IsOK());
 }
 
 // ---------------------------------------------------------------------------
