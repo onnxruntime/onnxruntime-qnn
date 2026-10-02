@@ -36,6 +36,7 @@
 #include "gtest/gtest.h"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
@@ -598,6 +599,51 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_RpcControlLatencyNonZero_Succeeds) {
   ctx.session_config[EPKey("rpc_control_latency")] = "100";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+#if defined(__linux__) && !defined(__aarch64__)
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextGenerationWithoutRpcmem_PreservesSharedMemoryGraphContract) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config["ep.context_enable"] = "1";
+  ctx.session_config[EPKey("enable_htp_shared_memory_allocator")] = "1";
+  auto factory = MakeFactory(ctx);
+
+  auto ep = MakeEp(*factory, ctx);
+
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "the generated context will retain the shared-memory graph I/O contract");
+
+  const OrtMemoryDevice* default_device = reinterpret_cast<const OrtMemoryDevice*>(kFakeToken);
+  auto* ep_ptr = static_cast<OrtEp*>(ep.get());
+  EXPECT_EQ(ep_ptr->GetDefaultMemoryDevice(ep_ptr, &default_device), nullptr);
+  EXPECT_EQ(default_device, nullptr);
+}
+#endif
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SharedBackendManagerWithDifferentAllocatorMode_Throws) {
+  EpStubContext owner_ctx;
+  owner_ctx.session_config[EPKey("htp_share_resource_optimization")] = "1";
+  auto owner_factory = MakeFactory(owner_ctx);
+  auto owner_ep = MakeEp(*owner_factory, owner_ctx);
+
+  // The host-only test cannot load RPCMEM to create a real HTP_SHARED owner.
+  // Set the shared manager's mode directly to emulate an existing opted-in
+  // session before constructing a second session that requests NONE.
+  auto shared_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
+  ASSERT_NE(shared_manager, nullptr);
+  shared_manager->SetQnnAllocatorType(qnn::QnnAllocatorType::HTP_SHARED);
+
+  EpStubContext consumer_ctx;
+  consumer_ctx.session_config[EPKey("htp_share_resource_optimization")] = "1";
+  auto consumer_factory = MakeFactory(consumer_ctx);
+
+  try {
+    auto consumer_ep = MakeEp(*consumer_factory, consumer_ctx);
+    FAIL() << "Expected an incompatible shared allocator mode to be rejected.";
+  } catch (const std::runtime_error& e) {
+    EXPECT_NE(std::string{e.what()}.find("Cannot share QNN backend manager"), std::string::npos);
+  }
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpShareResourceOptInvalid_LogsError) {

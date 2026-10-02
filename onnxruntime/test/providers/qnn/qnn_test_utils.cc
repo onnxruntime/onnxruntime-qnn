@@ -195,7 +195,8 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                           Ort::SessionOptions& session_options,
                           const std::string& registration_name,
                           const std::unordered_map<std::string, std::string>& ep_options,
-                          bool simulated) {
+                          bool simulated,
+                          std::optional<OrtHardwareDeviceType> target_hw_device_type_override) {
   Ort::Env* ort_env = GetOrtEnv();
   const OrtApi& c_api = Ort::GetApi();
 
@@ -224,28 +225,30 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
   size_t num_devices;
   ASSERT_ORTSTATUS_OK(c_api.GetEpDevices(*ort_env, &ep_devices, &num_devices));
 
-  auto target_hw_device_type = OrtHardwareDeviceType_CPU;
-  if ((ep_options.find("backend_type") != ep_options.end() && ep_options.at("backend_type") == "htp") ||
-      (ep_options.find("backend_path") != ep_options.end() && ep_options.at("backend_path") ==
+  auto target_hw_device_type = target_hw_device_type_override.value_or(OrtHardwareDeviceType_CPU);
+  if (!target_hw_device_type_override.has_value() &&
+      ((ep_options.find("backend_type") != ep_options.end() && ep_options.at("backend_type") == "htp") ||
+       (ep_options.find("backend_path") != ep_options.end() && ep_options.at("backend_path") ==
 #if _WIN32
-                                                                  "QnnHtp.dll"
+                                                                   "QnnHtp.dll"
 #else
-                                                                  "libQnnHtp.so"
+                                                                   "libQnnHtp.so"
 #endif
-       )) {
+        ))) {
 #if defined(__linux__) || (defined(_WIN32) && defined(_M_X64))
     target_hw_device_type = OrtHardwareDeviceType_CPU;
 #else
     target_hw_device_type = OrtHardwareDeviceType_NPU;
 #endif
-  } else if ((ep_options.find("backend_type") != ep_options.end() && ep_options.at("backend_type") == "gpu") ||
-             (ep_options.find("backend_path") != ep_options.end() && ep_options.at("backend_path") ==
+  } else if (!target_hw_device_type_override.has_value() &&
+             ((ep_options.find("backend_type") != ep_options.end() && ep_options.at("backend_type") == "gpu") ||
+              (ep_options.find("backend_path") != ep_options.end() && ep_options.at("backend_path") ==
 #if _WIN32
-                                                                         "QnnGpu.dll"
+                                                                          "QnnGpu.dll"
 #else
-                                                                         "libQnnGpu.so"
+                                                                          "libQnnGpu.so"
 #endif
-              )) {
+               ))) {
 #if defined(__linux__)
     target_hw_device_type = OrtHardwareDeviceType_CPU;
 #else
