@@ -303,7 +303,7 @@ static void RunHtpQDQMatMulNBitsTest(const TestParams params,
 
 bool IsNativeBqExpected([[maybe_unused]] QnnHtpDevice_Arch_t htp_arch) {
 #if defined(__linux__) && !defined(__aarch64__)
-  // Assume SoC model is set at least V81, which is the case in the above test funcstions.
+  // Assume SoC model is set at least V81, which is the case in the above test functions.
   return true;
 #else
   return htp_arch >= QNN_HTP_DEVICE_ARCH_V81;
