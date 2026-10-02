@@ -79,6 +79,17 @@ QnnQuantParamsWrapper MakeBwFloatBlock() {
                                              gsl::make_span(block_sizes));
 }
 
+QnnQuantParamsWrapper MakeBwBlockMapped() {
+  const std::vector<float> scales{0.5f, 0.25f};
+  const std::vector<int32_t> offsets{1, -2};
+  const std::vector<uint32_t> block_sizes{1, 1, 32, 1};
+  return QnnQuantParamsWrapper::BwBlockMapped(gsl::make_span(scales),
+                                              gsl::make_span(offsets),
+                                              /*bitwidth=*/2u,
+                                              gsl::make_span(block_sizes),
+                                              QNN_QUANTIZATION_ENCODING_MAPPING_ASYMMETRIC_PLUS_ONE);
+}
+
 }  // namespace
 
 // =============================================================================
@@ -351,6 +362,45 @@ TEST(QnnUnit_QuantParamsWrapperTest, CopyAssign_BwFloatBlock_DeepCopies) {
   EXPECT_FLOAT_EQ(dst.Get().bwFloatBlockEncoding.floatScaleOffset[1].offset, 0.1f);
 }
 
+TEST(QnnUnit_QuantParamsWrapperTest, CopyCtor_BwBlockMapped_DeepCopies) {
+  QnnQuantParamsWrapper src = MakeBwBlockMapped();
+  const auto* src_encoding = src.Get().bwBlockMappedEncoding;
+  const auto* src_block_sizes = src_encoding->blockSize;
+  const auto* src_scale_offsets = src_encoding->scaleOffset;
+
+  QnnQuantParamsWrapper dst(src);
+
+  EXPECT_TRUE(dst.IsBlockQuantized());
+  EXPECT_TRUE(dst.IsBwBlockMapped());
+  ASSERT_NE(dst.Get().bwBlockMappedEncoding, nullptr);
+  EXPECT_NE(dst.Get().bwBlockMappedEncoding, src_encoding);
+  EXPECT_NE(dst.Get().bwBlockMappedEncoding->blockSize, src_block_sizes);
+  EXPECT_NE(dst.Get().bwBlockMappedEncoding->scaleOffset, src_scale_offsets);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->bitwidth, 2u);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->mapping, QNN_QUANTIZATION_ENCODING_MAPPING_ASYMMETRIC_PLUS_ONE);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->blockSize[2], 32u);
+  EXPECT_FLOAT_EQ(dst.Get().bwBlockMappedEncoding->scaleOffset[0].scale, 0.5f);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->scaleOffset[1].offset, -2);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, CopyAssign_BwBlockMapped_DeepCopies) {
+  QnnQuantParamsWrapper src = MakeBwBlockMapped();
+  QnnQuantParamsWrapper dst;
+
+  dst = src;
+
+  EXPECT_TRUE(dst.IsBwBlockMapped());
+  ASSERT_NE(dst.Get().bwBlockMappedEncoding, nullptr);
+  EXPECT_NE(dst.Get().bwBlockMappedEncoding, src.Get().bwBlockMappedEncoding);
+  EXPECT_NE(dst.Get().bwBlockMappedEncoding->blockSize, src.Get().bwBlockMappedEncoding->blockSize);
+  EXPECT_NE(dst.Get().bwBlockMappedEncoding->scaleOffset, src.Get().bwBlockMappedEncoding->scaleOffset);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->bitwidth, 2u);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->mapping, QNN_QUANTIZATION_ENCODING_MAPPING_ASYMMETRIC_PLUS_ONE);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->blockSize[3], 1u);
+  EXPECT_FLOAT_EQ(dst.Get().bwBlockMappedEncoding->scaleOffset[1].scale, 0.25f);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->scaleOffset[0].offset, 1);
+}
+
 TEST(QnnUnit_QuantParamsWrapperTest, CopyAssign_SelfAssignment_LeavesUnchanged) {
   QnnQuantParamsWrapper q = MakePerChannelNonInt4();
   const auto* original_scaleoffset_ptr = q.Get().axisScaleOffsetEncoding.scaleOffset;
@@ -422,10 +472,14 @@ TEST(QnnUnit_QuantParamsWrapperTest, IsLPBQ_OnlyForBlockwiseExpansion) {
 TEST(QnnUnit_QuantParamsWrapperTest, IsBlockQuantized_AcceptsBlockAndBwFloatBlock) {
   QnnQuantParamsWrapper block = MakeBlockEncoding();
   QnnQuantParamsWrapper bw_float_block = MakeBwFloatBlock();
+  QnnQuantParamsWrapper bw_block_mapped = MakeBwBlockMapped();
   QnnQuantParamsWrapper per_tensor = QnnQuantParamsWrapper::PerTensor(0.5f, 0);
   EXPECT_TRUE(block.IsBlockQuantized());
   EXPECT_TRUE(bw_float_block.IsBlockQuantized());
+  EXPECT_TRUE(bw_block_mapped.IsBlockQuantized());
+  EXPECT_TRUE(bw_block_mapped.IsBwBlockMapped());
   EXPECT_FALSE(per_tensor.IsBlockQuantized());
+  EXPECT_FALSE(per_tensor.IsBwBlockMapped());
 }
 
 TEST(QnnUnit_QuantParamsWrapperTest, Predicates_FalseWhenEncodingDefinitionUndefined) {
@@ -666,6 +720,23 @@ TEST(QnnUnit_QuantParamsWrapperTest,
   EXPECT_EQ(dst.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK);
   EXPECT_EQ(dst.Get().bwFloatBlockEncoding.bitwidth, 8u);
   EXPECT_FLOAT_EQ(dst.Get().bwFloatBlockEncoding.floatScaleOffset[1].offset, 0.1f);
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest,
+     InitFromRaw_BwBlockMapped_DeepCopiesBlockSizesAndScaleOffsets) {
+  QnnQuantParamsWrapper src = MakeBwBlockMapped();
+  QnnQuantParamsWrapper dst;
+  ASSERT_TRUE(dst.Init(src.Get(), /*num_scaleoffsets=*/2, /*tensor_rank=*/4).IsOK());
+  EXPECT_TRUE(dst.IsBwBlockMapped());
+  ASSERT_NE(dst.Get().bwBlockMappedEncoding, nullptr);
+  EXPECT_NE(dst.Get().bwBlockMappedEncoding, src.Get().bwBlockMappedEncoding);
+  EXPECT_NE(dst.Get().bwBlockMappedEncoding->blockSize, src.Get().bwBlockMappedEncoding->blockSize);
+  EXPECT_NE(dst.Get().bwBlockMappedEncoding->scaleOffset, src.Get().bwBlockMappedEncoding->scaleOffset);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->bitwidth, 2u);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->mapping, QNN_QUANTIZATION_ENCODING_MAPPING_ASYMMETRIC_PLUS_ONE);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->blockSize[2], 32u);
+  EXPECT_FLOAT_EQ(dst.Get().bwBlockMappedEncoding->scaleOffset[0].scale, 0.5f);
+  EXPECT_EQ(dst.Get().bwBlockMappedEncoding->scaleOffset[1].offset, -2);
 }
 
 TEST(QnnUnit_QuantParamsWrapperTest, InitFromRaw_UnsupportedEncoding_ReturnsError) {
