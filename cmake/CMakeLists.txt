@@ -83,6 +83,14 @@ option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" O
 option(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS
        "Build QNN EP with internal symbols exported for unit tests. Do not use for production binaries." OFF)
 
+# This mode must keep the QNN EP export/link configuration and its direct-access
+# test bodies in lockstep. It is consumed by both provider and unit-test targets.
+set(onnxruntime_qnn_internal_ut_symbols_enabled OFF)
+if(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS OR
+   (ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+  set(onnxruntime_qnn_internal_ut_symbols_enabled ON)
+endif()
+
 option(onnxruntime_USE_FULL_PROTOBUF "Link to libprotobuf instead of libprotobuf-lite when this option is ON" OFF)
 option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS "Dump debug information about node inputs and outputs when executing the model." OFF)
 cmake_dependent_option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS_ENABLE_DUMP_TO_SQLDB "Build dump debug information about node inputs and outputs with support for sql database." OFF "onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS" OFF)
