@@ -611,8 +611,8 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextGenerationWithoutRpcmem_Preser
 
   auto ep = MakeEp(*factory, ctx);
 
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
-               "the generated context will retain the shared-memory graph I/O contract");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_INFO,
+               "the HTP shared memory allocator will be disabled as no allocations are expected to be made");
 
   const OrtMemoryDevice* default_device = reinterpret_cast<const OrtMemoryDevice*>(kFakeToken);
   auto* ep_ptr = static_cast<OrtEp*>(ep.get());
