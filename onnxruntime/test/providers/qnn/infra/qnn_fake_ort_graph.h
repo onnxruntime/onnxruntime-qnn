@@ -142,7 +142,7 @@ static_assert(offsetof(FakeOrtValue, shape) == offsetof(FakeValueInfo, shape),
 // OpAttr_GetType / ReadOpAttr stubs (e.g., OrtNodeAttrHelper::Get(...)).
 //
 // Holds a name + type + value. Currently supports ORT_OP_ATTR_STRING and
-// ORT_OP_ATTR_INT. Add more value fields if other attribute types are needed.
+// ORT_OP_ATTR_INT, and ORT_OP_ATTR_INTS.
 // ---------------------------------------------------------------------------
 struct FakeOpAttr {
   // For debugging only. Node_GetAttributeByName looks up attrs by the map key in
@@ -151,6 +151,7 @@ struct FakeOpAttr {
   OrtOpAttrType type = OrtOpAttrType::ORT_OP_ATTR_STRING;
   std::string string_value;
   int64_t int64_value = 0;
+  std::vector<int64_t> int64s_value;
 
   const OrtOpAttr* AsOpAttr() const { return reinterpret_cast<const OrtOpAttr*>(this); }
 
@@ -166,6 +167,13 @@ struct FakeOpAttr {
     a.name = std::move(name);
     a.type = OrtOpAttrType::ORT_OP_ATTR_INT;
     a.int64_value = val;
+    return a;
+  }
+  static FakeOpAttr MakeInts(std::string name, std::vector<int64_t> values) {
+    FakeOpAttr a;
+    a.name = std::move(name);
+    a.type = OrtOpAttrType::ORT_OP_ATTR_INTS;
+    a.int64s_value = std::move(values);
     return a;
   }
 };
@@ -502,7 +510,7 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
   //   First call: buf=nullptr, buf_size=0 → write required size into *out_size.
   //   Second call: buf!=nullptr → copy at most buf_size bytes into buf, write
   //   actual size into *out_size.
-  // Handles ORT_OP_ATTR_STRING (string_value) and ORT_OP_ATTR_INT (int64_value).
+  // Handles string, scalar int, and int-array attributes.
   api.ReadOpAttr = [](const OrtOpAttr* attr, OrtOpAttrType expected_type,
                       void* buf, size_t buf_size, size_t* out_size) noexcept -> OrtStatus* {
     auto* fa = reinterpret_cast<const FakeOpAttr*>(attr);
@@ -529,6 +537,11 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
       *out_size = sizeof(int64_t);
       if (buf != nullptr && buf_size >= sizeof(int64_t)) {
         std::memcpy(buf, &fa->int64_value, sizeof(int64_t));
+      }
+    } else if (expected_type == OrtOpAttrType::ORT_OP_ATTR_INTS) {
+      *out_size = fa->int64s_value.size() * sizeof(int64_t);
+      if (buf != nullptr && buf_size >= *out_size) {
+        std::memcpy(buf, fa->int64s_value.data(), *out_size);
       }
     } else {
       *out_size = 0;
