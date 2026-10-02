@@ -151,7 +151,7 @@ jobs:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
       - name: Resolve reviewed source
-        id: source
+        id: non-windows-source
         if: ${{ inputs.target_os != 'windows' && inputs.source != '' }}
         shell: bash
         env:
@@ -189,8 +189,8 @@ jobs:
           "BUILD_SOURCEVERSION=$ref" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: actions/checkout@v6
         with:
-          repository: ${{ steps.source.outputs.repository || steps.windows-source.outputs.repository || github.repository }}
-          ref: ${{ steps.source.outputs.ref || steps.windows-source.outputs.ref || github.sha }}
+          repository: ${{ steps.non-windows-source.outputs.repository || steps.windows-source.outputs.repository || github.repository }}
+          ref: ${{ steps.non-windows-source.outputs.ref || steps.windows-source.outputs.ref || github.sha }}
           persist-credentials: false
         # Submodules omitted here; initialized below only when a heavy build is needed, so
         # has_code_changes=false jobs skip the expensive recursive fetch while still reporting green.
@@ -246,9 +246,11 @@ jobs:
       - name: Report Windows device result on reviewed source
         if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.source != '' && inputs.run_tests && inputs.build_test_same_runner }}
         uses: actions/github-script@v8
+        env:
+          SOURCE: ${{ inputs.source }}
         with:
           script: |
-            const source = '${{ inputs.source }}';
+            const source = process.env.SOURCE;
             const sourceRef = source.slice(source.lastIndexOf('@') + 1);
             const jobStatus = '${{ job.status }}';
             const conclusion = jobStatus === 'success' ? 'success' :
@@ -349,10 +351,12 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      # The temporary branch pins CI scripts and test artifacts to the same
-      # reviewed commit for maintainer-approved device runs.
+      # Cross-runner jobs consume artifacts from this workflow run, so they use
+      # the same pinned workflow commit rather than resolving source again.
       - uses: actions/checkout@v6
         with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
         # Submodules omitted here; initialized below only when a heavy test run is needed.
       - name: Initialize submodules
@@ -426,6 +430,10 @@ jobs:
       # reviewed commit for maintainer-approved device runs.
       - uses: actions/checkout@v6
         with:
+          # This job consumes artifacts produced by the same workflow run, so use
+          # the workflow's pinned commit (the temporary reviewed branch for /device-test).
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
         # Submodules omitted here; initialized below only when a heavy wheel smoke test is needed.
       - name: Initialize submodules

@@ -191,6 +191,8 @@ jobs:
       upload_wheel: ${{ inputs.do_device_tests || inputs.windows_arm64_runner_arch == 'ARM64' }}
       upload_test_archive: ${{ !inputs.do_device_tests && inputs.windows_arm64_runner_arch != 'ARM64' }}
       build_test_same_runner: ${{ inputs.do_device_tests || inputs.windows_arm64_runner_arch == 'ARM64' }}
+      # Native ARM64 builds produce/test a Python wheel. The faster X64
+      # cross-compile path cannot, so it intentionally uses the pynone variant.
       target_py_vsn: ${{ (inputs.do_device_tests || inputs.windows_arm64_runner_arch == 'ARM64') && inputs.target_py_vsn || 'None' }}
       nightly_build: ${{ inputs.nightly_build }}
       source: ${{ inputs.source_repository != '' && format('{0}@{1}', inputs.source_repository, inputs.source_ref) || '' }}
@@ -212,6 +214,8 @@ jobs:
       test_runner_arch: arm64
 
   build-and-test-windows-x86_64:
+    # Full CI (including /device-test dispatches) already builds Windows X64;
+    # do_device_tests only adds hardware-specific jobs to that full matrix.
     if: ${{ inputs.do_all }}
     needs: [archive-testdata, path-filter]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml

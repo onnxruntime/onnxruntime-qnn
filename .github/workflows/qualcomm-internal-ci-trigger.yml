@@ -4,6 +4,7 @@
 # Lets developers trigger CI on a draft PR by commenting "/ci" on the PR.
 # After reviewing a fork contributor's code, maintainers can comment "/device-test"
 # to test its immutable SHA on device runners through a temporary upstream branch.
+# The command is valid for either draft or ready-for-review open fork PRs.
 # Approval covers the entire commit, including its workflows, actions, and scripts:
 # the reviewed code will execute with repository secrets and access to internal runners.
 #
@@ -84,7 +85,6 @@ jobs:
               return;
             }
 
-            let workflowId;
             let dispatchRef;
             let inputs;
             let message;
@@ -102,12 +102,10 @@ jobs:
                 core.setFailed('/ci cannot dispatch a fork branch. Use /device-test after review.');
                 return;
               }
-              workflowId = 'qualcomm-internal-ci.yml';
               dispatchRef = pr.data.head.ref;
               inputs = {};
               message = `🔄 CI triggered on \`${pr.data.head.ref}\`${pr.data.draft ? ' (draft PR — CI was skipped on push)' : ''}`;
             } else {
-              workflowId = 'qualcomm-internal-ci.yml';
               // A unique branch per approval attempt prevents a later approval
               // from moving the ref while an earlier run is queued or checking out.
               temporaryBranch = `ci/device-test/${pr.data.number}/${pr.data.head.sha}/${context.runId}-${process.env.GITHUB_RUN_ATTEMPT}`;
@@ -121,7 +119,7 @@ jobs:
               inputs = {
                 source_repository: `${context.repo.owner}/${context.repo.repo}`,
                 source_ref: pr.data.head.sha,
-                device_tests_only: 'true',
+                include_device_tests: 'true',
               };
               message = `📱 Maintainer-approved device test triggered for PR #${pr.data.number} at \`${pr.data.head.sha}\` using \`${temporaryBranch}\`. This approval includes the commit's workflows and scripts`;
             }
@@ -132,7 +130,7 @@ jobs:
               await github.rest.actions.createWorkflowDispatch({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                workflow_id: workflowId,
+                workflow_id: 'qualcomm-internal-ci.yml',
                 ref: dispatchRef,
                 inputs,
               });

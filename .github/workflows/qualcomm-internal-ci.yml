@@ -28,7 +28,7 @@ on:
         description: Full 40-character commit SHA of the source to test (maintainer-triggered runs only)
         required: false
         type: string
-      device_tests_only:
+      include_device_tests:
         description: Run full merge-required CI plus Qualcomm Linux QDC and Windows ARM64 device tests
         required: false
         default: false
@@ -54,8 +54,8 @@ jobs:
       # fork stubs are removed; otherwise required Linux test/wheel contexts
       # would be missing. It additionally enables the real device-only paths.
       do_all: true
-      do_device_tests: ${{ github.event.inputs.device_tests_only == 'true' }}
-      report_device_result_to_source: ${{ github.event.inputs.device_tests_only == 'true' }}
+      do_device_tests: ${{ github.event.inputs.include_device_tests == 'true' }}
+      report_device_result_to_source: ${{ github.event.inputs.include_device_tests == 'true' }}
       source_repository: ${{ github.event.inputs.source_repository }}
       source_ref: ${{ github.event.inputs.source_ref }}
 

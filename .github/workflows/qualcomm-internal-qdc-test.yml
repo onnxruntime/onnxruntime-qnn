@@ -147,6 +147,10 @@ jobs:
       - name: Report QDC result on reviewed source
         if: ${{ always() && inputs.report_result_to_source && inputs.source_ref != '' }}
         uses: actions/github-script@v8
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          TARGET_OS: ${{ inputs.target_os }}
+          TARGET_ARCH: ${{ inputs.target_arch }}
         with:
           script: |
             const jobStatus = '${{ job.status }}';
@@ -155,13 +159,13 @@ jobs:
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: 'test-${{ inputs.target_os }}-${{ inputs.target_arch }}-pynone',
-              head_sha: '${{ inputs.source_ref }}',
+              name: `test-${process.env.TARGET_OS}-${process.env.TARGET_ARCH}-pynone`,
+              head_sha: process.env.SOURCE_REF,
               status: 'completed',
               conclusion,
               details_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               output: {
                 title: 'Maintainer-approved QDC device test',
-                summary: `QDC ${{ inputs.target_os }}-${{ inputs.target_arch }} completed with ${jobStatus}.`,
+                summary: `QDC ${process.env.TARGET_OS}-${process.env.TARGET_ARCH} completed with ${jobStatus}.`,
               },
             });
