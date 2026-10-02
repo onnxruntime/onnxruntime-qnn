@@ -1,0 +1,57 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: "[TEMP][DO NOT MERGE] Delete PR #703 Snapshot Golden Test Store"
+
+on:
+  pull_request:
+    # The destructive job runs only when this specific Draft PR is explicitly
+    # converted to Ready for review. Opening or pushing never deletes anything.
+    types: [ready_for_review]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  delete-pr703-golden-test-store:
+    # All of these checks are intentionally fixed literals. There is no path
+    # input, so another PR or branch cannot widen the delete scope.
+    if: >-
+      github.repository == 'onnxruntime/onnxruntime-qnn' &&
+      github.event.pull_request.number == 908 &&
+      github.event.pull_request.head.ref == 'dev/yuhuchua/qnn-utils-copyright-asan-validation' &&
+      github.event.pull_request.title == '[TEMP][DO NOT MERGE] Delete PR #703 snapshot golden test store'
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    env:
+      BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Delete only the PR #703 temporary golden store
+        run: |
+          set -euo pipefail
+          : "${BUILD_ARTIFACTORY_REPO:?BUILD_ARTIFACTORY_REPO is required}"
+
+          readonly target="${BUILD_ARTIFACTORY_REPO}/ci/qnn-ep-test-store/snapshot-goldens-pr703-test"
+          readonly expected="${BUILD_ARTIFACTORY_REPO}/ci/qnn-ep-test-store/snapshot-goldens-pr703-test"
+          [ "${target}" = "${expected}" ] || {
+            echo "Refusing unexpected delete target: ${target}" >&2
+            exit 1
+          }
+
+          echo "Artifacts to delete under the fixed target: ${target}"
+          jf rt search "${target}/*"
+          jf rt delete --quiet "${target}/*"
+
+          echo "Artifacts remaining under the fixed target:"
+          jf rt search "${target}/*"
