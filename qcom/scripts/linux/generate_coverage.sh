@@ -250,6 +250,7 @@ snapshot_json="${build_dir}/${config}/snapshot_results.json"
 
 # Accuracy-routing gate artifacts.
 gate_script="${REPO_ROOT}/qcom/scripts/linux/accuracy_gate.py"
+version_resolver="${REPO_ROOT}/qcom/scripts/linux/resolve_tool_versions.sh"
 accuracy_list_file="${build_dir}/${config}/accuracy_list.txt"
 accuracy_filter_file="${build_dir}/${config}/accuracy_filter.txt"
 gate_summary_file="${build_dir}/${config}/accuracy_gate_summary.txt"
@@ -268,6 +269,21 @@ compute_accuracy_filter() {
         echo "${fallback}"
         return 0
     fi
+    local resolved_versions qairt_version="" ort_version=""
+    if resolved_versions="$("${version_resolver}" --bin-dir="${build_dir}/${config}" both 2>/dev/null)"; then
+        while IFS="=" read -r key value; do
+            case "${key}" in
+                qairt) qairt_version="${value}" ;;
+                ort) ort_version="${value}" ;;
+            esac
+        done <<< "${resolved_versions}"
+    fi
+    if [ -n "${qairt_version}" ] && [ -n "${ort_version}" ]; then
+        log_info "Accuracy gate: resolved current versions qairt=${qairt_version}, ort=${ort_version}."
+    else
+        log_warn "Accuracy gate: current QAIRT/ORT version could not be resolved; full accuracy fallback remains active."
+    fi
+
     # Enumerate the accuracy universe. The gate is pure Python and never invokes the
     # binary itself, so we hand it the --gtest_list_tests output here.
     if ! ( cd "${build_dir}/${config}"
@@ -278,7 +294,7 @@ compute_accuracy_filter() {
         echo "${fallback}"
         return 0
     fi
-    if ! python3 "${gate_script}" \
+    if ! QNN_UT_QAIRT_VERSION="${qairt_version}" QNN_UT_ORT_VERSION="${ort_version}" python3 "${gate_script}" \
             --snapshot-json="${snapshot_json}" \
             --golden-root="${QNN_UT_SNAPSHOT_GOLDEN_DIR:-}" \
             --accuracy-list-file="${accuracy_list_file}" \
