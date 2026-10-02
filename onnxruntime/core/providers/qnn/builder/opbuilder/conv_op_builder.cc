@@ -381,15 +381,19 @@ Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(bias_def, bias_info));
 
   if (bias_info.is_initializer) {
-    TensorInfo input0_info = {}, input1_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input0_info));
+    // Read the activation's quant params from the tensor actually bound to input_names[0], not
+    // inputs[0]: a mixed-precision Conv rebinds input_names[0] to a Converted activation with a
+    // rescaled quant encoding (see ProcessConv2D3DInputs), and the bias scale must match that.
+    const auto& activation_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
+    const QnnQuantParamsWrapper& input0_quant_param = activation_wrapper.GetQnnQuantParams();
+    TensorInfo input1_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input1_info));
 
-    if (input0_info.quant_param.IsQuantized() && input1_info.quant_param.IsQuantized()) {
+    if (input0_quant_param.IsQuantized() && input1_info.quant_param.IsQuantized()) {
       // Get activation scale (must be per-tensor for Conv)
-      RETURN_IF_NOT(input0_info.quant_param.IsPerTensor(/*include_bw*/ true),
+      RETURN_IF_NOT(input0_quant_param.IsPerTensor(/*include_bw*/ true),
                     "Activation must be per-tensor quantized for Conv 2D");
-      const float activation_scale = GetActivationScale(input0_info.quant_param);
+      const float activation_scale = GetActivationScale(input0_quant_param);
       std::vector<float> weights_scales;
       RETURN_IF_ERROR(utils::GetWeightQuantScales(input1_info.quant_param, weights_scales));
       RETURN_IF(weights_scales.empty(), "No weight scales found for bias quantization");
@@ -457,7 +461,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
   Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
 
-  // Bridge a mixed-precision activation/output pair with a Convert before Conv runs.
+  // Convert a mixed-precision activation/output pair before Conv runs.
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     // 1. Read the Conv's own declared (Q-node) output precision.
     const auto& conv_output = node_unit.Outputs()[0];
@@ -465,10 +469,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     RETURN_IF_ERROR(utils::GetQnnDataType(conv_output.quant_param.has_value(), conv_output.type,
                                           declared_output_dtype));
     // 2. A 16-bit activation feeding an 8-bit output is already handled losslessly downstream by
-    // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output. Bridge
+    // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output. Convert
     // only the other mismatched fixed-point pairs here; same-precision Conv is untouched.
     const bool is_narrowing_output = utils::IsQuant16bit(act_dtype) && utils::IsQuant8bit(declared_output_dtype);
-    if (!is_narrowing_output && utils::IsMixedPrecisionBridge(act_dtype, declared_output_dtype)) {
+    if (!is_narrowing_output && utils::NeedsPrecisionConvert(act_dtype, declared_output_dtype)) {
       RETURN_IF_NOT(act_wrapper.GetQnnQuantParams().IsPerTensor(),
                     "Conv's mixed-precision activation Convert only supports per-tensor quantization");
       // 3. Convert the activation to the output's precision before Conv consumes it.
@@ -806,16 +810,18 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   if (!has_bias_input && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     // Bias is implicit. QNN SDK 2.23/2.24/2.25 (QNN API version 2.16/2.17/2.18) has a validation bug for
     // implicit bias inputs, so provide an explicit bias of all 0 (quantized int32).
-    TensorInfo input0_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input0_info));
+    // Read the activation's quant params from the tensor actually bound to input_names[0] (see the
+    // matching comment in ProcessConvBias); the bias value is 0 either way, but keep the source consistent.
+    const QnnQuantParamsWrapper& input0_quant_param =
+        qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetQnnQuantParams();
 
     TensorInfo input1_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input1_info));
 
-    if (input0_info.quant_param.IsPerTensor(/*include_bw*/ true) && input1_info.quant_param.IsQuantized()) {
+    if (input0_quant_param.IsPerTensor(/*include_bw*/ true) && input1_info.quant_param.IsQuantized()) {
       const std::string bias_name = qnn::utils::UniqueNameGenerator().New(node_unit, "_implicit_bias");
       std::vector<uint32_t> bias_shape = {input1_info.shape[0]};
-      RETURN_IF_ERROR(AddZeroBiasInput(qnn_model_wrapper, input0_info.quant_param, input1_info.quant_param,
+      RETURN_IF_ERROR(AddZeroBiasInput(qnn_model_wrapper, input0_quant_param, input1_info.quant_param,
                                        std::move(bias_shape), bias_name, logger, input_names));
     }
   }
