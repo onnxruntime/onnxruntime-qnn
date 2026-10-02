@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
@@ -15,6 +16,8 @@
 
 namespace onnxruntime {
 namespace qnn {
+
+class QnnEpProfiler;
 
 struct QnnTensorInfo {
   const QnnTensorWrapper* tensor_wrapper = nullptr;
@@ -67,7 +70,10 @@ class QnnModel {
   // QnnEp::InitQnnHtpGraphConfigs. No-op when the backend is not HTP or nothing applies.
   Ort::Status ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs, const Ort::Logger& logger);
 
-  Ort::Status ExecuteGraph(OrtKernelContext* context, const Ort::Logger& logger);
+  Ort::Status ExecuteGraph(OrtKernelContext* context,
+                           const Ort::Logger& logger,
+                           const qnn::EpContextIoDispatch& io_dispatch,
+                           QnnEpProfiler* ort_profiler = nullptr);
 
   const OnnxTensorInfo* GetOutputInfo(const std::string& name) const {
     auto it = graph_outputs_.tensors.find(name);
@@ -163,7 +169,7 @@ class QnnModel {
 
   // Attempt to recover from an SSR (NPU Subsystem Restart) by reloading the QNN context
   // from disk and re-initializing the graph. Only supported for embed_mode=0 models.
-  Ort::Status RecoverFromSSR(const Ort::Logger& logger);
+  Ort::Status RecoverFromSSR(const Ort::Logger& logger, const qnn::EpContextIoDispatch& io_dispatch);
 
  private:
   const OrtNodeUnit& GetNodeUnit(const OrtNode* node,
@@ -175,7 +181,8 @@ class QnnModel {
   // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.
   Ort::Status BindAndExecuteGraph(OrtKernelContext* context,
                                   const Ort::Logger& logger,
-                                  Qnn_ErrorHandle_t& execute_status);
+                                  Qnn_ErrorHandle_t& execute_status,
+                                  QnnEpProfiler* ort_profiler);
 
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
                            bool is_input = true);

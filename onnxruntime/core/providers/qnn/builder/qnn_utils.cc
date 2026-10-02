@@ -99,7 +99,12 @@ size_t GetElementSizeByType(ONNXTensorElementDataType elem_type) {
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, sizeof(uint16_t)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32, sizeof(uint32_t)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64, sizeof(uint64_t)},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FN, 1},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FNUZ, 1},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2, 1},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2FNUZ, 1},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, 2},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16, 2},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, sizeof(float)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, sizeof(double)},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, sizeof(bool)}};
@@ -135,6 +140,25 @@ std::string_view GetElementNameByType(ONNXTensorElementDataType elem_type) {
     ORT_CXX_API_THROW("Unknown element type " + std::to_string(elem_type), ORT_EP_FAIL);
   }
   return pos->second;
+}
+
+size_t GetOnnxTensorDataSizeInBytes(size_t num_elements, ONNXTensorElementDataType element_type) {
+  SafeInt<size_t> safe_num_elements = num_elements;
+  if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2 || element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2) {
+    return (safe_num_elements + 3) / 4;
+  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 || element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
+    return (safe_num_elements + 1) / 2;
+  }
+  return (safe_num_elements * GetElementSizeByType(element_type));
+}
+
+size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorElementDataType element_type) {
+  // Empty shape means a 0D scalar: exactly 1 element.
+  if (shape.empty()) {
+    return GetOnnxTensorDataSizeInBytes(static_cast<size_t>(1), element_type);
+  }
+  SafeInt<size_t> num_elements = std::accumulate(shape.begin(), shape.end(), SafeInt<size_t>{1}, std::multiplies<>{});
+  return GetOnnxTensorDataSizeInBytes(num_elements, element_type);
 }
 
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_type) {
@@ -713,10 +737,54 @@ static nlohmann::json GetQnnTensorJSON(const Qnn_Tensor_t& tensor, bool include_
   tensor_json["axis_format"] = "NOT_YET_DEFINED";
 
   const Qnn_QuantizeParams_t& quant_params = GetQnnTensorQParams(tensor);
-  tensor_json["quant_params"] = {
-      {"definition", quant_params.encodingDefinition},
-      {"encoding", quant_params.quantizationEncoding},
-      {"scale_offset", {{"scale", quant_params.scaleOffsetEncoding.scale}, {"offset", quant_params.scaleOffsetEncoding.offset}}}};
+  // quant_params JSON layout matches the QAIRT official qairt-dlc-to-json schema.
+  // Always serialize the definition and encoding fields. Only serialize the
+  // encoding-specific union payload when the definition says those fields are valid.
+  nlohmann::json quant_params_json = {{"definition", quant_params.encodingDefinition},
+                                      {"encoding", quant_params.quantizationEncoding}};
+  if (quant_params.encodingDefinition == QNN_DEFINITION_IMPL_GENERATED ||
+      quant_params.encodingDefinition == QNN_DEFINITION_DEFINED) {
+    switch (quant_params.quantizationEncoding) {
+      case QNN_QUANTIZATION_ENCODING_SCALE_OFFSET:
+        quant_params_json["scale_offset"] = {{"scale", quant_params.scaleOffsetEncoding.scale},
+                                             {"offset", quant_params.scaleOffsetEncoding.offset}};
+        break;
+      case QNN_QUANTIZATION_ENCODING_BW_SCALE_OFFSET:
+        quant_params_json["bw_scale_offset"] = {{"bitwidth", quant_params.bwScaleOffsetEncoding.bitwidth},
+                                                {"scale", quant_params.bwScaleOffsetEncoding.scale},
+                                                {"offset", quant_params.bwScaleOffsetEncoding.offset}};
+        break;
+      case QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET: {
+        const auto& enc = quant_params.axisScaleOffsetEncoding;
+        nlohmann::json scale_offsets = nlohmann::json::array();
+        for (uint32_t i = 0; i < enc.numScaleOffsets; ++i) {
+          scale_offsets.push_back({{"scale", enc.scaleOffset[i].scale}, {"offset", enc.scaleOffset[i].offset}});
+        }
+        quant_params_json["axis_scale_offset"] = {{"axis", enc.axis},
+                                                  {"num_scale_offsets", enc.numScaleOffsets},
+                                                  {"scale_offsets", std::move(scale_offsets)}};
+        break;
+      }
+      case QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET: {
+        const auto& enc = quant_params.bwAxisScaleOffsetEncoding;
+        nlohmann::json scale_offsets = nlohmann::json::array();
+        // offsets may be NULL for symmetric quantization (all offsets implicitly 0).
+        for (uint32_t i = 0; i < enc.numElements; ++i) {
+          scale_offsets.push_back({{"scale", enc.scales[i]},
+                                   {"offset", enc.offsets ? enc.offsets[i] : 0}});
+        }
+        quant_params_json["bw_axis_scale_offset"] = {{"bitwidth", enc.bitwidth},
+                                                     {"axis", enc.axis},
+                                                     {"num_elements", enc.numElements},
+                                                     {"scale_offsets", std::move(scale_offsets)}};
+        break;
+      }
+      default:
+        quant_params_json["payload_status"] = "unsupported_quantization_encoding";
+        break;
+    }
+  }
+  tensor_json["quant_params"] = std::move(quant_params_json);
 
   gsl::span<const uint32_t> dims{GetQnnTensorDims(tensor), GetQnnTensorRank(tensor)};
   tensor_json["dims"] = JSONFromSpan(dims);
@@ -832,7 +900,7 @@ QnnJSONGraph::QnnJSONGraph() {
       {"model.cpp", "N/A"},
       {"model.bin", "N/A"},
       {"converter_command", ""},
-      {"copyright_str", "Copyright (c) Microsoft Corporation. All rights reserved."},
+      {"copyright_str", "Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries."},
       {"op_types", json::array()},
       {"Total parameters", ""},
       {"Total MACs per inference", ""},
@@ -1235,6 +1303,27 @@ Ort::Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span
   return Ort::Status();
 }
 
+void SignExtendUnpackedSubByteData(ONNXTensorElementDataType onnx_data_type,
+                                   /*in,out*/ gsl::span<uint8_t> bytes) {
+  // The masks keep this well-defined for any input byte, and idempotent: SignExtendLower*Bits()
+  // left-shifts its argument, so it needs a byte holding nothing above the sub-byte element.
+  switch (onnx_data_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
+      for (uint8_t& byte : bytes) {
+        byte = static_cast<uint8_t>(Int4x2::SignExtendLower4Bits(static_cast<std::byte>(byte & 0x0F)));
+      }
+      break;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
+      for (uint8_t& byte : bytes) {
+        byte = static_cast<uint8_t>(Int2x4::SignExtendLower2Bits(static_cast<std::byte>(byte & 0x03)));
+      }
+      break;
+    default:
+      // UINT4/UINT2 hold their value in the masked byte; nothing else was ever masked.
+      break;
+  }
+}
+
 Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
                                           gsl::span<const int32_t> bq_offsets,
                                           uint32_t num_blocks_per_channel,
@@ -1512,6 +1601,74 @@ static Ort::Status TransposeDataRank5(gsl::span<const int64_t> input_shape,
   return Ort::Status();
 }
 
+// Internal function to transpose a rank-2 buffer of fixed-size elements, one cache tile at a time.
+template <size_t ElementSize>
+static void TransposeTiled2D(size_t rows,
+                             size_t cols,
+                             gsl::span<const uint8_t> input_buffer,
+                             gsl::span<uint8_t> output_buffer) {
+  // A 32x32 tile of elements up to 8 bytes wide spans at most 32 cache lines on each of the source
+  // and destination sides (2 KB per side), which stays resident in L1 for the whole tile. Every
+  // source line is therefore loaded once and fully consumed, instead of once per element as in the
+  // untiled loop below.
+  constexpr size_t tile_size = 32;
+  for (size_t row_start = 0; row_start < rows; row_start += tile_size) {
+    const size_t row_end = std::min(row_start + tile_size, rows);
+    for (size_t col_start = 0; col_start < cols; col_start += tile_size) {
+      const size_t col_end = std::min(col_start + tile_size, cols);
+      for (size_t col = col_start; col < col_end; ++col) {
+        size_t dst_byte_index = (col * rows + row_start) * ElementSize;
+        for (size_t row = row_start; row < row_end; ++row) {
+          const size_t src_byte_index = (row * cols + col) * ElementSize;
+          assert(src_byte_index < input_buffer.size());
+          assert(dst_byte_index < output_buffer.size());
+          std::memcpy(&output_buffer[dst_byte_index], &input_buffer[src_byte_index], ElementSize);
+          dst_byte_index += ElementSize;
+        }
+      }
+    }
+  }
+}
+
+Ort::Status TwoDimensionTranspose(size_t rows,
+                                  size_t cols,
+                                  size_t elem_byte_size,
+                                  gsl::span<const uint8_t> input_buffer,
+                                  gsl::span<uint8_t> output_buffer) {
+  RETURN_IF_NOT(elem_byte_size != 0, "Expected a non-zero element byte size");
+
+  const size_t num_bytes = rows * cols * elem_byte_size;
+  RETURN_IF_NOT(input_buffer.size() == num_bytes && output_buffer.size() == num_bytes,
+                "Expected both transpose buffers to hold rows * cols * elem_byte_size bytes");
+
+  switch (elem_byte_size) {
+    case 1:
+      TransposeTiled2D<1>(rows, cols, input_buffer, output_buffer);
+      break;
+    case 2:
+      TransposeTiled2D<2>(rows, cols, input_buffer, output_buffer);
+      break;
+    case 4:
+      TransposeTiled2D<4>(rows, cols, input_buffer, output_buffer);
+      break;
+    case 8:
+      TransposeTiled2D<8>(rows, cols, input_buffer, output_buffer);
+      break;
+    default:
+      // Uncommon element size: fall back to an untiled element-by-element transpose.
+      for (size_t row = 0; row < rows; ++row) {
+        for (size_t col = 0; col < cols; ++col) {
+          const size_t src_byte_index = (row * cols + col) * elem_byte_size;
+          const size_t dst_byte_index = (col * rows + row) * elem_byte_size;
+          std::memcpy(&output_buffer[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
+        }
+      }
+      break;
+  }
+
+  return Ort::Status();
+}
+
 Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   std::vector<uint32_t>& data_shape,
                                   const OrtValueInfo* initializer,
@@ -1538,35 +1695,25 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
   const size_t elem_byte_size = qnn::utils::GetElementSizeByType(onnx_type);
   RETURN_IF_NOT(elem_byte_size != 0, "Can't get element byte size from given ONNX type");
 
-  std::vector<uint8_t> input_buffer;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer, input_buffer));
-  transposed_data.resize(input_buffer.size(), 0);
+  const size_t rows = data_shape[0];
+  const size_t cols = data_shape[1];
 
   if (skip_output_data_copy) {  // Only shape & dtype validation are needed, no need for real tensor
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 "Only shape and dtype validation are required, so we can use dummy tensor to avoid heavy memcpy.");
+    // Callers still size their QNN tensor from this buffer, so keep the byte count and skip only the
+    // initializer read and the transpose itself.
+    transposed_data.assign(rows * cols * elem_byte_size, 0);
     data_shape = std::move(output_shape);  // Update parameter with final transposed shape
     return Ort::Status();
   }
 
   // Actual tensor content is required.
-  const size_t rows = data_shape[0];
-  const size_t cols = data_shape[1];
-  const size_t output_cols = output_shape[1];
-
-  for (size_t row = 0; row < rows; row++) {
-    for (size_t col = 0; col < cols; col++) {
-      const size_t src_elem_index = (row * cols + col);
-      const size_t dst_elem_index = (col * output_cols + row);
-      const size_t src_byte_index = src_elem_index * elem_byte_size;
-      const size_t dst_byte_index = dst_elem_index * elem_byte_size;
-      assert(src_byte_index < input_buffer.size());
-      assert(dst_byte_index < transposed_data.size());
-
-      std::memcpy(&transposed_data[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
-    }
-  }
+  std::vector<uint8_t> input_buffer;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer, input_buffer));
+  transposed_data.resize(input_buffer.size(), 0);
+  RETURN_IF_ERROR(TwoDimensionTranspose(rows, cols, elem_byte_size, input_buffer, transposed_data));
 
   data_shape = std::move(output_shape);  // Update parameter with final transposed shape
   return Ort::Status();
@@ -1713,6 +1860,112 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
+static bool IsNarrowingQuantOutput(Qnn_DataType_t activation_qnn_data_type, Qnn_DataType_t output_qnn_data_type) {
+  return IsQuant16bit(activation_qnn_data_type) &&
+         (output_qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 || output_qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8);
+}
+
+// Every output level maps onto an intermediate level, so the Convert only drops the extra precision and the
+// result matches quantizing directly to the output encoding.
+static Ort::Status GetNarrowingIntermediateQuantParams(Qnn_DataType_t activation_qnn_data_type,
+                                                       Qnn_DataType_t output_qnn_data_type,
+                                                       const QnnQuantParamsWrapper& output_quant_param,
+                                                       QnnQuantParamsWrapper& intermediate_quant_param) {
+  RETURN_IF_NOT(output_quant_param.IsPerTensor(), "Narrowing output requires a per-tensor encoding");
+  const Qnn_ScaleOffset_t& out_encoding = output_quant_param.Get().scaleOffsetEncoding;
+
+  int64_t qmin_out = 0;
+  int64_t qmax_out = 0;
+  int64_t qmin_act = 0;
+  int64_t qmax_act = 0;
+  RETURN_IF_ERROR(GetQminQmax(output_qnn_data_type, qmin_out, qmax_out));
+  RETURN_IF_ERROR(GetQminQmax(activation_qnn_data_type, qmin_act, qmax_act));
+  const int64_t ratio = (qmax_act - qmin_act) / (qmax_out - qmin_out);  // 257 for 16-bit to 8-bit
+
+  // QNN encoding: real = scale * (q + offset).
+  const float scale = static_cast<float>(static_cast<double>(out_encoding.scale) / static_cast<double>(ratio));
+  const int64_t offset = (qmin_out + out_encoding.offset) * ratio - qmin_act;
+  intermediate_quant_param = QnnQuantParamsWrapper::PerTensor(scale, gsl::narrow<int32_t>(offset));
+  return Ort::Status();
+}
+
+Ort::Status AddOpWithQuantizedOutput(QnnModelWrapper& qnn_model_wrapper,
+                                     const std::string& node_name,
+                                     const std::string& op_type,
+                                     std::vector<std::string>&& input_names,
+                                     std::vector<std::string>&& param_tensor_names,
+                                     const std::string& output_name,
+                                     Qnn_TensorType_t output_tensor_type,
+                                     Qnn_DataType_t output_qnn_data_type,
+                                     QnnQuantParamsWrapper&& output_quant_param,
+                                     std::vector<uint32_t>&& output_shape,
+                                     Qnn_DataType_t activation_qnn_data_type,
+                                     bool do_op_validation) {
+  const bool is_float_act_quant_weight = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+                                         activation_qnn_data_type == QNN_DATATYPE_FLOAT_32 &&
+                                         input_names.size() > 1 &&
+                                         qnn_model_wrapper.GetQnnTensorWrapper(input_names[1])
+                                             .GetQnnQuantParams()
+                                             .IsQuantized();
+  if (is_float_act_quant_weight) {
+    for (auto& input_name : input_names) {
+      const auto& input_tensor = qnn_model_wrapper.GetQnnTensorWrapper(input_name);
+      if (input_tensor.GetTensorDataType() != QNN_DATATYPE_FLOAT_32) {
+        continue;
+      }
+      const std::string cast_output_name = UniqueNameGenerator().New(input_name, "_cast_fp16");
+      RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(UniqueNameGenerator().New(cast_output_name, QNN_OP_CAST),
+                                                    input_name, cast_output_name, QNN_TENSOR_TYPE_NATIVE,
+                                                    QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
+                                                    std::vector<uint32_t>(input_tensor.GetTensorDims()),
+                                                    do_op_validation));
+      input_name = cast_output_name;
+    }
+  }
+
+  std::string op_output_name = output_name;
+  if (is_float_act_quant_weight) {
+    op_output_name = UniqueNameGenerator().New(output_name, "_fp16");
+    QnnTensorWrapper fp16_tensorwrapper(op_output_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_16,
+                                        QnnQuantParamsWrapper(), std::vector<uint32_t>(output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_tensorwrapper)), "Failed to add tensor.");
+  } else if (IsNarrowingQuantOutput(activation_qnn_data_type, output_qnn_data_type)) {
+    QnnQuantParamsWrapper intermediate_quant_param;
+    RETURN_IF_ERROR(GetNarrowingIntermediateQuantParams(activation_qnn_data_type, output_qnn_data_type,
+                                                        output_quant_param, intermediate_quant_param));
+    op_output_name = UniqueNameGenerator().New(output_name, "_pre_convert");
+    QnnTensorWrapper intermediate_tensorwrapper(op_output_name, QNN_TENSOR_TYPE_NATIVE, activation_qnn_data_type,
+                                                std::move(intermediate_quant_param),
+                                                std::vector<uint32_t>(output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(intermediate_tensorwrapper)), "Failed to add tensor.");
+  }
+
+  QnnTensorWrapper output_tensorwrapper(output_name, output_tensor_type, output_qnn_data_type,
+                                        std::move(output_quant_param), std::move(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                op_type,
+                                                std::move(input_names),
+                                                {op_output_name},
+                                                std::move(param_tensor_names),
+                                                do_op_validation),
+                "Failed to add node.");
+
+  if (op_output_name != output_name) {
+    const char* op = is_float_act_quant_weight ? QNN_OP_CAST : QNN_OP_CONVERT;
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(UniqueNameGenerator().New(output_name, op),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  op,
+                                                  {op_output_name},
+                                                  {output_name},
+                                                  {},
+                                                  do_op_validation),
+                  "Failed to add output conversion node.");
+  }
+  return Ort::Status();
+}
+
 Ort::Status GetPermToLastAxis(uint32_t axis, uint32_t rank, std::vector<uint32_t>& perm) {
   RETURN_IF_NOT(axis < rank,
                 ("Expected axis must be smaller than rank: " +
@@ -1736,9 +1989,9 @@ uint64_t GetTimeStampInUs() {
   return std::chrono::duration_cast<std::chrono::microseconds>(timestamp).count();
 }
 
-bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale, float tolerance) {
-  float expected_scale = weights_scale * activation_scale;
-  return std::abs(bias_scale - expected_scale) <= tolerance;
+bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale) {
+  const float expected_scale = weights_scale * activation_scale;
+  return bias_scale == expected_scale;
 }
 
 Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param,
@@ -1999,31 +2252,6 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
   }
 
   return Ort::Status();
-}
-
-bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper, const std::string& zp_tensor_name,
-                                    int64_t bits) {
-  std::vector<uint8_t> per_block_uint8_zp;
-  const OrtValueInfo* zp_tensor_proto = qnn_model_wrapper.GetConstantTensor(zp_tensor_name);
-  if (zp_tensor_proto == nullptr) {
-    return false;  // zero_points tensor exists but is not a constant initializer.
-  }
-  auto status = qnn_model_wrapper.UnpackInitializerData(zp_tensor_proto, per_block_uint8_zp);
-  if (!status.IsOK()) {
-    return false;
-  }
-  // Build the expected packed byte: pack (8/bits) copies of 2^(bits-1) into one byte.
-  // e.g., bits=2: sym_zp=2 (0b10),   elems_per_byte=4 -> expected=0b10101010
-  //       bits=4: sym_zp=8 (0b1000), elems_per_byte=2 -> expected=0b10001000
-  //       bits=8: sym_zp=128,        elems_per_byte=1 -> expected=0b10000000
-  const int64_t elems_per_byte = 8 / bits;
-  const uint8_t sym_zp = static_cast<uint8_t>(1u << (bits - 1));
-  uint8_t expected_packed = 0;
-  for (int64_t i = 0; i < elems_per_byte; ++i) {
-    expected_packed |= static_cast<uint8_t>(sym_zp << (bits * i));
-  }
-  return std::all_of(per_block_uint8_zp.begin(), per_block_uint8_zp.end(),
-                     [expected_packed](uint8_t zp) { return zp == expected_packed; });
 }
 
 }  // namespace utils

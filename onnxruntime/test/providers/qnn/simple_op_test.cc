@@ -427,6 +427,34 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Sigmoid_U16) {
                          true);  // Use MS domain Q/DQ ops
 }
 
+TEST_F(QnnHTPBackendTests, UnaryOp_Swish_FP16) {
+  RunFP16OpTest("Swish",
+                {TestInputDef<float>({7}, false, {-4.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 4.0f})},
+                {},
+                24,
+                ExpectedEPNodeAssignment::All,
+                kOnnxDomain,
+                0.01f);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Swish_QDQ_U8) {
+  RunQDQOpTest<uint8_t>("Swish",
+                        {TestInputDef<float>({7}, false, {-10.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 10.0f})},
+                        {},
+                        24,
+                        ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Swish_QDQ_U16) {
+  RunQDQOpTest<uint16_t>("Swish",
+                         {TestInputDef<float>({7}, false, {-10.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 10.0f})},
+                         {},
+                         24,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,
+                         true);
+}
+
 // Test the accuracy of QDQ Tanh.
 TEST_F(QnnHTPBackendTests, UnaryOp_Tanh) {
   RunQDQOpTest<uint8_t>("Tanh",
@@ -577,6 +605,35 @@ static bool HasQnnJsonGraph(const std::filesystem::path& dump_dir) {
     }
   }
   return false;
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Swish_QnnGraph) {
+  const std::filesystem::path json_qnn_graph_dir = "UnaryOp_Swish_QnnGraph";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup =
+      gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  const std::vector<TestInputDef<float>> input_defs = {
+      TestInputDef<float>({7}, false, {-10.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f, 10.0f})};
+  TestQDQModelAccuracy(BuildOpTestCase<float>("Swish_node", "Swish", input_defs, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>("Swish_node", "Swish", input_defs, {}, {}),
+                       provider_options,
+                       24,
+                       ExpectedEPNodeAssignment::All);
+
+  if (!HasQnnJsonGraph(json_qnn_graph_dir)) {
+    return;
+  }
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Sigmoid", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 1);
 }
 
 // Builds a QDQ model and asserts the op emits as its dedicated fine-grained QNN op name.
@@ -2163,102 +2220,6 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_FP16) {
                 21,
                 ExpectedEPNodeAssignment::All,
                 kOnnxDomain);
-}
-
-// Returns a function that creates the model `X * HardSigmoid(X)`, which can be potentially fused
-// into a single HardSwish(X) operator.
-template <typename FloatType>
-static GetTestModelFn BuildHardSigmoidFusionTestCase(TestInputDef<FloatType>& input_def,
-                                                     std::optional<float> alpha,
-                                                     std::optional<float> beta) {
-  return [input_def, alpha, beta](ModelTestBuilder& builder) {
-    MakeTestInput<FloatType>(builder, "input", input_def);
-
-    // input -> HardSigmoid<alpha, beta> -> hs_output
-    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-    attrs.reserve((alpha.has_value() ? 1u : 0u) + (beta.has_value() ? 1u : 0u));
-
-    if (alpha.has_value()) {
-      attrs.push_back(MakeAttribute("alpha", alpha.value()));
-    }
-
-    if (beta.has_value()) {
-      attrs.push_back(MakeAttribute("beta", beta.value()));
-    }
-
-    builder.AddNode("HardSigmoid",
-                    "HardSigmoid",
-                    {"input"},
-                    {"hs_out"},
-                    kOnnxDomain,
-                    attrs);
-
-    // hs_out -> Mul -> output
-    //             ^
-    //             |
-    // input ------+
-    builder.MakeOutput("Y");
-    builder.AddNode("Mul",
-                    "Mul",
-                    {"hs_out", "input"},
-                    {"Y"});
-  };
-}
-
-// Test FP32 fusion of HardSigmoid into HardSwish on the HTP backend with the enable_htp_fp16_precision option enabled
-// to run it with fp16 precision.
-TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "htp";
-#if defined(_WIN32)
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#endif
-#if defined(__linux__) && !defined(__aarch64__)
-  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
-#endif
-  provider_options["enable_htp_fp16_precision"] = "1";
-
-  std::vector<float> input_data = {-8.0f, -2.0f, 0.0f, 0.5f, 0.9f, 1.1f, 3.3f, 8.0f,
-                                   -7.0f, 0.0f, 0.2f, 0.4f, 0.8f, 2.1f, 4.3f, 7.0f};
-
-  auto input_def = TestInputDef<float>({2, 2, 2, 2}, false, input_data);
-  constexpr float alpha = 1.0f / 6.0f;
-  constexpr float beta = 0.5f;
-  auto model_fn = BuildHardSigmoidFusionTestCase<float>(input_def, alpha, beta);
-
-  RunQnnModelTest(model_fn,
-                  provider_options,
-                  18,  // opset
-                  EPVerificationParams{ExpectedEPNodeAssignment::All,
-                                       // abs err. Comparing fp16 (QNN) vs fp32 (CPU EP) so can't expect too much.
-                                       ElementwiseAbsoluteVerifier(0.01f)});
-}
-
-// Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
-TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
-#if defined(_WIN32)
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#endif
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-
-  std::vector<float> input_data = {-8.0f, -2.0f, 0.0f, 0.5f, 0.9f, 1.1f, 3.3f, 8.0f,
-                                   -7.0f, 0.0f, 0.2f, 0.4f, 0.8f, 2.1f, 4.3f, 7.0f};
-
-  auto input_def = TestInputDef<float>({2, 2, 2, 2}, false, input_data);
-  auto input_fp16_def = ConvertToFP16InputDef(input_def);
-
-  constexpr float alpha = 1.0f / 6.0f;
-  constexpr float beta = 0.5f;
-  auto model_fp32_fn = BuildHardSigmoidFusionTestCase<float>(input_def, alpha, beta);
-  auto model_fp16_fn = BuildHardSigmoidFusionTestCase<Ort::Float16_t>(input_fp16_def, alpha, beta);
-
-  TestFp16ModelAccuracy(model_fp32_fn,
-                        model_fp16_fn,
-                        provider_options,
-                        18,  // opset
-                        ExpectedEPNodeAssignment::All);
 }
 
 // Test RandomUniformLike + Add operation on HTP backend

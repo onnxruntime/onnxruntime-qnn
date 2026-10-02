@@ -329,6 +329,10 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_outputs[i], output_tensor_infos[i]));
     } else {
       output_tensor_infos[i].qnn_data_type = input_tensor_infos[0].qnn_data_type;
+      // TODO: an absent output slot keeps the default UNDEFINED quant_param, emitted verbatim below.
+      // Dormant only because LSTM has no QDQ selector yet (always fp, where UNDEFINED is valid); before
+      // enabling a u8 LSTM, either fp-degrade a missing-output group in this builder (as the GRU op
+      // builder does) or backfill absent slots' quant encodings here.
     }
   }
 

@@ -58,6 +58,7 @@ class OpBuilderRegistrations {
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type);
 
 void CreateArgMaxMinOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateArrayFeatureExtractorOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateBatchNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateBernoulliOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -97,6 +98,7 @@ void CreateNonZeroOpBuilder(const std::string& op_type, OpBuilderRegistrations& 
 void CreateOneHotOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreatePadOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreatePoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateQLinearConvOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateQLinearMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateQuickGeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRandomNormalLikeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

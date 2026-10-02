@@ -43,8 +43,10 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
                                                         const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
-  RETURN_IF_NOT(IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()),
-                "GroupQueryAttention is only supported with the GPU backend");
+  auto backend_type = qnn_model_wrapper.GetQnnBackendType();
+
+  RETURN_IF_NOT(IsGpuBackend(backend_type) || backend_type == QnnBackendType::HTP,
+                "GroupQueryAttention is only supported with the GPU and HTP backends");
 
   const size_t num_inputs = node_unit.Inputs().size();
   const auto& inputs = node_unit.Inputs();
@@ -218,7 +220,14 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
   RETURN_IF(head_size == 0, "head_size can't be zero!");
 
   const float scale_default = 1.0f / std::sqrt(static_cast<float>(head_size));
-  const float scale = node_helper.Get("scale", scale_default);
+  // ONNX GroupQueryAttention treats scale == 0 as "use the default", i.e. 1/sqrt(head_size).
+  // node_helper.Get() only falls back to the default when the attribute is absent, so handle the
+  // explicit 0.0 case here as well; otherwise QNN GQA computes QK^T * 0 and the softmax degenerates
+  // to a uniform distribution (output becomes the mean of value).
+  float scale = node_helper.Get("scale", scale_default);
+  if (scale == 0.0f) {
+    scale = scale_default;
+  }
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),
                                node_unit.Name(),

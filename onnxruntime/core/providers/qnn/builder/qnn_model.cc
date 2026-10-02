@@ -8,7 +8,6 @@
 #include <gsl/gsl>
 #include <thread>
 
-#include "HTP/QnnHtpContext.h"
 #include "HTP/QnnHtpGraph.h"
 #include "QnnOpDef.h"
 
@@ -20,6 +19,7 @@
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_ep_profiler.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 #include "core/providers/qnn/shared_context.h"
 
@@ -289,42 +289,29 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
     trace_collector = std::make_unique<OpTraceCollector>();
   }
 
-  QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph, api_ptrs_, logger,
-                                                      qnn_backend_manager_->GetQnnInterface(),
-                                                      qnn_backend_manager_->GetQnnBackendHandle(),
-                                                      qnn_backend_manager_->GetQnnValidatorInterface(),
-                                                      qnn_backend_manager_->GetQnnValidatorBackendHandle(),
+  QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph,
+                                                      api_ptrs_,
+                                                      logger,
+                                                      *qnn_backend_manager_,
                                                       graph_inputs_,
                                                       graph_outputs_,
-                                                      qnn_backend_manager_->GetQnnBackendType(),
                                                       *context.model_settings,
                                                       context.tensor_name_overrides,
                                                       trace_collector.get(),
                                                       /*is_post_layout_transform=*/true);
 
   qnn::profile::ProfilingInfo profiling_info;
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
-    profiling_info.graph_name = graph_name;
-    profiling_info.start_time = qnn::utils::GetTimeStampInUs();
-  }
-#endif
+  QnnProfilingScope profiling_scope;
+  RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().CreateSetupProfilingScope(
+      profiling_info,
+      graph_name,
+      OrtProfilingOperation::COMPOSE,
+      ProfilingMethodType::COMPOSE_GRAPHS,
+      profiling_scope));
 
   bool rt = qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, context.graph_configs);
 
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
-    profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
-    profiling_info.method_type = ProfilingMethodType::COMPOSE_GRAPHS;
-  }
-#endif
-
   RETURN_IF_NOT(rt, "Failed to initialize qnn_model_wrapper.");
-
-  // NOTE: This function returns immediately when profiling is disabled.
-  // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
-  // and not in production. We can improve synchronization for event profiling if it becomes an issue.
-  RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
 
   std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
   qnn_node_groups.reserve(node_unit_holder.size());
@@ -350,13 +337,21 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   const bool build_json_graph = !context.json_qnn_graph_path.empty();
   RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
 
+  profiling_scope.Complete(profiling_info);
+
+  // Drain after the complete QNN graph composition so both provider CSV and ORT session
+  // profiling include the graph-add and graph-compose QAIRT events.
+  if (!profiling_info.graph_name.empty()) {
+    RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().ExtractBackendProfilingInfo(profiling_info, logger));
+  }
+
   // Collect framework op trace after graph composition
   if (trace_collector) {
     OpTraceLookup per_graph_lookup;
     trace_collector->Finalize(graph_name, qnn_model_wrapper, *context.op_trace_output, per_graph_lookup);
-    // Hand the per-graph lookup off to the backend manager, which holds the
-    // session-wide lookup that ExtractBackendProfilingInfo reads from.
-    qnn_backend_manager_->MergeOpTraceLookup(std::move(per_graph_lookup));
+    // Hand the per-graph lookup off to the profiling manager, which owns the
+    // session-wide lookup that extraction reads from.
+    qnn_backend_manager_->GetProfilingManager().MergeOpTraceLookup(std::move(per_graph_lookup));
   }
 
   LogTensorDetails(qnn_model_wrapper, graph_name, context.json_qnn_graph_path, logger);
@@ -384,23 +379,23 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "FinalizeGraphs started.");
 
   qnn::profile::ProfilingInfo profiling_info;
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
-    profiling_info.start_time = qnn::utils::GetTimeStampInUs();
-  }
-#endif
+  QnnProfilingScope profiling_scope;
+  // When finalization runs on a worker thread (i.e., parallel finalization), it has
+  // no initialization-thread TLS ORT profiler scope. ORT-only profiling therefore
+  // leaves `graph_name` empty and skips extraction. With a CSV/ETW sink, the same work
+  // remains provider-output-only and is never attributed to ORT JSON.
+  RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().CreateSetupProfilingScope(
+      profiling_info,
+      graph_info_->Name(),
+      OrtProfilingOperation::FINALIZE,
+      ProfilingMethodType::FINALIZE,
+      profiling_scope));
 
   Qnn_ErrorHandle_t status = qnn_backend_manager_->GetQnnInterface().graphFinalize(graph_info_->Graph(),
-                                                                                   qnn_backend_manager_->GetQnnProfileHandle(),
+                                                                                   profiling_scope.Handle(),
                                                                                    nullptr);
 
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
-    profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
-    profiling_info.method_type = ProfilingMethodType::FINALIZE;
-    profiling_info.graph_name = graph_info_->Name();
-  }
-#endif
+  profiling_scope.Complete(profiling_info);
 
   if (QNN_GRAPH_NO_ERROR != status) {
     return MAKE_EP_FAIL(("Failed to finalize QNN graph. " +
@@ -411,7 +406,9 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
   // NOTE: This function returns immediately when profiling is disabled.
   // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
   // and not in production. We can improve synchronization for event profiling if it becomes an issue.
-  RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
+  if (!profiling_info.graph_name.empty()) {
+    RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().ExtractBackendProfilingInfo(profiling_info, logger));
+  }
 
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "FinalizeGraphs completed.");
   return Ort::Status();
@@ -510,24 +507,27 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   const bool uses_shared_memory =
       ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
       ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE;
+  const bool uses_imported_memory =
+      ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_GPU &&
+      ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_DEFAULT;
 
-  if (!uses_shared_memory) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
-    SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
-    SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
-  } else {
+  if (uses_shared_memory || uses_imported_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t memHandle to ORT tensor shared memory.");
     Qnn_MemHandle_t qnn_mem_handle{};
     RETURN_IF_ERROR(qnn_backend_manager.GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
                                                                       qnn_mem_handle));
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_MEMHANDLE);
     SetQnnTensorMemHandle(qnn_tensor, qnn_mem_handle);
+  } else {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
+    SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
+    SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
   }
 
   return Ort::Status();
 }
 
-Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
+Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpContextIoDispatch& io_dispatch) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
               ("SSR recovery: reloading QNN context for graph: " + graph_info_->Name()).c_str());
 
@@ -550,45 +550,8 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
       // We are the first model to recover from this SSR event.
       // Free the old (shared) context and create a new one from the binary.
       qnn_backend_manager_->ReleaseSpecificContextHandle(old_context);
-
-      // Use the unified file I/O helper instead of duplicating the read logic.
-      std::vector<char> buffer;
-      RETURN_IF_ERROR(qnn_backend_manager_->ReadContextBinIfValid(context_bin_filepath_, buffer));
-
-      const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
-
-      // Build context configs: priority + spill fill buffer.
-      QnnContext_Config_t priority_config = QNN_CONTEXT_CONFIG_INIT;
-      RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, priority_config));
-
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
-      QnnContext_Config_t spill_fill_config = QNN_CONTEXT_CONFIG_INIT;
-      QnnHtpContext_CustomConfig_t spill_fill_custom_config;
-      spill_fill_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
-      QnnHtpContext_GroupRegistration_t group_info;
-      group_info.firstGroupHandle = 0x0;  // New group (this is the only context after SSR)
-      group_info.maxSpillFillBuffer = max_spill_fill_size_;
-      spill_fill_custom_config.groupRegistration = group_info;
-      spill_fill_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-      spill_fill_config.customConfig = &spill_fill_custom_config;
-      QnnContext_Config_t* spill_fill_ptr = max_spill_fill_size_ > 0 ? &spill_fill_config : nullptr;
-#else
-      QnnContext_Config_t* spill_fill_ptr = nullptr;
-#endif
-
-      const QnnContext_Config_t* context_configs[] = {&priority_config, spill_fill_ptr, nullptr};
-
-      auto rt = qnn_interface.contextCreateFromBinary(
-          qnn_backend_manager_->GetQnnBackendHandle(),
-          qnn_backend_manager_->GetQnnDeviceHandle(),
-          context_configs,
-          static_cast<void*>(buffer.data()),
-          static_cast<Qnn_ContextBinarySize_t>(buffer.size()),
-          &new_context,
-          qnn_backend_manager_->GetQnnProfileHandle());
-      RETURN_IF(QNN_SUCCESS != rt,
-                ("SSR recovery: contextCreateFromBinary failed. Error code: " + std::to_string(rt)).c_str());
-      RETURN_IF_ERROR(qnn_backend_manager_->AddQnnContextHandle(new_context));
+      RETURN_IF_ERROR(qnn_backend_manager_->ReloadContextForSSR(
+          context_bin_filepath_, max_spill_fill_size_, new_context, io_dispatch));
     } else {
       // Another model already recovered and recreated the context from this binary.
       // Reuse it — it's the only context remaining in context_map_.
@@ -615,7 +578,8 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger) {
 
 Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
                                           const Ort::Logger& logger,
-                                          Qnn_ErrorHandle_t& execute_status) {
+                                          Qnn_ErrorHandle_t& execute_status,
+                                          QnnEpProfiler* ort_profiler) {
   using namespace qnn::utils;
   auto TensorDataSize = [&ort_api = api_ptrs_.ort_api](auto ort_tensor) -> size_t {
     OrtTensorTypeAndShapeInfo* tensor_type_and_shape = nullptr;
@@ -729,12 +693,16 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Start execute QNN graph:" + graph_info_->Name()).c_str());
 
   qnn::profile::ProfilingInfo profiling_info;
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
-    profiling_info.start_time = qnn::utils::GetTimeStampInUs();
-  }
-#endif
-  auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
+  QnnProfilingScope profiling_scope;
+  RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().CreateGraphProfilingScope(
+      profiling_info,
+      graph_info_->Name(),
+      OrtProfilingOperation::EXECUTE,
+      ProfilingMethodType::EXECUTE,
+      ort_profiler,
+      logger,
+      profiling_scope));
+  auto profile_backend_handle = profiling_scope.Handle();
 
   auto thread_id = std::this_thread::get_id();
 
@@ -772,13 +740,7 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
                                               profile_backend_handle,
                                               nullptr);
 
-#ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-  if (qnn_backend_manager_->ProfilingEnabled()) {
-    profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
-    profiling_info.method_type = ProfilingMethodType::EXECUTE;
-    profiling_info.graph_name = graph_info_->Name();
-  }
-#endif
+  profiling_scope.Complete(profiling_info);
 
   // Relax on the normal path first to preserve the original relax -> extract-profiling
   // order, then mark handled so the scope guard above becomes a no-op. Log instead of
@@ -793,16 +755,26 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
     }
   }
 
-  // NOTE: This function returns immediately when profiling is disabled.
-  // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
-  // and not in production. We can improve synchronization for event profiling if it becomes an issue.
-  RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
+  bool queued_for_ort = false;
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  if (ort_profiler != nullptr) {
+    // HTP detailed events can be published after graphExecute returns. Keep the shared profile
+    // handle alive until StopEvent, then extract and attach the complete event tree to this ORT scope.
+    ort_profiler->QueueExecuteProfilingExtraction(std::move(profiling_info));
+    queued_for_ort = true;
+  }
+#endif
+  if (!queued_for_ort && profiling_scope.Active()) {
+    RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().ExtractBackendProfilingInfo(profiling_info, logger));
+  }
 
   return Ort::Status();
 }
 
 Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
-                                   const Ort::Logger& logger) {
+                                   const Ort::Logger& logger,
+                                   const qnn::EpContextIoDispatch& io_dispatch,
+                                   QnnEpProfiler* ort_profiler) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "QnnModel::ExecuteGraphs");
   size_t num_inputs;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetInputCount(context, &num_inputs));
@@ -830,24 +802,38 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
                   "SSR recovery: context was already freed by another QnnModel in the same context, "
                   "recovering proactively.");
-      RETURN_IF_ERROR(RecoverFromSSR(logger));
+      RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
     }
   }
 
   // First attempt: bind tensors and execute.
   Qnn_ErrorHandle_t execute_status = QNN_GRAPH_NO_ERROR;
-  RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  const size_t pending_extraction_mark =
+      ort_profiler ? ort_profiler->MarkPendingExecuteProfilingExtractions() : 0;
+#endif
+  RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
 
   if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+    if (ort_profiler) {
+      ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
+    }
+#endif
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
                 "NPU crashed. SSR detected during QNN graph execute.");
     if (!context_bin_filepath_.empty()) {
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Attempting SSR recovery.");
-      RETURN_IF_ERROR(RecoverFromSSR(logger));
+      RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
 
       // Retry once with fresh context and re-bound tensors.
-      RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status));
+      RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
       if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+        if (ort_profiler) {
+          ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
+        }
+#endif
         return Ort::Status("NPU crashed again after SSR recovery.", QNN_SSR_UNRECOVERABLE_ERROR_CODE);
       }
       if (QNN_GRAPH_NO_ERROR == execute_status) {
@@ -877,7 +863,14 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
                                    const std::vector<QnnTensorWrapper>& tensor_wrappers,
                                    bool is_input) {
   size_t tensor_count = tensor_wrappers.size();
-  RETURN_IF(0 == tensor_count, "Zero tensor size!");
+  if (tensor_count == 0) {
+    RETURN_IF_NOT(is_input, "The count of graph outputs should be nonzero!");
+    RETURN_IF_NOT(IsGpuBackend(qnn_backend_manager_->GetQnnBackendType()),
+                  "Having zero graph inputs is not supported on this backend.");
+    qnn_tensor_infos.clear();
+    return Ort::Status();
+  }
+
   if (is_input) {
     auto input_count = graph_inputs_.indices.size();
     RETURN_IF(input_count < tensor_count, "The count of graph inputs should be at least the count of tensor_wrapper!");

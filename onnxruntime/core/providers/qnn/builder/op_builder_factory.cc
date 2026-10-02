@@ -13,6 +13,7 @@ namespace qnn {
 OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateArgMaxMinOpBuilder("ArgMax", *this);
   CreateArgMaxMinOpBuilder("ArgMin", *this);
+  CreateArrayFeatureExtractorOpBuilder("ArrayFeatureExtractor", *this);
   CreateAttentionOpBuilder("Attention", *this);
   CreateBatchNormalizationOpBuilder("BatchNormalization", *this);
   CreateBernoulliOpBuilder("Bernoulli", *this);
@@ -57,8 +58,11 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreatePoolOpBuilder("GlobalAveragePool", *this);
   CreatePoolOpBuilder("GlobalMaxPool", *this);
   CreatePoolOpBuilder("MaxPool", *this);
+  CreateQLinearConvOpBuilder("QLinearConv", *this);
   CreateQLinearMatMulOpBuilder("QLinearMatMul", *this);
+  // QuickGelu and Swish share x * sigmoid(alpha * x); the builder applies each schema's default alpha.
   CreateQuickGeluOpBuilder("QuickGelu", *this);
+  CreateQuickGeluOpBuilder("Swish", *this);
   CreateRandomNormalLikeOpBuilder("RandomNormalLike", *this);
   CreateRandomUniformLikeOpBuilder("RandomUniformLike", *this);
   CreateRangeOpBuilder("Range", *this);

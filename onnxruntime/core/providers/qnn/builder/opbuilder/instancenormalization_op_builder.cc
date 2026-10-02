@@ -56,7 +56,8 @@ Ort::Status InstanceNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_m
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape of input 0");
   const size_t input_rank = input_shape.size();
 
-  RETURN_IF(input_rank <= 2 || input_rank > 4, "QNN InstanceNorm only supports input ranks of size 3 or 4.");
+  RETURN_IF(input_rank <= 2 || input_rank > 5,
+            "QNN InstanceNorm only supports input ranks of size 3, 4, or 5.");
 
   const uint32_t num_channels = (node_unit.Domain() == kMSInternalNHWCDomain) ? input_shape.back() : input_shape[1];
 
@@ -92,10 +93,61 @@ Ort::Status InstanceNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_m
   TensorInfo input0_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input0_info));
 
-  // HTP backend can only handle rank 3 inputs if the batch size is 1. If the batch size is not 1,
-  // QNN EP must reshape the input and output to (N, 1, W, C) and process the InstanceNorm as rank 4.
-  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
-      input0_info.shape.size() == 3 && input0_info.shape[0] != 1) {
+  // QNN InstanceNorm supports rank <= 4. Flatten rank-5 inputs ([N, D, H, W, C])
+  // to rank-4 ([N, D*H, W, C]): statistics run over the same per-(N, C) elements,
+  // so this is exact. Merge D*H to keep W intact.
+  if (input0_info.shape.size() == 5) {
+    const std::string& orig_input0_name = inputs[0].name;
+    const std::string op_input0_name = input0_info.is_initializer ? orig_input0_name
+                                                                  : utils::UniqueNameGenerator().New(orig_input0_name, "_reshape");
+    input_names.push_back(op_input0_name);
+
+    std::vector<uint8_t> initializer_data;
+    if (input0_info.is_initializer) {
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input0_info.initializer_tensor, initializer_data));
+    }
+
+    const uint64_t merged_spatial = static_cast<uint64_t>(input0_info.shape[1]) * input0_info.shape[2];
+    RETURN_IF(merged_spatial > UINT32_MAX, "InstanceNormalization rank-5 D*H product exceeds uint32 range");
+    std::vector<uint32_t> op_shape = {
+        input0_info.shape[0],                   // N
+        static_cast<uint32_t>(merged_spatial),  // D*H
+        input0_info.shape[3],                   // W
+        input0_info.shape[4]                    // C
+    };
+
+    if (!input0_info.is_initializer) {
+      RETURN_IF(input0_info.quant_param.IsPerChannel(),
+                "Non-constant InstanceNormalization inputs only support per-tensor quantization");
+
+      // Add Reshape node to flatten the two leading spatial dims.
+      // We don't need to do this for initializers, because the element layout does not change. We can just
+      // modify the shape dimensions.
+      bool is_graph_input = qnn_model_wrapper.IsGraphInput(orig_input0_name);
+      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(orig_input0_name,
+                                                       op_input0_name,
+                                                       input0_info.shape,
+                                                       op_shape,
+                                                       input0_info.qnn_data_type,
+                                                       input0_info.quant_param,
+                                                       do_op_validation,
+                                                       is_graph_input));
+    } else {
+      // A merge (unlike the unsqueeze below) cannot shift the quantization axis,
+      // so per-channel constants stay unsupported.
+      RETURN_IF(input0_info.quant_param.IsPerChannel(),
+                "Constant rank-5 InstanceNormalization inputs with per-channel quantization are not supported");
+    }
+
+    Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(op_input0_name);
+    QnnTensorWrapper input_tensorwrapper(op_input0_name, tensor_type, input0_info.qnn_data_type,
+                                         std::move(input0_info.quant_param), std::move(op_shape),
+                                         std::move(initializer_data));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+  } else if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+             input0_info.shape.size() == 3 && input0_info.shape[0] != 1) {
+    // HTP backend can only handle rank 3 inputs if the batch size is 1. If the batch size is not 1,
+    // QNN EP must reshape the input and output to (N, 1, W, C) and process the InstanceNorm as rank 4.
     const std::string& orig_input0_name = inputs[0].name;
     const std::string op_input0_name = input0_info.is_initializer ? orig_input0_name
                                                                   : utils::UniqueNameGenerator().New(orig_input0_name, "_reshape");
@@ -205,8 +257,12 @@ Ort::Status InstanceNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModel
 
   // HTP backend can only handle rank 3 inputs/outputs if the batch size is 1. If the batch size is not 1,
   // QNN EP must reshape the input and output to (N, 1, W, C) and process the InstanceNorm as rank 4.
-  if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) ||
-      output_info.shape.size() != 3 || output_info.shape[0] == 1) {
+  // Rank-5 outputs are flattened the same way (see ProcessInputs).
+  const bool is_rank3_batch_wrap =
+      IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      output_info.shape.size() == 3 && output_info.shape[0] != 1;
+  const bool is_rank5_flatten = output_info.shape.size() == 5;
+  if (!is_rank3_batch_wrap && !is_rank5_flatten) {
     return ProcessOutputs(qnn_model_wrapper, node_unit,
                           std::move(input_names),
                           std::move(param_tensor_names),
@@ -214,19 +270,31 @@ Ort::Status InstanceNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModel
   }
 
   //
-  // The output is meant to be rank 3 with batch size != 1. Must create a QNN InstanceNorm op with a rank 4 output
-  // that is then reshaped to rank 3 again.
+  // The output is meant to be rank 3 with batch size != 1, or rank 5. Must create a QNN InstanceNorm
+  // op with a rank 4 output that is then reshaped back to the original rank.
   //
 
   const std::string& orig_output_name = outputs[0].name;
   std::string op_output_name = utils::UniqueNameGenerator().New(orig_output_name, "_reshape");
 
-  std::vector<uint32_t> op_output_shape = {
-      output_info.shape[0],  // N
-      1,                     // H == 1
-      output_info.shape[1],  // W
-      output_info.shape[2],  // C
-  };
+  std::vector<uint32_t> op_output_shape;
+  if (output_info.shape.size() == 5) {
+    const uint64_t merged_spatial = static_cast<uint64_t>(output_info.shape[1]) * output_info.shape[2];
+    RETURN_IF(merged_spatial > UINT32_MAX, "InstanceNormalization rank-5 D*H product exceeds uint32 range");
+    op_output_shape = {
+        output_info.shape[0],                   // N
+        static_cast<uint32_t>(merged_spatial),  // D*H
+        output_info.shape[3],                   // W
+        output_info.shape[4]                    // C
+    };
+  } else {
+    op_output_shape = {
+        output_info.shape[0],  // N
+        1,                     // H == 1
+        output_info.shape[1],  // W
+        output_info.shape[2]   // C
+    };
+  }
 
   QnnTensorWrapper output_tensorwrapper(op_output_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
                                         output_info.quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
@@ -242,7 +310,8 @@ Ort::Status InstanceNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModel
 
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(orig_output_name);
 
-  // Add Reshape to convert QNN InstanceNorm output back to rank 3 (as expected by the rest of the ONNX graph).
+  // Add Reshape to convert QNN InstanceNorm output back to the original rank
+  // (as expected by the rest of the ONNX graph).
   RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(op_output_name,
                                                    orig_output_name,
                                                    op_output_shape,

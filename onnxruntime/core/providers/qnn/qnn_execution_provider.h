@@ -15,6 +15,7 @@
 #include "HTP/QnnHtpGraph.h"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
@@ -96,6 +97,14 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                        _In_ size_t num_options) noexcept;
   static const char* ORT_API_CALL GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp* this_ptr,
                                                                         _In_ const OrtGraph* graph) noexcept;
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  static OrtStatus* ORT_API_CALL CreateProfilerImpl(_In_ OrtEp* this_ptr,
+                                                    _Outptr_result_maybenull_ OrtEpProfilerImpl** profiler) noexcept;
+#endif
+
+  OrtStatus* ReloadCompiledContext(const OrtGraph** graphs,
+                                   const OrtNode** fused_nodes,
+                                   size_t count);
 
   OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
@@ -153,10 +162,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
-  void InitQnnHtpGraphConfigs(
-      const qnn::HtpGraphConfigs_t& configs,
-      qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
-
   std::unique_ptr<qnn::QnnSerializerConfig> InitQnnSerializerConfig() const;
 
   std::string FormatEPConfigKey(const std::string& key) const {
@@ -187,7 +192,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // RAII guard to complete backend setup and release resource during exit.
   // This is expected to be used in GetCapability and Compile for multi-SoC EP context.
   struct ScopedPerSocQnnBackendSetup {
-    explicit ScopedPerSocQnnBackendSetup(const QnnEp& ep) : ep_(ep) {};
+    explicit ScopedPerSocQnnBackendSetup(const QnnEp& ep) : ep_(ep) {}
     ~ScopedPerSocQnnBackendSetup();
     ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ScopedPerSocQnnBackendSetup);
 
@@ -225,6 +230,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
   bool prepare_only_ = false;
+  bool prepare_and_load_ = false;
   bool enable_spill_fill_buffer_ = false;
   bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)
@@ -275,6 +281,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   bool enable_htp_graph_splitting_ = false;
+  // Number of threads to prepare split subgraphs in parallel. UINT32_MAX = auto-select.
+  // Only meaningful when enable_htp_graph_splitting_ is true. Requires QAIRT SDK 2.51+.
+  uint32_t htp_graph_splitting_num_prepare_threads_ = UINT32_MAX;
 
   // === Multi-SoC context binary (a.k.a. Flexible Context Binary) ===
   bool enable_multi_soc_ep_context_ = false;
@@ -290,6 +299,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
 
   qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  OrtMemoryInfo* registered_memory_info_ = nullptr;
 
   // Model compatibility.
   std::shared_ptr<qnn::QnnCacheCompatibilityManager> qnn_cache_compatibility_manager_ = nullptr;
@@ -315,6 +326,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
   GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_ERROR;
   mutable std::atomic<uint64_t> genie_kv_cache_rewind_{1};
+
+  // Owns the App-provided EPContext read/write callbacks.
+  // On pre-v28 ORT it degrades to a no-op stub with HasReadCallback() / HasWriteCallback() returning false.
+  std::unique_ptr<qnn::EpContextIoDispatch> io_dispatch_;
 };
 
 }  // namespace onnxruntime
