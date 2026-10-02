@@ -393,12 +393,6 @@ block()
     target_compile_options(onnxruntime_provider_test PRIVATE -Wno-error=shorten-64-to-32)
   endif()
 
-  set(onnxruntime_qnn_internal_ut_symbols_enabled OFF)
-  if(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS OR
-     (ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
-    set(onnxruntime_qnn_internal_ut_symbols_enabled ON)
-  endif()
-
   # Internal-symbol test build: link against the SHARED QNN EP library so tests
   # can call EP-internal functions directly.
   if(onnxruntime_qnn_internal_ut_symbols_enabled)

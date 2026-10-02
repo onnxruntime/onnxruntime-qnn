@@ -44,12 +44,6 @@
     list(APPEND onnxruntime_providers_qnn_all_srcs "${ONNXRUNTIME_ROOT}/core/providers/qnn/onnxruntime_providers_qnn.rc")
   endif()
 
-  set(onnxruntime_qnn_internal_ut_symbols_enabled OFF)
-  if(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS OR
-     (ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
-    set(onnxruntime_qnn_internal_ut_symbols_enabled ON)
-  endif()
-
   if(onnxruntime_qnn_internal_ut_symbols_enabled)
     if(WIN32)
       list(APPEND onnxruntime_providers_qnn_all_srcs

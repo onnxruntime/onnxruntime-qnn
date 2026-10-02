@@ -21,13 +21,13 @@ Shared test infrastructure (mocks, stub backends, the `OpBuilderTestContext` wra
 
 Because the QNN EP ships as a dynamically loaded plugin (`MODULE` library), its internal symbols are not normally accessible to external test binaries. The existing integration tests work around this by testing only through the public EP interface.
 
-This unit test infrastructure solves the problem by introducing a **coverage build mode** (`ENABLE_COVERAGE=ON`) that:
+This unit test infrastructure solves the problem through an **internal-symbol test build mode** that is enabled by the Linux x86-64 coverage build or the explicit `onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS` CMake option:
 
 1. Rebuilds the EP as a `SHARED` library so the test binary can link against it directly.
-2. Exports all symbols via a permissive version script.
+2. Exports internal symbols through the platform-specific test-build linker configuration.
 3. Defines `QNN_EP_INTERNAL_SYMBOL_ACCESS=1`, which activates the test code in this directory.
 
-All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS`, so it compiles to empty translation units in normal (non-coverage) builds and has no impact on production binaries.
+All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS`, so it compiles to empty translation units unless this mode is enabled and has no impact on production binaries.
 
 ## Current test suites
 
@@ -69,6 +69,15 @@ cd build/linux-x86_64/RelWithDebInfo
 ./onnxruntime_provider_test --gtest_filter="QnnUnit_*"
 ```
 
+```powershell
+# Windows x86-64 internal-symbol test build. The result is test-only and must
+# not be used as a production QNN EP artifact.
+python qcom/build_and_test.py build_ort_windows_x86_64_internal_symbols --config Release
+
+# Run only the unit tests after the Windows internal-symbol build.
+build\windows-x86_64-internal-symbols\Release\onnxruntime_provider_test.exe --gtest_filter="QnnUnit_*"
+```
+
 ## Adding new unit tests
 
 ### Policy
@@ -77,7 +86,7 @@ Review standards for new tests in this directory.
 
 **File structure**
 - Add to an existing `*_test.cc` or create a new file following the same pattern (one source file under test → one test file).
-- Wrap everything except `#include "gtest/gtest.h"` in `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS` ... `#endif`. (Keep the gtest include outside the guard so the file always parses; the body becomes an empty TU in non-coverage builds.) Files without this guard will be compiled in non-coverage CI and fail to link against EP-internal symbols.
+- Wrap everything except `#include "gtest/gtest.h"` in `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS` ... `#endif`. (Keep the gtest include outside the guard so the file always parses; the body becomes an empty TU when internal-symbol access is disabled.) Files without this guard will fail to link against EP-internal symbols in normal builds.
 - Test suite name: `QnnUnit_<Component>Test`. Test name: `<Function>_<Scenario>_<ExpectedResult>` (e.g., `ValidateQnnNode_HtpBackend_Relu_Succeeds`).
 
 **Minimal example**
