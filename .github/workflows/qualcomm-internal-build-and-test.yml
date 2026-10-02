@@ -97,6 +97,14 @@ jobs:
             echo "code=false" >> "${GITHUB_OUTPUT}"
           fi
 
+      - name: Prune Git history from the runner workspace
+        if: always()
+        run: |
+          git for-each-ref --format='delete %(refname)' refs/remotes refs/tags |
+            git update-ref --stdin
+          git reflog expire --expire=now --all
+          git gc --prune=now
+
   build-linux-aarch64-oe-gcc11_2:
     if: ${{ inputs.do_all }}
     needs: [archive-testdata, path-filter]

@@ -245,3 +245,11 @@ jobs:
                 body,
               });
             }
+
+      - name: Prune Git history from the runner workspace
+        if: always()
+        run: |
+          git for-each-ref --format='delete %(refname)' refs/remotes refs/tags |
+            git update-ref --stdin
+          git reflog expire --expire=now --all
+          git gc --prune=now

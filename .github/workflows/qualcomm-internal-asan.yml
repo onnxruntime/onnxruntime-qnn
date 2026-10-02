@@ -71,3 +71,11 @@ jobs:
           python3 qcom/build_and_test.py \
             --target-py-version None \
             asan_linux_x86_64
+
+      - name: Prune Git history from the runner workspace
+        if: always()
+        run: |
+          git for-each-ref --format='delete %(refname)' refs/remotes refs/tags |
+            git update-ref --stdin
+          git reflog expire --expire=now --all
+          git gc --prune=now
