@@ -1812,10 +1812,16 @@ Ort::Status QnnBackendManager::ReleaseContext() {
     return Ort::Status();
   }
 
-  // release QNN context handles
-  contexts_.clear();
-  context_map_.clear();
-  ep_context_handle_map_.clear();
+  // Release QNN context handles.
+  {
+    std::lock_guard<std::mutex> lock(context_map_mutex_);
+    contexts_.clear();
+    context_map_.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
+    ep_context_handle_map_.clear();
+  }
 
   context_created_ = false;
   return Ort::Status();
@@ -2047,12 +2053,12 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   if (1 == graph_count) {
     // in case the EPContext node is generated from script
     // the graph name from the context binary may not match the EPContext node name
-    auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
+    auto qnn_model = std::make_unique<qnn::QnnModel>(shared_from_this(), api_ptrs_);
     RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[0], context));
     qnn_models.emplace(node_name, std::move(qnn_model));
   } else {
     for (uint32_t i = 0; i < graph_count; ++i) {
-      auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
+      auto qnn_model = std::make_unique<qnn::QnnModel>(shared_from_this(), api_ptrs_);
       RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[i], context));
       qnn_models.emplace(graphs_info[i].graphInfoV1.graphName, std::move(qnn_model));
     }
@@ -2866,6 +2872,7 @@ Ort::Status QnnBackendManager::AddQnnContextHandle(Qnn_ContextHandle_t raw_conte
   context_handle_record->context_handle = std::move(context_handle);
   context_handle_record->mem_handles = std::move(mem_handle_manager);
 
+  const std::lock_guard<std::mutex> lock(context_map_mutex_);
   const bool inserted = context_map_.try_emplace(raw_context_handle, std::move(context_handle_record)).second;
   RETURN_IF_NOT(inserted, "QNN context was already added.");
 
@@ -2874,7 +2881,17 @@ Ort::Status QnnBackendManager::AddQnnContextHandle(Qnn_ContextHandle_t raw_conte
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t context_handle,
+QnnBackendManager::ContextHandleLease QnnBackendManager::GetContextHandleLease(
+    Qnn_ContextHandle_t context_handle) const {
+  const std::lock_guard<std::mutex> lock(context_map_mutex_);
+  const auto it = context_map_.find(context_handle);
+  if (it == context_map_.end()) {
+    return {};
+  }
+  return ContextHandleLease{it->second};
+}
+
+Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(const ContextHandleLease& context_handle_lease,
                                                              void* memory_address,
                                                              const Qnn_Tensor_t& qnn_tensor,
                                                              Qnn_MemHandle_t& mem_handle) {
@@ -2886,11 +2903,11 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
   //    QnnContextHandleRecord or QnnBackendManager objects are being destroyed.
   //    Usage of weak_ptrs from the clean up function should ensure that those objects are only accessed while they are
   //    in scope.
+  // 3) SSR recovery removes this context from the manager while an execution is using it.
+  //    The caller-held lease keeps the context and its memory handles alive until execution completes.
 
-  const auto context_handle_record_it = context_map_.find(context_handle);
-  RETURN_IF_NOT(context_handle_record_it != context_map_.end(), "QNN context not found.");
-
-  auto& context_handle_record = context_handle_record_it->second;
+  const auto& context_handle_record = context_handle_lease.context_handle_record_;
+  RETURN_IF_NOT(context_handle_record != nullptr, "QNN context not found.");
   auto& context_mem_handle_manager = context_handle_record->mem_handles;
 
   bool did_register{};
@@ -3101,11 +3118,13 @@ void QnnBackendManager::ReleaseSpecificContextHandle(Qnn_ContextHandle_t old_con
     }
   }
 
-  // Remove from the non-owning vector.
-  contexts_.erase(std::remove(contexts_.begin(), contexts_.end(), old_context), contexts_.end());
+  {
+    const std::lock_guard<std::mutex> lock(context_map_mutex_);
+    contexts_.erase(std::remove(contexts_.begin(), contexts_.end(), old_context), contexts_.end());
 
-  // Remove from the owning map — triggers contextFree via UniqueQnnContextHandle deleter.
-  context_map_.erase(old_context);
+    // The context is freed after the last active lease releases its shared ownership.
+    context_map_.erase(old_context);
+  }
 }
 
 bool QnnBackendManager::IsDx12SharedMemoryAllocatorSupported() {

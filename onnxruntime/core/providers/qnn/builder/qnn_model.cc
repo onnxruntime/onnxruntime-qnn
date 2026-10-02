@@ -498,7 +498,7 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
                                                        QnnBackendManager& qnn_backend_manager,
                                                        const OrtMemoryInfo* ort_value_memory_info,
                                                        void* ort_value_data, uint32_t ort_value_data_size,
-                                                       Qnn_ContextHandle_t qnn_context,
+                                                       const QnnBackendManager::ContextHandleLease& context_handle_lease,
                                                        Qnn_Tensor_t& qnn_tensor) {
   // either set qnn_tensor memHandle or clientBuf
   OrtMemoryInfoDeviceType ort_value_memory_info_device_type;
@@ -514,7 +514,7 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   if (uses_shared_memory || uses_imported_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t memHandle to ORT tensor shared memory.");
     Qnn_MemHandle_t qnn_mem_handle{};
-    RETURN_IF_ERROR(qnn_backend_manager.GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
+    RETURN_IF_ERROR(qnn_backend_manager.GetOrRegisterContextMemHandle(context_handle_lease, ort_value_data, qnn_tensor,
                                                                       qnn_mem_handle));
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_MEMHANDLE);
     SetQnnTensorMemHandle(qnn_tensor, qnn_mem_handle);
@@ -540,6 +540,7 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
 
   Qnn_ContextHandle_t new_context = nullptr;
 
+  QnnBackendManager::ContextHandleLease new_context_lease;
   {
     // Serialize the check → release → create → register sequence across all models
     // sharing this QnnBackendManager.  Without this lock, concurrent SSR recovery in
@@ -557,6 +558,10 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
       // Reuse it — it's the only context remaining in context_map_.
       new_context = qnn_backend_manager_->GetQnnContext(0);
     }
+
+    // Keep the replacement context alive while retrieving the graph and rebuilding its metadata.
+    new_context_lease = qnn_backend_manager_->GetContextHandleLease(new_context);
+    RETURN_IF_NOT(new_context_lease, "SSR recovery: replacement QNN context is not available.");
   }  // release recovery_lock
 
   // Retrieve our graph from the (new or reused) context.
@@ -578,6 +583,7 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
 
 Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
                                           const Ort::Logger& logger,
+                                          const QnnBackendManager::ContextHandleLease& context_handle_lease,
                                           Qnn_ErrorHandle_t& execute_status,
                                           QnnEpProfiler* ort_profiler) {
   using namespace qnn::utils;
@@ -638,7 +644,7 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
         *qnn_backend_manager_,
         static_cast<const OrtMemoryInfo*>(input_tensor_mem_info),
         const_cast<void*>(raw_data), qnn_input_info.tensor_byte_size,
-        graph_info_->GraphContext(),
+        context_handle_lease,
         qnn_inputs.back()));
   }
 
@@ -684,7 +690,7 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
         *qnn_backend_manager_,
         static_cast<const OrtMemoryInfo*>(output_tensor_mem_info),
         mutable_data, qnn_output_info.tensor_byte_size,
-        graph_info_->GraphContext(),
+        context_handle_lease,
         qnn_outputs.back()));
   }
 
@@ -789,22 +795,17 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
   // session.Run() on the same session.
   std::lock_guard<std::mutex> lock(graph_exec_mutex_);
 
-  // Proactively recover if a sibling model already freed this context during its own SSR
-  // recovery (multi-partition / weight-sharing scenarios). Check under context_recovery_mutex_
-  // to avoid racing with concurrent modifications to context_map_.
-  if (!context_bin_filepath_.empty()) {
-    bool context_is_stale = false;
-    {
-      std::lock_guard<std::mutex> recovery_lock(qnn_backend_manager_->GetContextRecoveryMutex());
-      context_is_stale = !qnn_backend_manager_->HasContextHandle(graph_info_->GraphContext());
-    }
-    if (context_is_stale) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                  "SSR recovery: context was already freed by another QnnModel in the same context, "
-                  "recovering proactively.");
-      RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
-    }
+  // Keep the context alive across tensor binding and graph execution. An SSR recovery may remove
+  // it from the manager's map concurrently, but cannot free it while this lease is held.
+  auto context_handle_lease = qnn_backend_manager_->GetContextHandleLease(graph_info_->GraphContext());
+  if (!context_handle_lease && !context_bin_filepath_.empty()) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                "SSR recovery: context was already freed by another QnnModel in the same context, "
+                "recovering proactively.");
+    RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
+    context_handle_lease = qnn_backend_manager_->GetContextHandleLease(graph_info_->GraphContext());
   }
+  RETURN_IF_NOT(context_handle_lease, "QNN context is no longer available.");
 
   // First attempt: bind tensors and execute.
   Qnn_ErrorHandle_t execute_status = QNN_GRAPH_NO_ERROR;
@@ -812,7 +813,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
   const size_t pending_extraction_mark =
       ort_profiler ? ort_profiler->MarkPendingExecuteProfilingExtractions() : 0;
 #endif
-  RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
+  RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, context_handle_lease, execute_status, ort_profiler));
 
   if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
@@ -824,10 +825,13 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                 "NPU crashed. SSR detected during QNN graph execute.");
     if (!context_bin_filepath_.empty()) {
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Attempting SSR recovery.");
+      context_handle_lease = {};
       RETURN_IF_ERROR(RecoverFromSSR(logger, io_dispatch));
 
       // Retry once with fresh context and re-bound tensors.
-      RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
+      context_handle_lease = qnn_backend_manager_->GetContextHandleLease(graph_info_->GraphContext());
+      RETURN_IF_NOT(context_handle_lease, "QNN context is no longer available after SSR recovery.");
+      RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, context_handle_lease, execute_status, ort_profiler));
       if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
         if (ort_profiler) {
