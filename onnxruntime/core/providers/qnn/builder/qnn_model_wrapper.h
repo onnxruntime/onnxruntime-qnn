@@ -87,7 +87,7 @@ class QnnModelWrapper {
   // Add to internal param wrapper table
   bool AddParamWrapper(QnnParamWrapper&& param_wrapper);
 
-  const QnnTensorWrapper& GetQnnTensorWrapper(const std::string& tensor_name);
+  const QnnTensorWrapper& GetQnnTensorWrapper(const std::string& tensor_name) const;
 
   // Utility function to validate a QNN node. Does not modify this object's state.
   Ort::Status ValidateQnnNode(const std::string& node_name,
