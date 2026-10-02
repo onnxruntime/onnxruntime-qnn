@@ -933,13 +933,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                  "0",
                                  enable_vtcm_backup_buffer_sharing_str);
 
-  if (htp_share_resource_optimization_str == "1") {
-    // htp_share_resource_optimization=1 overrides enable_vtcm_backup_buffer_sharing regardless of its value
-    htp_share_resource_optimization_ = 1;
+  if (htp_share_resource_optimization_str == "0" || htp_share_resource_optimization_str == "1") {
+    // htp_share_resource_optimization overrides enable_vtcm_backup_buffer_sharing regardless of its value
+    htp_share_resource_optimization_ = std::stoi(htp_share_resource_optimization_str);
   } else if (!htp_share_resource_optimization_str.empty()) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_ERROR,
-                ("Invalid value entered for htp_share_resource_optimization: " + htp_share_resource_optimization_str + ", only 1 is allowed.").c_str());
+                ("Invalid value entered for htp_share_resource_optimization: " + htp_share_resource_optimization_str + ", only 0 or 1 are allowed.").c_str());
   } else if (enable_vtcm_backup_buffer_sharing_str == "1") {
     // htp_share_resource_optimization not set, fall back to enable_vtcm_backup_buffer_sharing
     htp_share_resource_optimization_ = 1;
@@ -950,7 +950,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
               ("htp_share_resource_optimization: " + std::to_string(htp_share_resource_optimization_)).c_str());
 
 #if QNN_API_VERSION_MAJOR < 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR < 26))
-  if (htp_share_resource_optimization_ == 1) {
+  if (htp_share_resource_optimization_ != -1) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
                 "User specified htp_share_resource_optimization but QNN API version is older than 2.26.");
@@ -1226,7 +1226,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 "Inference will not work as expected!");
   }
 
-  if (qnn_context_embed_mode_ && htp_share_resource_optimization_ == 1) {
+  if (qnn_context_embed_mode_ && htp_share_resource_optimization_ != -1) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_ERROR,
                 "[EP context generation:] HTP share resource optimization enabled conflict with EP context embed mode. "
@@ -1557,7 +1557,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
   const bool use_shared_backend_mgr =
-      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1);
+      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ != -1);
   if (use_shared_backend_mgr && SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     qnn_backend_manager_ = SharedContext::GetInstance().GetSharedQnnBackendManager();
     // Reset QnnBackendManager's logger to the one in current session as original one could be deleted along with the
@@ -1582,11 +1582,11 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      reused_io_limit_mb,
                                      enable_htp_cross_device_prepare},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
-    // Publish for later sessions. Always publish when htp_share_resource_optimization_==1,
+    // Publish for later sessions. Always publish when htp_share_resource_optimization_ is set,
     // even for a terminator session, because ContextCreateAsyncCallback retrieves the backend
     // manager from the singleton during SetupBackend (GetCapability). The terminator reset for
     // all sharing paths is deferred to after SetupBackend completes (in GetCapabilityImpl).
-    if (htp_share_resource_optimization_ == 1) {
+    if (htp_share_resource_optimization_ != -1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
   }
@@ -2242,7 +2242,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> context_bin_map;
-  if (ep->htp_share_resource_optimization_ == 1) {
+  if (ep->htp_share_resource_optimization_ != -1) {
     std::unordered_set<const OrtNode*> ep_ctx_nodes;
     GetMainEPCtxNodes(graph, ep->ort_api, ep_ctx_nodes, ep->logger_);
 
@@ -3694,7 +3694,13 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
+    qnn_backend_manager_->SetupBackend(/*load_from_cached_context=*/true,
+                                       /*need_load_system_lib=*/true,
+                                       /*share_ep_contexts=*/false,
+                                       /*htp_share_resource_optimization=*/-1,
+                                       /*enable_file_mapped_weights=*/false,
+                                       /*rpcmem_library=*/nullptr,
+                                       dummy_map);
   }
 
   status = qnn_cache_compatibility_manager_->ValidateCompatibilityInfo(info, *model_compatibility);
@@ -3717,7 +3723,13 @@ OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevic
                                                           OrtDeviceEpIncompatibilityDetails* details) noexcept {
   // This function is always called by temporary QnnEp, so no need to check if backend is already setup.
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-  Ort::Status status = qnn_backend_manager_->SetupBackend(false, false, false, false, false, nullptr, dummy_map);
+  Ort::Status status = qnn_backend_manager_->SetupBackend(/*load_from_cached_context=*/false,
+                                                          /*need_load_system_lib=*/false,
+                                                          /*share_ep_contexts=*/false,
+                                                          /*htp_share_resource_optimization=*/-1,
+                                                          /*enable_file_mapped_weights=*/false,
+                                                          /*rpcmem_library=*/nullptr,
+                                                          dummy_map);
 
   if (!status.IsOK()) {
     const std::string error_message = status.GetErrorMessage();
