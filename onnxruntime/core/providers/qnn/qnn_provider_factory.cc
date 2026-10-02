@@ -223,13 +223,13 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
       // Real-but-undetected NPU (WoS Makena, Linux/Android arm64): not virtual — can execute.
       // Cross-compile host (x86/x64): virtual — compile-only, no local NPU hardware.
       const bool is_virtual = !has_real_undetected_npu;
-      OrtHardwareDevice* undetected_npu_hw_device = nullptr;
-      RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, undetected_npu_hw_device, is_virtual));
-      factory->undetected_npu_hw_device_ = HardwareDeviceUniquePtr(
-          undetected_npu_hw_device,
+      OrtHardwareDevice* synthesized_npu_hw_device = nullptr;
+      RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, synthesized_npu_hw_device, is_virtual));
+      factory->synthesized_npu_hw_device_ = HardwareDeviceUniquePtr(
+          synthesized_npu_hw_device,
           FuncDeleter<OrtHardwareDevice>{factory->ep_api.ReleaseHardwareDevice});
 
-      RETURN_IF_NOT_NULL(create_ep_device(factory->undetected_npu_hw_device_.get()));
+      RETURN_IF_NOT_NULL(create_ep_device(factory->synthesized_npu_hw_device_.get()));
     }
   }
 

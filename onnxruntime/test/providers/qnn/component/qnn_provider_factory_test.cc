@@ -783,6 +783,37 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_CpuDevi
   EXPECT_EQ(ctx.created_ep_devices[0], cpu);
 }
 
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_ExplicitNpuNoDoubleSynthesis) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  // Pass an explicit Qualcomm NPU device on x86 — synthesis should NOT fire.
+  OrtHardwareDevice* npu = MakeFakeHwDevice(32);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+
+  const OrtHardwareDevice* devices[] = {npu};
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num), nullptr);
+
+  // Only the explicitly provided NPU — no virtual synthesis despite being on x86.
+  EXPECT_EQ(num, 1u);
+  ASSERT_EQ(ctx.created_ep_devices.size(), 1u);
+  EXPECT_EQ(ctx.created_ep_devices[0], npu);
+
+  // No IsVirtual metadata should have been added for the real NPU.
+  bool found_is_virtual = false;
+  for (const auto& kv : ctx.added_kv_pairs) {
+    if (kv.first == kOrtHardwareDevice_MetadataKey_IsVirtual) {
+      found_is_virtual = true;
+      break;
+    }
+  }
+  EXPECT_FALSE(found_is_virtual) << "Explicit NPU on x86 — no synthesis, no IsVirtual metadata.";
+}
+
 #endif  // !__aarch64__ && !_M_ARM64
 
 TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_RealNpuPresent_NoSynthesis) {
