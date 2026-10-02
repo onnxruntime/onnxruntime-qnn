@@ -514,10 +514,10 @@ Ort::Status QnnBackendManager::SetGlobalConfig() {
   return Ort::Status();
 }
 
-void QnnLogging(const char* format,
-                QnnLog_Level_t level,
-                uint64_t timestamp,
-                va_list argument_parameter) {
+void QnnBackendManager::QnnLogging(const char* format,
+                                   QnnLog_Level_t level,
+                                   uint64_t timestamp,
+                                   va_list argument_parameter) {
   ORT_UNUSED_PARAMETER(level);
   ORT_UNUSED_PARAMETER(timestamp);
 
@@ -1970,15 +1970,10 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
                                               graph_count,
                                               &graphs_info));
   } else {
-    // `CreateSystemDlcPlugin` is not suitable here as it creates an empty DLC.
-    // Instead, `QnnBackendSystemDlcPlugin.GetDlcBinaryInfo` creates DLC from binary.
     auto system_dlc_plugin = std::make_unique<QnnBackendSystemDlcPlugin>(this);
-    RETURN_IF_ERROR(system_dlc_plugin->GetDlcBinaryInfo(sys_ctx_handle.get(),
-                                                        static_cast<const uint8_t*>(bin_buffer),
-                                                        buffer_length,
-                                                        blob_version,
-                                                        graph_count,
-                                                        &graphs_info));
+    RETURN_IF_ERROR(system_dlc_plugin->SetupDlcFromBinary(static_cast<const uint8_t*>(bin_buffer), buffer_length));
+    RETURN_IF_ERROR(system_dlc_plugin->GetDlcBinaryInfo(sys_ctx_handle.get(), blob_version, graph_count, &graphs_info));
+    RETURN_IF_ERROR(system_dlc_plugin->Release());
   }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -3237,7 +3232,7 @@ Ort::Status QnnBackendManager::CreateSystemDlcPlugin() {
   }
 
   system_dlc_plugin_ = std::make_shared<QnnBackendSystemDlcPlugin>(this);
-  RETURN_IF_ERROR(system_dlc_plugin_->CreateDlc());
+  RETURN_IF_ERROR(system_dlc_plugin_->SetupDlc());
 
   system_dlc_created_ = true;
   return Ort::Status();
@@ -3248,7 +3243,7 @@ Ort::Status QnnBackendManager::ReleaseSystemDlcPlugin() {
     return Ort::Status();
   }
 
-  RETURN_IF_ERROR(system_dlc_plugin_->ReleaseDlc());
+  RETURN_IF_ERROR(system_dlc_plugin_->Release());
   system_dlc_plugin_.reset();
 
   system_dlc_created_ = false;
