@@ -128,6 +128,177 @@ inline Ort::Status PrepareForComputeHelper(const gsl::span<const int64_t>& raw_s
 }
 // QNN-EP COPY END
 
+// Gets the data from initializer inputs (e.g., starts, ends, axes, or steps) as a std::vector<int64_t>.
+Ort::Status GetInitializerInputData(const OrtNodeUnitIODef& input, const QnnModelWrapper& qnn_model_wrapper,
+                                    std::vector<int64_t>& output) {
+  const auto& input_name = input.name;
+  const bool is_constant = qnn_model_wrapper.IsConstantInput(input_name);
+  RETURN_IF_NOT(is_constant, ("Expected input " + input_name + " to be an initializer.").c_str());
+  const OrtValueInfo* initializer_valueinfo = nullptr;
+  RETURN_IF_ERROR(qnn_model_wrapper.FindInitializer(input_name, &initializer_valueinfo));
+
+  std::vector<uint8_t> initializer_bytes;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer_valueinfo, initializer_bytes));
+
+  ONNXTensorElementDataType onnx_type = input.type;
+  if (onnx_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
+    gsl::span<const int64_t> tensor_elems = ReinterpretAsSpan<int64_t, uint8_t>(initializer_bytes);
+    output.insert(output.end(), tensor_elems.begin(), tensor_elems.end());
+  } else if (onnx_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
+    gsl::span<const int32_t> tensor_elems = ReinterpretAsSpan<int32_t, uint8_t>(initializer_bytes);
+    output.insert(output.end(), tensor_elems.begin(), tensor_elems.end());
+  } else {
+    return MAKE_EP_FAIL(("Data type " + std::to_string(onnx_type) +
+                         " is not supported for Slice initializer input " + input.name)
+                            .c_str());
+  }
+
+  return Ort::Status();
+}
+
+// Extracts starts/ends/axes/steps data from attributes (opset < 10) or initializer inputs
+// (opset >= 10), plus the data input's ONNX shape. Shared by ProcessInputs (elision pre-check) and
+// ProcessAttributesAndOutputs (building the QNN node), so both always agree on the computed shape.
+Ort::Status ExtractSliceParams(const QnnModelWrapper& qnn_model_wrapper,
+                               const OrtNodeUnit& node_unit,
+                               std::vector<int64_t>& raw_starts,
+                               std::vector<int64_t>& raw_ends,
+                               std::vector<int64_t>& raw_axes,
+                               std::vector<int64_t>& raw_steps,
+                               std::vector<int64_t>& input_dimensions) {
+  const auto& inputs = node_unit.Inputs();
+  const size_t input_count = inputs.size();
+
+  // Opset 9 only has 1 input. The starts, ends, axes values are attributes.
+  if (node_unit.SinceVersion() < 10) {
+    OrtNodeAttrHelper node_helper(node_unit);
+    auto starts = node_helper.Get("starts", std::vector<int64_t>{0});
+    raw_starts.assign(starts.begin(), starts.end());
+    auto ends = node_helper.Get("ends", std::vector<int64_t>{0});
+    raw_ends.assign(ends.begin(), ends.end());
+    if (node_helper.HasAttr("axes")) {
+      auto axes = node_helper.Get("axes", std::vector<int64_t>{0});
+      raw_axes.assign(axes.begin(), axes.end());
+    }
+  } else {
+    constexpr size_t starts_index = 1;
+    constexpr size_t ends_index = 2;
+    constexpr size_t axes_index = 3;
+    constexpr size_t steps_index = 4;
+
+    // Starts input (required).
+    RETURN_IF_ERROR(GetInitializerInputData(inputs[starts_index], qnn_model_wrapper, raw_starts));
+
+    // Ends input (required).
+    RETURN_IF_ERROR(GetInitializerInputData(inputs[ends_index], qnn_model_wrapper, raw_ends));
+
+    // Axes input (optional).
+    if (input_count > axes_index && inputs[axes_index].Exists()) {
+      RETURN_IF_ERROR(GetInitializerInputData(inputs[axes_index], qnn_model_wrapper, raw_axes));
+    }
+
+    // Steps input (optional).
+    if (input_count > steps_index && inputs[steps_index].Exists()) {
+      RETURN_IF_ERROR(GetInitializerInputData(inputs[steps_index], qnn_model_wrapper, raw_steps));
+    }
+  }
+
+  std::vector<uint32_t> input0_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input0_shape),
+                "Cannot get shape for Slice input 0.");
+  input_dimensions.assign(input0_shape.cbegin(), input0_shape.cend());
+
+  return Ort::Status();
+}
+
+// Returns true only if `node_unit`'s first output has exactly one consumer, that consumer is
+// Concat, and the output is not itself a graph output. This is the one topology where it's safe
+// to build no QNN tensor for a zero-dim Slice output: ConcatOpBuilder::ProcessInputs independently
+// excludes zero-dim inputs by re-checking their ONNX-declared shape, so it never references a
+// tensor this builder chose not to create. Any other consumer (or a graph-output boundary) would
+// reference the missing tensor directly, so those cases must not be elided.
+bool CanElideZeroDimOutput(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) {
+  const auto& output_name = node_unit.Outputs()[0].name;
+  if (qnn_model_wrapper.IsGraphOutput(output_name)) {
+    return false;
+  }
+
+  const Ort::ConstNode node(&node_unit.GetNode());
+  std::vector<Ort::ConstValueInfo> outputs = node.GetOutputs();
+  if (outputs.size() != 1) {
+    return false;
+  }
+
+  std::vector<Ort::ValueInfoConsumerProducerInfo> consumers = outputs[0].GetConsumers();
+  if (consumers.size() != 1 || consumers[0].node == nullptr) {
+    return false;
+  }
+
+  return Ort::ConstNode(consumers[0].node).GetOperatorType() == "Concat";
+}
+
+// Whether a zero-dim Slice output can and should be elided (no QNN tensor/node built for it), on
+// the QNN HTP backend only -- QNN HTP's StridedSlice rejects any config whose computed output has
+// a zero-sized dimension (backendValidateOpConfig fails with QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE).
+// This shows up in partial-rotary (RoPE) exports where the "pass-through" (non-rotary) slice is
+// empty because rotary_dim == head_dim. Elision is only safe when CanElideZeroDimOutput holds;
+// otherwise the node must decline support so ORT can fall back to CPU EP for it, exactly like
+// ReshapeOpBuilder/ShapeOpBuilder do for the same class of "QNN can't represent a zero-sized dim"
+// problem.
+Ort::Status ComputeSliceZeroDimDecision(const QnnModelWrapper& qnn_model_wrapper,
+                                        const OrtNodeUnit& node_unit,
+                                        const PrepareForComputeMetadata& compute_metadata,
+                                        bool& should_elide) {
+  should_elide = false;
+
+  if (qnn_model_wrapper.GetQnnBackendType() != QnnBackendType::HTP) {
+    return Ort::Status();
+  }
+
+  bool has_zero_dim_output = false;
+  for (const int64_t dim : compute_metadata.output_dims_) {
+    if (dim == 0) {
+      has_zero_dim_output = true;
+      break;
+    }
+  }
+  if (!has_zero_dim_output) {
+    return Ort::Status();
+  }
+
+  if (!CanElideZeroDimOutput(qnn_model_wrapper, node_unit)) {
+    return MAKE_EP_FAIL(
+        "QNN HTP's StridedSlice rejects a zero-sized output dimension, and this Slice's output "
+        "cannot be safely elided (its only consumer must be Concat, and it must not be a graph "
+        "output).");
+  }
+
+  should_elide = true;
+  return Ort::Status();
+}
+
+// Re-derives the Slice's compute metadata for `node_unit` and calls ComputeSliceZeroDimDecision.
+// Used from ProcessInputs to decide whether to skip registering input 0 (and any BOOL->UINT8
+// cast) before ProcessAttributesAndOutputs independently reaches the same decision. Recomputing
+// this is cheap (O(rank), pure, no QNN API calls) and keeps the decision logic in one place
+// without adding a Slice-specific side channel to the shared IOpBuilder/BaseOpBuilder interface.
+Ort::Status ShouldElideZeroDimSliceOutput(const QnnModelWrapper& qnn_model_wrapper,
+                                          const OrtNodeUnit& node_unit,
+                                          bool& should_elide) {
+  std::vector<int64_t> raw_starts;
+  std::vector<int64_t> raw_ends;
+  std::vector<int64_t> raw_axes;
+  std::vector<int64_t> raw_steps;
+  std::vector<int64_t> input_dimensions;
+  RETURN_IF_ERROR(ExtractSliceParams(qnn_model_wrapper, node_unit, raw_starts, raw_ends, raw_axes,
+                                     raw_steps, input_dimensions));
+
+  PrepareForComputeMetadata compute_metadata(input_dimensions);
+  RETURN_IF_ERROR(PrepareForComputeHelper(raw_starts, raw_ends, raw_axes, raw_steps, compute_metadata));
+
+  return ComputeSliceZeroDimDecision(qnn_model_wrapper, node_unit, compute_metadata, should_elide);
+}
+
 }  // namespace
 
 class SliceOpBuilder : public BaseOpBuilder {
@@ -150,10 +321,6 @@ class SliceOpBuilder : public BaseOpBuilder {
 
  private:
   Ort::Status ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
-  void GetDataFromAttribute(const OrtNodeUnit& node_unit,
-                            std::vector<int64_t>& raw_starts,
-                            std::vector<int64_t>& raw_ends,
-                            std::vector<int64_t>& raw_axes) const;
 };
 
 Ort::Status SliceOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const {
@@ -174,51 +341,6 @@ Ort::Status SliceOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, 
   return Ort::Status();
 }
 
-void SliceOpBuilder::GetDataFromAttribute(const OrtNodeUnit& node_unit,
-                                          std::vector<int64_t>& raw_starts,
-                                          std::vector<int64_t>& raw_ends,
-                                          std::vector<int64_t>& raw_axes) const {
-  OrtNodeAttrHelper node_helper(node_unit);
-  auto starts = node_helper.Get("starts", std::vector<int64_t>{0});
-  raw_starts.assign(starts.begin(), starts.end());
-  auto ends = node_helper.Get("ends", std::vector<int64_t>{0});
-  raw_ends.assign(ends.begin(), ends.end());
-  if (node_helper.HasAttr("axes")) {
-    auto axes = node_helper.Get("axes", std::vector<int64_t>{0});
-    raw_axes.assign(axes.begin(), axes.end());
-  }
-}
-
-// Gets the data from initializer inputs (e.g., starts, ends, axes, or steps) as a std::vector<int64_t>.
-static Ort::Status GetInitializerInputData(const OrtNodeUnitIODef& input, const QnnModelWrapper& qnn_model_wrapper,
-                                           std::vector<int64_t>& output) {
-  const auto& input_name = input.name;
-  const bool is_constant = qnn_model_wrapper.IsConstantInput(input_name);
-  RETURN_IF_NOT(is_constant, ("Expected input " + input_name + " to be an initializer.").c_str());
-  const OrtValueInfo* initializer_valueinfo = nullptr;
-  RETURN_IF_ERROR(qnn_model_wrapper.FindInitializer(input_name, &initializer_valueinfo));
-
-  // Deserialize initializer into byte buffer
-  std::vector<uint8_t> initializer_bytes;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer_valueinfo, initializer_bytes));
-
-  // Copy Tensor of int32_t or int64_t elems into output (int64_ts).
-  ONNXTensorElementDataType onnx_type = input.type;
-  if (onnx_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
-    gsl::span<const int64_t> tensor_elems = ReinterpretAsSpan<int64_t, uint8_t>(initializer_bytes);
-    output.insert(output.end(), tensor_elems.begin(), tensor_elems.end());
-  } else if (onnx_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
-    gsl::span<const int32_t> tensor_elems = ReinterpretAsSpan<int32_t, uint8_t>(initializer_bytes);
-    output.insert(output.end(), tensor_elems.begin(), tensor_elems.end());
-  } else {
-    return MAKE_EP_FAIL(("Data type " + std::to_string(onnx_type) +
-                         " is not supported for Slice initializer input " + input.name)
-                            .c_str());
-  }
-
-  return Ort::Status();
-}
-
 // Note: For ONNX Slice operation the expected number of inputs is between 3 and 5
 Ort::Status SliceOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
@@ -227,6 +349,12 @@ Ort::Status SliceOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                           bool do_op_validation) const {
   if (do_op_validation) {
     RETURN_IF_ERROR(ExplicitOpCheck(qnn_model_wrapper, node_unit));
+  }
+
+  bool should_elide = false;
+  RETURN_IF_ERROR(ShouldElideZeroDimSliceOutput(qnn_model_wrapper, node_unit, should_elide));
+  if (should_elide) {
+    return Ort::Status();
   }
 
   // Only need to add input 0. The other inputs (if any) contain static data that is passed to QNN APIs
@@ -267,43 +395,18 @@ Ort::Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   std::vector<int64_t> raw_ends;
   std::vector<int64_t> raw_axes;
   std::vector<int64_t> raw_steps;
+  std::vector<int64_t> input_dimensions;
+  RETURN_IF_ERROR(ExtractSliceParams(qnn_model_wrapper, node_unit, raw_starts, raw_ends, raw_axes, raw_steps,
+                                     input_dimensions));
 
-  const auto& inputs = node_unit.Inputs();
-  const size_t input_count = inputs.size();
-
-  // Opset 9 only has 1 input. The starts, ends, axes values are attributes.
-  if (node_unit.SinceVersion() < 10) {
-    GetDataFromAttribute(node_unit, raw_starts, raw_ends, raw_axes);
-  } else {
-    constexpr size_t starts_index = 1;
-    constexpr size_t ends_index = 2;
-    constexpr size_t axes_index = 3;
-    constexpr size_t steps_index = 4;
-
-    // Starts input (required).
-    RETURN_IF_ERROR(GetInitializerInputData(inputs[starts_index], qnn_model_wrapper, raw_starts));
-
-    // Ends input (required).
-    RETURN_IF_ERROR(GetInitializerInputData(inputs[ends_index], qnn_model_wrapper, raw_ends));
-
-    // Axes input (optional).
-    if (input_count > axes_index && inputs[axes_index].Exists()) {
-      RETURN_IF_ERROR(GetInitializerInputData(inputs[axes_index], qnn_model_wrapper, raw_axes));
-    }
-
-    // Steps input (optional).
-    if (input_count > steps_index && inputs[steps_index].Exists()) {
-      RETURN_IF_ERROR(GetInitializerInputData(inputs[steps_index], qnn_model_wrapper, raw_steps));
-    }
-  }
-
-  std::vector<uint32_t> input0_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input0_shape),
-                "Cannot get shape for Slice input 0.");
-
-  std::vector<int64_t> input_dimensions(input0_shape.cbegin(), input0_shape.cend());
   PrepareForComputeMetadata compute_metadata(input_dimensions);
   RETURN_IF_ERROR(PrepareForComputeHelper(raw_starts, raw_ends, raw_axes, raw_steps, compute_metadata));
+
+  bool should_elide = false;
+  RETURN_IF_ERROR(ComputeSliceZeroDimDecision(qnn_model_wrapper, node_unit, compute_metadata, should_elide));
+  if (should_elide) {
+    return Ort::Status();
+  }
 
   const size_t input_rank = input_dimensions.size();
   std::vector<uint32_t> ranges_dims{static_cast<uint32_t>(input_rank), 3};
@@ -315,6 +418,8 @@ Ort::Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
     ranges_data.push_back(static_cast<uint32_t>(compute_metadata.ends_[i]));
     ranges_data.push_back(static_cast<uint32_t>(compute_metadata.steps_[i]));
   }
+
+  const auto& inputs = node_unit.Inputs();
 
   QnnParamWrapper ranges_paramwrapper(node_unit.Index(),
                                       node_unit.Name(),
