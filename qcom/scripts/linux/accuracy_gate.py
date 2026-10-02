@@ -50,9 +50,7 @@ from dataclasses import dataclass, field
 #
 # The QnnUnit token-replacement fallback remains for a future naming migration.
 _SNAPSHOT_TIER_RE = re.compile(r"_(?:SessionSnapshot|Snapshot)")
-_LEGACY_SNAPSHOT_SUITE_RE = re.compile(
-    r"^QnnSnapshot_(?P<op>.+?)_(?:OpBuilder|Session)(?P<variant>_.*)?Test$"
-)
+_LEGACY_SNAPSHOT_SUITE_RE = re.compile(r"^QnnSnapshot_(?P<op>.+?)_(?:OpBuilder|Session)(?P<variant>_.*)?Test$")
 
 # Snapshot status buckets.
 PASSED = "PASSED"
@@ -194,6 +192,7 @@ def derive_accuracy_suite(snapshot_suite: str) -> str:
     if legacy:
         return f"QnnAcc_{legacy.group('op')}_Accuracy{legacy.group('variant') or ''}Test"
     return _SNAPSHOT_TIER_RE.sub("_Accuracy", snapshot_suite, count=1)
+
 
 def load_manifest_versions(golden_root: str | None) -> ToolVersions:
     """Read qairt_version + ort_version from <golden_root>/manifest.json.
