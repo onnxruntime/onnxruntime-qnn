@@ -132,6 +132,7 @@ bool TryCreateHtpSession(const ORTCHAR_T* model_path,
 // from QnnHtpShared. Tests that only check output correctness would still pass
 // if the runtime silently fell back to copies.
 TEST_F(QnnHTPBackendTests, htp_shared_memory_output_uses_memhandle_branch) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -187,6 +188,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_output_uses_memhandle_branch) {
 
 // Verifies input tensors also take the MEMHANDLE path when allocated from QnnHtpShared.
 TEST_F(QnnHTPBackendTests, htp_shared_memory_input_uses_memhandle_branch) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -231,6 +233,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_input_uses_memhandle_branch) {
 // Verifies a WARNING is emitted when the shared-memory option is set but the
 // bound OrtValue is CPU-backed (fallback to per-frame copy).
 TEST_F(QnnHTPBackendTests, htp_shared_memory_silent_fallback_warning) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();  // opt-in requested...
 
   LogCapture capture;
@@ -273,6 +276,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_silent_fallback_warning) {
 // before any session exists, and that inference from a factory-allocated OrtValue
 // takes the MEMHANDLE branch.
 TEST_F(QnnHTPBackendTests, htp_shared_memory_factory_allocator_pre_session) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -587,6 +591,7 @@ TEST_F(QnnHTPBackendTests, shared_ortvalue_without_session_allocator_falls_back_
 // the pointer came from QnnHtpShared. A foreign pointer carrying that metadata
 // must safely use clientBuf instead of failing HTP allocation lookup.
 TEST_F(QnnHTPBackendTests, untracked_host_accessible_memory_falls_back_to_clientbuf) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -636,6 +641,7 @@ TEST_F(QnnHTPBackendTests, untracked_host_accessible_memory_falls_back_to_client
 // Verifies inference correctness with shared memory enabled and offload_graph_io_quantization=0
 // (ensures CPU↔QNN EP partition boundary is exercised).
 TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_inference_correct) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
   options["offload_graph_io_quantization"] = "0";  // ensures any quant/dequant stays on CPU
 
@@ -691,6 +697,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_inference_correct) 
 }
 
 TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_zero_copy) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
   options["offload_graph_io_quantization"] = "0";
 
@@ -764,6 +771,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_zero_copy) {
 // Uses alloc_tensor_reuse.onnx (2 float32 inputs [10], 2 float32 outputs [10]).
 // Graph: outp0 = -(inp0 + inp1); outp1 = -(inp0 - inp1).
 TEST_F(QnnHTPBackendTests, htp_shared_memory_multi_io) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -843,6 +851,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_multi_io) {
 // are written directly to the user's bound buffer). This test therefore mixes
 // shared inputs with a CPU output to exercise the fallback path.
 TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
@@ -912,6 +921,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
 // Core's memory planner. mul_1 has one output (Y), so exactly one WARNING is
 // expected regardless of the number of Runs.
 TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
 
   LogCapture capture;
