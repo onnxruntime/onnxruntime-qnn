@@ -128,6 +128,9 @@ size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorEl
 
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType_t element_data_type);
+Ort::Status GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape,
+                                        Qnn_DataType_t element_data_type,
+                                        size_t& data_size);
 size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor);
 
 bool QnnTensorHasDynamicShape(const Qnn_Tensor_t& tensor);

@@ -178,6 +178,28 @@ size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType
   return GetQnnTensorDataSizeInBytes(num_elements, element_type);
 }
 
+Ort::Status GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape,
+                                        Qnn_DataType_t element_type,
+                                        size_t& data_size) {
+  size_t num_elements = 1;
+  for (uint32_t dim : shape) {
+    size_t next_num_elements = 0;
+    RETURN_IF_NOT(SafeMultiply(num_elements, static_cast<size_t>(dim), next_num_elements),
+                  "QNN tensor element count overflow.");
+    num_elements = next_num_elements;
+  }
+
+  if (element_type == QNN_DATATYPE_SFIXED_POINT_4 || element_type == QNN_DATATYPE_UFIXED_POINT_4) {
+    data_size = num_elements / 2 + num_elements % 2;
+    return Ort::Status();
+  }
+
+  const size_t element_size = GetElementSizeByType(element_type);
+  RETURN_IF_NOT(SafeMultiply(num_elements, element_size, data_size),
+                "QNN tensor byte size overflow.");
+  return Ort::Status();
+}
+
 size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor) {
   uint32_t rank = GetQnnTensorRank(tensor);
   uint32_t* dims = GetQnnTensorDims(tensor);
