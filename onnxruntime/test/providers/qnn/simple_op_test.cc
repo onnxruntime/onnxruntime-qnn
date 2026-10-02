@@ -948,10 +948,8 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Abs_U16) {
 // qdq@QNN_EP val: -11.011764526367188 (err: 0.9882354736328125, err/output_range: 4.1176481246948242%)
 // qdq@CPU_EP val: -12.047059059143066 (err: 0.047059059143066406, err/output_range: 0.19607941806316376%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 3.9215683937072754%
-// V79+ HTP xQFloat can resolve exact quantization half-way cases differently from V73.
-// For this fixed vector, the difference crosses Ceil's integer boundary and QNN and CPU QDQ
-// outputs differ by at most 11 U8 codes (max_abs_diff / output_quant_scale). Only 11 / 255
-// of the output range is permitted.
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test accuracy of QDQ Ceil op.
 TEST_F(QnnHTPBackendTests, UnaryOp_Ceil) {
   const std::vector<float> input_data = GetFloatDataInRange(-12.0f, 12.0f, 6);

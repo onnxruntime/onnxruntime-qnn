@@ -527,9 +527,8 @@ static void RunReduceOpQDQTest(const std::string& op_type,
 // qdq@QNN_EP val: -2.6541414260864258 (err: 0.13106870651245117, err/output_range: 4.7058820724487305%)
 // qdq@CPU_EP val: -2.7415206432342529 (err: 0.043689489364624023, err/output_range: 1.5686246156692505%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 3.1372575759887695%
-// V79+ HTP xQFloat can resolve exact quantization half-way cases differently from V73.
-// For this fixed vector, QNN and CPU QDQ outputs differ by at most 8 U8 codes
-// (max_abs_diff / output_quant_scale), so only 8 / 255 of the output range is permitted.
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test creates a Q -> DQ -> ReduceSum -> Q -> DQ graph, and checks that all
 // nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
 //
@@ -563,9 +562,8 @@ TEST_F(QnnHTPBackendTests, ReduceSumU8Opset13_LastAxis) {
 // qdq@QNN_EP val: -2.6541414260864258 (err: 0.13106870651245117, err/output_range: 4.7058820724487305%)
 // qdq@CPU_EP val: -2.7415206432342529 (err: 0.043689489364624023, err/output_range: 1.5686246156692505%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 3.1372575759887695%
-// V79+ HTP xQFloat can resolve exact quantization half-way cases differently from V73.
-// For this fixed vector, QNN and CPU QDQ outputs differ by at most 8 U8 codes
-// (max_abs_diff / output_quant_scale), so only 8 / 255 of the output range is permitted.
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test creates a Q -> DQ -> ReduceSum -> Q -> DQ graph, and checks that all
 // nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
 //
@@ -749,9 +747,8 @@ TEST_F(QnnHTPBackendTests, ReduceMinS8Opset18) {
 // qdq@QNN_EP val: -0.66353535652160645 (err: 0.032767176628112793, err/output_range: 4.7058820724487305%)
 // qdq@CPU_EP val: -0.68538016080856323 (err: 0.010922372341156006, err/output_range: 1.5686246156692505%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 3.1372575759887695%
-// V79+ HTP xQFloat can resolve exact quantization half-way cases differently from V73.
-// For this fixed vector, QNN and CPU QDQ outputs differ by at most 8 U8 codes
-// (max_abs_diff / output_quant_scale), so only 8 / 255 of the output range is permitted.
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test creates a Q -> DQ -> ReduceMean -> Q -> DQ graph, and checks that all
 // nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
 //
@@ -786,9 +783,8 @@ TEST_F(QnnHTPBackendTests, ReduceMeanU8Opset18_LastAxis) {
 // qdq@QNN_EP val: -0.66353535652160645 (err: 0.032767176628112793, err/output_range: 4.7058820724487305%)
 // qdq@CPU_EP val: -0.68538016080856323 (err: 0.010922372341156006, err/output_range: 1.5686246156692505%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 3.1372575759887695%
-// V79+ HTP xQFloat can resolve exact quantization half-way cases differently from V73.
-// For this fixed vector, QNN and CPU QDQ outputs differ by at most 8 U8 codes
-// (max_abs_diff / output_quant_scale), so only 8 / 255 of the output range is permitted.
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test creates a Q -> DQ -> ReduceMean -> Q -> DQ graph, and checks that all
 // nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
 //
