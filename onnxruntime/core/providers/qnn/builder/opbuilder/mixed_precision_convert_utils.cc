@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-#include "core/providers/qnn/builder/opbuilder/precision_bridge_utils.h"
+#include "core/providers/qnn/builder/opbuilder/mixed_precision_convert_utils.h"
 
 #include <string>
 #include <utility>
@@ -53,30 +53,33 @@ bool OverrideActivationFixedEncoding(const std::string& op_type, Qnn_DataType_t 
   return quant_params.offset != orig_offset || quant_params.scale != orig_scale;
 }
 
-Ort::Status AlignBinaryPrecisionInputs(QnnModelWrapper& qnn_model_wrapper,
-                                       const OrtNodeUnit& node_unit,
-                                       std::vector<std::string>& input_names,
-                                       bool do_op_validation) {
-  // 1. Only applies to bridgeable binary ops with exactly 2 inputs.
-  if (!IsBinaryPrecisionBridgeOp(node_unit.OpType()) || input_names.size() != 2) {
+Ort::Status AlignBinaryInputPrecision(QnnModelWrapper& qnn_model_wrapper,
+                                      const OrtNodeUnit& node_unit,
+                                      std::vector<std::string>& input_names,
+                                      bool do_op_validation) {
+  // 1. Only applies to Convert-compatible binary ops with exactly 2 inputs.
+  if (!IsConvertCompatibleBinaryOp(node_unit.OpType()) || input_names.size() != 2) {
     return Ort::Status();
   }
 
-  // 2. Same-precision inputs need no bridging.
+  // 2. Same-precision inputs need no Convert.
   const Qnn_DataType_t dt0 = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
   const Qnn_DataType_t dt1 = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetTensorDataType();
   if (dt0 == dt1) {
     return Ort::Status();
   }
-  RETURN_IF_NOT(IsMixedPrecisionBridge(dt0, dt1),
-                "QNN EP's binary-op precision bridge only supports a mismatched fixed-point input pair.");
+  RETURN_IF_NOT(NeedsPrecisionConvert(dt0, dt1),
+                "QNN EP's binary-op precision Convert only supports a mismatched fixed-point input pair.");
 
-  // 3. Convert the narrower input up to the wider input's precision.
+  // 3. Convert the narrower input up to the wider input's precision. Same-width but differing
+  // signedness (e.g. Mul(s8, u8)) isn't a width mismatch, but a Convert is still required since
+  // the QNN dtypes differ; the tie-break below always picks input 1 in that case, converting it
+  // to input 0's dtype.
   const size_t narrow_idx = FixedPointBitWidth(dt0) < FixedPointBitWidth(dt1) ? 0 : 1;
   const Qnn_DataType_t wide_dtype = narrow_idx == 0 ? dt1 : dt0;
   const auto& narrow_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[narrow_idx]);
   RETURN_IF_NOT(narrow_wrapper.GetQnnQuantParams().IsPerTensor(),
-                "QNN EP's binary-op precision bridge only supports per-tensor quantization");
+                "QNN EP's binary-op precision Convert only supports per-tensor quantization");
   const Qnn_QuantizeParams_t& narrow_qp = narrow_wrapper.GetQnnQuantParams().Get();
   const std::string converted_name = UniqueNameGenerator().New(input_names[narrow_idx], "_convert");
   RETURN_IF_ERROR(InsertConvertOp(qnn_model_wrapper, input_names[narrow_idx], converted_name,
@@ -87,43 +90,28 @@ Ort::Status AlignBinaryPrecisionInputs(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-// Derives a `to_dtype` scale/offset for the same value range as `from_so` (a `from_dtype`
-// encoding), without building a Convert node.
-static Ort::Status DeriveScaleOffsetForDtype(Qnn_DataType_t from_dtype, const Qnn_ScaleOffset_t& from_so,
-                                             Qnn_DataType_t to_dtype, Qnn_ScaleOffset_t& to_so) {
-  // 1. Dequantize `from_dtype`'s [qmin, qmax] to get the tensor's real value range.
-  float from_qmin = 0.0f, from_qmax = 0.0f;
-  RETURN_IF_ERROR(GetQminQmax(from_dtype, from_qmin, from_qmax));
-  const double value_min = Dequantize(from_so.offset, from_so.scale, from_qmin);
-  const double value_max = Dequantize(from_so.offset, from_so.scale, from_qmax);
-  // 2. Re-quantize that same value range at `to_dtype`'s resolution.
-  RETURN_IF_ERROR(GetQuantParams(static_cast<float>(value_min), static_cast<float>(value_max),
-                                 to_dtype, to_so.scale, to_so.offset, /*symmetric*/ false));
-  return Ort::Status();
-}
-
-Ort::Status BridgeOutputPrecision(QnnModelWrapper& qnn_model_wrapper,
-                                  const OrtNodeUnit& node_unit,
-                                  std::vector<std::string>&& input_names,
-                                  std::vector<std::string>&& param_tensor_names,
-                                  bool do_op_validation,
-                                  const std::string& qnn_op_type,
-                                  Qnn_DataType_t native_dtype,
-                                  TensorInfo&& declared_output_info) {
+Ort::Status InsertOutputPrecisionConvert(QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& node_unit,
+                                         std::vector<std::string>&& input_names,
+                                         std::vector<std::string>&& param_tensor_names,
+                                         bool do_op_validation,
+                                         const std::string& qnn_op_type,
+                                         Qnn_DataType_t native_dtype,
+                                         const TensorInfo& declared_output_info) {
   const std::string& op_type = node_unit.OpType();
   const std::string& declared_output_name = node_unit.Outputs()[0].name;
 
-  // 1. Guard the two cases this bridge doesn't handle.
+  // 1. Guard the two cases this Convert doesn't handle.
   RETURN_IF_NOT(!qnn_model_wrapper.IsGraphOutput(declared_output_name),
-                ("QNN EP's precision bridge does not support a graph-output result for " + op_type).c_str());
+                ("QNN EP's precision Convert does not support a graph-output result for " + op_type).c_str());
   RETURN_IF_NOT(declared_output_info.quant_param.IsPerTensor(),
-                ("QNN EP's precision bridge only supports per-tensor quantization for " + op_type).c_str());
+                ("QNN EP's precision Convert only supports per-tensor quantization for " + op_type).c_str());
 
   // 2. Derive a native-precision encoding, then let any op-specific override (e.g. Sigmoid/Tanh) apply.
   const Qnn_ScaleOffset_t& declared_so = declared_output_info.quant_param.Get().scaleOffsetEncoding;
   Qnn_ScaleOffset_t native_so{};
-  RETURN_IF_ERROR(DeriveScaleOffsetForDtype(declared_output_info.qnn_data_type, declared_so,
-                                            native_dtype, native_so));
+  RETURN_IF_ERROR(DeriveScaleOffsetForDtype(declared_output_info.qnn_data_type, declared_so.offset, declared_so.scale,
+                                            native_dtype, /*to_symmetric*/ false, native_so.scale, native_so.offset));
   OverrideActivationFixedEncoding(op_type, native_dtype, native_so);
 
   // 3. Build the op with a native-precision intermediate output tensor.
