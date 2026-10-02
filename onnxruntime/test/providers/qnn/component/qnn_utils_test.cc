@@ -1226,6 +1226,18 @@ TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_BufferSizeMismatchFails) {
   EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(2, 3, 0, input, output).IsOK());
 }
 
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Template_ValidatesShapeAndElementCount) {
+  auto logger = MakeNullLogger();
+  const std::vector<int32_t> input{0, 1, 2, 3, 4, 5};
+  std::vector<int32_t> output;
+
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(input, std::vector<uint32_t>{6}, output, logger).IsOK());
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(input, std::vector<uint32_t>{2, 2}, output, logger).IsOK());
+
+  ASSERT_TRUE(qnn::utils::TwoDimensionTranspose(input, std::vector<uint32_t>{2, 3}, output, logger).IsOK());
+  EXPECT_EQ(output, (std::vector<int32_t>{0, 3, 1, 4, 2, 5}));
+}
+
 // =============================================================================
 // RequantizeBiasTensor — per-tensor and per-channel round-trip
 // =============================================================================

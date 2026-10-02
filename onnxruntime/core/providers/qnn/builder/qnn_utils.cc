@@ -2182,8 +2182,34 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
   OrtExternalInitializerInfo* external_initializer = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer));
   if (external_initializer) {
+    auto release_external_initializer = gsl::finally([&ort_api, external_initializer]() {
+      ort_api.ReleaseExternalInitializerInfo(external_initializer);
+    });
+
+    const OrtTypeInfo* type_info = nullptr;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(initializer, &type_info));
+    const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
+    RETURN_IF(tensor_type_and_shape_info == nullptr, "initializer is not a tensor.");
+
+    ONNXTensorElementDataType onnx_data_type;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
+
+    size_t num_dims = 0;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetDimensionsCount(tensor_type_and_shape_info, &num_dims));
+    std::vector<int64_t> dims(num_dims);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetDimensions(tensor_type_and_shape_info, dims.data(), dims.size()));
+    RETURN_IF(std::any_of(dims.begin(), dims.end(), [](int64_t dim) { return dim < 0; }),
+              "External initializer has a negative dimension.");
+
+    const size_t expected_byte_size = GetOnnxTensorDataSizeInBytes(dims, onnx_data_type);
+    const size_t external_byte_size = ort_api.ExternalInitializerInfo_GetByteSize(external_initializer);
+    RETURN_IF_NOT(external_byte_size == expected_byte_size,
+                  ("External initializer byte size does not match its declared shape and element type. Expected " +
+                   std::to_string(expected_byte_size) + " bytes, got " + std::to_string(external_byte_size) + ".")
+                      .c_str());
+
     RETURN_IF_ERROR(ReadExternalData(ort_api, external_initializer, model_path, unpacked_tensor));
-    ort_api.ReleaseExternalInitializerInfo(external_initializer);
     return Ort::Status();
   }
 
