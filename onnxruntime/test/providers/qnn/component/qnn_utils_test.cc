@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -153,6 +154,37 @@ TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_SpanMultiDim) {
   EXPECT_EQ(
       qnn::utils::GetQnnTensorDataSizeInBytes(shape_span, QNN_DATATYPE_FLOAT_32),
       2u * 3u * 4u * sizeof(float));
+}
+
+TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_CheckedShapeProductOverflowReturnsError) {
+  const std::vector<uint32_t> shape = {
+      std::numeric_limits<uint32_t>::max(),
+      std::numeric_limits<uint32_t>::max(),
+      2u,
+  };
+  size_t data_size = 0;
+
+  const Ort::Status status = qnn::utils::GetQnnTensorDataSizeInBytes(
+      gsl::make_span(shape), QNN_DATATYPE_SFIXED_POINT_16, data_size);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("element count overflow"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_CheckedByteCountOverflowReturnsError) {
+  std::vector<uint32_t> shape;
+  if constexpr (sizeof(size_t) == 8) {
+    shape = {std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max()};
+  } else {
+    shape = {std::numeric_limits<uint32_t>::max()};
+  }
+  size_t data_size = 0;
+
+  const Ort::Status status = qnn::utils::GetQnnTensorDataSizeInBytes(
+      gsl::make_span(shape), QNN_DATATYPE_SFIXED_POINT_16, data_size);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("byte size overflow"), std::string::npos);
 }
 
 // =============================================================================
