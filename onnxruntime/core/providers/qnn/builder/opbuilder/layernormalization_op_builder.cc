@@ -355,6 +355,13 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
   const bool externalize_scale = plan.externalize_scale;
   const bool externalize_bias = plan.externalize_bias;
 
+  std::vector<uint32_t> norm_shape;
+  size_t num_norm_elems = 0;
+  if (externalize_scale) {
+    norm_shape.assign(x_shape.begin() + ln_axis, x_shape.end());
+    RETURN_IF_ERROR(utils::GetQnnTensorDataSizeInBytes(norm_shape, QNN_DATATYPE_UINT_8, num_norm_elems));
+  }
+
   const auto& outputs = node_unit.Outputs();
   const std::string& final_output_name = outputs[0].name;
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
@@ -369,10 +376,6 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
   // qp, since the sqrt(N-1) bound assumes scale~=1 and loses precision at small scales.
   QnnQuantParamsWrapper ln_intermediate_qp;
   if (externalize_scale && final_output_info.quant_param.IsQuantized()) {
-    size_t num_norm_elems = 1;
-    for (size_t i = ln_axis; i < x_shape.size(); ++i) {
-      num_norm_elems *= static_cast<size_t>(x_shape[i]);
-    }
     // Hard bound is sqrt(N-1), but real data sits within ~3-sigma; cap at min(sqrt(N-1), 3.0)
     // so narrow dtypes (uint8: 256 levels) don't waste range on an unused tail. Values past 3.0
     // saturate, but are rare enough not to dominate per-tensor error.
@@ -403,13 +406,10 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
     // Match the synthesized ones tensor to the user-provided scale's dtype + quant params so the
     // LN op sees the type it expects in slot 1. Encoding 1.0 in the user's quant scheme is what
     // makes this an identity scale at runtime.
-    std::vector<uint32_t> norm_shape(x_shape.begin() + ln_axis, x_shape.end());
-    size_t num_elems = 1;
-    for (uint32_t d : norm_shape) {
-      num_elems *= static_cast<size_t>(d);
-    }
 
     const Qnn_DataType_t scale_dtype = scale_info.qnn_data_type;
+    size_t const_buf_size = 0;
+    RETURN_IF_ERROR(utils::GetQnnTensorDataSizeInBytes(norm_shape, scale_dtype, const_buf_size));
     std::vector<uint8_t> const_buf;
 
     if (scale_info.quant_param.IsQuantized()) {
@@ -431,28 +431,31 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
                     "synthesized identity scale would saturate.");
       const size_t elem_bytes = utils::GetElementSizeByType(scale_dtype);
       RETURN_IF_NOT(elem_bytes > 0, "LayerNorm scale decomposition: unsupported quantized scale dtype.");
-      const_buf.assign(num_elems * elem_bytes, 0);
-      for (size_t i = 0; i < num_elems; ++i) {
+      const_buf.assign(const_buf_size, 0);
+      for (size_t i = 0; i < num_norm_elems; ++i) {
         RETURN_IF_ERROR(StoreQuantizedFixedPoint(scale_dtype, const_buf.data(), i, quant_one));
       }
     } else {
       switch (scale_dtype) {
         case QNN_DATATYPE_FLOAT_32: {
-          const_buf.resize(num_elems * sizeof(float));
+          const_buf.resize(const_buf_size);
           float* p = reinterpret_cast<float*>(const_buf.data());
-          std::fill(p, p + num_elems, 1.0f);
+          std::fill(p, p + num_norm_elems, 1.0f);
           break;
         }
         case QNN_DATATYPE_FLOAT_16: {
-          const_buf.resize(num_elems * sizeof(Ort::Float16_t));
+          const_buf.resize(const_buf_size);
           Ort::Float16_t* p = reinterpret_cast<Ort::Float16_t*>(const_buf.data());
-          std::fill(p, p + num_elems, static_cast<Ort::Float16_t>(1.0f));
+          std::fill(p, p + num_norm_elems, static_cast<Ort::Float16_t>(1.0f));
           break;
         }
         default:
           return MAKE_EP_FAIL("LayerNorm scale decomposition: unsupported float scale dtype.");
       }
     }
+
+    RETURN_IF_NOT(const_buf.size() == const_buf_size,
+                  "LayerNorm scale decomposition: synthesized scale data size does not match its shape and dtype.");
 
     ln_scale_name = utils::UniqueNameGenerator().New(node_unit, "_ln_scale_one");
     QnnTensorWrapper scale_one_tensor(ln_scale_name,

@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -153,6 +154,37 @@ TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_SpanMultiDim) {
   EXPECT_EQ(
       qnn::utils::GetQnnTensorDataSizeInBytes(shape_span, QNN_DATATYPE_FLOAT_32),
       2u * 3u * 4u * sizeof(float));
+}
+
+TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_CheckedShapeProductOverflowReturnsError) {
+  const std::vector<uint32_t> shape = {
+      std::numeric_limits<uint32_t>::max(),
+      std::numeric_limits<uint32_t>::max(),
+      2u,
+  };
+  size_t data_size = 0;
+
+  const Ort::Status status = qnn::utils::GetQnnTensorDataSizeInBytes(
+      gsl::make_span(shape), QNN_DATATYPE_SFIXED_POINT_16, data_size);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("element count overflow"), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, GetQnnTensorDataSizeInBytes_CheckedByteCountOverflowReturnsError) {
+  std::vector<uint32_t> shape;
+  if constexpr (sizeof(size_t) == 8) {
+    shape = {std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint32_t>::max()};
+  } else {
+    shape = {std::numeric_limits<uint32_t>::max()};
+  }
+  size_t data_size = 0;
+
+  const Ort::Status status = qnn::utils::GetQnnTensorDataSizeInBytes(
+      gsl::make_span(shape), QNN_DATATYPE_SFIXED_POINT_16, data_size);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("byte size overflow"), std::string::npos);
 }
 
 // =============================================================================
@@ -1202,6 +1234,18 @@ TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_BufferSizeMismatchFails) {
   EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(2, 3, 4, input, short_output).IsOK());
   EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(3, 3, 4, input, output).IsOK());
   EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(2, 3, 0, input, output).IsOK());
+}
+
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Template_ValidatesShapeAndElementCount) {
+  auto logger = MakeNullLogger();
+  const std::vector<int32_t> input{0, 1, 2, 3, 4, 5};
+  std::vector<int32_t> output;
+
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(input, std::vector<uint32_t>{6}, output, logger).IsOK());
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(input, std::vector<uint32_t>{2, 2}, output, logger).IsOK());
+
+  ASSERT_TRUE(qnn::utils::TwoDimensionTranspose(input, std::vector<uint32_t>{2, 3}, output, logger).IsOK());
+  EXPECT_EQ(output, (std::vector<int32_t>{0, 3, 1, 4, 2, 5}));
 }
 
 // =============================================================================
