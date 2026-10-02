@@ -1013,8 +1013,13 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_TwoSe
   }
 }
 
-#ifndef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_OldSdk_LogsWarning) {
+  // QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_NUM_PREPARE_THREADS is available from
+  // QNN API 2.39 (QAIRT 2.51+). On those builds the warning path is compiled out, so skip.
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 39)
+  GTEST_SKIP() << "QAIRT SDK >= 2.51 (QNN API >= 2.39): num_prepare_threads is supported natively; "
+                  "old-SDK warning path is not compiled in.";
+#endif
   // When built against SDK < 2.51, setting the option must log a warning and be ignored.
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
@@ -1026,7 +1031,6 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_OldSd
                "htp_graph_splitting_num_prepare_threads was set but this build was compiled against "
                "QAIRT SDK < 2.51");
 }
-#endif
 
 // ===========================================================================
 // Group 8: Constructor — early throws
