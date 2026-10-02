@@ -3,7 +3,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/opbuilder/precision_bridge_utils.h"
+#include "core/providers/qnn/builder/opbuilder/mixed_precision_convert_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
@@ -135,8 +135,12 @@ Ort::Status SimpleOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                            bool do_op_validation) const {
   RETURN_IF_ERROR(BaseOpBuilder::ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation));
 
+  // Only HTP was validated for this Convert; the relaxed selectors are backend-agnostic, so guard here.
   // See OrtBinaryNodeGroupSelector's relaxation in qnn_ep_utils.cc for context.
-  return utils::AlignBinaryPrecisionInputs(qnn_model_wrapper, node_unit, input_names, do_op_validation);
+  if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    return Ort::Status();
+  }
+  return utils::AlignBinaryInputPrecision(qnn_model_wrapper, node_unit, input_names, do_op_validation);
 }
 
 // Limit to float type for now
@@ -501,10 +505,12 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                         GetQnnOpType(op_type), do_op_validation);
   }
 
-  // A bridgeable op's declared output precision may differ from what it now natively computes at
-  // (e.g. 16-bit in, declared 8-bit out); bridge with a native-precision compute + Convert.
-  // 1. Only applies to ops SimpleOpBuilder knows how to bridge.
-  if ((utils::IsUnaryPrecisionBridgeOp(op_type) || utils::IsBinaryPrecisionBridgeOp(op_type)) &&
+  // A Convert-compatible op's declared output precision may differ from what it now natively
+  // computes at (e.g. 16-bit in, declared 8-bit out); compute at native precision, then Convert.
+  // 1. Only HTP was validated for this Convert; the relaxed selectors are backend-agnostic, so
+  // guard here. Also only applies to ops SimpleOpBuilder knows how to Convert.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      (utils::IsConvertCompatibleUnaryOp(op_type) || utils::IsConvertCompatibleBinaryOp(op_type)) &&
       !input_names.empty()) {
     // 2. Read the declared (Q-node) output precision, applying any op-specific override first.
     TensorInfo output_info = {};
@@ -515,11 +521,11 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     }
     // 3. Compare against the precision the op will actually compute at (input_names[0]'s dtype).
     const Qnn_DataType_t native_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
-    const bool needs_bridge = utils::IsMixedPrecisionBridge(native_dtype, output_info.qnn_data_type);
-    if (needs_bridge) {
-      return utils::BridgeOutputPrecision(qnn_model_wrapper, node_unit, std::move(input_names),
-                                          std::move(param_tensor_names), do_op_validation,
-                                          GetQnnOpType(op_type), native_dtype, std::move(output_info));
+    const bool needs_convert = utils::NeedsPrecisionConvert(native_dtype, output_info.qnn_data_type);
+    if (needs_convert) {
+      return utils::InsertOutputPrecisionConvert(qnn_model_wrapper, node_unit, std::move(input_names),
+                                                 std::move(param_tensor_names), do_op_validation,
+                                                 GetQnnOpType(op_type), native_dtype, output_info);
     }
   }
 
