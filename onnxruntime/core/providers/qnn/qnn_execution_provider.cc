@@ -93,6 +93,26 @@ static std::optional<qnn::QnnBackendType> InferBackendTypeFromPath(const std::st
   }
   return std::nullopt;
 }
+// Strictly parses an integer without throwing or modifying `out` on failure.
+// std::from_chars rejects leading whitespace and reports overflow for the target type.
+template <typename T>
+static bool TryParseInteger(std::string_view value, T& out) {
+  // All current option values are non-negative, so reject explicit signs consistently for signed and unsigned T.
+  if (value.empty() || value.front() == '+' || value.front() == '-') {
+    return false;
+  }
+
+  T parsed{};
+  const char* begin = value.data();
+  const char* end = begin + value.size();
+  auto [ptr, ec] = std::from_chars(begin, end, parsed);
+  if (ec != std::errc{} || ptr != end) {
+    return false;
+  }
+
+  out = parsed;
+  return true;
+}
 
 static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,
@@ -256,19 +276,14 @@ static void ParseHtpGraphFinalizationOptimizationMode(
 static void ParseVtcmSize(const std::string& vtcm_size_in_mb_string,
                           int32_t& vtcm_size_in_mb,
                           const Ort::Logger& logger) {
-  try {
-    vtcm_size_in_mb = std::stoi(vtcm_size_in_mb_string);
-  } catch (const std::invalid_argument& /*ex*/) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Ignoring malformed VTCM size, expecting a >0 integer.");
-  } catch (const std::out_of_range& /*ex*/) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Ignoring malformed VTCM size, expecting a >0 integer.");
-  }
-
-  if (vtcm_size_in_mb <= 0) {
+  int32_t parsed = 0;
+  if (!TryParseInteger(vtcm_size_in_mb_string, parsed) || parsed <= 0) {
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_WARNING,
                 ("Invalid vtcm_mb: " + vtcm_size_in_mb_string + " will be skipped").c_str());
+    return;
   }
+  vtcm_size_in_mb = parsed;
 }
 
 static void ParseHtpArchitecture(const std::string& htp_arch_string,
@@ -301,17 +316,9 @@ static void ParseSocModel(const std::string& soc_model_string, uint32_t& soc_mod
     return;
   }
 
-  // Fall back to integer parsing for numeric IDs (e.g. "69", "43").
-  int value = 0;
-  try {
-    value = std::stoi(soc_model_string);
-  } catch (const std::invalid_argument& /*ex*/) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                ("Unrecognized soc_model '" + soc_model_string +
-                 "'. Expected a numeric ID (e.g. 43, 69) or a chip name (e.g. SM8550, SM8750).")
-                    .c_str());
-    return;
-  } catch (const std::out_of_range& /*ex*/) {
+  // Fall back to strict numeric parsing for numeric IDs (e.g. "69", "43").
+  uint32_t parsed = 0;
+  if (!TryParseInteger(soc_model_string, parsed)) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
                 ("Unrecognized soc_model '" + soc_model_string +
                  "'. Expected a numeric ID (e.g. 43, 69) or a chip name (e.g. SM8550, SM8750).")
@@ -319,11 +326,7 @@ static void ParseSocModel(const std::string& soc_model_string, uint32_t& soc_mod
     return;
   }
 
-  if (value < 0) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("Invalid soc_model: " + soc_model_string).c_str());
-  } else {
-    soc_model = static_cast<uint32_t>(value);
-  }
+  soc_model = parsed;
 }
 
 static void MatchSocModelAndHtpArch(const uint32_t soc_model,
@@ -394,10 +397,7 @@ static void ParseIntegerOption(const OrtApi& ort_api,
     return;
   }
 
-  const char* begin = value_str.data();
-  const char* end = begin + value_str.size();
-  auto [ptr, ec] = std::from_chars(begin, end, out);
-  if (ec != std::errc{} || ptr != end) {
+  if (!TryParseInteger(value_str, out)) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
                 ("Ignoring malformed " + key + ": " + value_str).c_str());
     out = default_value;
@@ -878,17 +878,9 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                  profiling_file_path);
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Profiling file path: " + profiling_file_path).c_str());
 
-  // Get RPC control latency from session options
-  std::string rpc_control_latency_str;
-  GetSessionConfigEntryOrDefault(ort_api,
-                                 session_options_,
-                                 FormatEPConfigKey("rpc_control_latency"),
-                                 "0",
-                                 rpc_control_latency_str);
-  if (!rpc_control_latency_str.empty() && rpc_control_latency_str != "0") {
-    default_rpc_control_latency_ = static_cast<uint32_t>(std::stoul(rpc_control_latency_str));
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("rpc_control_latency: " + rpc_control_latency_str).c_str());
-  }
+  // Get RPC control latency from session options.
+  ParseIntegerOption(ort_api, session_options_, FormatEPConfigKey("rpc_control_latency"),
+                     uint32_t{0}, default_rpc_control_latency_, logger_);
 
   // default_htp_performance_mode from QNN EP option.
   // set it once only for each thread as default so user don't need to set it for every session run
@@ -977,22 +969,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
-  std::string device_id_str;
-  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("device_id"), "0", device_id_str);
-  if (!device_id_str.empty()) {
-    int value = std::stoi(device_id_str);
-    if (value < 0) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_WARNING,
-                  ("Invalid device ID '" +
-                   device_id_str +
-                   "', only >= 0 allowed. Set to " +
-                   std::to_string(device_id_))
-                      .c_str());
-    } else {
-      device_id_ = static_cast<uint32_t>(value);
-    }
-  }
+  ParseIntegerOption(ort_api, session_options_, FormatEPConfigKey("device_id"),
+                     uint32_t{0}, device_id_, logger_);
 
   // Op packages
   std::string op_packages_str;
@@ -1167,6 +1145,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   uint8_t def_num_graph_prepare_threads = max_num_supported_threads > 8 ? 8 : max_num_supported_threads;
 
   auto is_valid_number = [this](const std::string& s) {
+    if (s.empty()) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_ERROR,
+                  "num_graph_prepare_threads must be a positive number");
+      return false;
+    }
+
     if (s[0] == '0') {
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_ERROR,
@@ -1185,23 +1170,25 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_ERROR,
                 "num_graph_prepare_threads must be a positive number");
-    return true;
+    return false;
   };
 #endif
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   if (!num_graph_prepare_threads_str.empty() && is_valid_number(num_graph_prepare_threads_str)) {
-    uint8_t value = static_cast<uint8_t>(std::stoi(num_graph_prepare_threads_str));
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("User specified num_graph_prepare_threads: " + std::to_string(value)).c_str());
-
-    if (value > max_num_supported_threads) {
+    int64_t parsed = 0;
+    // is_valid_number already guaranteed all-digits; TryParseInteger additionally guards against overflow.
+    if (!TryParseInteger(num_graph_prepare_threads_str, parsed) || parsed <= 0 ||
+        parsed > max_num_supported_threads) {
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_WARNING,
-                  ("Specified number of graph prepare threads (" + std::to_string(value) + ") is outside of the allowable range [1," + std::to_string(max_num_supported_threads) + "]. Defaulting to " + std::to_string(def_num_graph_prepare_threads) + " threads.").c_str());
+                  ("Specified number of graph prepare threads (" + num_graph_prepare_threads_str + ") is outside of the allowable range [1," + std::to_string(max_num_supported_threads) + "]. Defaulting to " + std::to_string(def_num_graph_prepare_threads) + " threads.").c_str());
       num_graph_prepare_threads_ = def_num_graph_prepare_threads;
     } else {
+      uint8_t value = static_cast<uint8_t>(parsed);
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("User specified num_graph_prepare_threads: " + std::to_string(value)).c_str());
       num_graph_prepare_threads_ = value;
     }
   } else {
@@ -3432,10 +3419,15 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
   rpc_latency = ort_api.GetRunConfigEntry(run_options, kOrtRunOptionsConfigQnnRpcControlLatency);
   uint32_t rpc_control_latency = 0;
   if (rpc_latency != nullptr) {
-    rpc_control_latency = static_cast<uint32_t>(std::stoul(rpc_latency));
-    per_thread_htp_power_configs.rpc_control_latency = rpc_control_latency;
+    if (TryParseInteger(rpc_latency, rpc_control_latency)) {
+      per_thread_htp_power_configs.rpc_control_latency = rpc_control_latency;
 
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, (std::string("rpc_control_latency: ") + rpc_latency).c_str());
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, (std::string("rpc_control_latency: ") + rpc_latency).c_str());
+    } else {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                  (std::string("Invalid rpc_control_latency: '") + rpc_latency + "'. Ignoring.").c_str());
+      per_thread_htp_power_configs.rpc_control_latency = default_rpc_control_latency_;
+    }
   } else {
     per_thread_htp_power_configs.rpc_control_latency = default_rpc_control_latency_;
   }
@@ -3589,7 +3581,11 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
     std::string value(option_values[opt_idx]);
 
     if (key == "kvcache_rewind") {
-      uint64_t rewind_value = std::stoull(value);
+      uint64_t rewind_value = 0;
+      if (!TryParseInteger(value, rewind_value)) {
+        ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, ("Invalid kvcache_rewind value: " + value).c_str());
+        return ep->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "Invalid kvcache_rewind value.");
+      }
       if (!(ep->genie_backend_manager_)) {
         ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, ("Invalid EP Workload Type: " + value).c_str());
         return ep->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "Genie Execution Not Set.");
