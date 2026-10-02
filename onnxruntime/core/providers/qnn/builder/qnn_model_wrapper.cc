@@ -211,6 +211,11 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
                                                   std::vector<Qnn_Tensor_t>& qnn_tensors,
                                                   bool do_op_validation) {
   for (const auto& tensor_name : tensor_names) {
+    if (tensor_name.empty()) {
+      qnn_tensors.push_back(QNN_TENSOR_INIT);
+      continue;
+    }
+
     auto it = model_tensors_map_.find(tensor_name);
     if (it == model_tensors_map_.end()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Input name not exist: " + tensor_name).c_str());
