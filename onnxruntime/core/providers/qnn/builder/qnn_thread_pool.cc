@@ -45,12 +45,8 @@ void QnnJobThreadPool::QnnJobThread::Start() {
     do {
       auto job = tp_->GetJobFromQueueIfExists(thread_num_);
       if (job) {
-        SetActive();
-        tp_->NotifyJobStarted();
-
         job();
-
-        SetInactive();
+        tp_->NotifyJobFinished();
       } else {
         tp_->WaitForJobQueueUpdate(thread_num_, exit_predicate_);
       }
@@ -82,15 +78,6 @@ void QnnJobThreadPool::QnnJobThread::Stop() {
   ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
               ORT_LOGGING_LEVEL_VERBOSE,
               ("QnnJobThread: Thread " + std::to_string(thread_num_) + " stopped").c_str());
-}
-
-void QnnJobThreadPool::QnnJobThread::WaitUntilInactive() {
-  std::unique_lock<std::mutex> lock(thread_activity_mutex_);
-  if (thread_active_) {
-    thread_activity_change_cv_.wait(lock, [this]() {
-      return !thread_active_;
-    });
-  }
 }
 
 QnnJobThreadPool::QnnJobThreadPool(uint8_t max_num_threads)
@@ -143,18 +130,14 @@ void QnnJobThreadPool::WaitForQueuedJobsToFinish() {
               ORT_LOGGING_LEVEL_VERBOSE,
               "QnnJobThreadPool: Waiting for all jobs to finish");
 
-  // Block all newly submitted jobs from entering the queue
-  std::unique_lock<std::mutex> lock(queue_mutex_);
-  // Only wait until queue is empty if thread pool has not been stopped
-  if (IsRunning() && !job_queue_.empty()) {
-    job_started_cv_.wait(lock, [this]() {
-      return job_queue_.empty();
-    });
+  if (!IsRunning()) {
+    return;
   }
 
-  for (auto& thread : thread_pool_) {
-    thread->WaitUntilInactive();
-  }
+  std::unique_lock<std::mutex> lock(queue_mutex_);
+  jobs_finished_cv_.wait(lock, [this]() {
+    return job_queue_.empty() && in_flight_jobs_ == 0;
+  });
 
   ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Done waiting on all jobs");
 }
@@ -191,10 +174,17 @@ std::function<void()> QnnJobThreadPool::GetJobFromQueueIfExists(const uint8_t th
                 ("QnnJobThreadPool: Thread " + std::to_string(thread_num) + " received a job").c_str());
     auto job = job_queue_.front();
     job_queue_.pop();
+    ++in_flight_jobs_;
     return job;
   }
 
   return nullptr;
+}
+
+void QnnJobThreadPool::NotifyJobFinished() {
+  std::unique_lock<std::mutex> lock(queue_mutex_);
+  --in_flight_jobs_;
+  jobs_finished_cv_.notify_all();
 }
 
 }  // namespace thread

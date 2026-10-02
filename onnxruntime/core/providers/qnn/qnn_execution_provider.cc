@@ -2674,6 +2674,9 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     end = std::chrono::steady_clock::now();
     total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
 
+    // Join every worker before consuming results or moving model ownership.
+    tp.Stop();
+
     for (auto& model_info : model_infos) {
       RETURN_IF_NOT_OK(std::move(model_info.result));
 
