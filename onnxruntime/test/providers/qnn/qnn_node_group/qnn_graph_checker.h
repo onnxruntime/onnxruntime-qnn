@@ -19,6 +19,11 @@ void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
                         const std::string& op,
                         size_t count = 1);
 
+// Asserts that a node of type `op` has a name containing `name_substring`.
+void AssertOpNameContainsInQnnGraph(const std::filesystem::path& dump_dir,
+                                    const std::string& op,
+                                    const std::string& name_substring);
+
 // Checks the datatype of the tensor produced by the single Convert node.
 void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
                                  uint32_t expected_data_type);
