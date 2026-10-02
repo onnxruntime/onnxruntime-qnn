@@ -143,6 +143,14 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
   size_t input_rank = input_info.shape.size();
+  const auto& outputs = node_unit.Outputs();
+  for (const auto& output : outputs) {
+    TensorInfo output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, output_info));
+    RETURN_IF_NOT(output_info.shape.size() == input_rank,
+                  "QNN TopK output rank must match input rank.");
+  }
+
   int32_t axis = OrtNodeAttrHelper(node_unit).Get("axis", -1);
   if (axis == -1 || axis == static_cast<int32_t>(input_rank - 1)) {
     RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper,
@@ -155,7 +163,6 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     return Ort::Status();
   }
 
-  const auto& outputs = node_unit.Outputs();
   std::vector<std::string> transpose_input_names;
   std::vector<std::vector<std::uint32_t>> transpose_input_shapes;
 
