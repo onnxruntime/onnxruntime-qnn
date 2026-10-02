@@ -181,6 +181,7 @@ class QnnModel {
   // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.
   Ort::Status BindAndExecuteGraph(OrtKernelContext* context,
                                   const Ort::Logger& logger,
+                                  const QnnBackendManager::ContextHandleLease& context_handle_lease,
                                   Qnn_ErrorHandle_t& execute_status,
                                   QnnEpProfiler* ort_profiler);
 
