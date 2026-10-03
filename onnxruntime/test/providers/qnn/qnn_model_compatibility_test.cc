@@ -582,7 +582,10 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MultiSoc_Override
 #if defined(_WIN32) && defined(_M_ARM64)
 TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_HostModeNoHnrd) {
 #ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
-  GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+  // Use AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after GTEST_SKIP().
+  if (::testing::internal::AlwaysTrue()) {
+    GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+  }
 #endif
 
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();

@@ -37,6 +37,7 @@
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
+#include "onnxruntime_config.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
@@ -437,7 +438,7 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetVersion_ReturnsSemver) {
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
-  EXPECT_STREQ(factory.GetVersion(&factory), "0.1.0");
+  EXPECT_STREQ(factory.GetVersion(&factory), ORT_QNN_EP_VERSION);
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, IsStreamAware_ReturnsFalse) {
