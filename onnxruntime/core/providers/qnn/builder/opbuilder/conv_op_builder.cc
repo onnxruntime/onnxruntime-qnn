@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <algorithm>
+
 #include <gsl/gsl>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -198,11 +200,13 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
         }  // end is_block_quant
       }  // end else (weight shape obtainable)
     }  // end quant_param check
+
     // HTP requires activation bitwidth >= weight bitwidth (a16w16, a16w8, a16w4, a8w8, a8w4). Checked
     // here, not in ProcessInputs, so an unsatisfiable combo is rejected before layout transform runs.
-    // Conv's actual compute bitwidth is the activation's own bitwidth in the 16-in/8-out narrowing
-    // case (handled by AddOpWithQuantizedOutput), and the output's bitwidth otherwise (the activation
-    // is Converted up to it first). See ProcessConv2D3DInputs's is_narrowing_output.
+    // Conv's actual compute bitwidth is always the wider of the activation's and the output's: when
+    // the activation is wider, it's Converted down only after Conv (AddOpWithQuantizedOutput);
+    // otherwise the activation is Converted up to the output's precision before Conv runs.
+    // See ProcessConv2D3DInputs's is_narrowing_output.
     Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
     RETURN_IF_ERROR(utils::GetQnnDataType(node_unit.Outputs()[0].quant_param.has_value(),
                                           node_unit.Outputs()[0].type, declared_output_dtype));
@@ -210,10 +214,9 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(utils::GetQnnDataType(input_0.quant_param.has_value(), input_0.type, act_dtype_check));
     Qnn_DataType_t weight_dtype = QNN_DATATYPE_FLOAT_32;
     RETURN_IF_ERROR(utils::GetQnnDataType(inputs[1].quant_param.has_value(), inputs[1].type, weight_dtype));
-    const bool is_narrowing_output = utils::IsQuant16bit(act_dtype_check) && utils::IsQuant8bit(declared_output_dtype);
     const int weight_bitwidth = utils::FixedPointBitWidth(weight_dtype);
-    const int compute_bitwidth = is_narrowing_output ? utils::FixedPointBitWidth(act_dtype_check)
-                                                     : utils::FixedPointBitWidth(declared_output_dtype);
+    const int compute_bitwidth = std::max(utils::FixedPointBitWidth(act_dtype_check),
+                                          utils::FixedPointBitWidth(declared_output_dtype));
     RETURN_IF_NOT(weight_bitwidth <= compute_bitwidth,
                   ("Conv's weight bitwidth (" + std::to_string(weight_bitwidth) +
                    ") exceeds its compute bitwidth (" + std::to_string(compute_bitwidth) + ")")
@@ -468,10 +471,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
     RETURN_IF_ERROR(utils::GetQnnDataType(conv_output.quant_param.has_value(), conv_output.type,
                                           declared_output_dtype));
-    // 2. A 16-bit activation feeding an 8-bit output is already handled losslessly downstream by
+    // 2. A 16-bit activation feeding an 8-bit output is already handled by
     // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output. Convert
     // only the other mismatched fixed-point pairs here; same-precision Conv is untouched.
-    const bool is_narrowing_output = utils::IsQuant16bit(act_dtype) && utils::IsQuant8bit(declared_output_dtype);
+    const bool is_narrowing_output = utils::IsNarrowingQuantOutput(act_dtype, declared_output_dtype);
     if (!is_narrowing_output && utils::NeedsPrecisionConvert(act_dtype, declared_output_dtype)) {
       RETURN_IF_NOT(act_wrapper.GetQnnQuantParams().IsPerTensor(),
                     "Conv's mixed-precision activation Convert only supports per-tensor quantization");
