@@ -27,6 +27,27 @@ std::string BaseOpBuilder::GetOpBuilderType() const {
 Ort::Status BaseOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger) const {
+  // HTP v68 does not support FP16 or FP32 tensors. Reject any op with such
+  // inputs or outputs at GetCapability time so they fall back to CPU.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      qnn_model_wrapper.GetHtpArch() == QNN_HTP_DEVICE_ARCH_V68) {
+    const auto check_io = [&](const std::vector<OrtNodeUnitIODef>& io_defs) -> Ort::Status {
+      for (const auto& io_def : io_defs) {
+        if (IsOptionalOrtNodeUnitIODef(io_def)) {
+          continue;
+        }
+        TensorInfo tensor_info = {};
+        RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(io_def, tensor_info));
+        const Qnn_DataType_t qnn_dt = tensor_info.qnn_data_type;
+        RETURN_IF(qnn_dt == QNN_DATATYPE_FLOAT_32 || qnn_dt == QNN_DATATYPE_FLOAT_16,
+                  "QNN EP does not support FP32 or FP16 tensors on HTP v68.");
+      }
+      return Ort::Status();
+    };
+    RETURN_IF_ERROR(check_io(node_unit.Inputs()));
+    RETURN_IF_ERROR(check_io(node_unit.Outputs()));
+  }
+
   // General Datatype checks on various QNN backend (HTP, CPU, GPU)
   RETURN_IF_ERROR(ProcessDataTypes(qnn_model_wrapper, node_unit));
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
