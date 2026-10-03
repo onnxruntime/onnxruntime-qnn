@@ -2043,6 +2043,90 @@ TEST_F(QnnHTPBackendTests, Add_U8_U16_Convert) {
                        ExpectedEPNodeAssignment::All);
 }
 
+// Builds a unary op model with a mismatched input/output QDQ type, exercising the precision bridge.
+template <typename InputQType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQUnaryMixedDtypeTestCase(const std::string& op_type,
+                                                                      const TestInputDef<float>& input_def) {
+  return [op_type, input_def](ModelTestBuilder& builder, std::vector<QuantParams<OutputQType>>& output_qparams) {
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def);
+    const std::string input_after_qdq =
+        AddQDQNodePair<InputQType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
+
+    builder.AddNode(op_type, op_type, {input_after_qdq}, {"Y"}, kOnnxDomain);
+
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "qdq_out", "Y",
+                                                       output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+// Builds a binary op model where the two inputs and/or output can use different QDQ types.
+template <typename Input0QType, typename Input1QType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQBinaryMixedDtypeTestCase(const std::string& op_type,
+                                                                       const TestInputDef<float>& input0_def,
+                                                                       const TestInputDef<float>& input1_def) {
+  return [op_type, input0_def, input1_def](ModelTestBuilder& builder,
+                                           std::vector<QuantParams<OutputQType>>& output_qparams) {
+    MakeTestInput<float>(builder, "input0", input0_def);
+    const QuantParams<Input0QType> input0_qparams = GetTestInputQuantParams<Input0QType>(input0_def);
+    const std::string input0_after_qdq =
+        AddQDQNodePair<Input0QType>(builder, "qdq_in0", "input0", input0_qparams.scale, input0_qparams.zero_point);
+
+    MakeTestInput<float>(builder, "input1", input1_def);
+    const QuantParams<Input1QType> input1_qparams = GetTestInputQuantParams<Input1QType>(input1_def);
+    const std::string input1_after_qdq =
+        AddQDQNodePair<Input1QType>(builder, "qdq_in1", "input1", input1_qparams.scale, input1_qparams.zero_point);
+
+    builder.AddNode(op_type, op_type, {input0_after_qdq, input1_after_qdq}, {"Y"}, kOnnxDomain);
+
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "qdq_out", "Y",
+                                                       output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+// Sigmoid computed at u16 (its HTP-required fixed encoding), output re-quantized to u8.
+TEST_F(QnnHTPBackendTests, Sigmoid_U16In_U8Out_Mixed) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input_def({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6));
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>("Sigmoid_node", "Sigmoid", {input_def}, {}, {}, kOnnxDomain),
+                       BuildQDQUnaryMixedDtypeTestCase<uint16_t, uint8_t>("Sigmoid", input_def),
+                       provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Mul with mismatched input precisions (u8, u16); the u8 input is Converted up to u16 first.
+TEST_F(QnnHTPBackendTests, Mul_U8_U16_MixedInputs) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input0_def({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8));
+  TestInputDef<float> input1_def({1, 2, 2, 2}, false, GetFloatDataInRange(-20.0f, 20.0f, 8));
+
+  TestQDQModelAccuracy(
+      BuildOpTestCase<float>("Mul_node", "Mul", {input0_def, input1_def}, {}, {}, kOnnxDomain),
+      BuildQDQBinaryMixedDtypeTestCase<uint8_t, uint16_t, uint16_t>("Mul", input0_def, input1_def),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Mul with same-precision (u8) inputs but a declared u16 output.
+TEST_F(QnnHTPBackendTests, Mul_U8U8_U16Out_Mixed) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input0_def({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8));
+  TestInputDef<float> input1_def({1, 2, 2, 2}, false, GetFloatDataInRange(-5.0f, 5.0f, 8));
+
+  TestQDQModelAccuracy(
+      BuildOpTestCase<float>("Mul_node", "Mul", {input0_def, input1_def}, {}, {}, kOnnxDomain),
+      BuildQDQBinaryMixedDtypeTestCase<uint8_t, uint8_t, uint16_t>("Mul", input0_def, input1_def),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
 // Builds a graph where a (DQ -> Q) sequence at the graph's output is fuse into a QNN Convert operator.
 // ONNX Graph: DQ -> Add -> Q -> DQ -> Q -> graph_output
 // QNN Graph:  DQ -> Add -> Q -> Convert -> graph_output

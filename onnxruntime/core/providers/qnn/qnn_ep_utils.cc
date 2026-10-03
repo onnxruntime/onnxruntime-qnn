@@ -57,6 +57,26 @@ std::optional<ONNXTensorElementDataType> GetNodeInputDataType(const OrtNode* nod
   return GetDataTypeFromValueInfo(ort_api, inputs[index]);
 }
 
+// 1.2.1 True if `type` is a convertible (4/8/16-bit, signed or unsigned) fixed-point encoding.
+bool IsConvertibleFixedPointType(ONNXTensorElementDataType type) {
+  switch (type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// 1.2.2 True if `a` and `b` are a mismatched pair of convertible fixed-point encodings.
+bool NeedsPrecisionConvert(ONNXTensorElementDataType a, ONNXTensorElementDataType b) {
+  return a != b && IsConvertibleFixedPointType(a) && IsConvertibleFixedPointType(b);
+}
+
 // 1.3 Element type of `node`'s output[index].
 std::optional<ONNXTensorElementDataType> GetNodeOutputDataType(const OrtNode* node, const OrtApi& ort_api, int index) {
   size_t num_defs = 0;
@@ -911,7 +931,18 @@ bool OrtUnaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
   }
 
   if (dt_input.value() != dt_output.value()) {
-    return false;
+    // SimpleOpBuilder can Convert a precision mismatch for some unary ops.
+    // Other unary-shaped ops (Reduce*, Pool*, Softmax, Slice, LRN) have dedicated builders
+    // that don't implement this Convert, so stay strict for them.
+    // 1. Op must be one SimpleOpBuilder knows how to Convert.
+    // 2. The mismatch itself must be a convertible fixed-point pair (4/8/16-bit).
+    // This check is intentionally permissive beyond that (e.g. doesn't check graph-output or
+    // per-tensor-only); SimpleOpBuilder's InsertOutputPrecisionConvert enforces those limits
+    // and fails the second (NHWC) validation pass, so the node falls back if they don't hold.
+    if (!qnn::utils::IsConvertCompatibleUnaryOp(Ort::ConstNode(node).GetOperatorType()) ||
+        !NeedsPrecisionConvert(dt_input.value(), dt_output.value())) {
+      return false;
+    }
   }
 
   return true;
@@ -994,7 +1025,19 @@ bool OrtBinaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   }
 
   if (dt_input_1.value() != dt_input_2.value() || dt_input_1.value() != dt_output.value()) {
-    return false;
+    // SimpleOpBuilder can align a mismatched input pair for some binary ops via Convert.
+    // 1. Op must be one SimpleOpBuilder knows how to Convert.
+    const bool is_convert_compatible_op = qnn::utils::IsConvertCompatibleBinaryOp(Ort::ConstNode(node).GetOperatorType());
+    // 2. Every mismatched slot must itself be a convertible fixed-point type (4/8/16-bit).
+    // This check is intentionally permissive beyond that (e.g. doesn't check per-tensor-only);
+    // AlignBinaryInputPrecision enforces that limit and fails the second (NHWC) validation pass,
+    // so the node falls back if it doesn't hold.
+    const bool all_convertible = IsConvertibleFixedPointType(dt_input_1.value()) &&
+                                 IsConvertibleFixedPointType(dt_input_2.value()) &&
+                                 IsConvertibleFixedPointType(dt_output.value());
+    if (!is_convert_compatible_op || !all_convertible) {
+      return false;
+    }
   }
 
   return true;
@@ -1152,27 +1195,25 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
   }
 
   // DQ nodes are positional. Verify explicitly that both inputs[0] (data) and inputs[1] (weight) are DQ-produced.
-  {
-    size_t num_inputs = 0;
-    if (ort_api.Node_GetNumInputs(node, &num_inputs) != nullptr || num_inputs < 2) {
+  size_t num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(node, &num_inputs) != nullptr || num_inputs < 2) {
+    return false;
+  }
+  std::vector<const OrtValueInfo*> node_inputs(num_inputs);
+  if (ort_api.Node_GetInputs(node, node_inputs.data(), node_inputs.size()) != nullptr) {
+    return false;
+  }
+  for (int slot : {0, 1}) {
+    if (node_inputs[slot] == nullptr) {
       return false;
     }
-    std::vector<const OrtValueInfo*> inputs(num_inputs);
-    if (ort_api.Node_GetInputs(node, inputs.data(), inputs.size()) != nullptr) {
+    const OrtNode* producer = nullptr;
+    if (ort_api.ValueInfo_GetValueProducer(node_inputs[slot], &producer, nullptr) != nullptr) {
       return false;
     }
-    for (int slot : {0, 1}) {
-      if (inputs[slot] == nullptr) {
-        return false;
-      }
-      const OrtNode* producer = nullptr;
-      if (ort_api.ValueInfo_GetValueProducer(inputs[slot], &producer, nullptr) != nullptr) {
-        return false;
-      }
-      if (producer == nullptr ||
-          Ort::ConstNode(producer).GetOperatorType() != "DequantizeLinear") {
-        return false;  // inputs[0] and inputs[1] must be DQ-produced; only inputs[2] (bias) may be float.
-      }
+    if (producer == nullptr ||
+        Ort::ConstNode(producer).GetOperatorType() != "DequantizeLinear") {
+      return false;  // inputs[0] and inputs[1] must be DQ-produced; only inputs[2] (bias) may be float.
     }
   }
 
@@ -1184,8 +1225,22 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
+  // IsSupportedActivationOutputTypePair accepts 16-bit-in/8-bit-out: ConvOpBuilder narrows only the
+  // output after computing Conv at 16-bit (see AddOpWithQuantizedOutput), so that case is lossless
+  // and handled downstream regardless of rank. NeedsPrecisionConvert accepts any other mismatched
+  // fixed-point pair (e.g. 8-bit-in/16-bit-out, 4-bit combos): ConvOpBuilder Converts the activation
+  // to the output's precision before Conv runs, but only ProcessConv2D3DInputs (rank 4/5 activation)
+  // implements that Convert — ProcessConv1DInputs (rank 3) does not — so reject a rank-3 mismatch
+  // here rather than let it fall back silently after a wasted partition attempt. The per-tensor-only
+  // limit is checked separately in IsOpSupported (weight-bitwidth guard) and in
+  // ProcessConv2D3DInputs itself, which fails the second (NHWC) validation pass — and the node falls
+  // back — if it doesn't hold. See ConvOpBuilder::ProcessConv2D3DInputs.
   if (!IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0])) {
-    return false;
+    std::vector<int64_t> input_shape;
+    if (!NeedsPrecisionConvert(dt_input.value(), dt_output.value()) ||
+        !GetValueInfoShape(ort_api, node_inputs[0], input_shape) || input_shape.size() == 3) {
+      return false;
+    }
   }
 
   if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 &&
