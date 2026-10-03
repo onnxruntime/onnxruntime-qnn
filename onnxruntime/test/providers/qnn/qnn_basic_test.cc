@@ -1281,8 +1281,8 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
   VerifyFileExistsAndIsNonEmpty(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
 
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 29))
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 36
   VerifyFileExistsAndIsNonEmpty("detailed_profile_qnn.log");
   std::remove("detailed_profile_qnn.log");
 #endif
@@ -1314,8 +1314,8 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
   std::remove(provider_options["profiling_file_path"].c_str());
 
   std::cout << "DEBUG: " << __FILE__ << " " << __LINE__ << std::endl;
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 29))
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 36
   VerifyFileExistsAndIsNonEmpty("optrace_profile_qnn.log");
   std::cout << "DEBUG: " << __FILE__ << " " << __LINE__ << std::endl;
   if (std::remove("optrace_profile_qnn.log") != 0)

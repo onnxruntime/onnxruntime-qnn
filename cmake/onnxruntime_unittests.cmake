@@ -368,6 +368,15 @@ block()
     if(onnxruntime_BUILD_QNN_UDO_TEST)
       target_compile_definitions(onnxruntime_provider_test PRIVATE BUILD_QNN_UDO_TEST)
     endif()
+    # Inject QNN SDK version macros so version-gated tests compile correctly.
+    # QNN_API_VERSION_* are defined in QNN SDK headers and are always available, but
+    # QNN_SDK_VERSION_* are injected by CMake and must be explicitly propagated here.
+    if(QNN_SDK_VERSION_MAJOR AND QNN_SDK_VERSION_MINOR)
+      target_compile_definitions(onnxruntime_provider_test PRIVATE
+        QNN_SDK_VERSION_MAJOR=${QNN_SDK_VERSION_MAJOR}
+        QNN_SDK_VERSION_MINOR=${QNN_SDK_VERSION_MINOR}
+        QNN_SDK_VERSION_PATCH=${QNN_SDK_VERSION_PATCH})
+    endif()
   endif()
 
   # Dependency on ORT Core public header files

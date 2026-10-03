@@ -45,10 +45,11 @@
 // Flag to determine if Backend should do node validation for each opNode added
 #define DO_GRAPH_NODE_VALIDATIONS 1
 
-// Ensure that we have a recent enough version of QNN
-static_assert(QNN_API_VERSION_MAJOR > 2 ||
-                  (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 29),
-              "Minimum required QAIRT SDK version is 2.39.0");
+// Ensure that we have a recent enough version of QNN SDK.
+#if !defined(QNN_SDK_VERSION_MAJOR) || !defined(QNN_SDK_VERSION_MINOR) || \
+    QNN_SDK_VERSION_MAJOR < 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 39)
+#error "Minimum required QAIRT SDK version is 2.39.0"
+#endif
 
 namespace onnxruntime {
 namespace qnn {
@@ -1448,7 +1449,8 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
     const qnn::EpContextIoDispatch& io_dispatch) {
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 35
   QnnContext_Config_t context_config_resource_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t resource_sharing_custom_config;
   resource_sharing_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_SHARE_RESOURCES;
@@ -1493,7 +1495,8 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
 
   std::vector<const QnnContext_Config_t*> configs_vec;
   configs_vec.push_back(&context_priority_config);
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 35
   configs_vec.push_back(&context_config_resource_sharing);
   configs_vec.push_back(&resource_sharing_opt_type_config);
   configs_vec.push_back(&context_config_weight_sharing);
@@ -1706,7 +1709,8 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
 
   QnnContext_Config_t context_config_ref_weight_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t ref_weight_sharing_custom_config;
-#if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 33
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 44
   if (core_api_version_.major == 2 && core_api_version_.minor >= 33) {
     ref_weight_sharing_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REFERENCE_WEIGHT_SHARING_ENABLED;
     ref_weight_sharing_custom_config.referenceWeightSharingEnabled = enable_htp_ref_weight_sharing;
@@ -1874,8 +1878,9 @@ Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
   }
 
   max_spill_fill_buffer_size = 0;
-  // spill fill starts from 2.28
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+  // spill fill starts from QAIRT SDK 2.28
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 28
   auto sys_ctx_handle = GetSystemContextHandle();
   RETURN_IF(sys_ctx_handle == nullptr, "System context handle is null.");
 
@@ -1999,7 +2004,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
                   ("Graph count from QNN context: " + std::to_string(graph_count)).c_str());
 
   Qnn_ContextHandle_t context = nullptr;
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 35
   if (htp_share_resource_optimization_ == 1) {
     if (ep_context_handle_map_.find(node_name) != ep_context_handle_map_.end()) {
       context = ep_context_handle_map_.at(node_name);
@@ -2040,7 +2046,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
       RETURN_IF_ERROR(GetProfilingManager().ExtractBackendProfilingInfo(profiling_info, *logger_ptr_));
     }
 
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 35
   }
 #endif
 
@@ -2246,10 +2253,11 @@ Ort::Status QnnBackendManager::SetupBackend(
   bool enable_htp_weight_sharing = false;
   if (share_ep_contexts && !load_from_cached_context) {
 #if QNN_ARCH_ARM64 && \
-    (QNN_API_VERSION_MAJOR < 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34))
+    (!defined(QNN_SDK_VERSION_MAJOR) || !defined(QNN_SDK_VERSION_MINOR) || \
+     QNN_SDK_VERSION_MAJOR < 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 45))
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
-                    "Weight sharing on Windows arm64 device requires QNN API version >=2.34. Since Current version is too old, disabling the Weight sharing.");
+                    "Weight sharing on Windows ARM64 device requires QAIRT SDK >= 2.45 (QNN API version >=2.34). Since Current version is too old, disabling the Weight sharing.");
 #elif defined(__ANDROID__)
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
@@ -3067,14 +3075,16 @@ Ort::Status QnnBackendManager::GetGraphInfoAndBinVersion(QnnSystemContext_Handle
     *graphs_info = binary_info->contextBinaryInfoV1.graphs;
     blob_version = binary_info->contextBinaryInfoV1.contextBlobVersion;
   }
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 15)  // starts from 2.22
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 22  // starts from QAIRT SDK 2.22
   else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_2) {
     graph_count = binary_info->contextBinaryInfoV2.numGraphs;
     *graphs_info = binary_info->contextBinaryInfoV2.graphs;
     blob_version = binary_info->contextBinaryInfoV2.contextBlobVersion;
   }
 #endif
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)  // starts from 2.28
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 28  // starts from QAIRT SDK 2.28
   else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3) {
     graph_count = binary_info->contextBinaryInfoV3.numGraphs;
     *graphs_info = binary_info->contextBinaryInfoV3.graphs;

@@ -394,7 +394,8 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
       return Ort::Status();
     }
 
-#if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR >= 21 && QNN_API_VERSION_MINOR <= 23
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && (QNN_SDK_VERSION_MINOR >= 28 && QNN_SDK_VERSION_MINOR <= 30)
     // Skip QNN validation for Tanh with uint16 (quantized) output.
     // This gets around a Tanh QNN validation bug in QNN SDK 2.28.0 - 2.30.0.
     // The QNN documentation states that the output scale and offset for ufixed_point_16 should be

@@ -949,11 +949,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("htp_share_resource_optimization: " + std::to_string(htp_share_resource_optimization_)).c_str());
 
-#if QNN_API_VERSION_MAJOR < 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR < 26))
+#if !defined(QNN_SDK_VERSION_MAJOR) || !defined(QNN_SDK_VERSION_MINOR) || \
+    QNN_SDK_VERSION_MAJOR < 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 35)
   if (htp_share_resource_optimization_ == 1) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
-                "User specified htp_share_resource_optimization but QNN API version is older than 2.26.");
+                "User specified htp_share_resource_optimization but QAIRT SDK <= 2.35 (QNN API version <= 2.26).");
   }
 #endif
 

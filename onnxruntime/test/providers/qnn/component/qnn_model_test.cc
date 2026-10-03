@@ -162,7 +162,8 @@ TEST(QnnUnit_ModelTest, Deserialize_Version1_NullOutputTensors_ReturnsError) {
   EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
 }
 
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 18)
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 25
 TEST(QnnUnit_ModelTest, Deserialize_Version2_NullInputTensors_ReturnsError) {
   // Covers the V2 conditional branch at lines 844-849.
   QnnModelMinimalTestContext ctx;
@@ -179,7 +180,8 @@ TEST(QnnUnit_ModelTest, Deserialize_Version2_NullInputTensors_ReturnsError) {
 }
 #endif
 
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 28
 TEST(QnnUnit_ModelTest, Deserialize_Version3_NullInputTensors_ReturnsError) {
   // Covers the V3 conditional branch at lines 853-858.
   QnnModelMinimalTestContext ctx;

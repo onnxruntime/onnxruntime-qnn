@@ -17,7 +17,7 @@
       set(${QNN_VERSION_OUTPUT} "${CMAKE_MATCH_2}" PARENT_SCOPE)
       message(STATUS "Extracted QNN SDK version ${CMAKE_MATCH_2} from ${QNN_SDK_YAML_FILE}")
     else()
-      message(WARNING "Failed to extract QNN SDK version from ${QNN_SDK_YAML_FILE}")
+      message(FATAL_ERROR "Failed to extract QNN SDK version from ${QNN_SDK_YAML_FILE}")
     endif()
   endfunction()
 
@@ -25,15 +25,20 @@
     if(EXISTS "${onnxruntime_QNN_HOME}/sdk.yaml")
       extract_qnn_sdk_version_from_yaml("${onnxruntime_QNN_HOME}/sdk.yaml" QNN_SDK_VERSION)
     else()
-      message(WARNING "Cannot open sdk.yaml to extract QNN SDK version")
+      message(FATAL_ERROR "Cannot open sdk.yaml to extract QNN SDK version.")
     endif()
   endif()
   message(STATUS "QNN SDK version ${QNN_SDK_VERSION}")
 
   if(QNN_SDK_VERSION)
-    string(REGEX MATCH "^([0-9]+)\\.([0-9]+)" _ "${QNN_SDK_VERSION}")
+    string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _ "${QNN_SDK_VERSION}")
     set(QNN_SDK_VERSION_MAJOR "${CMAKE_MATCH_1}")
     set(QNN_SDK_VERSION_MINOR "${CMAKE_MATCH_2}")
+    set(QNN_SDK_VERSION_PATCH "${CMAKE_MATCH_3}")
+    # Expose to parent scope so onnxruntime_unittests.cmake can inject them into the test target.
+    set(QNN_SDK_VERSION_MAJOR "${QNN_SDK_VERSION_MAJOR}" PARENT_SCOPE)
+    set(QNN_SDK_VERSION_MINOR "${QNN_SDK_VERSION_MINOR}" PARENT_SCOPE)
+    set(QNN_SDK_VERSION_PATCH "${QNN_SDK_VERSION_PATCH}" PARENT_SCOPE)
   endif()
 
   source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_ep_srcs})
@@ -120,7 +125,8 @@
   if(QNN_SDK_VERSION_MAJOR AND QNN_SDK_VERSION_MINOR)
     target_compile_definitions(onnxruntime_providers_qnn PRIVATE
       QNN_SDK_VERSION_MAJOR=${QNN_SDK_VERSION_MAJOR}
-      QNN_SDK_VERSION_MINOR=${QNN_SDK_VERSION_MINOR})
+      QNN_SDK_VERSION_MINOR=${QNN_SDK_VERSION_MINOR}
+      QNN_SDK_VERSION_PATCH=${QNN_SDK_VERSION_PATCH})
   endif()
 
   # Set linker flags for function(s) exported by EP DLL
