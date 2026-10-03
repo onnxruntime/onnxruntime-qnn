@@ -4137,7 +4137,10 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeRespected) {
 
 TEST_F(QnnHTPBackendTests, CrossDevicePrepare) {
 #ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
-  GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+  // Use AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after GTEST_SKIP().
+  if (::testing::internal::AlwaysTrue()) {
+    GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+  }
 #endif
 
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();

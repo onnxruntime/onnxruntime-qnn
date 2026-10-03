@@ -43,9 +43,9 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.6.0         | v2.50.40          | v1.27.0              |
+| v2.7.0         | v2.51.0           | v1.29.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.6.0 was built and tested with ORT 1.27.0 but it is compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.7.0 was built and tested with ORT 1.29.0 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
@@ -70,9 +70,9 @@ For build instructions, please see the [BUILD page](./build.md).
   - This release is validated against the following dependency versions:
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
-    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.27.0` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.50.0` |
-  - **Version note:** QNN EP v2.6.0 was built and tested with QAIRT SDK 2.50.0; the public Android Maven runtime artifact is versioned `2.50.0`.
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.29.0` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.51.0` |
+  - **Version note:** QNN EP v2.7.0 was built and tested with QAIRT SDK 2.51.0; the public Android Maven runtime artifact is versioned `2.51.0`.
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
@@ -385,6 +385,11 @@ The `enable_htp_prepare_and_load` option performs AOT compilation and context lo
 |---|---|
 |`UINT32_MAX` (default)|Auto-select: `min(max(1, hardware_concurrency), num_splits)`. Only effective when `enable_htp_graph_splitting=1`. Requires QAIRT SDK 2.51+; ignored on older builds.|
 |`N`|Use exactly N threads to prepare split sub-graphs in parallel. Value 0 or 1 means single-threaded. Values > 1 cap the number of splits.|
+
+|`"htp_num_cores"`|Description|
+|---|---|
+|`0` or unset|Default. Do not request a graph core count.|
+|Positive integer|Pass `QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES` when creating the graph. On ARM64 devices, also select the first requested HTP cores reported for `device_id`. On x86 hosts, offline AOT generation uses the requested graph core count without enumerating physical devices. It does not override the graph core count of an already compiled context binary.|
 
 |`"GPE_KWAY_PARTITIONS"`|Description|
 |---|---|
