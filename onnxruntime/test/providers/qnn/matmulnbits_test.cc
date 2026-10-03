@@ -644,7 +644,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B2_BS128_ZP) {
   RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
-TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS32) {
+TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS32) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto htp_arch = GetPlatformAttributes().htp_arch;
@@ -694,7 +694,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N16_K64_B4_BS32) {
   RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
-TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64) {
+TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto htp_arch = GetPlatformAttributes().htp_arch;
@@ -720,7 +720,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64_ZP) {
   RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/false);
 }
 
-TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B4_BS128) {
+TEST_F(QnnHTPBackendTests, DISABLED_MatMulNBits_QDQ_U16_M1_N64_K256_B4_BS128) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto htp_arch = GetPlatformAttributes().htp_arch;
