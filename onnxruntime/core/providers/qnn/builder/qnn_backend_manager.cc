@@ -2252,7 +2252,7 @@ Ort::Status QnnBackendManager::SetupBackend(
 
   bool enable_htp_weight_sharing = false;
   if (share_ep_contexts && !load_from_cached_context) {
-#if QNN_ARCH_ARM64 && \
+#if QNN_ARCH_ARM64 &&                                                      \
     (!defined(QNN_SDK_VERSION_MAJOR) || !defined(QNN_SDK_VERSION_MINOR) || \
      QNN_SDK_VERSION_MAJOR < 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 45))
     ORT_CXX_LOG_PTR(logger_ptr_,

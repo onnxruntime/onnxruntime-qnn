@@ -612,7 +612,7 @@ static void CreateQdqAddModel(const std::string& model_file_name) {
 // Two models share the same QNN context binary. When SSR occurs, each model
 // independently recovers by reloading the shared binary and retrieving its graph.
 TEST_F(QnnMockSSRBackendTests, DISABLED_SSRGraphExecuteEpContextWeightSharing) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
       defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API version >= 2.34).";

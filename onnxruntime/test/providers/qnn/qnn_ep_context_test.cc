@@ -2208,7 +2208,7 @@ static void GetModelInputNames(const std::string& model_path,
 // The 2nd session uses graph from 1st session
 // 4. Run the 2nd session
 TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
       defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
@@ -2328,7 +2328,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 
 TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
       defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
@@ -2567,7 +2567,7 @@ static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_i
 }
 
 TEST_F(QnnHTPBackendTests, FileMapping_Off) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
       defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
@@ -2596,7 +2596,7 @@ TEST_F(QnnHTPBackendTests, HtpSharedResourceOptimization_HtpReusedIoLimitMb_Load
 // For Ort sessions to generate the context binary, with session option ep.share_ep_contexts enabled
 // Ort sessions will share the QnnBackendManager, so that all graphs from all models compile into the same Qnn context
 TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
       defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API version >= 2.34).";
@@ -3541,7 +3541,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_Execution
 // [Case 1] Non-GPU backend (HTP) + share_ep_contexts=true:
 // HTP weight sharing is active: both sessions compile into the same .bin.
 TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
       defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";

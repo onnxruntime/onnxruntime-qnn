@@ -1728,7 +1728,7 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
 // QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38 (QAIRT 2.49).
 // Defined here (duplicated from core/providers/qnn/builder/qnn_def.h) so test files that must
 // not include EP-private headers can gate on it without breaking the public-API-only boundary.
-#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 &&     \
     defined(QNN_SDK_VERSION_MINOR) && defined(QNN_SDK_VERSION_PATCH) && \
     (QNN_SDK_VERSION_MINOR > 49 || (QNN_SDK_VERSION_MINOR == 49 && QNN_SDK_VERSION_PATCH >= 40))
 #define QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
