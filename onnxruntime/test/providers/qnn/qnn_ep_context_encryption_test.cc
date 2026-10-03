@@ -797,7 +797,7 @@ TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
   GTEST_SKIP() << "share_ep_contexts context reload not supported on x86 HTP emulator.";
 #elif (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";

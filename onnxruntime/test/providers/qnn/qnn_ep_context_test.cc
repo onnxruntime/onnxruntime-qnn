@@ -2210,7 +2210,7 @@ static void GetModelInputNames(const std::string& model_path,
 TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
@@ -2330,7 +2330,7 @@ TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
@@ -2569,7 +2569,7 @@ static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_i
 TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
@@ -2598,7 +2598,7 @@ TEST_F(QnnHTPBackendTests, HtpSharedResourceOptimization_HtpReusedIoLimitMb_Load
 TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API version >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
@@ -3387,7 +3387,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
 // QnnContext_create succeeds without option 22.
 TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_DefaultThreads_CompileSucceeds) {
 #if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
   GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
 #else
   ProviderOptions provider_options;
@@ -3475,7 +3475,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
 // ignores the thread-count config.
 TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_ExecutionSucceeds) {
 #if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
   GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
 #else
   ProviderOptions provider_options;
@@ -3543,7 +3543,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_Execution
 TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
-    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
