@@ -1863,11 +1863,6 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-static bool IsNarrowingQuantOutput(Qnn_DataType_t activation_qnn_data_type, Qnn_DataType_t output_qnn_data_type) {
-  return IsQuant16bit(activation_qnn_data_type) &&
-         (output_qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 || output_qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8);
-}
-
 // Every output level maps onto an intermediate level, so the Convert only drops the extra precision and the
 // result matches quantizing directly to the output encoding.
 static Ort::Status GetNarrowingIntermediateQuantParams(Qnn_DataType_t activation_qnn_data_type,

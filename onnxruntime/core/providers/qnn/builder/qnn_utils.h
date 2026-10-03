@@ -173,6 +173,12 @@ inline bool NeedsPrecisionConvert(Qnn_DataType_t a, Qnn_DataType_t b) {
   return a != b && FixedPointBitWidth(a) != 0 && FixedPointBitWidth(b) != 0;
 }
 
+inline bool IsNarrowingQuantOutput(Qnn_DataType_t activation_qnn_data_type, Qnn_DataType_t output_qnn_data_type) {
+  const int act_bitwidth = FixedPointBitWidth(activation_qnn_data_type);
+  const int output_bitwidth = FixedPointBitWidth(output_qnn_data_type);
+  return act_bitwidth != 0 && output_bitwidth != 0 && act_bitwidth > output_bitwidth;
+}
+
 // Name generator that produces unique QNN node names by appending a counter suffix,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
 class UniqueNameGeneratorImpl {
