@@ -21,80 +21,92 @@
 namespace onnxruntime {
 namespace qnn {
 
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 29))
+// QNN_SDK_VERSION_MAJOR/MINOR/PATCH are injected by CMake from the QAIRT sdk.yaml.
+// A FATAL_ERROR in CMake guarantees they are always defined when building with QNN EP.
+#ifndef QNN_SDK_VERSION_MINOR
+#error "QNN_SDK_VERSION_MINOR is not defined. Rebuild with CMake from the repo root."
+#endif
+
+// All feature availability guards below use QAIRT SDK version numbers.
+// SDK versioning is used consistently throughout the codebase.
+
+// System Profile API available from QAIRT SDK 2.36.
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 36
 #define QNN_SYSTEM_PROFILE_API_ENABLED
 #endif
 
-#if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
+// System DLC API available from QAIRT SDK 2.48.
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 48
 #define QNN_SYSTEM_DLC_API_ENABLED
-#endif  // QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
+#endif
 
 // HTP MatMul LUT is currently enabled only on Windows with QAIRT SDK 2.51+.
-// QNN_SDK_VERSION_MAJOR/MINOR are injected by CMake from the SDK version.
-#if defined(_WIN32) && defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
-    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
+#if defined(_WIN32) && defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51
 #define ORT_QNN_HTP_MATMUL_LUT_SUPPORTED 1
 #else
 #define ORT_QNN_HTP_MATMUL_LUT_SUPPORTED 0
 #endif
 
-// HTP Graph Splitting (Graph Program Executor) requires QAIRT SDK 2.49+.
-#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
-    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 49))
+// HTP Graph Splitting requires QAIRT SDK 2.49+.
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
 #define QNN_HTP_GRAPH_SPLITTING_AVAILABLE
 #endif
 
 // QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_NUM_PREPARE_THREADS is available from QAIRT SDK 2.51+.
-#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
-    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51
 #define QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
 #endif
 
-// QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38
-// (QAIRT 2.49).
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+// QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QAIRT SDK 2.49.40.
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 &&     \
+    defined(QNN_SDK_VERSION_MINOR) && defined(QNN_SDK_VERSION_PATCH) && \
+    (QNN_SDK_VERSION_MINOR > 49 || (QNN_SDK_VERSION_MINOR == 49 && QNN_SDK_VERSION_PATCH >= 40))
 #define QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 #endif
 
-// QNN_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.37
-// (QAIRT 2.48).
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37)
+// QNN_GROUP_QUERY_ATTENTION is available from QAIRT SDK 2.48.
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 48
 #define QNN_GROUP_QUERY_ATTENTION_AVAILABLE
 #endif
 
-// QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.38
-// (QAIRT 2.49).
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+// QNN_HTP_GROUP_QUERY_ATTENTION is available from QAIRT SDK 2.49.
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49
 #define QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE
 #endif
 
-// QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT is available from QAIRT 2.45
-// (QNN API 2.34).
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34)
+// QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT is available from QAIRT SDK 2.45.
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45
 #define QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
 #endif
 
+// File-mapped weights available from QAIRT SDK 2.39 on Windows ARM64.
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-#if QNN_API_VERSION_MAJOR > 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR >= 32))
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 39
 #define QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 #endif
 #endif
 
-// HTP native BQ support starts from QAIRT 2.51 (QNN API 2.40).
-#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+// HTP native BQ support starts from QAIRT SDK 2.51 (QNN API 2.40).
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51
 #define QNN_HTP_NATIVE_BQ_AVAILABLE
-#endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#endif
 
-// Cross device prepare is only available on WoS starting from QAIRT 2.51 (or QNN API 2.40).
+// Cross device prepare is only available on WoS starting from QAIRT SDK 2.51.
 #if defined(_WIN32) && QNN_ARCH_ARM64
-#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51
 #define QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
-#endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#endif  // defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51
 #endif  // defined(_WIN32) && QNN_ARCH_ARM64
 
 // QNN only support subset of POSIX of dlopen/dlsym/dladdr/dlerror/dlclose
