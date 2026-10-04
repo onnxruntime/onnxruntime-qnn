@@ -969,7 +969,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 #ifndef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   enable_file_mapped_weights_ = false;
   ORT_CXX_LOG(logger_,
-              ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is only available on Windows arm64 devices for QNN API versions >= 2.32. Feature will be disabled by default");
+              ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is only available on Windows ARM64 devices for QNN SDK >= 2.39 (QNN API versions >= 2.32). Feature will be disabled by default");
 #else
   if (qnn_context_embed_mode_ && enable_file_mapped_weights_) {
     enable_file_mapped_weights_ = false;

@@ -3504,7 +3504,12 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_Execution
 
   Ort::SessionOptions so;
   SetGraphSplittingOptions(so, ctx_path);
-  so.AddConfigEntry("ep.qnnexecutionprovider.htp_graph_splitting_num_prepare_threads", "2");
+  so.AddConfigEntry("ep.qnnexecutionprovider.htp_graph_splitting_num_prepare_threads",
+#if defined(__linux__) && !defined(__aarch64__)
+                    "1");
+#else
+                    "2");
+#endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
