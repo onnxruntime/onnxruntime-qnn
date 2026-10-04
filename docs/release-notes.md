@@ -1,3 +1,34 @@
+# ONNX Runtime QNN Execution Provider v2.7.40
+
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.29.0)<br>
+**QAIRT SDK Compatibility:** 2.51.40<br>
+**Platform:** WinML
+
+```
+pip install onnxruntime==1.29.0
+pip install onnxruntime-qnn==2.7.40
+```
+
+This is a WinML-specific patch release built with QAIRT 2.51.40 and ORT 1.29.0.<br>
+
+For the mainline release of ORT QNN EP, please use [v2.7.0](#onnx-runtime-qnn-execution-provider-v270) which was built with QAIRT 2.51.0 and ORT 1.29.0.<br>
+
+## Bug Fixes
+
+- **ExternalResourceImporter D3D12 device creation** — Delayed the `D3D12CreateDevice` call in `ExternalResourceImporter` until memory or semaphore import is actually needed. This fixes WebNN conformance test timeouts caused by unnecessary device initialization overhead. ([#907](https://github.com/onnxruntime/onnxruntime-qnn/pull/907))
+
+**Full Changelog:** [rel-2.7.0...rel-2.7.40](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.7.0...rel-2.7.40)
+
+## Contributors
+
+This release includes contributions from:
+
+[Matthew Sinclair](https://github.com/qti-mattsinc)
+
+---
+
+---
+
 # ONNX Runtime QNN Execution Provider v2.7.0
 
 **ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.29.0)<br>
