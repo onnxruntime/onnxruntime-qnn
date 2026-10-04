@@ -2,16 +2,10 @@
 
 **ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.29.0)<br>
 **QAIRT SDK Compatibility:** 2.51.40<br>
-**Platform:** WinML
 
-```
-pip install onnxruntime==1.29.0
-pip install onnxruntime-qnn==2.7.40
-```
+This is a WinML-specific patch release built with QAIRT 2.51.40 and ORT 1.29.0. This version is **not available on PyPI, NuGet or Maven** and is only distributed through **WinML channels**.<br>
 
-This is a WinML-specific patch release built with QAIRT 2.51.40 and ORT 1.29.0.<br>
-
-For the mainline release of ORT QNN EP, please use [v2.7.0](#onnx-runtime-qnn-execution-provider-v270) which was built with QAIRT 2.51.0 and ORT 1.29.0.<br>
+For the mainline release of ORT QNN EP, please use [v2.7.0](#onnx-runtime-qnn-execution-provider-v270) which was built with QAIRT 2.51.0 and ORT 1.29.0 and is available on **PyPI, NuGet and Maven**<br>
 
 ## Bug Fixes
 
