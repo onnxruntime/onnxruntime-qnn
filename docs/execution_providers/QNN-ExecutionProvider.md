@@ -45,7 +45,8 @@ ONNX Runtime QNN EP has been built and tested with the following SDK version com
 |----------------|-------------------|----------------------|
 | v2.7.40        | v2.51.40          | v1.29.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.7.40 was built for WinML with QAIRT 2.51.40. For mainline release of ORT QNN EP please use 2.7.0 which was built with QAIRT 2.51.0.
+> **Note**: ONNX Runtime QNN EP 2.7.40 was built for WinML with QAIRT 2.51.40 and is available only through WinML channels. 
+> **Note**: For mainline release of ORT QNN EP please use 2.7.0 which was built with QAIRT 2.51.0.
 > **Note**: ONNX Runtime QNN EP 2.7.0 and 2.7.40 were built and tested with ORT 1.29.0 but are compatible with ORT >= 1.24.1
 
 ## Build (Windows)
