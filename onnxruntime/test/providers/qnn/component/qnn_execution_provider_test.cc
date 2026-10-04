@@ -1068,9 +1068,10 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_TwoSe
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_OldSdk_LogsWarning) {
   // QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_NUM_PREPARE_THREADS is available from
-  // QNN API 2.39 (QAIRT 2.51+). On those builds the warning path is compiled out, so skip.
-#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 39)
-  GTEST_SKIP() << "QAIRT SDK >= 2.51 (QNN API >= 2.39): num_prepare_threads is supported natively; "
+  // QAIRT SDK 2.51+. On those builds the warning path is compiled out, so skip.
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51
+  GTEST_SKIP() << "QAIRT SDK >= 2.51: num_prepare_threads is supported natively; "
                   "old-SDK warning path is not compiled in.";
 #endif
   // When built against SDK < 2.51, setting the option must log a warning and be ignored.
