@@ -3478,6 +3478,10 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_Execution
       defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51)
   GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.51+. Skipping on this SDK build.";
 #else
+#if defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "Graph splitting execution with num_prepare_threads is not supported "
+                  "on the Linux x86_64 HTP emulator. Skipping the test.";
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -3504,12 +3508,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_Execution
 
   Ort::SessionOptions so;
   SetGraphSplittingOptions(so, ctx_path);
-  so.AddConfigEntry("ep.qnnexecutionprovider.htp_graph_splitting_num_prepare_threads",
-#if defined(__linux__) && !defined(__aarch64__)
-                    "1");
-#else
-                    "2");
-#endif
+  so.AddConfigEntry("ep.qnnexecutionprovider.htp_graph_splitting_num_prepare_threads", "2");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
