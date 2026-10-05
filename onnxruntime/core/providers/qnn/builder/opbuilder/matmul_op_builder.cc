@@ -592,20 +592,6 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnConv2D(QnnModelWrapper& qnn_mode
                                                           std::move(unpacked_tensor), input_names));
   }
 
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 16 && QNN_API_VERSION_MINOR <= 18)
-  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-    // Bias is implicit. QNN SDK 2.23/2.24/2.25 (QNN API version 2.16/2.17/2.18) has a validation bug for
-    // implicit bias inputs, so provide an explicit bias of all 0 (quantized int32).
-
-    if (input_info_0.quant_param.IsPerTensor(/*include_bw*/ true) && input_info_1.quant_param.IsQuantized()) {
-      const std::string bias_name = qnn::utils::UniqueNameGenerator().New(node_unit, "_implicit_bias");
-      std::vector<uint32_t> bias_shape = {input_info_1.shape[1]};
-      RETURN_IF_ERROR(AddZeroBiasInput(qnn_model_wrapper, input_info_0.quant_param, input_info_1.quant_param,
-                                       std::move(bias_shape), bias_name, logger, input_names));
-    }
-  }
-#endif
-
   return Ort::Status();
 }
 
@@ -808,9 +794,15 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     is_bq_matmul = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().IsBlockQuantized();
   }
 
-  std::string qnn_op_type = QNN_OP_FULLY_CONNECTED;
+  std::string qnn_op_type;
   std::vector<std::string> param_tensor_names;
-  if (!use_conv2d && !use_fully_connected) {
+  if (use_conv2d) {
+    // LPBQ path: Conv2D with 1×1 filters.
+    qnn_op_type = QNN_OP_CONV_2D;
+    RETURN_IF_ERROR(bq::BuildConv2DParamsForBQLowering(qnn_model_wrapper, node_unit, param_tensor_names));
+  } else if (use_fully_connected) {
+    qnn_op_type = QNN_OP_FULLY_CONNECTED;
+  } else {
     qnn_op_type = QNN_OP_MAT_MUL;
     RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), false,
                                        QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0, param_tensor_names));
@@ -818,18 +810,7 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                        QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1, param_tensor_names));
   }
 
-  if (use_conv2d) {
-    // LPBQ path: Conv2D with 1×1 filters.
-    // AddConv2DNodeforBQLowering builds Conv2D params, registers the output tensor, and creates the node.
-    RETURN_IF_ERROR(bq::AddConv2DNodeforBQLowering(qnn_model_wrapper, node_unit,
-                                                   std::move(input_names),
-                                                   op_output_name,
-                                                   op_output_shape,
-                                                   output_info.qnn_data_type,
-                                                   op_output_quant_param,
-                                                   is_op_output_graph_output,
-                                                   do_op_validation));
-  } else if (is_bq_matmul) {
+  if (is_bq_matmul) {
     // The QNN HTP BQ MatMul runs on 4-D tensors and outputs FP16.
     // Pipeline: MatMul (4-D FP16 [batch,1,M,N]) → Reshape (to ONNX [...,M,N] FP16)
     //           → Quantize (FP16 → INT16)
