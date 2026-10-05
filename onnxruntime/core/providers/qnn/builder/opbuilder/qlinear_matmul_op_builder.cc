@@ -196,7 +196,8 @@ bool QLinearMatMulOpBuilder::DecideUseFullyConnected(const QnnModelWrapper& qnn_
                                                      Qnn_DataType_t qnn_dtype_a,
                                                      Qnn_DataType_t qnn_dtype_b,
                                                      const QnnQuantParamsWrapper& quant_a) {
-#if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR <= 20
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR <= 27
   // Validation crashes if QNN FullyConnected is used in QNN SDK versions 2.26 - 2.27.
   // Just use QNN MatMul for these older QNN SDK versions.
   ORT_UNUSED_PARAMETER(qnn_model_wrapper);

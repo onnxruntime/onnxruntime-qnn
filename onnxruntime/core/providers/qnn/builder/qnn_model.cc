@@ -1101,7 +1101,8 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
     input_tensors = qnn_sys_ctx_graph_info.graphInfoV1.graphInputs;
     output_tensors = qnn_sys_ctx_graph_info.graphInfoV1.graphOutputs;
   }
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 18)  // start from 2.25
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 25  // start from QAIRT SDK 2.25
   else if (qnn_sys_ctx_graph_info.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_2) {
     graph_name.assign(qnn_sys_ctx_graph_info.graphInfoV2.graphName);
     graph_input_num = qnn_sys_ctx_graph_info.graphInfoV2.numGraphInputs;
@@ -1111,7 +1112,8 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
     output_tensors = qnn_sys_ctx_graph_info.graphInfoV2.graphOutputs;
   }
 #endif
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)  // start from 2.28
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 28  // start from QAIRT SDK 2.28
   else if (qnn_sys_ctx_graph_info.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
     graph_name.assign(qnn_sys_ctx_graph_info.graphInfoV3.graphName);
     graph_input_num = qnn_sys_ctx_graph_info.graphInfoV3.numGraphInputs;

@@ -752,7 +752,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
                                     inputs, is_bq_weight, use_lpbq_path, input_names));
   }
 
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 16 && QNN_API_VERSION_MINOR <= 18)
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && (QNN_SDK_VERSION_MINOR >= 23 && QNN_SDK_VERSION_MINOR <= 25)
   if (!has_bias_input && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     // Bias is implicit. QNN SDK 2.23/2.24/2.25 (QNN API version 2.16/2.17/2.18) has a validation bug for
     // implicit bias inputs, so provide an explicit bias of all 0 (quantized int32).

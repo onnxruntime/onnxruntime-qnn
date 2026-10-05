@@ -949,11 +949,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("htp_share_resource_optimization: " + std::to_string(htp_share_resource_optimization_)).c_str());
 
-#if QNN_API_VERSION_MAJOR < 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR < 26))
+#if !defined(QNN_SDK_VERSION_MAJOR) || !defined(QNN_SDK_VERSION_MINOR) || \
+    QNN_SDK_VERSION_MAJOR < 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 35)
   if (htp_share_resource_optimization_ == 1) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
-                "User specified htp_share_resource_optimization but QNN API version is older than 2.26.");
+                "User specified htp_share_resource_optimization but QAIRT SDK <= 2.35 (QNN API version <= 2.26).");
   }
 #endif
 
@@ -968,7 +969,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 #ifndef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   enable_file_mapped_weights_ = false;
   ORT_CXX_LOG(logger_,
-              ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is only available on Windows arm64 devices for QNN API versions >= 2.32. Feature will be disabled by default");
+              ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is only available on Windows ARM64 devices for QNN SDK >= 2.39 (QNN API versions >= 2.32). Feature will be disabled by default");
 #else
   if (qnn_context_embed_mode_ && enable_file_mapped_weights_) {
     enable_file_mapped_weights_ = false;

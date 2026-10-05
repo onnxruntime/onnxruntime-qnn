@@ -405,7 +405,8 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
         // - QNN 2.19: "round_prefer_floor" via QNN's Resize operator
         // - QNN 2.20 (API version 2.14): "round_prefer_ceil" via QNN's Resize operator
 
-#if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR >= 14
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 20
         RETURN_IF_NOT(nearest_mode == "round_prefer_ceil" || nearest_mode == "floor",
                       ("QNN EP: Resize on the NPU does not support nearest_mode " + nearest_mode).c_str());
 

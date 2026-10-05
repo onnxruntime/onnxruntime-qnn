@@ -317,7 +317,8 @@ Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
                                     logger);
   }
 
-#if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 17 && QNN_API_VERSION_MINOR <= 20
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && (QNN_SDK_VERSION_MINOR >= 24 && QNN_SDK_VERSION_MINOR <= 27)
   // Bias is implicit. QNN SDK 2.24 to 2.27 (QNN API version 2.17 to 2.20) has a validation bug for
   // implicit bias inputs, so provide an explicit bias of all 0 (quantized int32). Done here (after
   // the decomposition branch) so the synthesized tensor is never orphaned by the decomposed path,
@@ -479,7 +480,8 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
 
   std::vector<std::string> ln_inputs = {input_names[0], ln_scale_name};
 
-#if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 17 && QNN_API_VERSION_MINOR <= 20
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && (QNN_SDK_VERSION_MINOR >= 24 && QNN_SDK_VERSION_MINOR <= 27)
   // Mirror the ProcessInputs workaround: on QNN SDK 2.24-2.27 (API 2.17-2.20), an LN node without
   // an explicit bias intermittently fails graph finalize on NPU. The decomposed path always emits
   // LN with only {X, scale}, so synthesize a zero int32 bias here when the same prerequisites hold.

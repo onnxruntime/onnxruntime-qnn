@@ -1728,8 +1728,9 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
 // QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38 (QAIRT 2.49).
 // Defined here (duplicated from core/providers/qnn/builder/qnn_def.h) so test files that must
 // not include EP-private headers can gate on it without breaking the public-API-only boundary.
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 &&     \
+    defined(QNN_SDK_VERSION_MINOR) && defined(QNN_SDK_VERSION_PATCH) && \
+    (QNN_SDK_VERSION_MINOR > 49 || (QNN_SDK_VERSION_MINOR == 49 && QNN_SDK_VERSION_PATCH >= 40))
 #define QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 #endif
 
@@ -2176,16 +2177,18 @@ inline HRESULT CreateD3D12Buffer(
 
 #endif  // _WIN32 && ...
 
-// HTP native BQ support starts from QAIRT 2.51 (QNN API 2.40).
-#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+// HTP native BQ support starts from QAIRT SDK 2.51.
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51
 #define QNN_HTP_NATIVE_BQ_AVAILABLE
-#endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#endif  // defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51
 
-// Cross device prepare is available on WoS starting from QAIRT 2.51 (QNN API 2.40).
+// Cross device prepare is available on WoS starting from QAIRT SDK 2.51.
 #if defined(_WIN32) && defined(_M_ARM64)
-#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#if defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+    defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51
 #define QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
-#endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#endif  // defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51
 #endif  // defined(_WIN32) && defined(_M_ARM64)
 
 }  // namespace test

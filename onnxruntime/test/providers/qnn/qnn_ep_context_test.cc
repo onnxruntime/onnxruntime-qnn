@@ -1692,8 +1692,8 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
 
 // htp_reused_io_limit_mb: a valid numeric value is accepted when preparing and loading an AOT context.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceeds) {
-#if QNN_API_VERSION_MAJOR < 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34)
+#if !defined(QNN_SDK_VERSION_MAJOR) || !defined(QNN_SDK_VERSION_MINOR) || \
+    QNN_SDK_VERSION_MAJOR < 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 45)
   GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
 #elif defined(__linux__) && !defined(__aarch64__)
   GTEST_SKIP() << "htp_reused_io_limit_mb is not supported by the x86_64 HTP emulator.";
@@ -2208,9 +2208,10 @@ static void GetModelInputNames(const std::string& model_path,
 // The 2nd session uses graph from 1st session
 // 4. Run the 2nd session
 TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
-    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
-  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
+    !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #else
@@ -2327,9 +2328,10 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 
 TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
-    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
-  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
+    !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #else
@@ -2565,9 +2567,10 @@ static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_i
 }
 
 TEST_F(QnnHTPBackendTests, FileMapping_Off) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
-    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
-  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
+    !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #else
@@ -2578,8 +2581,8 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 // Verifies that htp_reused_io_limit_mb is accepted as a group-level config when
 // htp_share_resource_optimization loads contexts with contextCreateFromBinaryListAsync.
 TEST_F(QnnHTPBackendTests, HtpSharedResourceOptimization_HtpReusedIoLimitMb_LoadsSucceeds) {
-#if QNN_API_VERSION_MAJOR < 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34)
+#if !defined(QNN_SDK_VERSION_MAJOR) || !defined(QNN_SDK_VERSION_MINOR) || \
+    QNN_SDK_VERSION_MAJOR < 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 45)
   GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
 #elif !defined(__aarch64__) && !defined(_M_ARM64)
   GTEST_SKIP() << "contextCreateFromBinaryListAsync execution requires a real ARM64 HTP device.";
@@ -2593,9 +2596,10 @@ TEST_F(QnnHTPBackendTests, HtpSharedResourceOptimization_HtpReusedIoLimitMb_Load
 // For Ort sessions to generate the context binary, with session option ep.share_ep_contexts enabled
 // Ort sessions will share the QnnBackendManager, so that all graphs from all models compile into the same Qnn context
 TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
-    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
-  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
+    !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API version >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #else
@@ -3382,8 +3386,8 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
 // On SDK 2.48 the Graph Splittling config block is compiled out; the test still passes because
 // QnnContext_create succeeds without option 22.
 TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_DefaultThreads_CompileSucceeds) {
-#if !(defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
-      (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 49)))
+#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 49)
   GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
 #else
   ProviderOptions provider_options;
@@ -3470,10 +3474,14 @@ TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
 // option is consumed by ORT_UNUSED_PARAMETER and the test still passes as the session simply
 // ignores the thread-count config.
 TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_ExecutionSucceeds) {
-#if !(defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
-      (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 49)))
-  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.49+. Skipping on this SDK build.";
+#if !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 51)
+  GTEST_SKIP() << "Graph splitting requires QAIRT SDK 2.51+. Skipping on this SDK build.";
 #else
+#if defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "Graph splitting execution with num_prepare_threads is not supported "
+                  "on the Linux x86_64 HTP emulator. Skipping the test.";
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -3537,9 +3545,10 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_Execution
 // [Case 1] Non-GPU backend (HTP) + share_ep_contexts=true:
 // HTP weight sharing is active: both sessions compile into the same .bin.
 TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
-    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
-  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
+#if (defined(__aarch64__) || defined(_M_ARM64)) &&                    \
+    !(defined(QNN_SDK_VERSION_MAJOR) && QNN_SDK_VERSION_MAJOR == 2 && \
+      defined(QNN_SDK_VERSION_MINOR) && QNN_SDK_VERSION_MINOR >= 45)
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QAIRT SDK >= 2.45 (QNN API >= 2.34).";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #else
