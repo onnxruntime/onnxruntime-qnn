@@ -245,18 +245,10 @@ Ort::Status RegisterLPBQWeightAsConv1x1Filter(QnnModelWrapper& qnn_model_wrapper
   return Ort::Status();
 }
 
-Ort::Status AddConv2DNodeforBQLowering(QnnModelWrapper& qnn_model_wrapper,
-                                       const OrtNodeUnit& node_unit,
-                                       std::vector<std::string>&& input_names,
-                                       const std::string& conv2d_output_name,
-                                       const std::vector<uint32_t>& conv2d_output_shape,
-                                       Qnn_DataType_t conv2d_output_dtype,
-                                       const QnnQuantParamsWrapper& conv2d_output_quant_param,
-                                       bool is_graph_output,
-                                       bool do_op_validation) {
+Ort::Status BuildConv2DParamsForBQLowering(QnnModelWrapper& qnn_model_wrapper,
+                                           const OrtNodeUnit& node_unit,
+                                           std::vector<std::string>& param_tensor_names) {
   // Build Conv2D params: stride=[1,1], pad=[[0,0],[0,0]], dilation=[1,1], group=1.
-  std::vector<std::string> param_tensor_names;
-
   QnnParamWrapper stride_param(node_unit.Index(), node_unit.Name(),
                                QNN_OP_CONV_2D_PARAM_STRIDE, {2}, {1u, 1u});
   param_tensor_names.push_back(stride_param.GetParamTensorName());
@@ -274,6 +266,21 @@ Ort::Status AddConv2DNodeforBQLowering(QnnModelWrapper& qnn_model_wrapper,
 
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), 1u,
                                          QNN_OP_CONV_2D_PARAM_GROUP, param_tensor_names));
+
+  return Ort::Status();
+}
+
+Ort::Status AddConv2DNodeforBQLowering(QnnModelWrapper& qnn_model_wrapper,
+                                       const OrtNodeUnit& node_unit,
+                                       std::vector<std::string>&& input_names,
+                                       const std::string& conv2d_output_name,
+                                       const std::vector<uint32_t>& conv2d_output_shape,
+                                       Qnn_DataType_t conv2d_output_dtype,
+                                       const QnnQuantParamsWrapper& conv2d_output_quant_param,
+                                       bool is_graph_output,
+                                       bool do_op_validation) {
+  std::vector<std::string> param_tensor_names;
+  RETURN_IF_ERROR(BuildConv2DParamsForBQLowering(qnn_model_wrapper, node_unit, param_tensor_names));
 
   const Qnn_TensorType_t conv2d_tensor_type = is_graph_output
                                                   ? QNN_TENSOR_TYPE_APP_READ
