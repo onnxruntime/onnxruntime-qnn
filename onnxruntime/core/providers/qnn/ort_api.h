@@ -391,9 +391,9 @@ class OrtNodeUnit {
   const std::vector<OrtNodeUnitIODef>& Inputs() const noexcept { return inputs_; }
   const std::vector<OrtNodeUnitIODef>& Outputs() const noexcept { return outputs_; }
 
-  std::string Domain() const noexcept { return Ort::ConstNode(target_node_).GetDomain(); }
-  std::string OpType() const noexcept { return Ort::ConstNode(target_node_).GetOperatorType(); }
-  std::string Name() const noexcept { return Ort::ConstNode(target_node_).GetName(); }
+  std::string Domain() const { return Ort::ConstNode(target_node_).GetDomain(); }
+  std::string OpType() const { return Ort::ConstNode(target_node_).GetOperatorType(); }
+  std::string Name() const { return Ort::ConstNode(target_node_).GetName(); }
   int SinceVersion() const noexcept { return Ort::ConstNode(target_node_).GetSinceVersion(); }
   // Align NodeUnit to name as Index although returning Id since index is inaccessible.
   size_t Index() const noexcept { return Ort::ConstNode(target_node_).GetId(); }
@@ -403,7 +403,7 @@ class OrtNodeUnit {
   const OrtNode* GetOutputReshapeNode() const noexcept { return output_reshape_node_; }
   const std::vector<const OrtNode*>& GetDQNodes() const noexcept { return dq_nodes_; }
   const std::vector<const OrtNode*>& GetQNodes() const noexcept { return q_nodes_; }
-  std::vector<const OrtNode*> GetAllNodesInGroup() const noexcept {
+  std::vector<const OrtNode*> GetAllNodesInGroup() const {
     std::vector<const OrtNode*> all_nodes = dq_nodes_;
     all_nodes.push_back(target_node_);
     if (output_reshape_node_) {

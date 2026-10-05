@@ -3678,7 +3678,7 @@ const char* ORT_API_CALL QnnEp::GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp
 OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice* const* /*devices*/,
                                                          size_t /*num_devices*/,
                                                          const char* compatibility_info,
-                                                         OrtCompiledModelCompatibility* model_compatibility) noexcept {
+                                                         OrtCompiledModelCompatibility* model_compatibility) {
   std::string info_string(compatibility_info);
   if (info_string.empty()) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "No compatibility info to be validated.");
@@ -3731,7 +3731,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
 }
 
 OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* /*hw*/,
-                                                          OrtDeviceEpIncompatibilityDetails* details) noexcept {
+                                                          OrtDeviceEpIncompatibilityDetails* details) {
   // This function is always called by temporary QnnEp, so no need to check if backend is already setup.
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
   Ort::Status status = qnn_backend_manager_->SetupBackend(false, false, false, false, false, nullptr, dummy_map);
