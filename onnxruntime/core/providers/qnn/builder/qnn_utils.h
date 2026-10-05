@@ -1014,6 +1014,7 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
 // (e.g., non-initializer, or activation/weight not quantized).
 Ort::Status ProcessBiasForQuantizedOp(QnnModelWrapper& qnn_model_wrapper,
                                       const Ort::Logger& logger,
+                                      const OrtNodeUnit& node_unit,
                                       const OrtNodeUnitIODef& bias_def,
                                       const QnnQuantParamsWrapper& act_quant_param,
                                       const QnnQuantParamsWrapper& weight_quant_param,

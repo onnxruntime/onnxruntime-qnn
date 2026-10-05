@@ -73,6 +73,7 @@ class ConvOpBuilder : public BaseOpBuilder {
   //   3. Quantize bias scale using activation_scale * weight_scale if float bias present.
   //   4. Normal path: pass bias through ProcessInput unchanged.
   Ort::Status ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
+                              const OrtNodeUnit& node_unit,
                               const Ort::Logger& logger,
                               const std::vector<OrtNodeUnitIODef>& inputs,
                               bool is_bq_weight,
@@ -219,6 +220,7 @@ static Ort::Status ProcessBqFp16Bias(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
+                                           const OrtNodeUnit& node_unit,
                                            const Ort::Logger& logger,
                                            const std::vector<OrtNodeUnitIODef>& inputs,
                                            bool is_bq_weight,
@@ -237,7 +239,7 @@ Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input1_info));
 
   bool was_handled = false;
-  RETURN_IF_ERROR(utils::ProcessBiasForQuantizedOp(qnn_model_wrapper, logger, inputs[2],
+  RETURN_IF_ERROR(utils::ProcessBiasForQuantizedOp(qnn_model_wrapper, logger, node_unit, inputs[2],
                                                    input0_info.quant_param, input1_info.quant_param,
                                                    input_names, was_handled));
   if (was_handled) {
@@ -601,7 +603,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   //
   const bool has_bias_input = num_inputs == 3;
   if (has_bias_input) {
-    RETURN_IF_ERROR(ProcessConvBias(qnn_model_wrapper, logger,
+    RETURN_IF_ERROR(ProcessConvBias(qnn_model_wrapper, node_unit, logger,
                                     inputs, is_bq_weight, use_lpbq_path, input_names));
   }
 

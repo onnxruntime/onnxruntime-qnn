@@ -114,6 +114,12 @@ Ort::Status RegisterLPBQWeightAsConv1x1Filter(QnnModelWrapper& qnn_model_wrapper
                                               std::vector<uint8_t> weight_data,
                                               std::vector<std::string>& input_names);
 
+// Builds the QNN Conv2D parameter tensors (stride=1, pad=0, dilation=1, group=1) for
+// LPBQ/BwFloatBlock lowering.
+Ort::Status BuildConv2DParamsForBQLowering(QnnModelWrapper& qnn_model_wrapper,
+                                           const OrtNodeUnit& node_unit,
+                                           std::vector<std::string>& param_tensor_names);
+
 // Creates a QNN Conv2D node (stride=1, pad=0, dilation=1, group=1) for LPBQ/BwFloatBlock lowering.
 // Registers the Conv2D output tensor with conv2d_output_name, conv2d_output_shape, and
 // conv2d_output_dtype.
