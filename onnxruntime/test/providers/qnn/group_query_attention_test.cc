@@ -38,7 +38,7 @@ namespace onnxruntime {
 namespace test {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
-#if (defined(__aarch64__) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#if (defined(__aarch64__) || defined(__linux__) || defined(_M_ARM64)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
 #define BUILD_HTP_GQA_TESTS 1
 #endif
 
@@ -443,7 +443,8 @@ static void RunHTPPackedGQATest(int32_t num_heads,
                                 float scale,
                                 int32_t do_rotary,
                                 float fp32_abs_err = 1e-2f,
-                                int32_t max_seq_len = 0) {
+                                int32_t max_seq_len = 0,
+                                int32_t rotary_interleaved = 0) {
   // GQA op validation fails on HTP (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE) on V68 and below.
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
@@ -474,6 +475,7 @@ static void RunHTPPackedGQATest(int32_t num_heads,
   }
 
   config.do_rotary = do_rotary;
+  config.rotary_interleaved = rotary_interleaved;
   config.kv_num_heads = kv_num_heads;
   config.num_heads = num_heads;
   config.scale = scale;
@@ -572,6 +574,14 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Llama3_AR1_FP32) {
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_Rotary_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
+
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 52))
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_RotaryInterleaved_FP32) {
+  RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1,
+                              /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 0, /*rotary_interleaved*/ 1);
+}
+#endif
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);

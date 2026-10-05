@@ -52,25 +52,29 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   const auto& inputs = node_unit.Inputs();
 
   const size_t num_outputs = node_unit.Outputs().size();
+#ifndef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
   const auto& outputs = node_unit.Outputs();
+#endif
 
-  TensorInfo present_key_tensor_info = {};
-  RETURN_IF_NOT(num_outputs > 1 && outputs[1].Exists(), "Required output tensor present_key not provided");
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[1], present_key_tensor_info));
-  RETURN_IF_NOT(present_key_tensor_info.shape.size() == 4, "Unexpected rank for present_key");
-  const auto max_sequence_length = present_key_tensor_info.shape[2];
-
-  // At time of writing, the com.microsoft.GroupQueryAttention op def has 14 inputs and 4 outputs.
-  const size_t max_num_inputs = 14;
+  // ORT has 16 inputs. QAIRT 2.52 supports all except ORT's quantized-KV
+  // scales (12/13); its Q/K RMS-norm inputs are instead mapped from ORT 14/15.
+  const size_t max_num_inputs = 16;
   const size_t max_num_outputs = 4;
 
+#ifdef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
+  RETURN_IF(num_inputs > 12 && inputs[12].Exists(), "k_scale input is not supported by QNN GroupQueryAttention");
+  RETURN_IF(num_inputs > 13 && inputs[13].Exists(), "v_scale input is not supported by QNN GroupQueryAttention");
+#else
   for (size_t i = 10; i < std::min(num_inputs, max_num_inputs); i++) {
-    RETURN_IF(inputs[i].Exists(), "attention_bias, head_sink, k_scale, and v_scale inputs are not supported");
+    RETURN_IF(inputs[i].Exists(), "attention_bias, head_sink, k_scale, v_scale, q_norm_weight, and k_norm_weight inputs are not supported");
   }
+#endif
   RETURN_IF(num_inputs > max_num_inputs,
             ("More than " + std::to_string(max_num_inputs) + " inputs provided, which is unsupported").c_str());
 
+#ifndef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
   RETURN_IF(num_outputs > 3 && outputs[3].Exists(), "output_qk output is not supported");
+#endif
   RETURN_IF(num_outputs > max_num_outputs,
             ("More than " + std::to_string(max_num_outputs) + " outputs provided, which is unsupported").c_str());
 
@@ -88,23 +92,43 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
 
   int32_t local_window_size = node_helper.Get("local_window_size", -1);
   RETURN_IF(local_window_size < -1, ("unsupported value for local_window_size: " + std::to_string(local_window_size)).c_str());
+#ifndef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
+  TensorInfo present_key_tensor_info = {};
+  RETURN_IF_NOT(num_outputs > 1 && outputs[1].Exists(), "Required output tensor present_key not provided");
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[1], present_key_tensor_info));
+  RETURN_IF_NOT(present_key_tensor_info.shape.size() == 4, "Unexpected rank for present_key");
+  const auto max_sequence_length = present_key_tensor_info.shape[2];
   RETURN_IF(local_window_size != -1 && SafeInt<uint32_t>(local_window_size) < max_sequence_length,
             "Local attention through local_window_size not supported");
+#endif
 
   int32_t qk_output = node_helper.Get("qk_output", 0);
+  RETURN_IF(qk_output < 0 || qk_output > 2, "qk_output must be 0, 1, or 2");
+#ifndef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
   RETURN_IF(qk_output != 0, "qk_output != 0 not supported");
+#endif
 
-  // note: QNN RotaryEmbedding supports the interleaved attribute, but QNN GroupQueryAttention does not.
-  //       We could support ONNX GQA w/ rotary_interleaved by decomposing it into QNN RotaryEmbeddings (w/ interleaved)
-  //       + QNN GQA.
+  const int32_t do_rotary = node_helper.Get("do_rotary", 0);
+  RETURN_IF(do_rotary != 0 && do_rotary != 1, "do_rotary must be 0 or 1");
   int32_t rotary_interleaved = node_helper.Get("rotary_interleaved", 0);
+#ifndef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
   RETURN_IF(rotary_interleaved != 0, "rotary_interleaved != 0 not supported");
+#else
+  RETURN_IF(rotary_interleaved != 0 && rotary_interleaved != 1, "rotary_interleaved must be 0 or 1");
+#endif
 
   int32_t smooth_softmax = node_helper.Get("smooth_softmax", -1);
+  RETURN_IF(smooth_softmax != -1 && smooth_softmax != 0 && smooth_softmax != 1,
+            "smooth_softmax must be -1, 0, or 1");
+#ifndef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
   RETURN_IF(smooth_softmax != -1, "smooth_softmax != -1 not supported");
+#endif
 
   float softcap = node_helper.Get("softcap", 0.0f);
+  RETURN_IF(softcap < 0.0f, "softcap must be non-negative");
+#ifndef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
   RETURN_IF(softcap != 0.0f, "softcap != 0 not supported");
+#endif
 
   // Validate OpConfig with backend
   std::vector<std::string> input_names;
@@ -132,6 +156,12 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
       7u,  // cos_cache
       8u,  // sin_cache
       9u   // position_ids
+#ifdef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
+      , 10u,  // attention_bias
+      11u,     // head_sink
+      14u,     // q_norm_weight (ORT 12/13 are unsupported k/v scale inputs)
+      15u      // k_norm_weight
+#endif
   };
   constexpr size_t kQnnTotalSeqLenIdx = 2;  // index of total_sequence_length in qnn_idx_to_onnx
 
@@ -201,9 +231,16 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
                                QNN_OP_GROUP_QUERY_ATTENTION_PARAM_KV_NUM_HEADS,
                                param_names));
 
-  // do_rotary
-  const int64_t do_rotary = node_helper.Get("do_rotary", static_cast<int64_t>(0));
-  const uint32_t do_rotary_u32 = SafeInt<uint32_t>(do_rotary);
+  // QNN 2.52 represents interleaved RoPE with do_rotary=2, while ORT
+  // represents it as do_rotary=1 plus rotary_interleaved=1.
+  const int64_t onnx_do_rotary = node_helper.Get("do_rotary", static_cast<int64_t>(0));
+  const int64_t rotary_interleaved = node_helper.Get("rotary_interleaved", static_cast<int64_t>(0));
+  uint32_t do_rotary_u32 = SafeInt<uint32_t>(onnx_do_rotary);
+#ifdef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
+  if (onnx_do_rotary != 0 && rotary_interleaved != 0) {
+    do_rotary_u32 = QNN_OP_GROUP_QUERY_ATTENTION_DO_ROTARY_INTERLEAVED;
+  }
+#endif
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),
                                node_unit.Name(),
@@ -234,6 +271,43 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
                                scale,
                                QNN_OP_GROUP_QUERY_ATTENTION_PARAM_SCALE,
                                param_names));
+
+#ifdef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
+  const uint32_t causal = QNN_OP_GROUP_QUERY_ATTENTION_CAUSAL_MASK_ENABLED;
+  RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), causal,
+                               QNN_OP_GROUP_QUERY_ATTENTION_PARAM_CAUSAL, param_names));
+
+  const int32_t local_window_size = node_helper.Get("local_window_size", -1);
+  if (local_window_size != -1) {
+    RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), local_window_size,
+                                 QNN_OP_GROUP_QUERY_ATTENTION_PARAM_LOCAL_WINDOW_SIZE, param_names));
+  }
+
+  const uint32_t sliding_window_cache = SafeInt<uint32_t>(node_helper.Get("sliding_window_cache", 0));
+  RETURN_IF(sliding_window_cache > 1, "sliding_window_cache must be 0 or 1");
+  RETURN_IF(sliding_window_cache == 1 && local_window_size <= 0,
+            "sliding_window_cache requires local_window_size > 0");
+  RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), sliding_window_cache,
+                               QNN_OP_GROUP_QUERY_ATTENTION_PARAM_SLIDING_WINDOW_CACHE, param_names));
+
+  const uint32_t smooth_softmax = SafeInt<uint32_t>(node_helper.Get("smooth_softmax", -1) == 1 ? 1 : 0);
+  RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), smooth_softmax,
+                               QNN_OP_GROUP_QUERY_ATTENTION_PARAM_SMOOTH_SOFTMAX, param_names));
+
+  const float softcap = node_helper.Get("softcap", 0.0f);
+  RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), softcap,
+                               QNN_OP_GROUP_QUERY_ATTENTION_PARAM_SOFTCAP, param_names));
+
+  const uint32_t qk_output = SafeInt<uint32_t>(node_helper.Get("qk_output", 0));
+  RETURN_IF(qk_output > QNN_OP_GROUP_QUERY_ATTENTION_QK_OUTPUT_AFTER_SOFTMAX,
+            "qk_output must be 0, 1, or 2");
+  RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), qk_output,
+                               QNN_OP_GROUP_QUERY_ATTENTION_PARAM_QK_OUTPUT, param_names));
+
+  const float qk_norm_epsilon = node_helper.Get("qk_norm_epsilon", 1e-6f);
+  RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), qk_norm_epsilon,
+                               QNN_OP_GROUP_QUERY_ATTENTION_PARAM_QK_NORM_EPSILON, param_names));
+#endif
 
   std::vector<std::string> output_names;
   for (size_t output_idx = 0; output_idx < num_outputs; ++output_idx) {

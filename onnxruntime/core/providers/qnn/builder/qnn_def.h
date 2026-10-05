@@ -90,6 +90,14 @@ namespace qnn {
 #define QNN_HTP_NATIVE_BQ_AVAILABLE
 #endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
 
+// QAIRT 2.52 extends GroupQueryAttention with additional inputs and parameters.
+// QNN API 2.40 alone is insufficient: QAIRT 2.51 also reports API 2.40 but
+// has the previous GQA op definition.
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 52))
+#define QNN_GQA_EXTENDED_OPDEF_AVAILABLE
+#endif
+
 // Cross device prepare is only available on WoS starting from QAIRT 2.51 (or QNN API 2.40).
 #if defined(_WIN32) && QNN_ARCH_ARM64
 #if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
