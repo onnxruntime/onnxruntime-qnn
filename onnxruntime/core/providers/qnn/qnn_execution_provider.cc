@@ -1756,23 +1756,19 @@ const char* ORT_API_CALL QnnEp::GetNameImpl(const OrtEp* this_ptr) noexcept {
 /*static*/
 OrtStatus* ORT_API_CALL QnnEp::CreateProfilerImpl(OrtEp* this_ptr,
                                                   OrtEpProfilerImpl** profiler) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   *profiler = nullptr;
   auto* ep = static_cast<QnnEp*>(this_ptr);
   if (!ep->qnn_backend_manager_) {
     return nullptr;
   }
 
-  try {
-    auto qnn_profiler = std::make_unique<qnn::QnnEpProfiler>(
-        ep->ep_api, ep->ort_api, ep->logger_, ep->qnn_backend_manager_->GetProfilingManager());
-    // ORT owns the returned profiler and releases it via ReleaseImpl.
-    *profiler = qnn_profiler.release();
-    return nullptr;
-  } catch (const std::exception& e) {
-    return ep->ort_api.CreateStatus(ORT_FAIL, e.what());
-  } catch (...) {
-    return ep->ort_api.CreateStatus(ORT_FAIL, "QnnEpProfiler: unknown exception");
-  }
+  auto qnn_profiler = std::make_unique<qnn::QnnEpProfiler>(
+      ep->ep_api, ep->ort_api, ep->logger_, ep->qnn_backend_manager_->GetProfilingManager());
+  // ORT owns the returned profiler and releases it via ReleaseImpl.
+  *profiler = qnn_profiler.release();
+  return nullptr;
+  QNN_EP_API_IMPL_END
 }
 #endif
 

@@ -578,15 +578,18 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
 OrtStatus* ORT_API_CALL QnnEpFactory::GetNumCustomOpDomainsImpl(
     _In_ OrtEpFactory* this_ptr,
     _Out_ size_t* num_domains) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
   *num_domains = factory->custom_op_domains_.size();
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* ORT_API_CALL QnnEpFactory::GetCustomOpDomainsImpl(
     _In_ OrtEpFactory* this_ptr,
     _Out_writes_all_(num_domains) OrtCustomOpDomain** domains,
     _In_ size_t num_domains) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
   if (num_domains > factory->custom_op_domains_.size()) {
     return factory->ort_api.CreateStatus(
@@ -597,6 +600,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetCustomOpDomainsImpl(
     domains[i] = factory->custom_op_domains_[i];
   }
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 }  // namespace onnxruntime
