@@ -1476,7 +1476,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
 #else
   ORT_CXX_LOG_PTR(logger_ptr_,
                   ORT_LOGGING_LEVEL_WARNING,
-                  "Called CreateContextVtcmBackupBufferSharingEnabled() but QNN API version is older than 2.26!");
+                  "Called CreateContextVtcmBackupBufferSharingEnabled() but QAIRT SDK is older than 2.35 (QNN API < 2.26)!");
 #endif
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
