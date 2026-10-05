@@ -259,6 +259,26 @@ def _nuget_artifact_version(args: argparse.Namespace) -> str:
     return re.sub(r"^(\d+\.\d+\.\d+)(?=[A-Za-z])", r"\1-", args.artifact_version)
 
 
+def _wheel_package_version(args: argparse.Namespace) -> str:
+    if not args.staging_artifact_root:
+        return args.artifact_version
+    # The staged filename uses 2.7.0rc3.dev0, while the generated package's
+    # build_and_package_info.py reports the equivalent 2.7.0.rc3.dev0 form.
+    return re.sub(r"^(\d+\.\d+\.\d+)(?=rc\d)", r"\1.", args.artifact_version)
+
+
+def _staging_wheel_platform(path: str) -> str | None:
+    job_name = path.split("/", 1)[0]
+    prefixes = {
+        "windows-arm64": "windows-arm64-py",
+        "windows-arm64ec": "windows-arm64ec-py",
+        "windows-x86_64": "windows-x86_64-py",
+        "linux-aarch64": "linux-aarch64_",
+        "linux-x86_64": "linux-x86_64_",
+    }
+    return next((platform for platform, prefix in prefixes.items() if job_name.startswith(prefix)), None)
+
+
 def _download_staging_wheels(args: argparse.Namespace, destination: Path) -> None:
     paths = [path for path in list_staging_artifacts(args) if path.endswith(".whl")]
     py_tags = [f"cp{version.replace('.', '')}" for version in args.python_versions.split(",")]
@@ -284,7 +304,7 @@ def _download_staging_wheels(args: argparse.Namespace, destination: Path) -> Non
     selected = [
         path
         for path in paths
-        if any(path.startswith(platform) for platform in platforms)
+        if _staging_wheel_platform(path) in platforms
         and any(f"-{tag}-{tag}-" in path for tag in py_tags)
     ]
     expected = len(py_tags) * len(platforms)
@@ -297,7 +317,8 @@ def _download_staging_wheels(args: argparse.Namespace, destination: Path) -> Non
         temp_dir = Path(temp_dir_name)
         downloaded: dict[str, list[Path]] = {platform: [] for platform in platforms}
         for path in selected:
-            platform = next(platform for platform in platforms if path.startswith(platform))
+            platform = _staging_wheel_platform(path)
+            assert platform is not None
             local_path = temp_dir / platform / Path(path).name
             downloaded[platform].append(download_staging_artifact(args, path, local_path))
 
@@ -713,7 +734,7 @@ def test_wheel(args: argparse.Namespace) -> None:
                     "-SourceDirectory",
                     str(wheel_dir),
                     "-ExpectedVersion",
-                    args.artifact_version,
+                    _wheel_package_version(args),
                     *(["-SkipSignatureCheck"] if args.skip_signature_check else []),
                 ],
             )
@@ -758,7 +779,7 @@ def test_wheel(args: argparse.Namespace) -> None:
                     "-WheelDirectory",
                     str(wheel_dir),
                     "-ExpectedVersion",
-                    args.artifact_version,
+                    _wheel_package_version(args),
                     "-SamplePath",
                     str(SAMPLE_PATH),
                 ],
@@ -777,7 +798,7 @@ def test_wheel(args: argparse.Namespace) -> None:
                     "--wheel-directory",
                     str(wheel_dir),
                     "--expected-version",
-                    args.artifact_version,
+                    _wheel_package_version(args),
                     "--sample-path",
                     str(SAMPLE_PATH),
                 ],
