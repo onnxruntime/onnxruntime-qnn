@@ -1318,6 +1318,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                                            false,
                                                                            logger_);
 
+  model_settings_.use_native_matmul = ParseBoolOption(ort_api,
+                                                      session_options_,
+                                                      FormatEPConfigKey("use_native_matmul"),
+                                                      false,
+                                                      logger_);
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,
