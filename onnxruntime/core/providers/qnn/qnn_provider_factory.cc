@@ -171,8 +171,9 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
                                      OrtHardwareDevice*& device,
                                      const bool is_virtual = true) {
     OrtKeyValuePairs* hw_metadata = nullptr;
+    factory->ort_api.CreateKeyValuePairs(&hw_metadata);
+    factory->ort_api.AddKeyValuePair(hw_metadata, "Description", "Qualcomm NPU");
     if (is_virtual) {
-      factory->ort_api.CreateKeyValuePairs(&hw_metadata);
       factory->ort_api.AddKeyValuePair(hw_metadata, kOrtHardwareDevice_MetadataKey_IsVirtual, "1");
     }
 
