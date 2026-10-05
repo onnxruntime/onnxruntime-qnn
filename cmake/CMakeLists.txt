@@ -431,7 +431,10 @@ endif()
 include(external/onnxruntime_prebuilt.cmake)
 
 # Generate onnxruntime_config.h
-file (STRINGS "${REPO_ROOT}/VERSION_NUMBER" ORT_VERSION)
+file (STRINGS "${REPO_ROOT}/VERSION_NUMBER" ORT_QNN_EP_VERSION)
+file (READ "${REPO_ROOT}/qcom/packages.yml" _packages_yml)
+string(REGEX MATCH "ort_prebuilt_windows_x64:[^\n]*\n[[:space:]]*version:[[:space:]]*([0-9.]+)" _ort_ver_match "${_packages_yml}")
+set(ORT_VERSION "${CMAKE_MATCH_1}")
 
 set(ORT_PROVIDER_FLAGS)
 list(APPEND ORT_PROVIDER_FLAGS -DUSE_QNN=1)
@@ -789,11 +792,11 @@ set(VERSION_BUILD_PART       0 CACHE STRING "Third part of numeric file/product 
 set(VERSION_PRIVATE_PART     0 CACHE STRING "Fourth part of numeric file/product version.")
 set(VERSION_STRING       "Internal Build" CACHE STRING "String representation of file/product version.")
 if(VERSION_MAJOR_PART STREQUAL "0" AND VERSION_MINOR_PART STREQUAL "0" AND VERSION_BUILD_PART STREQUAL "0" AND VERSION_PRIVATE_PART STREQUAL "0")
-    string(REPLACE "." ";"  ORT_VERSION_STRING_LIST ${ORT_VERSION})
+    string(REPLACE "." ";"  ORT_VERSION_STRING_LIST ${ORT_QNN_EP_VERSION})
     list(GET ORT_VERSION_STRING_LIST 0 VERSION_MAJOR_PART)
     list(GET ORT_VERSION_STRING_LIST 1 VERSION_MINOR_PART)
     list(GET ORT_VERSION_STRING_LIST 2 VERSION_BUILD_PART)
-    set(VERSION_STRING ${ORT_VERSION})
+    set(VERSION_STRING ${ORT_QNN_EP_VERSION})
 endif()
 
 
@@ -928,7 +931,7 @@ configure_package_config_file(
 
 write_basic_package_version_file(
     "${PROJECT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
-    VERSION ${ORT_VERSION}
+    VERSION ${ORT_QNN_EP_VERSION}
     COMPATIBILITY SameMajorVersion)
 
 install(

@@ -627,20 +627,20 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
   } else if (is_block_quant) {
     if (!qnn_model_wrapper.GetModelSettings().enable_block_quant_weight_optimization) {
       ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Block quant weight optimization disabled, falling back to float BQ path"));
+                  ("Block quant weight optimization disabled, BQ path is adopted as-is"));
       return Ort::Status();
     }
     // ONNX block quantization -> QNN LPBQ (BLOCKWISE_EXPANSION) conversion only supported for 4-bit.
     if (io_def.type != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
       ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
-                  ("BQ to LPBQ conversion only supported for int4 weights, falling back to float BQ path"));
+                  ("BQ to LPBQ conversion only supported for int4 weights, falling back to BQ path"));
       return Ort::Status();
     }
     // LPBQ requires symmetric quantization (all zero-points must be zero).
     for (const int32_t zp : zero_points) {
       if (zp != 0) {
         ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
-                    ("BQ to LPBQ conversion requires symmetric quantization, falling back to float BQ path"));
+                    ("BQ to LPBQ conversion requires symmetric quantization, falling back to BQ path"));
         return Ort::Status();
       }
     }
@@ -708,7 +708,7 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
                                                               per_block_int_scales, lpbq_offsets);
     if (!status.IsOK()) {
       ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
-                  ("BQ to LPBQ conversion failed, falling back to float BQ path: " + std::string(status.GetErrorMessage())).c_str());
+                  ("BQ to LPBQ conversion failed, falling back to BQ path: " + std::string(status.GetErrorMessage())).c_str());
       return Ort::Status();
     }
 

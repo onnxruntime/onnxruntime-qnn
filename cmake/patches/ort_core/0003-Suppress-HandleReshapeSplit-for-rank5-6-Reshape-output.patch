@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hua-Yu Chou <hchou@qti.qualcomm.com>
+Date: Wed, 10 Sep 2026 10:00:00 +0800
+Subject: [PATCH 8/8] Suppress HandleReshapeSplit for rank-5/6 Reshape outputs
+
+ORT 1.29's HandleReshapeSplit absorbs NHWC layout-conversion transposes
+into adjacent Reshape nodes whose output rank is higher than the incoming
+transpose rank.  For SpaceToDepth and ChannelShuffle RTR (Reshape ->
+Transpose -> Reshape) patterns the intermediate tensor is rank 5 or 6.
+Absorbing the transpose mutates both the Reshape shape constant and the
+core transpose permutation, making the QNN EP fusion matchers unable to
+recognise the pattern in the post-Layout-Transform GetCapability pass.
+
+Add an early-return guard that skips absorption when the Reshape output
+rank is 5 or 6, leaving all other ranks unchanged.
+
+---
+ onnxruntime/core/optimizer/transpose_optimization/onnx_transpose_optimization.cc | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+--- a/onnxruntime/core/optimizer/transpose_optimization/onnx_transpose_optimization.cc
++++ b/onnxruntime/core/optimizer/transpose_optimization/onnx_transpose_optimization.cc
+@@ -2641,6 +2641,15 @@ static bool HandleReshapeSplit(HandlerArgs& args) {
+   }
+
+   // This handler is for pure splits (output rank > post-transpose rank).
++
++  // Do not absorb transposes into rank-5 or rank-6 Reshape outputs. These ranks
++  // are used by QNN EP's SpaceToDepth and ChannelShuffle RTR (Reshape->Transpose->
++  // Reshape) fusions. Absorbing the transpose mutates the perm and shape in ways
++  // that break the QNN EP pattern matchers post-Layout-Transform.
++  if (requested_shape.size() == 5 || requested_shape.size() == 6) {
++    return false;
++  }
++
+   // Equal or smaller ranks are the domain of HandleReshapeAsTranspose.
+   if (requested_shape.size() <= rank) {
+     return false;
+--
+2.39.0

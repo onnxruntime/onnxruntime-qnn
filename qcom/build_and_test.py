@@ -646,6 +646,28 @@ class TaskLibrary:
 
     if is_host_linux() and is_host_x86_64():
 
+        @public_task("Coverage-instrumented build only, no report (Linux x86_64, RelWithDebInfo)")
+        @depends(["create_venv"])
+        def coverage_build_linux_x86_64(self, plan: Plan) -> str:
+            # The coverage binary is required for consumers that run the snapshot/
+            # accuracy tiers directly (e.g. publish_goldens.sh regenerates goldens
+            # and verifies accuracy in one pass). They only need the instrumented
+            # binary, not the HTML report, so this omits GenerateCoverageTask.
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Building ONNX Runtime for Linux (RelWithDebInfo + coverage)",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64",
+                    "RelWithDebInfo",
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "build",
+                    extra_args=["--enable-coverage"],
+                )
+            )
+
         @public_task("Build with code coverage and generate HTML report (Linux x86_64, RelWithDebInfo)")
         @depends(["create_venv"])
         def coverage_linux_x86_64(self, plan: Plan) -> str:

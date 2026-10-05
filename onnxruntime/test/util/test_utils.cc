@@ -297,30 +297,32 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
 
   //
-  // get expected output from CPU EP using public API
+  // get expected output from CPU EP using public API — only needed when verify_outputs is true.
+  // When verify_outputs is false (e.g. custom-domain nodes whose CPU kernel is absent), skip the
+  // CPU reference session so its construction cannot fail on an unregistered custom domain.
   //
-  Ort::SessionOptions cpu_so;
-  if (custom_op_domain != nullptr) {
-    cpu_so.Add(*custom_op_domain);
-  }
-  Ort::Session cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), cpu_so);
-
-  // fetch all outputs using public API
-  std::vector<std::string> output_names;
-  size_t output_count = cpu_session.GetOutputCount();
-  output_names.reserve(output_count);
-
-  Ort::AllocatorWithDefaultOptions allocator;
-  for (size_t i = 0; i < output_count; ++i) {
-    auto output_name = cpu_session.GetOutputNameAllocated(i, allocator);
-    output_names.push_back(output_name.get());
-  }
-
-  Ort::RunOptions cpu_run_options;
-  cpu_run_options.SetRunTag(log_id.data());
-
   std::vector<Ort::Value> expected_fetches;
-  RunWithEP(cpu_session, cpu_run_options, feeds, expected_fetches);
+  std::vector<std::string> output_names;
+  if (verify_outputs) {
+    Ort::SessionOptions cpu_so;
+    if (custom_op_domain != nullptr) {
+      cpu_so.Add(*custom_op_domain);
+    }
+    Ort::Session cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), cpu_so);
+
+    size_t output_count = cpu_session.GetOutputCount();
+    output_names.reserve(output_count);
+
+    Ort::AllocatorWithDefaultOptions allocator;
+    for (size_t i = 0; i < output_count; ++i) {
+      auto output_name = cpu_session.GetOutputNameAllocated(i, allocator);
+      output_names.push_back(output_name.get());
+    }
+
+    Ort::RunOptions cpu_run_options;
+    cpu_run_options.SetRunTag(log_id.data());
+    RunWithEP(cpu_session, cpu_run_options, feeds, expected_fetches);
+  }
 
   if (params.graph_verifier) {
     ort_so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");

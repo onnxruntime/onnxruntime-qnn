@@ -36,35 +36,6 @@ constexpr std::array<int64_t, 6> kPermS2dCrd = {0, 1, 3, 5, 2, 4};
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
 
-/// @brief Get the shape of a tensor from its OrtValueInfo
-std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const OrtValueInfo* value_info) {
-  if (value_info == nullptr) {
-    return std::nullopt;
-  }
-
-  const OrtTypeInfo* type_info = nullptr;
-  if (ort_api.GetValueInfoTypeInfo(value_info, &type_info) != nullptr) {
-    return std::nullopt;
-  }
-
-  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  if (ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info) != nullptr) {
-    return std::nullopt;
-  }
-
-  size_t dims_count = 0;
-  if (ort_api.GetDimensionsCount(tensor_info, &dims_count) != nullptr) {
-    return std::nullopt;
-  }
-
-  std::vector<int64_t> dims(dims_count);
-  if (ort_api.GetDimensions(tensor_info, dims.data(), dims_count) != nullptr) {
-    return std::nullopt;
-  }
-
-  return dims;
-}
-
 /// @brief Match the pattern: Reshape -> Transpose -> Reshape with rank-6 intermediate tensors
 std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank6ToRank5Pattern(
     const QnnModelWrapper& qnn_model_wrapper,

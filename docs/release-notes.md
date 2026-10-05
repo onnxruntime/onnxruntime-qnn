@@ -1,3 +1,168 @@
+# ONNX Runtime QNN Execution Provider v2.7.40
+
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.29.0)<br>
+**QAIRT SDK Compatibility:** 2.51.40<br>
+
+This is a WinML-specific patch release built with QAIRT 2.51.40 and ORT 1.29.0. This version is **not available on PyPI, NuGet or Maven** and is only distributed through **WinML channels**.<br>
+
+For the mainline release of ORT QNN EP, please use [v2.7.0](#onnx-runtime-qnn-execution-provider-v270) which was built with QAIRT 2.51.0 and ORT 1.29.0 and is available on **PyPI, NuGet and Maven**<br>
+
+## Bug Fixes
+
+- **ExternalResourceImporter D3D12 device creation** — Delayed the `D3D12CreateDevice` call in `ExternalResourceImporter` until memory or semaphore import is actually needed. This fixes WebNN conformance test timeouts caused by unnecessary device initialization overhead. ([#907](https://github.com/onnxruntime/onnxruntime-qnn/pull/907))
+
+**Full Changelog:** [rel-2.7.0...rel-2.7.40](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.7.0...rel-2.7.40)
+
+## Contributors
+
+This release includes contributions from:
+
+[Matthew Sinclair](https://github.com/qti-mattsinc)
+
+---
+
+---
+
+# ONNX Runtime QNN Execution Provider v2.7.0
+
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.29.0)<br>
+**QAIRT SDK Compatibility:** 2.51.0
+
+```
+pip install onnxruntime==1.29.0
+pip install onnxruntime-qnn==2.7.0
+```
+
+## New Ops and Fusions
+
+- **ArrayFeatureExtractor** ([#710](https://github.com/onnxruntime/onnxruntime-qnn/pull/710))
+- **MaxRoiPool** ([#542](https://github.com/onnxruntime/onnxruntime-qnn/pull/542))
+- **QLinearConv** ([#494](https://github.com/onnxruntime/onnxruntime-qnn/pull/494))
+- **Swish** ([#777](https://github.com/onnxruntime/onnxruntime-qnn/pull/777))
+- **MatMul+Add+Relu QDQ node group fusion** ([#694](https://github.com/onnxruntime/onnxruntime-qnn/pull/694))
+
+For the full list of supported operators, see [Supported ONNX Operators](execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators) and for supported fusions, see [Supported Operator Fusions](execution_providers/QNN-ExecutionProvider.md#supported-operator-fusions).
+
+## Improvements
+
+- **`prepare_and_load` session option** — Compiles and reloads the QNN context in a single ORT session, letting large models bypass the JIT flow's single process-domain memory limit. ([#517](https://github.com/onnxruntime/onnxruntime-qnn/pull/517))
+- **HTP Graph Splitting** — New provider options split large single-core LLM graphs into independently-prepareable sub-graphs, cutting context preparation time. Requires QAIRT SDK 2.49+. ([#645](https://github.com/onnxruntime/onnxruntime-qnn/pull/645), [#801](https://github.com/onnxruntime/onnxruntime-qnn/pull/801))
+- **`htp_reused_io_limit_mb` provider option** — Lets applications specify reused I/O buffer size, avoiding an inflated memory estimate that can prevent a context from loading. ([#752](https://github.com/onnxruntime/onnxruntime-qnn/pull/752))
+- **`enable_htp_matmul_lut` session option** — Opt-out for the HTP MatMul LUT kernel optimization, on by default on QAIRT 2.51+. ([#807](https://github.com/onnxruntime/onnxruntime-qnn/pull/807))
+- **EPContext binary encryption** — ORT 1.28 read/write callbacks let applications encrypt/decrypt the compiled context binary at rest. ([#647](https://github.com/onnxruntime/onnxruntime-qnn/pull/647))
+- **Automatic UDO custom-op domain registration** — Domains are registered via factory hooks from the `ORT_QNN_CUSTOM_OP_DOMAINS` environment variable, no manual `Ort::CustomOpDomain` needed. ([#770](https://github.com/onnxruntime/onnxruntime-qnn/pull/770))
+- **Native QNN RoPE op** — RotaryEmbedding now lowers to the native HTP `QNN_OP_ROTARY_EMBEDDING` kernel instead of a multi-op decomposition. ([#659](https://github.com/onnxruntime/onnxruntime-qnn/pull/659))
+- **Variadic Sum/Max/Min** — Now accept more than 2 inputs instead of falling back to CPU EP. ([#687](https://github.com/onnxruntime/onnxruntime-qnn/pull/687))
+- **GRU quantized execution on HTP** — Genuine quantized (uint8 / native uint16) GRU now runs on HTP, with fp32 fallback on QNN for unsupported configs instead of a hard CPU fallback. ([#721](https://github.com/onnxruntime/onnxruntime-qnn/pull/721))
+- **HTP native block quantization (BQ) for Conv and MatMulNBits** — Routes block-quantized weights to the HTP native BQ kernel when supported (QAIRT SDK 2.51+), avoiding an extra activation convert step. ([#604](https://github.com/onnxruntime/onnxruntime-qnn/pull/604))
+- **Faster 2D initializer transpose** — Cache-tiled transposition speeds up ONNX→QNN lowering of weights; reduces LLM session creation time by up to ~33%. ([#791](https://github.com/onnxruntime/onnxruntime-qnn/pull/791))
+- **Constant-only graphs on GPU** — QNN GPU backend now accepts graphs with zero runtime inputs, fixing several WebNN conformance failures. ([#795](https://github.com/onnxruntime/onnxruntime-qnn/pull/795))
+- **Relaxed HTP arch compatibility check** — Loosens the compatibility check for existing recipes when `htp_arch` is explicitly specified. ([#806](https://github.com/onnxruntime/onnxruntime-qnn/pull/806))
+- **Build-time minimum ORT API version check** — Replaces a hardcoded version floor with a build-generated macro and a lint gate that catches silent drift. ([#487](https://github.com/onnxruntime/onnxruntime-qnn/pull/487))
+
+## Op Translation Fixes
+
+- **Clip** — GPU backend now clamps `+/-infinity` min/max bounds to finite floats instead of failing. ([#761](https://github.com/onnxruntime/onnxruntime-qnn/pull/761))
+- **Dynamic uint16 MatMul/FullyConnected** — Fixed the symmetric-encoding check so an already-symmetric input no longer gets an unnecessary `Convert`. ([#765](https://github.com/onnxruntime/onnxruntime-qnn/pull/765), [#780](https://github.com/onnxruntime/onnxruntime-qnn/pull/780))
+- **RMSNorm (HTP)** — Nonnegative per-tensor INT16 gamma is now re-encoded as UINT16 before HTP validation, which previously rejected it. ([#773](https://github.com/onnxruntime/onnxruntime-qnn/pull/773))
+- **Reciprocal (FP16)** — Fixed a static-tensor data-length mismatch by serializing the constant divisor at the correct FP16 width. ([#733](https://github.com/onnxruntime/onnxruntime-qnn/pull/733))
+- **Cast (fp32→bool, HTP v79+)** — Rewrites the cast as `Sign → Abs → Cast` to work around `NotEqual(x, 0.0f)` misbehaving on HTP v79+. ([#735](https://github.com/onnxruntime/onnxruntime-qnn/pull/735))
+- **Sub-byte (INT4/INT2) constant folding** — Fixed negative 4-bit/2-bit weights decoding incorrectly, recovering a large accuracy regression on a w4a16 model. ([#728](https://github.com/onnxruntime/onnxruntime-qnn/pull/728))
+- **Slice (BOOL, HTP)** — BOOL input/output is now supported, avoiding a hard failure when CPU fallback is disabled. ([#695](https://github.com/onnxruntime/onnxruntime-qnn/pull/695))
+- **Gemm (broadcast bias)** — A bias broadcast QNN can't represent as a single value per channel now lowers to `FullyConnected + ElementWiseAdd` instead of being rejected. ([#741](https://github.com/onnxruntime/onnxruntime-qnn/pull/741))
+
+## Bug Fixes
+
+- **Backend library load check** — Fixed a crash when a backend library fails its API version check on a second load attempt. ([#588](https://github.com/onnxruntime/onnxruntime-qnn/pull/588))
+- **QNN graph node name uniqueness** — Node names are now centrally reserved across the composed graph, fixing graph-compose failures on models with colliding node names. ([#734](https://github.com/onnxruntime/onnxruntime-qnn/pull/734))
+- **SSR recovery file mapping** — SSR recovery now reuses the existing memory-mapped context binary, restoring a performance benefit that was silently lost after SSR on Windows ARM64. ([#677](https://github.com/onnxruntime/onnxruntime-qnn/pull/677))
+- **`fp16_clamp_overflow` on context-binary load** — The option was silently ignored on the AOT context-binary path, causing NaN output on HTP v79+; now applied correctly. ([#718](https://github.com/onnxruntime/onnxruntime-qnn/pull/718))
+- **UDO HTP op-package build (QAIRT 2.50)** — Fixed a missing HTP core include path needed by QAIRT 2.50's restructured headers. ([#772](https://github.com/onnxruntime/onnxruntime-qnn/pull/772))
+
+**Full Changelog:** [rel-2.6.0...rel-2.7.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.6.0...rel-2.7.0)
+
+## Contributors
+
+This release includes contributions from:
+
+[Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [chunghow-qti](https://github.com/chunghow-qti), [Calvin Nguyen](https://github.com/quic-calvnguy), [Chun-Chih Teng](https://github.com/qti-chuteng), [Chung-Ho Wu](https://github.com/chunghow-qti), [Hua-Yu Chou](https://github.com/huaychou), [Hung-Jui Wang](https://github.com/qti-hungjuiw), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Kyle Romero](https://github.com/qti-kromero), [Matthew Sinclair](https://github.com/qti-mattsinc), [Min Fong Hong](https://github.com/minfhong-qti), [Nischay Mamidi](https://github.com/qti-niscmami), [Pranjal Singh Thakur](https://github.com/pratha-qti), [Shubham Patel](https://github.com/qti-shubham), [Tirupathi Reddy T](https://github.com/tirupath-qti), [Tzu-Hsuan Wei](https://github.com/tzuhsuanwei), [WeiCheng Chang](https://github.com/weicheng-qti),  [Yathindra Kota](https://github.com/yath1), [Yu-Hung Chuang](https://github.com/yuhuchua-qti), [Yuduo Wu](https://github.com/qti-yuduo)
+
+---
+
+---
+
+# ONNX Runtime QNN Execution Provider v2.6.0
+
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.27.0)<br>
+**QAIRT SDK Compatibility:** 2.50.40
+
+```
+pip install onnxruntime==1.27.0
+pip install onnxruntime-qnn==2.6.0
+```
+
+## Packaging
+
+### Platform Support
+
+| Package | Windows ARM64 | Windows ARM64 (ARM64x) | Windows x86_64 | Linux ARM64 | Linux x86_64 | Android ARM64 |
+|---|---|---|---|---|---|---|
+| Python Wheel | Inference | — | AOT compilation | Inference | AOT compilation | — |
+| NuGet | - | Inference | — | — | — | — |
+| ZIP | Inference | Inference | AOT compilation | — | AOT compilation | — |
+| tgz | — | — | — | Inference | — | — |
+| Maven | — | — | — | — | — | Inference |
+
+## New Ops and Fusions
+
+- **Attention** ([#651](https://github.com/onnxruntime/onnxruntime-qnn/pull/651))
+- **Bernoulli** ([#709](https://github.com/onnxruntime/onnxruntime-qnn/pull/709))
+- **Range** ([#331](https://github.com/onnxruntime/onnxruntime-qnn/pull/331))
+- **CastLike** ([#690](https://github.com/onnxruntime/onnxruntime-qnn/pull/690))
+- **Reshape-Transpose fusion** ([#666](https://github.com/onnxruntime/onnxruntime-qnn/pull/666))
+- **L2Norm fusion** ([#589](https://github.com/onnxruntime/onnxruntime-qnn/pull/589))
+- **ERF-based Gelu fusion** ([#648](https://github.com/onnxruntime/onnxruntime-qnn/pull/648))
+- **SpaceToDepth RTR-only fusion** ([#629](https://github.com/onnxruntime/onnxruntime-qnn/pull/629))
+
+For the full list of supported operators, see [Supported ONNX Operators](execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators) and for supported fusions, see [Supported Operator Fusions](execution_providers/QNN-ExecutionProvider.md#supported-operator-fusions).
+
+## Improvements
+
+- **HTP SSR recovery** — The AOT `embed_mode=0` flow now transparently recovers from NPU subsystem restarts (`QNN_COMMON_ERROR_SYSTEM_COMMUNICATION`): the context is reloaded from the `.bin` file and inference retries with no application intervention. JIT and `embed_mode=1` flows surface the failure as `ORT_ENGINE_ERROR` for programmatic detection. ([#459](https://github.com/onnxruntime/onnxruntime-qnn/pull/459))
+- **MatMulNBits int16 QDQ activations on HTP** — HTP now accepts `uint16`/`int16` QDQ activations for `MatMulNBits`, in addition to `float32`/`float16`. ([#675](https://github.com/onnxruntime/onnxruntime-qnn/pull/675))
+- **Conv LPBQ encoding support** — Conv op builder now routes to HTP LPBQ (`QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION`) kernels when `int16` activations with 4-bit symmetric block-quantized weights are present and `enable_block_quant_weight_optimization=1`. ([#483](https://github.com/onnxruntime/onnxruntime-qnn/pull/483))
+- **LSTM unrolled at ORT by default** — Renamed session option `disable_htp_monolithic_lstm` → `enable_htp_monolithic_lstm` (default OFF). LSTM now unrolls per-timestep at ORT level by default; the HTP-native monolithic LSTM kernel is opt-in. ([#630](https://github.com/onnxruntime/onnxruntime-qnn/pull/630))
+- **MCDM driver path via device-interface GUID** — In sandboxed/AppContainer environments where the `qcnspmcdm` service name is unresolvable, QNN EP now discovers the MCDM driver directory via the device-interface class GUID, with fallback to the previous service-name lookup. ([#691](https://github.com/onnxruntime/onnxruntime-qnn/pull/691))
+- **Conv2d/Conv3d `reuse_sparse_indices` parameter** — Adds the `reuse_sparse_indices` parameter (set to `false` for standard ONNX Conv) to align with the native QNN Conv2D/Conv3D op definitions. ([#350](https://github.com/onnxruntime/onnxruntime-qnn/pull/350))
+
+## Op Translation Fixes
+
+- **RMSNorm** — Scale tensors with leading 1-dimensions (e.g. `[1, 1, 1024]` for `axis=-1`) are now squeezed to match QNN's `rank(gamma) == size(axes)` constraint, recovering nodes that previously fell back to CPU EP in transformer models. ([#674](https://github.com/onnxruntime/onnxruntime-qnn/pull/674))
+- **Conv (QDQ)** — Float (non-quantized) bias is now accepted when forming the Conv QDQ node group; quantization is applied at graph build time. ([#481](https://github.com/onnxruntime/onnxruntime-qnn/pull/481))
+- **Resize** — Added support for `tf_half_pixel_for_nn` coordinate transformation mode (mapped to `HALF_PIXEL`), avoiding CPU fallback. ([#287](https://github.com/onnxruntime/onnxruntime-qnn/pull/287))
+- **SpaceToDepth fusion** — Fixed rejection when the intermediate Reshape shape has `-1` at the channel dimension; shape is now resolved from ValueInfo instead of the initializer. ([#635](https://github.com/onnxruntime/onnxruntime-qnn/pull/635))
+- **Softplus** — Added to the QDQ-fusion unary op selector allowlist so quantized Softplus fuses correctly. ([#644](https://github.com/onnxruntime/onnxruntime-qnn/pull/644))
+- **GatherBlockQuantize** — Fixed int4 weights not being routed to QNN GPU. ([#605](https://github.com/onnxruntime/onnxruntime-qnn/pull/605))
+- **BatchNormalization** — Fixed crash/rejection when input and output quantization dtypes are mixed. ([#633](https://github.com/onnxruntime/onnxruntime-qnn/pull/633))
+- **Pad** — Fixed out-of-bounds read in `OrtPadNodeGroupSelector::Check` when a Pad node has zero DQ inputs. ([#631](https://github.com/onnxruntime/onnxruntime-qnn/pull/631))
+
+## Bug Fixes
+
+- **QNN node creation** — Backend validation is now performed during `CreateQnnNode`, catching op config errors at partition time rather than at graph finalization. ([#672](https://github.com/onnxruntime/onnxruntime-qnn/pull/672))
+- **Windows build** — Fixed MSVC 14.51 C4875 warning-as-error and upleveled numpy version in build tooling. ([#662](https://github.com/onnxruntime/onnxruntime-qnn/pull/662))
+- **Build archive step** — Fixed `WinError 5` (access denied) caused by Windows symlinks under `_deps/` during packaging. ([#620](https://github.com/onnxruntime/onnxruntime-qnn/pull/620))
+
+**Full Changelog:** [rel-2.5.0...rel-2.6.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.5.0...rel-2.6.0)
+
+## Contributors
+
+This release includes contributions from:
+
+[Ashima Jain](https://github.com/qti-ashimaj), [Ankur Shukla](https://github.com/ankus-qti), [Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [Calvin Nguyen](https://github.com/quic-calvnguy), [Cheng-Hsin Weng](https://github.com/qti-chenweng), [Chun-Chih Teng](https://github.com/qti-chuteng), [Chung-Ho Wu](https://github.com/chunghow-qti), [Hua-Yu Chou](https://github.com/huaychou), [Hung-Jui Wang](https://github.com/qti-hungjuiw), [Ketan Dhakate](https://github.com/qti-kdhakate), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Kyle Romero](https://github.com/qti-kromero), [Mike Hsu](https://github.com/quic-muchhsu), [Min Fong Hong](https://github.com/minfhong-qti), [Nischay Mamidi](https://github.com/qti-niscmami), [Pranjal Singh Thakur](https://github.com/pratha-qti), [Sachin Jangid](https://github.com/sachjang-qti), [Shubham Patel](https://github.com/qti-shubham),  [Tirupathi Reddy T](https://github.com/tirupath-qti), [Yathindra Kota](https://github.com/yath1), [Yu-Hung Chuang](https://github.com/yuhuchua-qti), [Yuduo Wu](https://github.com/qti-yuduo), [Xia Han](https://github.com/xiha0704)
+---
+
+---
+
 # ONNX Runtime QNN Execution Provider v2.5.0
 
 **ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.26.0)<br>
@@ -59,6 +224,10 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 - **Android NPU discovery** — Standalone QNN EP now detects Qualcomm devices via the `ro.soc.manufacturer` system property instead of scanning `/dev/fastrpc-cdsp*`, which Android's SELinux policy blocks for untrusted apps. Fixes `getEpDevices()` returning no NPU device (and QNN EP being unusable) on Android even on supported devices. Linux ARM64 behavior is unchanged. ([#683](https://github.com/onnxruntime/onnxruntime-qnn/pull/683))
 
 **Full Changelog:** [rel-2.4.0...rel-2.5.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.4.0...rel-2.5.0)
+
+## Known Issues
+
+- **LLM model load failure (`QNN_MEMORY_ALLOCATION_ERROR`, 1002)** — Some LLM models fail to load with all EP context binaries. Workaround: enable the `enable_vtcm_backup_buffer_sharing` QNN EP option. This option is AOT-flow only and may not cover all use cases. Fix targeted for `2.6.0`.
 
 ## Contributors
 

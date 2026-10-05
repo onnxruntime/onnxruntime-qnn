@@ -56,7 +56,7 @@ Ort::Status ProcessScatterNDIndices(QnnModelWrapper& qnn_model_wrapper,
 
     // Rename so a sibling op reusing the same ONNX initializer under a different
     // axis bound cannot alias our rewritten copy.
-    indices_tensor_name = utils::UniqueNameGenerator().New(indices_tensor_name, "_qnn_idx");
+    indices_tensor_name = indices_tensor_name + "_qnn_idx";
   }
 
   return utils::AddNormalizedIndicesTensor(qnn_model_wrapper, std::move(indices_info),

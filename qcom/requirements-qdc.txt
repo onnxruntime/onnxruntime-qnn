@@ -2,4 +2,4 @@
 # SPDX-License-Identifier: MIT
 
 -r requirements.txt
-qualcomm_device_cloud_sdk==0.3.0
+qualcomm_device_cloud_sdk==0.4.1

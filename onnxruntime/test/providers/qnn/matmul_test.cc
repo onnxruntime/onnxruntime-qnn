@@ -714,47 +714,193 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_dynamic_inputs) {
   }
 }
 
-TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_ConvertOnlyIfAsymmetric) {
-  namespace fs = std::filesystem;
-  struct TestCase {
-    const char* name;
-    float input1_min;
-    size_t expected_convert_count;
-  };
-
-  for (const TestCase& test_case : {TestCase{"symmetric", -0.1f, 0},
-                                    TestCase{"asymmetric", -0.05f, 1}}) {
-    SCOPED_TRACE(test_case.name);
-    const fs::path graph_dir = fs::temp_directory_path() /
-                               (std::string("MatMulOp_QDQ_U16DynamicInput1_") + test_case.name);
-    fs::remove_all(graph_dir);
-    ASSERT_TRUE(fs::create_directories(graph_dir));
-    auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
-
-    ProviderOptions provider_options;
-    provider_options["backend_type"] = "htp";
-    provider_options["offload_graph_io_quantization"] = "0";
-    provider_options["dump_json_qnn_graph"] = "1";
-    provider_options["json_qnn_graph_dir"] = graph_dir.string();
+static ProviderOptions GetQDQMatMulProviderOptions(const std::filesystem::path& graph_dir) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
 #ifdef __linux__
-    provider_options["htp_arch"] = "73";
+  provider_options["htp_arch"] = "73";
+#endif
+  return provider_options;
+}
+
+static void RunDynamicInput1QuantErrorTest(const char* test_name,
+                                           float input1_min,
+                                           float input1_max,
+                                           Qnn_DataType_t expected_convert_type,
+                                           size_t expected_convert_count = 1) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() /
+                             (std::string("MatMulOp_QDQ_U16DynamicInput1_") + test_name);
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options = GetQDQMatMulProviderOptions(graph_dir);
+
+  TestInputDef<float> input0_def({2, 3}, false, GetFloatDataInRange(-0.1f, 0.1f, 6));
+  TestInputDef<float> input1_def({3, 2}, false, GetFloatDataInRange(input1_min, input1_max, 6));
+
+  const auto f32_model = BuildMatMulOpTestCase(input0_def, input1_def);
+  const auto qdq_model = BuildMatMulOpQDQTestCase<uint16_t, uint16_t, uint16_t>(input0_def, input1_def, false);
+  TestQDQModelAccuracy(f32_model, qdq_model, provider_options, 21,
+                       ExpectedEPNodeAssignment::All, QDQTolerance());
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "Convert", expected_convert_count);
+  if (expected_convert_count != 0) {
+    AssertConvertOutputDataType(graph_dir, expected_convert_type);
+  }
+}
+
+// A 16-bit activation with an 8-bit output stays in one node unit: the op runs at 16 bits and a Convert narrows it.
+template <typename ActivationQType, typename WeightQType, typename OutputQType>
+static void RunNarrowingOutputTest(const char* test_name, bool weight_is_initializer,
+                                   Qnn_DataType_t expected_convert_type) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / (std::string("MatMulOp_QDQ_NarrowingOutput_") + test_name);
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options = GetQDQMatMulProviderOptions(graph_dir);
+
+  TestInputDef<float> input0_def({2, 16}, false, GetFloatDataInRange(-1.0f, 1.0f, 32));
+  TestInputDef<float> input1_def({16, 8}, weight_is_initializer, GetFloatDataInRange(-0.5f, 0.5f, 128));
+
+  const auto f32_model = BuildMatMulOpTestCase(input0_def, input1_def);
+  const auto qdq_model =
+      BuildMatMulOpQDQTestCase<ActivationQType, WeightQType, OutputQType>(input0_def, input1_def, true);
+  TestQDQModelAccuracy(f32_model, qdq_model, provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "Convert", 1);
+  AssertConvertOutputDataType(graph_dir, expected_convert_type);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationU8Output_StaticWeight) {
+  RunNarrowingOutputTest<uint16_t, uint8_t, uint8_t>("u16_u8_static", /*weight_is_initializer=*/true,
+                                                     QNN_DATATYPE_UFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationU8Output_DynamicInput1) {
+  RunNarrowingOutputTest<uint16_t, uint8_t, uint8_t>("u16_u8_dynamic", /*weight_is_initializer=*/false,
+                                                     QNN_DATATYPE_UFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationS8Output_StaticWeight) {
+  RunNarrowingOutputTest<uint16_t, uint8_t, int8_t>("u16_s8_static", /*weight_is_initializer=*/true,
+                                                    QNN_DATATYPE_SFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_S16ActivationS8Output_StaticWeight) {
+  RunNarrowingOutputTest<int16_t, int8_t, int8_t>("s16_s8_static", /*weight_is_initializer=*/true,
+                                                  QNN_DATATYPE_SFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8) {
+  RunDynamicInput1QuantErrorTest("low_error", 0.0f, 0.2f, QNN_DATATYPE_UFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_HighQuantErrorUsesSymmetricU16) {
+  RunDynamicInput1QuantErrorTest("high_error", 0.0f, 100.0f, QNN_DATATYPE_UFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16SymmetricDynamicInput1_PassesThrough) {
+  RunDynamicInput1QuantErrorTest("symmetric_input", -0.1f, 0.1f, QNN_DATATYPE_UFIXED_POINT_16,
+                                 /*expected_convert_count=*/0);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_NonU16Input1DoesNotUseU16ConversionGate) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulOp_QDQ_NonU16Input1";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options = GetQDQMatMulProviderOptions(graph_dir);
+
+  TestInputDef<float> input0_def({2, 3}, false, GetFloatDataInRange(-0.1f, 0.1f, 6));
+  TestInputDef<float> input1_def({3, 2}, false, GetFloatDataInRange(0.0f, 100.0f, 6));
+  TestQDQModelAccuracy(
+      BuildMatMulOpTestCase(input0_def, input1_def),
+      BuildMatMulOpQDQTestCase<uint16_t, uint8_t, uint16_t>(input0_def, input1_def, false),
+      provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "Convert", 0);
+}
+
+// Float MatMul whose only QDQ node is a per-channel DQ on a constant weight, as in weight-only quantized LLMs.
+template <typename WeightQType>
+static void RunPerChannelWeightOnlyTest(const char* test_name) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / (std::string("MatMulOp_PerChannelWeightOnly_") + test_name);
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_htp_fp16_precision"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
-    TestInputDef<float> input0_def({2, 3}, false, GetFloatDataInRange(-0.1f, 0.1f, 6));
-    TestInputDef<float> input1_def({3, 2}, false, GetFloatDataInRange(test_case.input1_min, 0.1f, 6));
-    ASSERT_EQ(GetTestInputQuantParams<uint16_t>(input1_def).IsSymmetric(),
-              test_case.expected_convert_count == 0);
+  TestInputDef<float> input_def({2, 16}, false, GetFloatDataInRange(-1.0f, 1.0f, 32));
+  TestInputDef<float> weight_def({16, 8}, true, GetFloatDataInRange(-0.5f, 0.5f, 128));
+  const std::vector<int64_t>& weight_shape = weight_def.GetShape();
+  constexpr int64_t kAxis = 1;
 
-    TestQDQModelAccuracy(
-        BuildMatMulOpTestCase(input0_def, input1_def),
-        BuildMatMulOpQDQTestCase<uint16_t, uint16_t, uint16_t>(input0_def, input1_def, false),
-        provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
+  auto build_model = [&](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", input_def);
 
-    if (::testing::Test::IsSkipped()) {
-      return;
+    std::vector<float> scales;
+    std::vector<WeightQType> zero_points;
+    GetTestInputQuantParamsPerChannel<WeightQType>(weight_def, scales, zero_points, kAxis, true);
+
+    size_t num_storage_elems = SizeOfShape(weight_shape);
+    if constexpr (std::is_same_v<WeightQType, Int4x2>) {
+      num_storage_elems = Int4x2::CalcNumInt4Pairs(num_storage_elems);
     }
-    AssertOpInQnnGraph(graph_dir, "Convert", test_case.expected_convert_count);
+    std::vector<WeightQType> quantized(num_storage_elems);
+    QuantizeValues<float, WeightQType>(weight_def.GetRawData(), quantized, weight_shape, scales, zero_points, kAxis);
+    builder.MakeInitializer<WeightQType>("weight_quant", weight_shape, quantized);
+    builder.AddDequantizeLinearNode<WeightQType>("weight_dq", "weight_quant", scales, zero_points, "weight_dq_out",
+                                                 {builder.MakeScalarAttribute("axis", kAxis)});
+
+    builder.MakeOutput("Y");
+    builder.AddNode("MatMul", "MatMul", {"input", "weight_dq_out"}, {"Y"}, kOnnxDomain);
+  };
+
+  RunQnnModelTest(build_model, provider_options, 21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
   }
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(graph_dir, "Dequantize", 0);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_F32S8_PerChannelWeightOnly) {
+  RunPerChannelWeightOnlyTest<int8_t>("s8");
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_F32S4_PerChannelWeightOnly) {
+  RunPerChannelWeightOnlyTest<Int4x2>("s4");
 }
 
 // Tests MatMul with two uint16 (quantized) inputs with weight as static.
@@ -812,7 +958,6 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_static_weight) {
         provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
   }
 }
-
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(__linux__)

@@ -163,6 +163,16 @@ class UniqueNameGeneratorImpl {
 
 UniqueNameGeneratorImpl& UniqueNameGenerator();
 
+// Returns a stable, non-empty base name for a node unit.
+// Uses node_unit.Name() when non-empty; falls back to OpType()+Index() for unnamed nodes,
+// matching the behaviour of UniqueNameGeneratorImpl::New(const OrtNodeUnit&, suffix).
+// Use this instead of node_unit.Name() when constructing intermediate tensor names that
+// must be deterministic and collision-free across GetCapability and Compile passes.
+inline std::string NodeUnitBaseName(const OrtNodeUnit& node_unit) {
+  const std::string& name = node_unit.Name();
+  return name.empty() ? node_unit.OpType() + std::to_string(node_unit.Index()) : name;
+}
+
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
                                bool is_quantized = false,
@@ -674,6 +684,14 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false);
 
+// Transposes a [rows, cols] buffer of `elem_byte_size`-wide elements into a [cols, rows] buffer.
+// Both buffers must hold exactly rows * cols * elem_byte_size bytes.
+Ort::Status TwoDimensionTranspose(size_t rows,
+                                  size_t cols,
+                                  size_t elem_byte_size,
+                                  gsl::span<const uint8_t> input_buffer,
+                                  gsl::span<uint8_t> output_buffer);
+
 template <typename T>
 Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
                                   const std::vector<uint32_t>& data_shape,
@@ -717,6 +735,24 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             bool output_symmetric,
                             bool do_op_validation);
 
+// Adds `output_name` and the op producing it. HTP Conv/MatMul/FullyConnected only emit their activation's
+// datatype, so a 16-bit activation with an 8-bit output is built as the op into a 16-bit intermediate
+// spanning exactly the output's range, followed by a Convert into `output_name`. HTP also lacks float32
+// kernels for a quantized weight, so a float32 activation with a quantized weight runs the op in float16
+// between Casts.
+Ort::Status AddOpWithQuantizedOutput(QnnModelWrapper& qnn_model_wrapper,
+                                     const std::string& node_name,
+                                     const std::string& op_type,
+                                     std::vector<std::string>&& input_names,
+                                     std::vector<std::string>&& param_tensor_names,
+                                     const std::string& output_name,
+                                     Qnn_TensorType_t output_tensor_type,
+                                     Qnn_DataType_t output_qnn_data_type,
+                                     QnnQuantParamsWrapper&& output_quant_param,
+                                     std::vector<uint32_t>&& output_shape,
+                                     Qnn_DataType_t activation_qnn_data_type,
+                                     bool do_op_validation);
+
 /**
  * Get permutation to transpose given axis to the last one.
  *
@@ -734,10 +770,12 @@ Ort::Status GetPermToLastAxis(uint32_t axis, uint32_t rank, std::vector<uint32_t
  */
 uint64_t GetTimeStampInUs();
 
-// Checks if bias scale matches the expected scale (weights_scale * activation_scale)
-// Returns true if they match within a tolerance, false otherwise
-bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale,
-                         float tolerance = 1e-5f);
+// Checks that a quantized bias scale is exactly the scale a (weights_scale * activation_scale).
+// Any other value has to be requantized before emission.
+// The comparison is exact because quantizers emit exactly float(weights_scale * activation_scale).
+// It must not use an absolute epsilon: bias scales are a product of two small scales and get as
+// small as 1e-10, so an epsilon like 1e-5 is far larger than the scales being compared
+bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale);
 
 // Extracts weight scales from a QnnQuantParamsWrapper.
 // Supports per-tensor (SCALE_OFFSET, BW_SCALE_OFFSET), per-channel (AXIS_SCALE_OFFSET,
@@ -968,14 +1006,6 @@ std::string PtrToString(const void* const ptr);
 Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
                                       gsl::span<const float> scales,
                                       std::vector<uint8_t>& fp16_bytes);
-
-// Returns true if all packed zero_points in the given initializer tensor are symmetric
-// (i.e., each sub-byte element equals 2^(bits-1)).
-// MatMulNBits stores zero_points as packed sub-byte integers in uint8 bytes
-// (e.g., two 4-bit values per byte, four 2-bit values per byte).
-bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper,
-                                    const std::string& zp_tensor_name,
-                                    int64_t bits);
 
 }  // namespace utils
 }  // namespace qnn
