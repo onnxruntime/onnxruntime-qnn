@@ -234,11 +234,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                                                   "libQnnHtp.so"
 #endif
        )) {
-#if !defined(__aarch64__) && !defined(_M_ARM64)
-    target_hw_device_type = OrtHardwareDeviceType_CPU;
-#else
     target_hw_device_type = OrtHardwareDeviceType_NPU;
-#endif
   } else if ((ep_options.find("backend_type") != ep_options.end() && ep_options.at("backend_type") == "gpu") ||
              (ep_options.find("backend_path") != ep_options.end() && ep_options.at("backend_path") ==
 #if _WIN32
