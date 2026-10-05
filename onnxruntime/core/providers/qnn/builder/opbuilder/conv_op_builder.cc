@@ -217,7 +217,10 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     const int weight_bitwidth = utils::FixedPointBitWidth(weight_dtype);
     const int compute_bitwidth = std::max(utils::FixedPointBitWidth(act_dtype_check),
                                           utils::FixedPointBitWidth(declared_output_dtype));
-    RETURN_IF_NOT(weight_bitwidth <= compute_bitwidth,
+    // compute_bitwidth == 0 means both activation and output are float (e.g. weight-only
+    // quantization, where the weight is dequantized to float/fp16 before Conv runs), so there's
+    // no fixed-point constraint to enforce.
+    RETURN_IF_NOT(compute_bitwidth == 0 || weight_bitwidth <= compute_bitwidth,
                   ("Conv's weight bitwidth (" + std::to_string(weight_bitwidth) +
                    ") exceeds its compute bitwidth (" + std::to_string(compute_bitwidth) + ")")
                       .c_str());
