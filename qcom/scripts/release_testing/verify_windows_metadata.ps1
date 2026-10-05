@@ -8,7 +8,8 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$SourceDirectory,
     [Parameter(Mandatory=$true)]
-    [string]$ExpectedVersion
+    [string]$ExpectedVersion,
+    [switch]$SkipSignatureCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,15 +46,21 @@ function Test-QnnDll {
         return $result
     }
 
-    # Certificate check
-    $signature = Get-AuthenticodeSignature -FilePath $DllPath
-    if ($signature.Status -ne 'Valid') {
-        Write-Host "  [$Label] CERTIFICATE FAIL: Invalid signature ($($signature.Status))" -ForegroundColor Red
-    } elseif ($signature.SignerCertificate.Subject -like "*QUALCOMM INCORPORATED*") {
-        Write-Host "  [$Label] CERTIFICATE PASS" -ForegroundColor Green
+    # Certificate check. Raw CI staging artifacts are intentionally unsigned,
+    # but all other file/version checks should still run before signing.
+    if ($SkipSignatureCheck) {
+        Write-Host "  [$Label] CERTIFICATE SKIP: staging artifact" -ForegroundColor Yellow
         $result.CertPass = $true
     } else {
-        Write-Host "  [$Label] CERTIFICATE FAIL: Not signed by QUALCOMM INCORPORATED (Subject: $($signature.SignerCertificate.Subject))" -ForegroundColor Red
+        $signature = Get-AuthenticodeSignature -FilePath $DllPath
+        if ($signature.Status -ne 'Valid') {
+            Write-Host "  [$Label] CERTIFICATE FAIL: Invalid signature ($($signature.Status))" -ForegroundColor Red
+        } elseif ($signature.SignerCertificate.Subject -like "*QUALCOMM INCORPORATED*") {
+            Write-Host "  [$Label] CERTIFICATE PASS" -ForegroundColor Green
+            $result.CertPass = $true
+        } else {
+            Write-Host "  [$Label] CERTIFICATE FAIL: Not signed by QUALCOMM INCORPORATED (Subject: $($signature.SignerCertificate.Subject))" -ForegroundColor Red
+        }
     }
 
     # Version check — normalise to major.minor.patch to handle both
@@ -325,6 +332,9 @@ if ($null -ne $nuspecPass) {
     }
 }
 Write-Host "=== Certificate Summary ===" -ForegroundColor Cyan
+if ($SkipSignatureCheck) {
+    Write-Host "Authenticode validation skipped for unsigned staging artifacts" -ForegroundColor Yellow
+}
 Write-Host "Total:  $($certPassCount + $certFailCount)"
 Write-Host "Passed: $certPassCount" -ForegroundColor Green
 Write-Host "Failed: $certFailCount" -ForegroundColor Red

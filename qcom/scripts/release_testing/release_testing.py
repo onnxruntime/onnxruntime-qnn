@@ -25,10 +25,15 @@ import logging
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
+import zipfile
 from configparser import ConfigParser
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -41,6 +46,14 @@ RELEASE_SCRIPTS_DIR = SCRIPT_DIR
 UPLEVELING_DIR = SCRIPT_DIR.parent / "upleveling"
 INI_FILE = UPLEVELING_DIR / "config.ini"
 ARTIFACTORY_CERTS_FILE = UPLEVELING_DIR / "certs" / "artifactory-ca.pem"
+STAGING_REPOSITORY_URL = (
+    "https://artifactory-qdc-global.qualcomm.com/artifactory/"
+    "aisw-ortqnnep-generic-virtual"
+)
+STAGING_STORAGE_API_URL = (
+    "https://artifactory-qdc-global.qualcomm.com/artifactory/api/storage/"
+    "aisw-ortqnnep-generic-virtual"
+)
 
 # Hardcoded defaults
 PRODUCT_NAME = "onnxruntime-qnn"
@@ -185,6 +198,281 @@ def download_artifacts(
     return artifact_list
 
 
+def _staging_root(args: argparse.Namespace) -> str:
+    root = args.staging_artifact_root.strip().strip("/")
+    if not root or ".." in root.split("/") or not re.fullmatch(r"[A-Za-z0-9._/-]+", root):
+        log.error("Invalid --staging-artifact-root: %r", args.staging_artifact_root)
+        sys.exit(1)
+    return root
+
+
+def list_staging_artifacts(args: argparse.Namespace) -> list[str]:
+    """List files recursively under a CI staging root."""
+    root = _staging_root(args)
+    user, password = _get_artifactory_credentials()
+    verify = str(ARTIFACTORY_CERTS_FILE) if ARTIFACTORY_CERTS_FILE.exists() else True
+    url = f"{STAGING_STORAGE_API_URL}/{quote(root, safe='/')}"
+    log.info("Listing staging artifacts at: %s", url)
+    response = requests.get(
+        url,
+        params={"list": "", "deep": "1", "listFolders": "0"},
+        auth=HTTPBasicAuth(user, password),
+        verify=verify,
+    )
+    if response.status_code != 200:
+        log.error("Failed to list staging artifacts (HTTP %d)", response.status_code)
+        sys.exit(1)
+    return [entry["uri"].lstrip("/") for entry in response.json().get("files", [])]
+
+
+def download_staging_artifact(args: argparse.Namespace, relative_path: str, destination: Path) -> Path:
+    """Download one file from the selected CI staging root."""
+    root = _staging_root(args)
+    user, password = _get_artifactory_credentials()
+    verify = str(ARTIFACTORY_CERTS_FILE) if ARTIFACTORY_CERTS_FILE.exists() else True
+    url = f"{STAGING_REPOSITORY_URL}/{quote(root, safe='/')}/{quote(relative_path, safe='/')}"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    log.info("Downloading staging artifact: %s", relative_path)
+    with requests.get(url, auth=HTTPBasicAuth(user, password), verify=verify, stream=True) as response:
+        if response.status_code != 200:
+            log.error("Failed to download %s (HTTP %d)", relative_path, response.status_code)
+            sys.exit(1)
+        with destination.open("wb") as output:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                output.write(chunk)
+    return destination
+
+
+def _matching_staging_paths(paths: list[str], pattern: str) -> list[str]:
+    matches = [path for path in paths if re.search(pattern, path)]
+    if not matches:
+        log.error("No staging artifacts matched: %s", pattern)
+        sys.exit(1)
+    return matches
+
+
+def _nuget_artifact_version(args: argparse.Namespace) -> str:
+    if not args.staging_artifact_root:
+        return args.artifact_version
+    # Python/ZIP prerelease versions use 2.7.0rc3.dev0, while NuGet uses
+    # SemVer's separator form 2.7.0-rc3.dev0.
+    return re.sub(r"^(\d+\.\d+\.\d+)(?=[A-Za-z])", r"\1-", args.artifact_version)
+
+
+def _download_staging_wheels(args: argparse.Namespace, destination: Path) -> None:
+    paths = [path for path in list_staging_artifacts(args) if path.endswith(".whl")]
+    py_tags = [f"cp{version.replace('.', '')}" for version in args.python_versions.split(",")]
+
+    if args.only_metadata:
+        py_tags = ["cp311", "cp312", "cp313", "cp314"]
+        platforms = ("windows-arm64", "windows-x86_64", "windows-arm64ec")
+    elif args.only_backward_compat:
+        py_tags = ["cp312"]
+        platforms = ("windows-arm64",)
+    elif is_host_windows() and is_host_arm64():
+        platforms = ("windows-arm64",)
+    elif is_host_windows() and is_host_x86_64():
+        platforms = ("windows-x86_64", "windows-arm64ec")
+    elif is_host_linux() and is_host_arm64():
+        platforms = ("linux-aarch64",)
+    elif is_host_linux() and is_host_x86_64():
+        platforms = ("linux-x86_64",)
+    else:
+        log.error("Unsupported platform for staging wheel selection")
+        sys.exit(1)
+
+    selected = [
+        path
+        for path in paths
+        if any(path.startswith(platform) for platform in platforms)
+        and any(f"-{tag}-{tag}-" in path for tag in py_tags)
+    ]
+    expected = len(py_tags) * len(platforms)
+    if len(selected) != expected:
+        log.error("Expected %d staging wheel inputs, found %d", expected, len(selected))
+        sys.exit(1)
+
+    destination.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="staging-wheels-") as temp_dir_name:
+        temp_dir = Path(temp_dir_name)
+        downloaded: dict[str, list[Path]] = {platform: [] for platform in platforms}
+        for path in selected:
+            platform = next(platform for platform in platforms if path.startswith(platform))
+            local_path = temp_dir / platform / Path(path).name
+            downloaded[platform].append(download_staging_artifact(args, path, local_path))
+
+        for platform in platforms:
+            if platform in ("windows-x86_64", "windows-arm64ec"):
+                continue
+            for wheel_path in downloaded[platform]:
+                shutil.copy2(wheel_path, destination / wheel_path.name)
+
+        if "windows-x86_64" in platforms:
+            amd_by_name = {path.name: path for path in downloaded["windows-x86_64"]}
+            arm_by_name = {path.name: path for path in downloaded["windows-arm64ec"]}
+            for amd_name, amd_path in amd_by_name.items():
+                arm_name = amd_name.replace("win_amd64", "win_arm64")
+                arm_path = arm_by_name.get(amd_name) or arm_by_name.get(arm_name)
+                if arm_path is None:
+                    log.error("No ARM64EC wheel found for %s", amd_name)
+                    sys.exit(1)
+                run_script_path = UPLEVELING_DIR / "merge_wheels.py"
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(run_script_path),
+                        "--amd64-wheel",
+                        str(amd_path),
+                        "--arm64ec-wheel",
+                        str(arm_path),
+                        "--output-folder",
+                        str(destination),
+                    ],
+                    check=True,
+                )
+
+
+def _download_staging_nuget(args: argparse.Namespace, destination: Path) -> None:
+    paths = _matching_staging_paths(list_staging_artifacts(args), r"\.nupkg$")
+    if len(paths) != 2:
+        log.error("Expected 2 staging NuGet inputs, found %d", len(paths))
+        sys.exit(1)
+    destination.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="staging-nuget-") as temp_dir_name:
+        temp_dir = Path(temp_dir_name)
+        for path in paths:
+            platform = "arm64x" if path.startswith("windows-arm64x") else "x64"
+            download_staging_artifact(args, path, temp_dir / platform / Path(path).name)
+        subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "tools" / "nuget" / "merge_qnn_nupkgs.py"),
+                "--input_dir",
+                str(temp_dir),
+                "--output_dir",
+                str(destination),
+            ],
+            check=True,
+        )
+
+
+_WINDOWS_TEST_FILES = (
+    "ep_weight_sharing_ctx_gen.exe",
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "onnxruntime.dll",
+    "onnxruntime_perf_test.exe",
+    "onnxruntime_plugin_ep_onnx_test.exe",
+    "onnxruntime_provider_test.exe",
+    "onnxruntime_providers_qnn.dll",
+    "onnxruntime_providers_shared.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+)
+_LINUX_TEST_FILES = (
+    "ep_weight_sharing_ctx_gen",
+    "libonnxruntime.so",
+    "libonnxruntime_providers_qnn.so",
+    "libonnxruntime_providers_shared.so",
+    "onnxruntime_perf_test",
+    "onnxruntime_plugin_ep_onnx_test",
+    "onnxruntime_provider_test",
+)
+
+
+def _test_archive_platform(path: str) -> str | None:
+    name = Path(path).name.lower()
+    if "windows-arm64ec" in name:
+        return "windows-arm64ec"
+    if "windows-arm64" in name:
+        return "windows-arm64"
+    if "windows-x86_64" in name:
+        return "windows-x86_64"
+    if "linux-aarch64" in name and "manylinux" in name:
+        return "linux-arm64"
+    if "linux-x86_64" in name and "ubuntu" in name:
+        return "linux-x86_64"
+    return None
+
+
+def _prepare_staging_test_package(
+    args: argparse.Namespace,
+    archive_dir: Path,
+    paths: list[str],
+    required_platforms: set[str],
+) -> None:
+    test_paths = [path for path in paths if "/onnxruntime-tests-" in f"/{path}"]
+    platform_paths = {platform: path for path in test_paths if (platform := _test_archive_platform(path))}
+    if not required_platforms.issubset(platform_paths):
+        log.error("Staging test archives missing platforms: %s", sorted(required_platforms - set(platform_paths)))
+        sys.exit(1)
+
+    with tempfile.TemporaryDirectory(prefix="staging-test-package-") as temp_dir_name:
+        temp_dir = Path(temp_dir_name)
+        package_root = temp_dir / "test_package"
+        for platform in sorted(required_platforms):
+            path = platform_paths[platform]
+            archive_path = download_staging_artifact(args, path, temp_dir / Path(path).name)
+            extract_dir = temp_dir / f"extract-{platform}"
+            extract_dir.mkdir()
+            if archive_path.suffix == ".zip":
+                with zipfile.ZipFile(archive_path) as archive:
+                    archive.extractall(extract_dir)
+            else:
+                with tarfile.open(archive_path, "r:*") as archive:
+                    archive.extractall(extract_dir, filter="data")
+            wanted = _WINDOWS_TEST_FILES if platform.startswith("windows-") else _LINUX_TEST_FILES
+            output_dir = package_root / platform
+            output_dir.mkdir(parents=True)
+            for filename in wanted:
+                matches = list(extract_dir.rglob(filename))
+                if not matches:
+                    log.error("%s is missing %s", Path(path).name, filename)
+                    sys.exit(1)
+                shutil.copy2(matches[0], output_dir / filename)
+
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive_dir / "test_package.zip", "w", zipfile.ZIP_DEFLATED) as output:
+            for file_path in sorted(package_root.rglob("*")):
+                if file_path.is_file():
+                    output.write(file_path, file_path.relative_to(package_root).as_posix())
+
+
+def _download_staging_archives(args: argparse.Namespace, artifact_type: str, destination: Path) -> None:
+    paths = list_staging_artifacts(args)
+    if artifact_type == "zip":
+        selected = [
+            path
+            for path in paths
+            if path.endswith(".zip")
+            and "/onnxruntime-qnn-" in f"/{path}"
+            and not path.endswith("-pdb.zip")
+        ]
+        if not args.only_metadata:
+            if is_host_arm64():
+                selected = [path for path in selected if path.endswith(("win-arm64.zip", "win-arm64x.zip"))]
+                required_test_platforms = {"windows-arm64", "windows-x86_64"}
+            else:
+                selected = [path for path in selected if path.endswith("win-x64.zip")]
+                required_test_platforms = {"windows-x86_64"}
+    else:
+        selected = [path for path in paths if path.endswith(".tgz") and "/onnxruntime-qnn-" in f"/{path}"]
+        if is_host_arm64():
+            selected = [path for path in selected if path.endswith("linux-aarch64.tgz")]
+            required_test_platforms = {"linux-arm64"}
+        else:
+            selected = [path for path in selected if path.endswith("linux-x64.tgz")]
+            required_test_platforms = {"linux-x86_64"}
+    if not selected:
+        log.error("No staging %s release archives found", artifact_type)
+        sys.exit(1)
+    destination.mkdir(parents=True, exist_ok=True)
+    for path in selected:
+        download_staging_artifact(args, path, destination / Path(path).name)
+    if not args.only_metadata:
+        _prepare_staging_test_package(args, destination, paths, required_test_platforms)
+
+
 def list_artifacts(
     artifact_type: str,
     version: str,
@@ -233,6 +521,78 @@ def verify_artifact_counts(args: argparse.Namespace) -> None:
     """Verify all expected artifacts are present on Artifactory before running tests."""
     python_versions = args.python_versions.split(",")
     failed = False
+
+    if args.staging_artifact_root:
+        paths = list_staging_artifacts(args)
+        py_tags = [f"cp{version.replace('.', '')}" for version in python_versions]
+        staging_wheels = [path for path in paths if path.endswith(".whl")]
+        expected_platforms = (
+            "linux-aarch64",
+            "linux-x86_64",
+            "windows-arm64-",
+            "windows-arm64ec-",
+            "windows-x86_64-",
+        )
+        missing_wheels = [
+            f"{platform} {tag}"
+            for platform in expected_platforms
+            for tag in py_tags
+            if not any(path.startswith(platform) and f"-{tag}-{tag}-" in path for path in staging_wheels)
+        ]
+        if missing_wheels:
+            log.error("Staging wheels: FAIL — missing:\n%s", "\n".join(f"  {item}" for item in missing_wheels))
+            failed = True
+        else:
+            log.info("Staging wheels: PASS — 20/20 raw inputs (16 after merge)")
+
+        nupkgs = [path for path in paths if path.endswith(".nupkg")]
+        if len(nupkgs) != 2:
+            log.error("Staging NuGet: FAIL — expected 2 merge inputs, found %d", len(nupkgs))
+            failed = True
+        else:
+            log.info("Staging NuGet: PASS — 2/2 merge inputs")
+
+        release_zips = [
+            path
+            for path in paths
+            if path.endswith(".zip")
+            and "/onnxruntime-qnn-" in f"/{path}"
+            and not path.endswith("-pdb.zip")
+        ]
+        expected_zip_suffixes = ("win-arm64.zip", "win-arm64ec.zip", "win-arm64x.zip", "win-x64.zip")
+        missing_zips = [suffix for suffix in expected_zip_suffixes if not any(p.endswith(suffix) for p in release_zips)]
+        if missing_zips:
+            log.error("Staging Zip: FAIL — missing: %s", missing_zips)
+            failed = True
+        else:
+            log.info("Staging Zip: PASS — 4/4 raw release archives")
+
+        tgzs = [path for path in paths if path.endswith(".tgz") and "/onnxruntime-qnn-" in f"/{path}"]
+        missing_tgzs = [suffix for suffix in _EXPECTED_TGZ_SUFFIXES if not any(p.endswith(suffix) for p in tgzs)]
+        if missing_tgzs:
+            log.error("Staging TGZ: FAIL — missing: %s", missing_tgzs)
+            failed = True
+        else:
+            log.info("Staging TGZ: PASS — 2/2")
+
+        test_platforms = {_test_archive_platform(path) for path in paths}
+        expected_test_platforms = {
+            "windows-arm64ec",
+            "windows-arm64",
+            "windows-x86_64",
+            "linux-arm64",
+            "linux-x86_64",
+        }
+        if not expected_test_platforms.issubset(test_platforms):
+            log.error("Staging test packages: FAIL — missing: %s", sorted(expected_test_platforms - test_platforms))
+            failed = True
+        else:
+            log.info("Staging test packages: PASS — 5/5")
+
+        if failed:
+            sys.exit(1)
+        log.info("Staging artifact count check PASS")
+        return
 
     # --- Wheels: 4 Python versions x 4 arches = 16 ---
     wheels = list_artifacts("wheel", args.artifact_version, ".whl")
@@ -329,7 +689,9 @@ def _wheel_download_filter(args: argparse.Namespace) -> str | None:
 def test_wheel(args: argparse.Namespace) -> None:
     wheel_dir = Path(args.source_directory) / "wheel"
 
-    if args.download_from_artifactory:
+    if args.staging_artifact_root:
+        _download_staging_wheels(args, wheel_dir)
+    elif args.download_from_artifactory:
         downloaded = download_artifacts(
             "wheel",
             args.artifact_version,
@@ -352,6 +714,7 @@ def test_wheel(args: argparse.Namespace) -> None:
                     str(wheel_dir),
                     "-ExpectedVersion",
                     args.artifact_version,
+                    *(["-SkipSignatureCheck"] if args.skip_signature_check else []),
                 ],
             )
         else:
@@ -428,7 +791,9 @@ def test_zip(args: argparse.Namespace) -> None:
 
     archive_dir = Path(args.source_directory) / "archive"
 
-    if args.download_from_artifactory:
+    if args.staging_artifact_root:
+        _download_staging_archives(args, "zip", archive_dir)
+    elif args.download_from_artifactory:
         if not args.test_package_version:
             log.error("--test-package-version is required for zip testing")
             sys.exit(1)
@@ -463,6 +828,7 @@ def test_zip(args: argparse.Namespace) -> None:
                 str(archive_dir),
                 "-ExpectedVersion",
                 args.artifact_version,
+                *(["-SkipSignatureCheck"] if args.skip_signature_check else []),
             ],
         )
         return
@@ -510,7 +876,9 @@ def test_tgz(args: argparse.Namespace) -> None:
 
     archive_dir = Path(args.source_directory) / "archive"
 
-    if args.download_from_artifactory:
+    if args.staging_artifact_root:
+        _download_staging_archives(args, "tgz", archive_dir)
+    elif args.download_from_artifactory:
         if not args.test_package_version:
             log.error("--test-package-version is required for tgz testing")
             sys.exit(1)
@@ -570,7 +938,9 @@ def test_nuget(args: argparse.Namespace) -> None:
 
     nuget_dir = Path(args.source_directory) / "nuget"
 
-    if args.download_from_artifactory:
+    if args.staging_artifact_root:
+        _download_staging_nuget(args, nuget_dir)
+    elif args.download_from_artifactory:
         download_artifacts(
             "nuget",
             args.artifact_version,
@@ -587,7 +957,8 @@ def test_nuget(args: argparse.Namespace) -> None:
                 "-SourceDirectory",
                 str(nuget_dir),
                 "-ExpectedVersion",
-                args.artifact_version,
+                _nuget_artifact_version(args),
+                *(["-SkipSignatureCheck"] if args.skip_signature_check else []),
             ],
         )
         return
@@ -607,7 +978,7 @@ def test_nuget(args: argparse.Namespace) -> None:
             "-NuGetDirectory",
             str(nuget_dir),
             "-ExpectedVersion",
-            args.artifact_version,
+            _nuget_artifact_version(args),
             "-RuntimeIdentifiers",
             runtime_id,
             "-ModelPath",
@@ -657,6 +1028,20 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--staging-artifact-root",
+        default="",
+        help=(
+            "Repository-relative CI artifact root under aisw-ortqnnep-generic-virtual. "
+            "When set, download and assemble raw staging artifacts instead of public release artifacts. "
+            "This takes precedence over --download-from-artifactory."
+        ),
+    )
+    parser.add_argument(
+        "--skip-signature-check",
+        action="store_true",
+        help="Skip Authenticode checks while retaining Windows file and version metadata validation.",
+    )
+    parser.add_argument(
         "--python-versions",
         default="3.11,3.12,3.13,3.14",
         help="Comma-separated Python versions for wheel testing (default: 3.11,3.12,3.13,3.14)",
@@ -686,6 +1071,11 @@ def main() -> None:
     )
 
     args = parse_args()
+
+    if args.staging_artifact_root:
+        # CI build outputs are unsigned by design. Keep version/file metadata
+        # validation enabled while omitting only Authenticode verification.
+        args.skip_signature_check = True
 
     log.info(f"Platform: {platform.system()} {platform.machine()}")
     log.info(f"Artifact type: {args.artifact_type}")

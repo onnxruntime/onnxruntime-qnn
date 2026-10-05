@@ -17,6 +17,7 @@ wheel with both library sets in separate subdirectories.
 import argparse
 import logging
 import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -124,7 +125,7 @@ def merge_wheels(amd64_wheel, arm64ec_wheel, output_folder):
         with zipfile.ZipFile(temp_wheel, "r") as zip_ref:
             zip_ref.extractall(extract_dir)
 
-        subprocess.run(["wheel", "pack", str(extract_dir), "-d", str(output_path)], check=True)
+        subprocess.run([sys.executable, "-m", "wheel", "pack", str(extract_dir), "-d", str(output_path)], check=True)
         logging.info(f"  Created: {Path(amd64_wheel).name}")
 
     # Log summary

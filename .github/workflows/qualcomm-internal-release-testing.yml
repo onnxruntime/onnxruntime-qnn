@@ -30,12 +30,20 @@ on:
           Required when artifact_format is zip, tgz, or all.
         type: string
         default: "2.5.0rc3"
+      staging_artifact_root:
+        description: |
+          Optional repository-relative CI artifact root under aisw-ortqnnep-generic-virtual,
+          for example ci/refs/heads/rel-2.7.0/37282647333/5f4a0de163.
+          Raw artifacts are assembled locally and Authenticode checks are skipped.
+        type: string
+        default: ""
   workflow_dispatch:
     inputs: *common_inputs
 
 env:
   ARTIFACT_VERSION:     ${{ inputs.artifact_version }}
   TEST_PACKAGE_VERSION: ${{ inputs.test_package_version }}
+  STAGING_ARTIFACT_ROOT: ${{ inputs.staging_artifact_root }}
   ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
   ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
 
@@ -59,6 +67,7 @@ jobs:
             --artifact-type all \
             --artifact-version "${ARTIFACT_VERSION}" \
             --source-directory "${GITHUB_WORKSPACE}/release_testing" \
+            --staging-artifact-root "${STAGING_ARTIFACT_ROOT}" \
             --only-count-check
 
       - name: Summary
@@ -87,6 +96,7 @@ jobs:
             --artifact-type wheel `
             --artifact-version "$env:ARTIFACT_VERSION" `
             --source-directory "${{ github.workspace }}/release_testing" `
+            --staging-artifact-root "$env:STAGING_ARTIFACT_ROOT" `
             --download-from-artifactory `
             --only-metadata
 
@@ -124,6 +134,7 @@ jobs:
             --artifact-type wheel `
             --artifact-version "$env:ARTIFACT_VERSION" `
             --source-directory "${{ github.workspace }}/release_testing" `
+            --staging-artifact-root "$env:STAGING_ARTIFACT_ROOT" `
             --download-from-artifactory `
             --python-versions "${{ matrix.python-version }}"
 
@@ -166,6 +177,7 @@ jobs:
             --artifact-type wheel \
             --artifact-version "${ARTIFACT_VERSION}" \
             --source-directory "${GITHUB_WORKSPACE}/release_testing" \
+            --staging-artifact-root "${STAGING_ARTIFACT_ROOT}" \
             --download-from-artifactory \
             --python-versions "${{ matrix.python-version }}"
 
@@ -193,6 +205,7 @@ jobs:
             --artifact-type wheel `
             --artifact-version "$env:ARTIFACT_VERSION" `
             --source-directory "${{ github.workspace }}/release_testing" `
+            --staging-artifact-root "$env:STAGING_ARTIFACT_ROOT" `
             --download-from-artifactory `
             --only-backward-compat
 
@@ -222,6 +235,7 @@ jobs:
             --artifact-type zip `
             --artifact-version "$env:ARTIFACT_VERSION" `
             --source-directory "${{ github.workspace }}/release_testing" `
+            --staging-artifact-root "$env:STAGING_ARTIFACT_ROOT" `
             --test-package-version "$env:TEST_PACKAGE_VERSION" `
             --download-from-artifactory `
             --only-metadata
@@ -259,6 +273,7 @@ jobs:
             --artifact-type zip `
             --artifact-version "$env:ARTIFACT_VERSION" `
             --source-directory "${{ github.workspace }}/release_testing" `
+            --staging-artifact-root "$env:STAGING_ARTIFACT_ROOT" `
             --test-package-version "$env:TEST_PACKAGE_VERSION" `
             --download-from-artifactory
 
@@ -299,6 +314,7 @@ jobs:
             --artifact-type tgz \
             --artifact-version "${ARTIFACT_VERSION}" \
             --source-directory "${GITHUB_WORKSPACE}/release_testing" \
+            --staging-artifact-root "${STAGING_ARTIFACT_ROOT}" \
             --test-package-version "${TEST_PACKAGE_VERSION}" \
             --download-from-artifactory
 
@@ -328,6 +344,7 @@ jobs:
             --artifact-type nuget `
             --artifact-version "$env:ARTIFACT_VERSION" `
             --source-directory "${{ github.workspace }}/release_testing" `
+            --staging-artifact-root "$env:STAGING_ARTIFACT_ROOT" `
             --download-from-artifactory `
             --only-metadata
 
@@ -364,6 +381,7 @@ jobs:
             --artifact-type nuget `
             --artifact-version "$env:ARTIFACT_VERSION" `
             --source-directory "${{ github.workspace }}/release_testing" `
+            --staging-artifact-root "$env:STAGING_ARTIFACT_ROOT" `
             --download-from-artifactory
 
       - name: Summary
