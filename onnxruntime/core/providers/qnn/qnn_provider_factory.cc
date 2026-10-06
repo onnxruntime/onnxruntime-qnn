@@ -172,7 +172,8 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
                                      const bool is_virtual = true) {
     OrtKeyValuePairs* hw_metadata = nullptr;
     factory->ort_api.CreateKeyValuePairs(&hw_metadata);
-    factory->ort_api.AddKeyValuePair(hw_metadata, "Description", "Qualcomm NPU");
+    factory->ort_api.AddKeyValuePair(hw_metadata, "Description",
+                                     is_virtual ? "Qualcomm(R) NPU - Virtual" : "Qualcomm NPU");
     if (is_virtual) {
       factory->ort_api.AddKeyValuePair(hw_metadata, kOrtHardwareDevice_MetadataKey_IsVirtual, "1");
     }
@@ -208,6 +209,8 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     }
   }
 
+  bool has_real_npu = has_npu_hw_device;
+
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
     const bool has_real_undetected_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
 
@@ -231,8 +234,28 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
           FuncDeleter<OrtHardwareDevice>{factory->ep_api.ReleaseHardwareDevice});
 
       RETURN_IF_NOT_NULL(create_ep_device(factory->synthesized_npu_hw_device_.get()));
+
+      if (!is_virtual) {
+        has_real_npu = true;
+      }
     }
   }
+
+  // Phase 3: Synthesize a virtual NPU for lockdown AOT when a real NPU exists.
+  // Selecting this device auto-configures cross_device_prepare + prepare_only in CreateEpImpl.
+  // Cross device prepare requires Windows ARM64 + QAIRT >= 2.51 (QNN API 2.40).
+#if defined(_WIN32) && QNN_ARCH_ARM64 && \
+    (QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40))
+  if (has_real_npu && num_ep_devices < max_ep_devices) {
+    OrtHardwareDevice* virtual_npu = nullptr;
+    RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, virtual_npu, /*is_virtual=*/true));
+    factory->synthesized_virtual_npu_hw_device_ = HardwareDeviceUniquePtr(
+        virtual_npu,
+        FuncDeleter<OrtHardwareDevice>{factory->ep_api.ReleaseHardwareDevice});
+
+    RETURN_IF_NOT_NULL(create_ep_device(factory->synthesized_virtual_npu_hw_device_.get()));
+  }
+#endif
 
   return nullptr;
 }
@@ -339,6 +362,51 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
 
     // Use the amended session options with the autoep backend path during creation of QnnEp
     session_options = autoep_session_options.get();
+  }
+
+  // Auto-configure lockdown AOT when a virtual device is selected.
+  // Injects cross_device_prepare, prepare_only, and context_enable as defaults (skipped if user already set them).
+  {
+    bool has_virtual_device = false;
+    for (size_t i = 0; i < num_devices && !has_virtual_device; ++i) {
+      const auto* metadata = factory->ort_api.HardwareDevice_Metadata(devices[i]);
+      if (metadata) {
+        const char* const* keys = nullptr;
+        const char* const* values = nullptr;
+        size_t num_entries = 0;
+        factory->ort_api.GetKeyValuePairs(metadata, &keys, &values, &num_entries);
+        for (size_t j = 0; j < num_entries; ++j) {
+          if (strcmp(keys[j], kOrtHardwareDevice_MetadataKey_IsVirtual) == 0 &&
+              strcmp(values[j], "1") == 0) {
+            has_virtual_device = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (has_virtual_device) {
+      if (!autoep_session_options) {
+        OrtSessionOptions* cloned = nullptr;
+        RETURN_IF_NOT_NULL(factory->ort_api.CloneSessionOptions(session_options, &cloned));
+        autoep_session_options = SessionOptionsUniquePtr(cloned, factory->ort_api.ReleaseSessionOptions);
+      }
+
+      auto inject_default = [&](const char* key, const char* value) -> OrtStatus* {
+        int has_key = 0;
+        RETURN_IF_NOT_NULL(factory->ort_api.HasSessionConfigEntry(autoep_session_options.get(), key, &has_key));
+        if (!has_key) {
+          RETURN_IF_NOT_NULL(factory->ort_api.AddSessionConfigEntry(autoep_session_options.get(), key, value));
+        }
+        return nullptr;
+      };
+
+      RETURN_IF_NOT_NULL(inject_default("ep.context_enable", "1"));
+      RETURN_IF_NOT_NULL(inject_default((provider_prefix + "enable_htp_prepare_only").c_str(), "1"));
+      RETURN_IF_NOT_NULL(inject_default((provider_prefix + "enable_htp_cross_device_prepare").c_str(), "1"));
+
+      session_options = autoep_session_options.get();
+    }
   }
 
   std::unique_ptr<QnnEp> qnn_ep;

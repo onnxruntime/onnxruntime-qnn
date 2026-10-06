@@ -81,6 +81,8 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // Synthesized NPU hardware device when ORT Core doesn't enumerate one.
   // Real-but-undetected (WoS Makena, Linux/Android arm64) or virtual (x86 cross-compile).
   HardwareDeviceUniquePtr synthesized_npu_hw_device_;
+  // Virtual NPU for lockdown AOT when a real NPU already exists (ARM64).
+  HardwareDeviceUniquePtr synthesized_virtual_npu_hw_device_;
 
   // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
   qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
