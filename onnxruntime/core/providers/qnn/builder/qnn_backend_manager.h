@@ -433,7 +433,15 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #endif
 
   void ResetLogger(const Ort::Logger& logger) {
+    const std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
     logger_ptr_ = &logger;
+  }
+
+  void ResetLoggerIfCurrent(const Ort::Logger& logger) {
+    const std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
+    if (logger_ptr_ == &logger) {
+      logger_ptr_ = &OrtLoggingManager::GetDefaultLogger();
+    }
   }
 
   // Release the current QNN context handles (frees HW resources).

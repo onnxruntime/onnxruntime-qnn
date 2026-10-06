@@ -25,9 +25,40 @@ class SharedContext {
   }
 
   bool HasQnnModel(const std::string& model_name) {
+    const std::lock_guard<std::mutex> lock(mtx_);
     auto it = find_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
                       [&model_name](const std::unique_ptr<qnn::QnnModel>& qnn_model) { return qnn_model->Name() == model_name; });
     return it != shared_qnn_models_.end();
+  }
+
+  std::vector<std::unique_ptr<qnn::QnnModel>> TakeSharedQnnModels(
+      const std::vector<std::string>& model_names) {
+    const std::lock_guard<std::mutex> lock(mtx_);
+
+    for (const auto& model_name : model_names) {
+      if (std::count(model_names.begin(), model_names.end(), model_name) != 1) {
+        return {};
+      }
+      auto it = find_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
+                        [&model_name](const std::unique_ptr<qnn::QnnModel>& qnn_model) {
+                          return qnn_model->Name() == model_name;
+                        });
+      if (it == shared_qnn_models_.end()) {
+        return {};
+      }
+    }
+
+    std::vector<std::unique_ptr<qnn::QnnModel>> models;
+    models.reserve(model_names.size());
+    for (const auto& model_name : model_names) {
+      auto it = find_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
+                        [&model_name](const std::unique_ptr<qnn::QnnModel>& qnn_model) {
+                          return qnn_model->Name() == model_name;
+                        });
+      models.push_back(std::move(*it));
+      shared_qnn_models_.erase(it);
+    }
+    return models;
   }
 
   std::unique_ptr<qnn::QnnModel> GetSharedQnnModel(const std::string& model_name) {
@@ -84,13 +115,11 @@ class SharedContext {
     qnn_backend_manager_.reset();
   }
 
-  void SetSharedCtxBinFileName(std::string& shared_ctx_bin_file_name) {
+  std::string GetOrSetSharedCtxBinFileName(const std::string& candidate) {
     const std::lock_guard<std::mutex> lock(mtx_);
-    shared_ctx_bin_file_name_ = shared_ctx_bin_file_name;
-  }
-
-  const std::string& GetSharedCtxBinFileName() {
-    const std::lock_guard<std::mutex> lock(mtx_);
+    if (shared_ctx_bin_file_name_.empty()) {
+      shared_ctx_bin_file_name_ = candidate;
+    }
     return shared_ctx_bin_file_name_;
   }
 
