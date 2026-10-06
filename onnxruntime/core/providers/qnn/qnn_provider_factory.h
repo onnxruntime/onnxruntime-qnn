@@ -111,7 +111,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
-  std::vector<OrtEpDevice*> gpu_ep_devices_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
   // Actual NPU hardware that ORT Core did not enumerate (e.g. Makena without DXCore).

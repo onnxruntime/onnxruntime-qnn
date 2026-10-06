@@ -228,8 +228,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
         factory->host_accessible_memory_info_ != nullptr) {
       RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(
           ep_device, factory->host_accessible_memory_info_.get()));
-    } else if (device_type == OrtHardwareDeviceType_GPU) {
-      factory->gpu_ep_devices_.push_back(ep_device);
     }
 
     return static_cast<OrtStatus*>(nullptr);
@@ -415,9 +413,12 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
   // factory cannot distinguish the two allocators while they share it.
   if (qnn::IsDx12SharedMemoryAllocator(qnn_ep->qnn_allocator_type_) &&
       factory->host_accessible_memory_info_ != nullptr) {
-    for (OrtEpDevice* ep_device : factory->gpu_ep_devices_) {
-      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(
-          ep_device, factory->host_accessible_memory_info_.get()));
+    for (OrtEpDevice* ep_device : factory->ep_devices_) {
+      const OrtHardwareDevice* device = factory->ort_api.EpDevice_Device(ep_device);
+      if (factory->ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_GPU) {
+        RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(
+            ep_device, factory->host_accessible_memory_info_.get()));
+      }
     }
   }
 
