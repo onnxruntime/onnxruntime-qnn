@@ -258,6 +258,29 @@ TEST(QnnUnit_EpUtilsTest, Binary_RejectsMixedTypes) {
                          {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
+// dq1 = UINT8, dq2 = INT8 — same bitwidth, differing signedness. Unlike Binary_RejectsMixedTypes,
+// Add IS Convert-compatible (see IsConvertCompatibleBinaryOp) and both types are convertible
+// fixed-point types, so the selector accepts the group; AlignBinaryInputPrecision (op-builder side)
+// later Converts dq2's INT8 up to dq1's UINT8 before Add runs (see mixed_precision_convert_utils.cc).
+TEST(QnnUnit_EpUtilsTest, Binary_AcceptsSameWidthSignednessMismatch) {
+  EpUtilsTestContext ctx;
+  FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
+  FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
+  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in2}, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeNode main_node{"add", "Add", "", 13, {}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  OrtGlobalApiOverride global_guard(&ctx.api);
+  OrtBinaryNodeGroupSelector sel;
+  EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                        {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+}
+
 // =============================================================================
 // OrtPadNodeGroupSelector::Check
 //
