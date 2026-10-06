@@ -91,6 +91,8 @@ Ort::Status BufferOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_NOT(buffer_size % input_frame_count == 0,
                 "QNN EP: Buffer 'buffer_size' must be evenly divisible by the input frame count.");
 
+  // MasterOpDef Buffer/stride constraints: [input frame count, buffer_size] and an
+  // integer number of input frames.
   const int64_t stride = node_helper.Get("stride", static_cast<int64_t>(1));
   RETURN_IF_NOT(stride >= static_cast<int64_t>(input_frame_count) && stride <= buffer_size,
                 "QNN EP: Buffer 'stride' must be in the range [input frame count, buffer_size].");

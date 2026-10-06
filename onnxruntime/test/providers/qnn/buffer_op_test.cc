@@ -436,6 +436,21 @@ TEST_F(QnnHTPBackendTests, Buffer_Fp16_reset_restores_initial_state) {
                                  "buffer_reset");
 }
 
+TEST_F(QnnHTPBackendTests, Buffer_Fp16_omitted_reset_retains_state) {
+  QNN_SKIP_TEST_ON_LINUX_X86_64("qti_aisw Buffer requires HTP hardware; not supported on the x86_64 simulator.");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  // An omitted reset uses BlockOp's default false value, so the second invocation must retain
+  // the first frame in the Buffer state.
+  VerifyQnnStatefulResetBehavior(
+      BuildBufferTestCase<Ort::Float16_t>(TestInputDef<float>({1}, false, std::vector<float>{1.0f}),
+                                          /*buffer_size=*/4, /*buffer_dim=*/0,
+                                          /*mode=*/1),
+      "Buffer_OmittedResetBehavior", provider_options, 21, nullptr);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
