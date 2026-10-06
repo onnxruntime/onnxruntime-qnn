@@ -195,23 +195,8 @@ jobs:
       target_arch: x86_64
       testdata_archive_artifact_name: testdata-zip
       target_py_vsn: ${{ inputs.target_py_vsn }}
-
-  # Keep this non-required shadow validation alongside the shipping build until its
-  # test inventory and reliability are established. It exercises both QnnUnit_* and
-  # legacy tests against the internal-symbol provider DLL.
-  build-and-test-windows-x86_64-internal-symbols:
-    if: ${{ inputs.do_all }}
-    needs: [archive-testdata, path-filter]
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-    secrets: inherit
-    with:
-      has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
-      nightly_build: ${{ inputs.nightly_build }}
-      target_arch: x86_64
-      target_py_vsn: ${{ inputs.target_py_vsn }}
       qnn_internal_ut_symbols: true
-      ci_job_suffix: "-internal-symbols"
-      # This is validation-only; do not publish a non-shipping wheel or test archive.
+      # Internal-symbol artifacts are test-only and must not be published.
       upload_wheel: false
 
   lint:
