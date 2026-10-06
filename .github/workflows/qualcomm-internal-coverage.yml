@@ -86,6 +86,8 @@ jobs:
 
       - name: Run Coverage and Diff Coverage (Linux x86_64, always RelWithDebInfo)
         if: steps.gate.outputs.run == 'true' && github.event_name == 'pull_request'
+        env:
+          ORT_DIFF_BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
         run: |
           # Python version does not affect C++ code coverage results.
           # Defaults to 3.10 to match DEFAULT_PYTHON_LINUX in qcom/ep_build/util.py.
