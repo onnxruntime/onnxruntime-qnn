@@ -486,7 +486,8 @@ onnxruntime_fetchcontent_declare(
   PATCH_COMMAND
     ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0001-cpp-model-test-runner-uses-plugin-EP.patch &&
     ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0002-Allow-users-to-specify-arm64ReproDir-by-cmake-flag.patch &&
-    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0003-Suppress-HandleReshapeSplit-for-rank5-6-Reshape-output.patch # TODO: remove when QNN EP SpaceToDepth/ChannelShuffle fusions are hardened to handle the absorbed-perm form (follow-up PR)
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0003-Suppress-HandleReshapeSplit-for-rank5-6-Reshape-output.patch && # TODO: remove when QNN EP SpaceToDepth/ChannelShuffle fusions are hardened to handle the absorbed-perm form (follow-up PR)
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0005-deduplicate-autoep-custom-op-domains.patch # TODO: Remove this once the ORT core version we used includes the fix.
   EXCLUDE_FROM_ALL)
 FetchContent_Populate(ort_core)
 

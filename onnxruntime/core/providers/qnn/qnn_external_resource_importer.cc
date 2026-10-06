@@ -95,11 +95,6 @@ QnnExternalResourceImporterImpl::QnnExternalResourceImporterImpl(
 
   // Release
   Release = ReleaseImpl;
-
-  HRESULT hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12_device_));
-  if (FAILED(hr) || d3d12_device_ == nullptr) {
-    throw std::runtime_error("D3D12CreateDevice failed.");
-  }
 }
 
 bool ORT_API_CALL QnnExternalResourceImporterImpl::CanImportMemoryImpl(
@@ -136,6 +131,14 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::ImportMemoryImpl(
 
   switch (desc->handle_type) {
     case ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE: {
+      std::lock_guard<std::mutex> lock{impl.d3d12_device_mutex_};
+      if (!impl.d3d12_device_) {
+        HRESULT hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&impl.d3d12_device_));
+        if (FAILED(hr) || impl.d3d12_device_ == nullptr) {
+          return impl.ort_api_.CreateStatus(ORT_FAIL, "D3D12CreateDevice failed.");
+        }
+      }
+
       HRESULT hr = impl.d3d12_device_->OpenSharedHandle(
           desc->native_handle,
           IID_PPV_ARGS(&(handle->d3d12_resource_)));
@@ -286,6 +289,14 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::ImportSemaphoreImpl(
 
   switch (desc->type) {
     case ORT_EXTERNAL_SEMAPHORE_D3D12_FENCE: {
+      std::lock_guard<std::mutex> lock{impl.d3d12_device_mutex_};
+      if (!impl.d3d12_device_) {
+        HRESULT hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&impl.d3d12_device_));
+        if (FAILED(hr) || impl.d3d12_device_ == nullptr) {
+          return impl.ort_api_.CreateStatus(ORT_FAIL, "D3D12CreateDevice failed.");
+        }
+      }
+
       HRESULT hr = impl.d3d12_device_->OpenSharedHandle(
           desc->native_handle,
           IID_PPV_ARGS(&(handle->d3d12_fence_)));

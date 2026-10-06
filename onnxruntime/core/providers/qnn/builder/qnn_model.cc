@@ -876,7 +876,9 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
     RETURN_IF(input_count < tensor_count, "The count of graph inputs should be at least the count of tensor_wrapper!");
     qnn_tensor_infos.resize(input_count);
   } else {
-    qnn_tensor_infos.resize(tensor_count);
+    auto output_count = graph_outputs_.indices.size();
+    RETURN_IF(output_count < tensor_count, "The count of graph outputs should be at least the count of tensor_wrapper!");
+    qnn_tensor_infos.resize(output_count);
   }
 
   for (auto& tensor_wrapper : tensor_wrappers) {
@@ -888,24 +890,24 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
     const auto& tensor_name = tensor_wrapper.GetName();
     auto qnn_index = is_input ? GetGraphInputIndex(tensor_name) : GetOutputIndex(tensor_name);
     auto ort_index = is_input ? GetOrtInputIndex(tensor_name) : qnn_index;
+    RETURN_IF(qnn_index >= qnn_tensor_infos.size(),
+              ("QNN tensor index is out of range for tensor: " + tensor_name).c_str());
 
     QnnTensorInfo& qnn_tensor_info = qnn_tensor_infos[qnn_index];
     qnn_tensor_info.tensor_wrapper = &tensor_wrapper;
     qnn_tensor_info.tensor_byte_size = static_cast<uint32_t>(length);
     qnn_tensor_info.ort_index = ort_index;
   }
-  // The number of graph inputs and the number of tensor wrappers may not match.
+  // The number of graph inputs/outputs and the number of tensor wrappers may not match.
   // - For example, for ResizeNearestNeighbor op, Qnn only cares about the 1st input,
   //   so the rest of the inputs are not converted to tensor wrappers.
   // - However, these remaining inputs still appear in the graph inputs, resulting in
   //   a discrepancy in the input quantities.
-  // If not all inputs are used, erase the empty allocations in qnn_tensor_infos.
-  if (is_input) {
-    qnn_tensor_infos.erase(std::remove_if(qnn_tensor_infos.begin(),
-                                          qnn_tensor_infos.end(),
-                                          [](QnnTensorInfo qnn_tensor_info) { return qnn_tensor_info.tensor_wrapper == nullptr; }),
-                           qnn_tensor_infos.end());
-  }
+  // If not all inputs/outputs are used, erase the empty allocations in qnn_tensor_infos.
+  qnn_tensor_infos.erase(std::remove_if(qnn_tensor_infos.begin(),
+                                        qnn_tensor_infos.end(),
+                                        [](QnnTensorInfo qnn_tensor_info) { return qnn_tensor_info.tensor_wrapper == nullptr; }),
+                         qnn_tensor_infos.end());
   return Ort::Status();
 }
 
