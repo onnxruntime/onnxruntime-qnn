@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <numeric>
 #include <optional>
@@ -698,7 +699,15 @@ Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
                                   /* out */ std::vector<T>& transposed_data,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false) {
-  transposed_data.resize(data.size(), 0);
+  RETURN_IF_NOT(data_shape.size() == 2, "Expected shape of rank 2");
+  const size_t rows = data_shape[0];
+  const size_t cols = data_shape[1];
+  RETURN_IF(rows != 0 && cols > std::numeric_limits<size_t>::max() / rows,
+            "Transpose shape element count overflows size_t");
+  const size_t element_count = rows * cols;
+  RETURN_IF_NOT(data.size() == element_count,
+                "Transpose data size does not match rows * cols");
+  transposed_data.resize(element_count, 0);
 
   if (skip_output_data_copy) {
     ORT_CXX_LOG(logger,
@@ -707,16 +716,10 @@ Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
     return Ort::Status();
   }
 
-  const size_t rows = data_shape[0];
-  const size_t cols = data_shape[1];
-
   for (size_t row = 0; row < rows; row++) {
     for (size_t col = 0; col < cols; col++) {
       const size_t src_index = (row * cols + col);
       const size_t dst_index = (col * rows + row);
-      assert(src_index < data.size());
-      assert(dst_index < transposed_data.size());
-
       transposed_data[dst_index] = data[src_index];
     }
   }

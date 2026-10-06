@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <cmath>
+#include <limits>
 #include <numeric>
 
 #include "QnnOpDef.h"
@@ -182,6 +183,9 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
   // num_heads
   std::optional<int64_t> num_heads = node_helper.GetInt64("num_heads");
   RETURN_IF_NOT(num_heads.has_value(), "required attribute num_heads not provided");
+  RETURN_IF(num_heads.value() <= 0 ||
+                num_heads.value() > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
+            "num_heads must be a positive uint32 value");
   uint32_t num_heads_u32 = SafeInt<uint32_t>(num_heads.value());
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),
@@ -193,6 +197,9 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
   // kv_num_heads
   const std::optional<int64_t> kv_num_heads = node_helper.GetInt64("kv_num_heads");
   RETURN_IF_NOT(kv_num_heads.has_value(), "required attribute kv_num_heads not provided");
+  RETURN_IF(kv_num_heads.value() <= 0 ||
+                kv_num_heads.value() > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
+            "kv_num_heads must be a positive uint32 value");
   const uint32_t kv_num_heads_u32 = SafeInt<uint32_t>(kv_num_heads.value());
   RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                node_unit.Index(),
@@ -216,7 +223,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
   TensorInfo output_tensor_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_tensor_info));
   RETURN_IF_NOT(output_tensor_info.shape.size() == 3, "Unexpected rank for output out[0]");
-  const size_t head_size = output_tensor_info.shape[2] / num_heads.value();
+  const size_t head_size = output_tensor_info.shape[2] / num_heads_u32;
   RETURN_IF(head_size == 0, "head_size can't be zero!");
 
   const float scale_default = 1.0f / std::sqrt(static_cast<float>(head_size));
