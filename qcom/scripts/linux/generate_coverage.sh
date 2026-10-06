@@ -255,6 +255,14 @@ accuracy_list_file="${build_dir}/${config}/accuracy_list.txt"
 accuracy_filter_file="${build_dir}/${config}/accuracy_filter.txt"
 gate_summary_file="${build_dir}/${config}/accuracy_gate_summary.txt"
 
+# These are routing inputs, not durable reports. Remove all prior-run data before
+# snapshot starts: if snapshot fails before producing fresh JSON, the gate must
+# see the missing file and select the full-accuracy fallback.
+rm -f "${snapshot_json}" \
+      "${accuracy_list_file}" \
+      "${accuracy_filter_file}" \
+      "${gate_summary_file}"
+
 # Compute the accuracy run-set from the snapshot JSON + golden manifest and echo
 # the resulting gtest filter to stdout. The golden store root is $QNN_UT_SNAPSHOT_GOLDEN_DIR
 # (same var the snapshot tests read); an empty/absent manifest there means

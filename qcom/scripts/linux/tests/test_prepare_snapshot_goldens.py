@@ -58,6 +58,7 @@ def run_preflight(
     *,
     download_fails: bool = False,
     fake_unzip: str | None = None,
+    initial_github_env: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -73,7 +74,7 @@ def run_preflight(
 
     golden_dir = tmp_path / "goldens"
     github_env = tmp_path / "github_env"
-    github_env.touch()
+    github_env.write_text(initial_github_env)
     env = os.environ.copy()
     env.update(
         {
@@ -131,7 +132,7 @@ def test_invalid_preflight_never_enables_golden_store(tmp_path: Path, build_dir:
     )
 
     assert result.returncode == 0, result.stderr
-    assert github_env.read_text() == ""
+    assert github_env.read_text().endswith("QNN_UT_SNAPSHOT_GOLDEN_DIR=\n")
     assert not golden_dir.exists()
 
 
@@ -151,7 +152,24 @@ def test_extract_failure_never_enables_golden_store(tmp_path: Path, build_dir: P
     result, github_env, _ = run_preflight(tmp_path, build_dir, source_zip, fake_unzip=fake_unzip)
 
     assert result.returncode == 0, result.stderr
-    assert github_env.read_text() == ""
+    assert github_env.read_text().endswith("QNN_UT_SNAPSHOT_GOLDEN_DIR=\n")
+
+
+def test_failed_preflight_clears_previously_exported_golden_store(tmp_path: Path, build_dir: Path) -> None:
+    source_zip = tmp_path / "goldens.zip"
+    create_zip(source_zip, {"qairt_version": "different", "ort_version": ORT_VERSION})
+    previous = "QNN_UT_SNAPSHOT_GOLDEN_DIR=/previous/goldens\n"
+
+    result, github_env, golden_dir = run_preflight(
+        tmp_path,
+        build_dir,
+        source_zip,
+        initial_github_env=previous,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not golden_dir.exists()
+    assert github_env.read_text() == previous + "QNN_UT_SNAPSHOT_GOLDEN_DIR=\n"
 
 
 def test_aligned_archive_enables_golden_store(tmp_path: Path, build_dir: Path) -> None:
@@ -161,6 +179,6 @@ def test_aligned_archive_enables_golden_store(tmp_path: Path, build_dir: Path) -
     result, github_env, golden_dir = run_preflight(tmp_path, build_dir, source_zip)
 
     assert result.returncode == 0, result.stderr
-    assert github_env.read_text() == f"QNN_UT_SNAPSHOT_GOLDEN_DIR={golden_dir}\n"
+    assert github_env.read_text() == f"QNN_UT_SNAPSHOT_GOLDEN_DIR=\nQNN_UT_SNAPSHOT_GOLDEN_DIR={golden_dir}\n"
     assert (golden_dir / "manifest.json").is_file()
     assert (golden_dir / "snapshot/builder/opbuilder/clip/Case.json").is_file()

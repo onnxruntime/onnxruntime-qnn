@@ -12,6 +12,7 @@
 import json
 
 import accuracy_gate as gate
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +131,14 @@ def test_parse_accuracy_list():
         (PLAIN, "Case/Clip_int32"),
         (QDQF, "Case/Clip_U8_Rank4"),
     ]
+
+
+def test_main_rejects_empty_parsed_accuracy_list(tmp_path):
+    accuracy_list = tmp_path / "accuracy_list.txt"
+    accuracy_list.write_text("Unexpected gtest list format\n")
+
+    with pytest.raises(ValueError, match="No accuracy cases parsed"):
+        gate.main(["--accuracy-list-file", str(accuracy_list)])
 
 
 # ===========================================================================

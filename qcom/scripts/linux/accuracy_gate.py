@@ -443,6 +443,8 @@ def main(argv: list[str] | None = None) -> int:
 
     with open(args.accuracy_list_file) as f:
         accuracy_cases = parse_accuracy_list(f.read())
+    if not accuracy_cases:
+        raise ValueError("No accuracy cases parsed from --gtest_list_tests output")
 
     result = run_gate(
         snapshot_json=args.snapshot_json or None,

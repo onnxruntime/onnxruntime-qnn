@@ -33,6 +33,15 @@ for arg in "$@"; do
     esac
 done
 
+clear_store_env() {
+    if [ -n "${GITHUB_ENV:-}" ]; then
+        printf '%s\n' "QNN_UT_SNAPSHOT_GOLDEN_DIR=" >> "${GITHUB_ENV}"
+    fi
+}
+
+# Preflight starts disabled; only a fully verified archive enables the store.
+clear_store_env
+
 disable_store() {
     log_warn "Snapshot golden store disabled: $*"
     exit 0
