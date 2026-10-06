@@ -234,9 +234,9 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
   // QNN 2.52 represents interleaved RoPE with do_rotary=2, while ORT
   // represents it as do_rotary=1 plus rotary_interleaved=1.
   const int64_t onnx_do_rotary = node_helper.Get("do_rotary", static_cast<int64_t>(0));
-  const int64_t rotary_interleaved = node_helper.Get("rotary_interleaved", static_cast<int64_t>(0));
   uint32_t do_rotary_u32 = SafeInt<uint32_t>(onnx_do_rotary);
 #ifdef QNN_GQA_EXTENDED_OPDEF_AVAILABLE
+  const int64_t rotary_interleaved = node_helper.Get("rotary_interleaved", static_cast<int64_t>(0));
   if (onnx_do_rotary != 0 && rotary_interleaved != 0) {
     do_rotary_u32 = QNN_OP_GROUP_QUERY_ATTENTION_DO_ROTARY_INTERLEAVED;
   }
