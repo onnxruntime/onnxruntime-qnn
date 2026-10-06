@@ -664,7 +664,14 @@ jobs:
 
       - name: Read version
         id: version
-        run: echo "version=$(cat VERSION_NUMBER)-SNAPSHOT" >> $GITHUB_OUTPUT
+        run: |
+          BASE_VERSION=$(cat VERSION_NUMBER)
+          VERSION_SUFFIX="${{ inputs.version_suffix }}"
+          if [ -n "$VERSION_SUFFIX" ]; then
+            echo "version=${BASE_VERSION}-${VERSION_SUFFIX}-SNAPSHOT" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${BASE_VERSION}-SNAPSHOT" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish Maven artifact snapshot to Internal Artifactory
         if: ${{ !inputs.skip_publish }}
