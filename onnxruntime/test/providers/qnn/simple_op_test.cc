@@ -2131,6 +2131,22 @@ TEST_F(QnnHTPBackendTests, Mul_U8U8_U16Out_Mixed) {
       provider_options, 21, ExpectedEPNodeAssignment::All);
 }
 
+// Add with same-bitwidth but differing-signedness inputs (u8, s8); neither input is narrower, so
+// AlignBinaryInputPrecision's tie-break Converts the s8 input up to the u8 input's precision.
+TEST_F(QnnHTPBackendTests, Add_U8_S8_SameWidthSignednessMixed) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input0_def({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8));
+  TestInputDef<float> input1_def({1, 2, 2, 2}, false, GetFloatDataInRange(-20.0f, 20.0f, 8));
+
+  TestQDQModelAccuracy(
+      BuildOpTestCase<float>("Add_node", "Add", {input0_def, input1_def}, {}, {}, kOnnxDomain),
+      BuildQDQBinaryMixedDtypeTestCase<uint8_t, int8_t, uint8_t>("Add", input0_def, input1_def),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
 // Builds a graph where a (DQ -> Q) sequence at the graph's output is fuse into a QNN Convert operator.
 // ONNX Graph: DQ -> Add -> Q -> DQ -> Q -> graph_output
 // QNN Graph:  DQ -> Add -> Q -> Convert -> graph_output
