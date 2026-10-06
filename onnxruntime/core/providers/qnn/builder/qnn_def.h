@@ -406,6 +406,11 @@ class QnnTensorWrapper {
 
     uint32_t shape_rank = GetQnnTensorRank(qnn_tensor);
     uint32_t* shape_data = GetQnnTensorDims(qnn_tensor);
+    constexpr uint32_t kMaxCachedContextTensorRank = 32;
+    RETURN_IF(shape_rank > kMaxCachedContextTensorRank,
+              "Cached context tensor rank exceeds the supported limit");
+    RETURN_IF(shape_rank > 0 && shape_data == nullptr,
+              "Cached context tensor dimensions are null");
     dimensions_.assign(shape_data, shape_data + shape_rank);
     SetQnnTensorDim(qnn_tensor_, dimensions_);
 
