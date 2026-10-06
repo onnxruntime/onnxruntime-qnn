@@ -708,7 +708,8 @@ static GetTestModelFn BuildStatefulLSTMWithResetCase(uint32_t seq_len, uint32_t 
       input_names.push_back("slstm_reset");
     }
 
-    builder.MakeOutput<float>("Y", {{{static_cast<int64_t>(seq_len), 1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
+    builder.MakeOutput<float>("Y", {{{static_cast<int64_t>(seq_len), 1LL,
+                                      static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
     builder.MakeOutput<float>("Y_h", {{{1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
     builder.MakeOutput<float>("Y_c", {{{1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
 
@@ -716,6 +717,29 @@ static GetTestModelFn BuildStatefulLSTMWithResetCase(uint32_t seq_len, uint32_t 
         builder.MakeStringAttribute("direction", "forward"),
         builder.MakeScalarAttribute("hidden_size", static_cast<int64_t>(hidden_size))};
     builder.AddNode("slstm_with_reset", "StatefulLstm", input_names, {"Y", "Y_h", "Y_c"}, kQtiAiswDomain, attrs);
+  };
+}
+
+// Equivalent standard ONNX LSTM for numerically validating the stateful QNN model. The initial
+// states are feeds so they can be replaced with the first StatefulLstm Y_h/Y_c before the second run.
+static GetTestModelFn BuildStandardLSTMReferenceCase(uint32_t seq_len, uint32_t batch_size,
+                                                     uint32_t input_size, uint32_t hidden_size) {
+  return [seq_len, batch_size, input_size, hidden_size](ModelTestBuilder& builder) {
+    MakeTestInput(builder, "X", TestInputDef<float>({seq_len, batch_size, input_size}, false, std::vector<float>(seq_len * batch_size * input_size, 0.25f)));
+    MakeTestInput(builder, "W", TestInputDef<float>({1, 4 * hidden_size, input_size}, false, std::vector<float>(4 * hidden_size * input_size, 0.10f)));
+    MakeTestInput(builder, "R", TestInputDef<float>({1, 4 * hidden_size, hidden_size}, false, std::vector<float>(4 * hidden_size * hidden_size, 0.05f)));
+    MakeTestInput(builder, "initial_h", TestInputDef<float>({1, batch_size, hidden_size}, false, std::vector<float>(batch_size * hidden_size, 0.0f)));
+    MakeTestInput(builder, "initial_c", TestInputDef<float>({1, batch_size, hidden_size}, false, std::vector<float>(batch_size * hidden_size, 0.0f)));
+    builder.MakeOutput<float>("Y", {{{static_cast<int64_t>(seq_len), 1LL,
+                                      static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
+    builder.MakeOutput<float>("Y_h", {{{1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
+    builder.MakeOutput<float>("Y_c", {{{1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs = {
+        builder.MakeStringAttribute("direction", "forward"),
+        builder.MakeScalarAttribute("hidden_size", static_cast<int64_t>(hidden_size))};
+    builder.AddNode("lstm_reference", "LSTM", {"X", "W", "R", "", "", "initial_h", "initial_c", ""},
+                    {"Y", "Y_h", "Y_c"}, "", attrs);
   };
 }
 
@@ -734,6 +758,18 @@ TEST_F(QnnHTPBackendTests, StatefulLSTM_Fp16_reset_restores_initial_state) {
   provider_options["backend_type"] = "htp";
   VerifyQnnStatefulResetBehavior(BuildStatefulLSTMWithResetCase(5, 1, 3, 4), "StatefulLSTM_ResetBehavior",
                                  provider_options, 13, "slstm_reset");
+}
+
+TEST_F(QnnHTPBackendTests, StatefulLSTM_Fp16_matches_standard_lstm_across_inferences) {
+  QNN_SKIP_TEST_ON_LINUX_X86_64("qti_aisw StatefulLstm requires HTP hardware; not supported on the x86_64 simulator.");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  VerifyQnnStatefulRnnNumerics(BuildStatefulLSTMWithResetCase(5, 1, 3, 4),
+                               BuildStandardLSTMReferenceCase(5, 1, 3, 4),
+                               "StatefulLSTM_Numerics", provider_options, 13, "slstm_reset",
+                               {"initial_h", "initial_c"}, 1e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, StatefulLSTM_Fp16_omitted_reset_retains_state) {

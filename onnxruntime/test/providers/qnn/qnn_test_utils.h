@@ -922,6 +922,18 @@ void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
                                     int opset,
                                     const char* reset_input_name);
 
+// Compares a stateful QNN RNN against an equivalent standard ONNX RNN on CPU. It runs the
+// stateful model with reset=true, then with reset=false, and feeds the first QNN state outputs
+// into the standard model for the second reference inference.
+void VerifyQnnStatefulRnnNumerics(const GetTestModelFn& build_stateful_case,
+                                  const GetTestModelFn& build_reference_case,
+                                  const char* log_id,
+                                  const ProviderOptions& provider_options,
+                                  int opset,
+                                  const char* reset_input_name,
+                                  const std::vector<std::string>& reference_state_input_names,
+                                  float abs_tolerance);
+
 /**
  * If the ORT_UNIT_TEST_ENABLE_QNN_SAVER environment variable is enabled (set to 1), this function modifies
  * the QNN EP provider options to enable the QNN Saver backend, which dumps QNN API calls (and weights) to disk.

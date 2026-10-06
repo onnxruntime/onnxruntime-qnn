@@ -607,7 +607,8 @@ static GetTestModelFn BuildStatefulGRUWithResetCase(uint32_t seq_len, uint32_t b
       input_names.push_back("sgru_reset");
     }
 
-    builder.MakeOutput<float>("Y", {{{static_cast<int64_t>(seq_len), 1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
+    builder.MakeOutput<float>("Y", {{{static_cast<int64_t>(seq_len), 1LL,
+                                      static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
     builder.MakeOutput<float>("Y_h", {{{1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
 
     std::vector<ONNX_NAMESPACE::AttributeProto> attrs = {
@@ -615,6 +616,27 @@ static GetTestModelFn BuildStatefulGRUWithResetCase(uint32_t seq_len, uint32_t b
         builder.MakeScalarAttribute("hidden_size", static_cast<int64_t>(hidden_size)),
         builder.MakeScalarAttribute("linear_before_reset", static_cast<int64_t>(0))};
     builder.AddNode("sgru_with_reset", "StatefulGru", input_names, {"Y", "Y_h"}, kQtiAiswDomain, attrs);
+  };
+}
+
+// Equivalent standard ONNX GRU for numerically validating the stateful QNN model. The initial
+// state is a feed so it can be replaced with the first StatefulGru Y_h before the second run.
+static GetTestModelFn BuildStandardGRUReferenceCase(uint32_t seq_len, uint32_t batch_size,
+                                                    uint32_t input_size, uint32_t hidden_size) {
+  return [seq_len, batch_size, input_size, hidden_size](ModelTestBuilder& builder) {
+    MakeTestInput(builder, "X", TestInputDef<float>({seq_len, batch_size, input_size}, false, std::vector<float>(seq_len * batch_size * input_size, 0.25f)));
+    MakeTestInput(builder, "W", TestInputDef<float>({1, 3 * hidden_size, input_size}, false, std::vector<float>(3 * hidden_size * input_size, 0.10f)));
+    MakeTestInput(builder, "R", TestInputDef<float>({1, 3 * hidden_size, hidden_size}, false, std::vector<float>(3 * hidden_size * hidden_size, 0.05f)));
+    MakeTestInput(builder, "initial_h", TestInputDef<float>({1, batch_size, hidden_size}, false, std::vector<float>(batch_size * hidden_size, 0.0f)));
+    builder.MakeOutput<float>("Y", {{{static_cast<int64_t>(seq_len), 1LL,
+                                      static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
+    builder.MakeOutput<float>("Y_h", {{{1LL, static_cast<int64_t>(batch_size), static_cast<int64_t>(hidden_size)}}});
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs = {
+        builder.MakeStringAttribute("direction", "forward"),
+        builder.MakeScalarAttribute("hidden_size", static_cast<int64_t>(hidden_size)),
+        builder.MakeScalarAttribute("linear_before_reset", static_cast<int64_t>(0))};
+    builder.AddNode("gru_reference", "GRU", {"X", "W", "R", "", "", "initial_h"}, {"Y", "Y_h"}, "", attrs);
   };
 }
 
@@ -633,6 +655,18 @@ TEST_F(QnnHTPBackendTests, StatefulGRU_Fp32_reset_restores_initial_state) {
   provider_options["backend_type"] = "htp";
   VerifyQnnStatefulResetBehavior(BuildStatefulGRUWithResetCase(5, 1, 3, 4), "StatefulGRU_ResetBehavior",
                                  provider_options, 21, "sgru_reset");
+}
+
+TEST_F(QnnHTPBackendTests, StatefulGRU_Fp32_matches_standard_gru_across_inferences) {
+  QNN_SKIP_TEST_ON_LINUX_X86_64("qti_aisw StatefulGru requires HTP hardware; not supported on the x86_64 simulator.");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  VerifyQnnStatefulRnnNumerics(BuildStatefulGRUWithResetCase(5, 1, 3, 4),
+                               BuildStandardGRUReferenceCase(5, 1, 3, 4),
+                               "StatefulGRU_Numerics", provider_options, 21, "sgru_reset",
+                               {"initial_h"}, 1e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, StatefulGRU_Fp32_omitted_reset_retains_state) {
