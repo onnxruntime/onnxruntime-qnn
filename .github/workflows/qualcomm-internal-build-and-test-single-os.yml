@@ -41,6 +41,14 @@ on:
         description: "Specify the type of build: Debug, Release, or RelWithDebInfo."
         default: "Release"
         type: string
+      qnn_internal_ut_symbols:
+        description: "Build and test Windows x86_64 with QNN EP internal unit-test symbols exported."
+        default: false
+        type: boolean
+      ci_job_suffix:
+        description: "Suffix appended to build, test-report, and artifact names to distinguish parallel validation jobs."
+        default: ""
+        type: string
       version_suffix:
         description: "Version suffix. If set, the specified suffix will be appended to the version string."
         type: string
@@ -125,6 +133,9 @@ env:
   # Cross compilation on Windows adds a folder to the build directory.
   BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && format('{0}/{0}', inputs.build_config) || inputs.build_config }}"
 
+  # The internal-symbol build is intentionally isolated from the shipping x86_64 build directory.
+  BUILD_DIR_ARCH: "${{ inputs.target_os == 'windows' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_ut_symbols && format('{0}-internal-symbols', inputs.target_arch) || inputs.target_arch }}"
+
   TEST_ARCHIVE_EXT: "${{ inputs.target_os == 'linux' && 'tar.bz2' || 'zip' }}"
 
   ORT_VERSION_SUFFIX: "${{ inputs.version_suffix != '' && inputs.version_suffix || '' }}"
@@ -140,7 +151,7 @@ env:
 
 jobs:
   build:
-    name: "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    name: "build-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.ci_job_suffix }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     runs-on: ["self-hosted", "${{ inputs.build_runner_os != '' && inputs.build_runner_os || inputs.target_os }}", "${{ inputs.build_runner_arch }}", "Build"]
     defaults:
       run:
@@ -163,7 +174,7 @@ jobs:
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
-          ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
+          ${{ inputs.qnn_internal_ut_symbols && 'build' || (inputs.upload_test_archive == true && 'archive' || 'build') }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_ut_symbols && '_internal_symbols' || '' }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }}
@@ -172,29 +183,29 @@ jobs:
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
           --config ${{ inputs.build_config }}
-          test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
+          test_ort_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_ut_symbols && '_internal_symbols' || '' }} --only
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
         # Skipped on fork PRs: the action creates a check run, which the fork-PR GITHUB_TOKEN cannot do.
         if: ${{ always() && inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
         with:
-          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
+          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.ci_job_suffix }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
           group_reports: false
           include_passed: true
           detailed_summary: true
           verbose_summary:  false
           report_paths: |
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v7
         if: ${{ always() && inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }} # always run even if the previous step fails
         with:
-          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
+          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}}${{ inputs.ci_job_suffix }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
           retention-days: 7
           path: |
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
       # Artifactory steps are no-ops on fork PRs (secrets unavailable); the build still compiles the change.
       - name: Setup JFrog CLI
