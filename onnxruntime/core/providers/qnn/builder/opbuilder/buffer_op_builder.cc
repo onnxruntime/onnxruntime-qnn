@@ -100,15 +100,18 @@ Ort::Status BufferOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                 "QNN EP: Buffer 'stride' must be evenly divisible by the input frame count.");
 
   const QnnBackendType backend_type = qnn_model_wrapper.GetQnnBackendType();
+  TensorInfo input_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
+  TensorInfo output_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
+  // MasterOpDef requires Buffer output to use the same datatype as its activation input.
+  RETURN_IF_NOT(input_info.qnn_data_type == output_info.qnn_data_type,
+                "QNN EP: Buffer input and output must have the same data type.");
   if (IsNpuBackend(backend_type)) {
     // HtpOpDefSupplement restrictions do not apply to non-HTP backends.
     RETURN_IF(mode == QNN_OP_BUFFER_MODE_BLOCKING,
               "QNN EP: Buffer mode 0 (BLOCKING) is not supported on HTP. Use mode 1 or 2.");
 
-    TensorInfo input_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
-    TensorInfo output_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
     // FLOAT_32 is converted to the supported FLOAT_16 native Buffer path below. All other
     // application-visible types must map directly to an HTP Buffer configuration.
     const bool is_supported_buffer_type = input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32 ||
@@ -117,8 +120,6 @@ Ort::Status BufferOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                           input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16;
     RETURN_IF_NOT(is_supported_buffer_type,
                   "QNN EP: HTP Buffer supports FP16, U8, or U16 activations (FP32 is cast to FP16).");
-    RETURN_IF_NOT(input_info.qnn_data_type == output_info.qnn_data_type,
-                  "QNN EP: HTP Buffer input and output must have the same data type.");
     const bool is_quantized_buffer = input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
                                      input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16;
     RETURN_IF(is_quantized_buffer && input_shape.size() > 4,
@@ -146,10 +147,12 @@ Ort::Status BufferOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   const auto& inputs = node_unit.Inputs();
 
   // HTP's floating-point Buffer kernel consumes FP16. Keep the ONNX/QNN graph input FP32
-  // for the application, but feed the internal Buffer node through an explicit Cast.
+  // for the application, but feed the internal HTP Buffer node through an explicit Cast.
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
-  if (input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
+  const bool use_htp_fp16_buffer = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+                                   input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32;
+  if (use_htp_fp16_buffer) {
     RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
     const std::string& original_input_name = input_names.back();
     const std::string cast_output_name = utils::UniqueNameGenerator().New(original_input_name, "_buffer_cast_fp16");
@@ -211,15 +214,16 @@ Ort::Status BufferOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
 
-  if (input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
+  const bool use_htp_fp16_buffer = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+                                   input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32;
+  if (use_htp_fp16_buffer) {
     RETURN_IF_NOT(output_info.qnn_data_type == QNN_DATATYPE_FLOAT_32,
                   "QNN EP: FP32 Buffer input requires an FP32 output.");
   }
 
   // Match the FP32 ONNX output with an FP16 internal Buffer output, then cast back to the
   // application-visible FP32 output after the QNN Buffer node.
-  if (input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32 &&
-      output_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
+  if (use_htp_fp16_buffer) {
     const std::string buffer_output_name = utils::UniqueNameGenerator().New(node_unit, "_buffer_fp16_output");
     QnnTensorWrapper buffer_output_wrapper(buffer_output_name, QNN_TENSOR_TYPE_NATIVE,
                                            QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),

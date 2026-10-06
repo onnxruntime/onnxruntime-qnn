@@ -453,6 +453,39 @@ TEST_F(QnnHTPBackendTests, Buffer_Fp16_omitted_reset_retains_state) {
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
+// IR validates QNN op configurations on the host. This confirms non-HTP FP32 Buffer lowering
+// keeps the native FP32 path instead of applying the HTP-only FP32-to-FP16 casts.
+TEST_F(QnnIRBackendTests, Buffer_FP32_IR_composition) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "ir";
+
+  ModelTestBuilder builder;
+  MakeTestInput(builder, "X", TestInputDef<float>({1}, false, std::vector<float>{1.0f}));
+  builder.MakeOutput<float>("Y", {{4}});
+  std::vector<ONNX_NAMESPACE::AttributeProto> attrs = {
+      builder.MakeScalarAttribute("buffer_size", static_cast<int64_t>(4)),
+      builder.MakeScalarAttribute("buffer_dim", static_cast<int64_t>(0)),
+      builder.MakeScalarAttribute("mode", static_cast<int64_t>(1)),
+      builder.MakeScalarAttribute("stride", static_cast<int64_t>(1))};
+  builder.AddNode("buffer_ir", "Buffer", {"X"}, {"Y"}, kQtiAiswDomain, attrs);
+
+  const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> onnx_opset{builder.model_.add_opset_import()};
+  onnx_opset->set_domain("");
+  onnx_opset->set_version(21);
+  const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> qti_opset{builder.model_.add_opset_import()};
+  qti_opset->set_domain(kQtiAiswDomain);
+  qti_opset->set_version(1);
+  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  builder.model_.SerializeToString(&model_data);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions session_options;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, "QNNExecutionProvider", provider_options);
+  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 
