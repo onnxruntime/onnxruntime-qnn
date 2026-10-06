@@ -227,7 +227,8 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(frame_step_input, frame_step));
     std::vector<uint8_t> frame_step_data;
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(frame_step.initializer_tensor, frame_step_data));
-    frame_step_info = *reinterpret_cast<uint32_t*>(frame_step_data.data());
+    RETURN_IF(frame_step_data.size() != sizeof(int64_t), "STFT frame_step must be a scalar int64 initializer.");
+    frame_step_info = SafeInt<uint32_t>(*reinterpret_cast<const int64_t*>(frame_step_data.data()));
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), frame_step_info,
                                            QNN_OP_STFT_PARAM_FRAME_STEP, param_tensor_names));
   }
@@ -239,7 +240,8 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
     std::vector<uint8_t> frame_length_data;
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(frame_length.initializer_tensor, frame_length_data));
-    frame_length_info = *reinterpret_cast<uint32_t*>(frame_length_data.data());
+    RETURN_IF(frame_length_data.size() != sizeof(int64_t), "STFT frame_length must be a scalar int64 initializer.");
+    frame_length_info = SafeInt<uint32_t>(*reinterpret_cast<const int64_t*>(frame_length_data.data()));
 
     // Create frame_length parameter
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), frame_length_info,
