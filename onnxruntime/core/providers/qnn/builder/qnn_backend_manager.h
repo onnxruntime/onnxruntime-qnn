@@ -814,6 +814,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // File mapping.
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
+  std::vector<std::pair<void*, uint64_t>> mapped_fastrpc_buffers_;
 
   // Backend plugin for system DLC APIs.
   bool system_dlc_created_ = false;
