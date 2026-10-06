@@ -410,39 +410,11 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusionFromReshape(
   }
 
   // Validate shape: Reshape1 input must equal T_tail output (ChannelShuffle is shape-preserving at group boundaries).
-  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-  size_t r1_in_count = 0, t_tail_out_count = 0;
-  std::vector<const OrtValueInfo*> r1_ins, t_tail_outs;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&reshape1_node_unit.GetNode(), &r1_in_count), ort_api, nullptr);
-  r1_ins.resize(r1_in_count);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&reshape1_node_unit.GetNode(), r1_ins.data(), r1_in_count), ort_api, nullptr);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&transpose_tail->GetNode(), &t_tail_out_count), ort_api, nullptr);
-  t_tail_outs.resize(t_tail_out_count);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&transpose_tail->GetNode(), t_tail_outs.data(), t_tail_out_count), ort_api, nullptr);
-
-  const OrtTypeInfo* r1_in_ti = nullptr;
-  const OrtTensorTypeAndShapeInfo* r1_in_tsi = nullptr;
-  const OrtTypeInfo* t_tail_out_ti = nullptr;
-  const OrtTensorTypeAndShapeInfo* t_tail_out_tsi = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(r1_ins[0], &r1_in_ti), ort_api, nullptr);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(r1_in_ti, &r1_in_tsi), ort_api, nullptr);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(t_tail_outs[0], &t_tail_out_ti), ort_api, nullptr);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(t_tail_out_ti, &t_tail_out_tsi), ort_api, nullptr);
-
-  size_t r1_in_rank = 0, t_tail_out_rank = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(r1_in_tsi, &r1_in_rank), ort_api, nullptr);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(t_tail_out_tsi, &t_tail_out_rank), ort_api, nullptr);
-
-  // ChannelShuffle is shape-preserving; input and output must have same rank.
-  if (r1_in_rank != t_tail_out_rank || r1_in_rank < 2) {
-    return nullptr;
-  }
-
-  std::vector<int64_t> r1_in_dims(r1_in_rank), t_tail_out_dims(t_tail_out_rank);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensions(r1_in_tsi, r1_in_dims.data(), r1_in_rank), ort_api, nullptr);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensions(t_tail_out_tsi, t_tail_out_dims.data(), t_tail_out_rank), ort_api, nullptr);
-
-  if (!std::equal(r1_in_dims.begin(), r1_in_dims.end(), t_tail_out_dims.begin())) {
+  std::vector<uint32_t> input_shape;
+  std::vector<uint32_t> output_shape;
+  if (!qnn_model_wrapper.GetOnnxShape(reshape1_node_unit.Inputs()[0].shape, input_shape) ||
+      !qnn_model_wrapper.GetOnnxShape(transpose_tail->Outputs()[0].shape, output_shape) ||
+      input_shape.size() < 2 || input_shape != output_shape) {
     return nullptr;
   }
 

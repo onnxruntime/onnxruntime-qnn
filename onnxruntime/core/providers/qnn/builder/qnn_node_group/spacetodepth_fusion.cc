@@ -573,9 +573,9 @@ Ort::Status CreateOrValidateOnQnn(
         qnn_model_wrapper.GetOnnxShape(GetReshape2Node(node_units).Outputs()[0].shape, output_shape) &&
         input_shape.size() == kRank4 && output_shape.size() == kRank4) {
       output_already_nhwc = output_shape[0] == input_shape[0] &&
-                            output_shape[1] * block_height == input_shape[1] &&
-                            output_shape[2] * block_width == input_shape[2] &&
-                            output_shape[3] == input_shape[3] * block_height * block_width;
+                            static_cast<uint64_t>(output_shape[1]) * block_height == input_shape[1] &&
+                            static_cast<uint64_t>(output_shape[2]) * block_width == input_shape[2] &&
+                            output_shape[3] == static_cast<uint64_t>(input_shape[3]) * block_height * block_width;
     }
   }
   // RTR + T(NCHW->NHWC) ==> NHWC->NCHW + S2D (only when input is not already NHWC)
