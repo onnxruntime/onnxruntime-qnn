@@ -122,6 +122,7 @@ Ort::Status GRUOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape),
                 "QNN EP: dynamic GRU input shape is not supported.");
+  RETURN_IF_NOT(input_shape.size() == 3, "QNN EP: GRU input X must be rank 3.");
 
   if (node_unit.Inputs().size() > 4 && node_unit.Inputs()[4].Exists()) {
     TensorInfo tensor_info = {};
@@ -185,6 +186,8 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_inputs[i], input_tensor_infos[i]));
     }
   }
+  RETURN_IF(input_tensor_infos.empty() || input_tensor_infos[0].shape.size() != 3,
+            "QNN EP: GRU input X must be rank 3.");
   std::vector<TensorInfo> output_tensor_infos(2);
   for (size_t i = 0; i < 2; i++) {
     if (onnx_outputs.size() > i && onnx_outputs[i].Exists()) {
@@ -627,6 +630,7 @@ Ort::Status GRUOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
       TensorInfo output_info = {};
       if (outputs.size() > i && outputs[i].Exists()) {
         RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[i], output_info));
+        RETURN_IF(output_info.shape.size() < 3, "QNN EP: GRU output rank must be at least 3.");
         const std::string& name = outputs[i].name;
         const uint32_t concat_axis = static_cast<uint32_t>(output_info.shape.size() - 3);
         const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(name);
