@@ -19,6 +19,7 @@ For the mainline release of ORT QNN EP, please use [v2.7.0](#onnx-runtime-qnn-ex
 This release includes contributions from:
 
 [Matthew Sinclair](https://github.com/qti-mattsinc)
+[Calvin Nguyen](https://github.com/quic-calvnguy)
 
 ---
 

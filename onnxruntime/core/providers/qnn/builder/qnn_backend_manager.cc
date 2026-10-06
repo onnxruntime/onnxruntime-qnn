@@ -1198,11 +1198,10 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
   }
 
   mapped_fastrpc_buffers_.erase(
-    std::remove_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(), [unaligned_data_ptr](const auto& p) {
-      return p.first == unaligned_data_ptr;
-    }),
-    mapped_fastrpc_buffers_.end()
-  );
+      std::remove_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(), [unaligned_data_ptr](const auto& p) {
+        return p.first == unaligned_data_ptr;
+      }),
+      mapped_fastrpc_buffers_.end());
   return QNN_SUCCESS;
 }
 #endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
