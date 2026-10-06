@@ -8,7 +8,7 @@
 #include <memory>
 #include <ostream>
 
-#include "core/providers/qnn/builder/i_graph_emitter.h"
+#include "core/providers/qnn/builder/graph_emitter_interface.h"
 
 #include "core/providers/qnn/builder/qnn_utils.h"
 

@@ -14,7 +14,7 @@
 #include "core/providers/qnn/builder/qairt_graph_emitter.h"
 #include "core/providers/qnn/builder/qairt_backend_manager.h"
 #endif
-#include "core/providers/qnn/builder/i_graph_emitter.h"
+#include "core/providers/qnn/builder/graph_emitter_interface.h"
 #include "core/providers/qnn/builder/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/ort_api.h"

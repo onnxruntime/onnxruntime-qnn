@@ -16,7 +16,7 @@
 #include "QairtCpp/QairtLog.hpp"
 #include "QairtCpp/QairtProfile.hpp"
 
-#include "core/providers/qnn/builder/i_backend_manager.h"
+#include "core/providers/qnn/builder/backend_manager_interface.h"
 
 namespace onnxruntime {
 namespace qnn {

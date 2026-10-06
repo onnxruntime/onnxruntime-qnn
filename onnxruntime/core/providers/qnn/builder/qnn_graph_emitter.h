@@ -5,7 +5,7 @@
 
 #include "QnnInterface.h"
 
-#include "core/providers/qnn/builder/i_graph_emitter.h"
+#include "core/providers/qnn/builder/graph_emitter_interface.h"
 
 namespace onnxruntime {
 namespace qnn {
