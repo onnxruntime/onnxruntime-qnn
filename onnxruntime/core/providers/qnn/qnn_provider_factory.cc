@@ -215,7 +215,8 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
 
   auto create_ep_device = [&factory, &ep_devices, &num_ep_devices](const OrtHardwareDevice* device) {
     OrtEpDevice* ep_device = nullptr;
-    OrtStatus* status = factory->ep_api.CreateEpDevice(factory, device, nullptr, nullptr, &ep_device);
+    RETURN_IF_NOT_NULL(factory->ep_api.CreateEpDevice(factory, device, nullptr, nullptr, &ep_device));
+
     ep_devices[num_ep_devices++] = ep_device;
     factory->ep_devices_.push_back(ep_device);
 
@@ -231,7 +232,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
       factory->gpu_ep_devices_.push_back(ep_device);
     }
 
-    return status;
+    return static_cast<OrtStatus*>(nullptr);
   };
 
   auto create_hw_device = [&factory](const OrtHardwareDeviceType device_type,

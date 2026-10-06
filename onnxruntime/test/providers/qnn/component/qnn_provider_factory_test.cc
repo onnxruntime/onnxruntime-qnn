@@ -120,6 +120,9 @@ class FactoryStubContext {
   // instead of a fake pointer; the counter is decremented for each call.
   int fail_next_create_ep_device = 0;
 
+  // Count of EpDevice_AddAllocatorInfo invocations.
+  int add_allocator_info_calls = 0;
+
   // Version string reported by MakeFakeApiBase()'s GetVersionString. An empty
   // string is reported back as a nullptr (exercises the "(null)" branch of the
   // parse-error message); a non-empty string is passed through verbatim.
@@ -331,7 +334,10 @@ class FactoryStubContext {
     };
     stub_ep_api.ReleaseHardwareDevice = [](OrtHardwareDevice*) noexcept {};
     stub_ep_api.EpDevice_AddAllocatorInfo =
-        [](OrtEpDevice*, const OrtMemoryInfo*) noexcept -> OrtStatus* { return nullptr; };
+        [](OrtEpDevice*, const OrtMemoryInfo*) noexcept -> OrtStatus* {
+      if (auto* self = current_) ++self->add_allocator_info_calls;
+      return nullptr;
+    };
     stub_ep_api.DeviceEpIncompatibilityDetails_SetDetails =
         [](OrtDeviceEpIncompatibilityDetails*, uint32_t, int32_t, const char*) noexcept -> OrtStatus* {
       if (auto* self = current_) ++self->set_details_calls;
@@ -741,14 +747,13 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CreateEpDeviceFails_Prop
   size_t num = 0;
   // The supported NPU passes the filter, so CreateEpDevice is invoked and its
   // error status must propagate out of GetSupportedDevices.
-  // Note: the create_ep_device lambda increments num_ep_devices before it
-  // returns, so the caller sees num == 1 with ep_devices[0] == nullptr.
   OrtStatus* status = factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num);
   ASSERT_NE(status, nullptr);
   EXPECT_EQ(StubStatusCode(ctx, status), ORT_FAIL);
-  EXPECT_EQ(num, 1u);
+  EXPECT_EQ(num, 0u);
   EXPECT_EQ(ep_devices[0], nullptr);
   EXPECT_TRUE(ctx.created_ep_devices.empty());
+  EXPECT_EQ(ctx.add_allocator_info_calls, 0);
   ctx.stub_ort_api.ReleaseStatus(status);
 }
 
