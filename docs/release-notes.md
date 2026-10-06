@@ -10,6 +10,7 @@ For the mainline release of ORT QNN EP, please use [v2.7.0](#onnx-runtime-qnn-ex
 ## Bug Fixes
 
 - **ExternalResourceImporter D3D12 device creation** — Delayed the `D3D12CreateDevice` call in `ExternalResourceImporter` until memory or semaphore import is actually needed. This fixes WebNN conformance test timeouts caused by unnecessary device initialization overhead. ([#907](https://github.com/onnxruntime/onnxruntime-qnn/pull/907))
+- **Deallocation of FastRPC buffers due to file mapping** - On systems where read-only import buffers are unsupported, memory can be allocated in NPU memory space and never deallocated. Allocated buffers will now be added to a container and deallocated on failed QNN context creation in this situation. ([#929](https://github.com/onnxruntime/onnxruntime-qnn/pull/929))
 
 **Full Changelog:** [rel-2.7.0...rel-2.7.40](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.7.0...rel-2.7.40)
 
@@ -17,7 +18,8 @@ For the mainline release of ORT QNN EP, please use [v2.7.0](#onnx-runtime-qnn-ex
 
 This release includes contributions from:
 
-[Matthew Sinclair](https://github.com/qti-mattsinc)
+[Matthew Sinclair](https://github.com/qti-mattsinc),
+[Calvin Nguyen](https://github.com/quic-calvnguy)
 
 ---
 
