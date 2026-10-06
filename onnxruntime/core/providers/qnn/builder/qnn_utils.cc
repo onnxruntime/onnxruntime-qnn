@@ -2155,6 +2155,38 @@ Ort::Status RequantizeBiasTensor(const std::vector<uint8_t>& original_bias_data,
   return Ort::Status();
 }
 
+Ort::Status ResolveExternalDataPath(const std::filesystem::path& model_directory,
+                                    const std::filesystem::path& relative_data_path,
+                                    std::filesystem::path& resolved_data_path) {
+  RETURN_IF(relative_data_path.empty(), "External initializer location must not be empty.");
+  RETURN_IF(relative_data_path.has_root_path(),
+            "External initializer location must be relative to the model directory.");
+
+  const std::filesystem::path normalized_relative_path = relative_data_path.lexically_normal();
+  for (const auto& component : normalized_relative_path) {
+    RETURN_IF(component == "..", "External initializer location must not leave the model directory.");
+  }
+
+  std::error_code error_code;
+  const std::filesystem::path canonical_model_directory =
+      std::filesystem::weakly_canonical(model_directory, error_code);
+  RETURN_IF(error_code, "Failed to resolve the model directory: ", error_code.message());
+
+  const std::filesystem::path candidate_path =
+      std::filesystem::weakly_canonical(canonical_model_directory / normalized_relative_path, error_code);
+  RETURN_IF(error_code, "Failed to resolve the external initializer path: ", error_code.message());
+
+  const std::filesystem::path path_relative_to_model = candidate_path.lexically_relative(canonical_model_directory);
+  RETURN_IF(path_relative_to_model.empty() || path_relative_to_model.has_root_path(),
+            "External initializer location must remain inside the model directory.");
+  for (const auto& component : path_relative_to_model) {
+    RETURN_IF(component == "..", "External initializer location must remain inside the model directory.");
+  }
+
+  resolved_data_path = candidate_path;
+  return Ort::Status();
+}
+
 Ort::Status ReadExternalData(const OrtApi& ort_api,
                              const OrtExternalInitializerInfo* initializer,
                              const std::filesystem::path& model_path,
@@ -2163,7 +2195,8 @@ Ort::Status ReadExternalData(const OrtApi& ort_api,
   int64_t offset = ort_api.ExternalInitializerInfo_GetFileOffset(initializer);
   size_t byte_size = ort_api.ExternalInitializerInfo_GetByteSize(initializer);
 
-  std::filesystem::path external_file_path = model_path.parent_path() / file_path;
+  std::filesystem::path external_file_path;
+  RETURN_IF_ERROR(ResolveExternalDataPath(model_path.parent_path(), file_path, external_file_path));
 
   unpacked_tensor.resize(byte_size);
   RETURN_IF_ERROR(ReadFileIntoBuffer(

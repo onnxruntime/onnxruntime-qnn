@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <mutex>
 #include <numeric>
@@ -983,6 +984,10 @@ Ort::Status ReadExternalData(const OrtApi& ort_api,
                              const OrtExternalInitializerInfo* initializer,
                              const std::filesystem::path& model_path,
                              std::vector<uint8_t>& unpacked_tensor);
+
+Ort::Status ResolveExternalDataPath(const std::filesystem::path& model_directory,
+                                    const std::filesystem::path& relative_data_path,
+                                    std::filesystem::path& resolved_data_path);
 
 Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const OrtValueInfo* initializer,
