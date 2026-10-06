@@ -298,7 +298,8 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                                       *context.model_settings,
                                                       context.tensor_name_overrides,
                                                       trace_collector.get(),
-                                                      /*is_post_layout_transform=*/true);
+                                                      /*is_post_layout_transform=*/true,
+                                                      graph_emitter_.get());
 
   qnn::profile::ProfilingInfo profiling_info;
   QnnProfilingScope profiling_scope;
@@ -391,9 +392,17 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
       ProfilingMethodType::FINALIZE,
       profiling_scope));
 
-  Qnn_ErrorHandle_t status = qnn_backend_manager_->GetQnnInterface().graphFinalize(graph_info_->Graph(),
-                                                                                   profiling_scope.Handle(),
-                                                                                   nullptr);
+  Qnn_ErrorHandle_t status;
+  if (graph_emitter_) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
+                "[QAIRT C++ API] FinalizeGraph via QairtGraphEmitter");
+    Ort::Status s = graph_emitter_->FinalizeGraph(graph_info_->Graph(), profiling_scope.Handle());
+    status = s.IsOK() ? QNN_GRAPH_NO_ERROR : QNN_GRAPH_ERROR_GENERAL;
+  } else {
+    status = qnn_backend_manager_->GetQnnInterface().graphFinalize(graph_info_->Graph(),
+                                                                   profiling_scope.Handle(),
+                                                                   nullptr);
+  }
 
   profiling_scope.Complete(profiling_info);
 
@@ -732,13 +741,25 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 
   RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
 
-  execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
-                                              qnn_inputs.data(),
-                                              static_cast<uint32_t>(qnn_inputs.size()),
-                                              qnn_outputs.data(),
-                                              static_cast<uint32_t>(qnn_outputs.size()),
-                                              profile_backend_handle,
-                                              nullptr);
+  if (graph_emitter_) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
+                "[QAIRT C++ API] ExecuteGraph via QairtGraphEmitter");
+    execute_status = graph_emitter_->ExecuteGraph(graph_info_->Graph(),
+                                                  qnn_inputs.data(),
+                                                  static_cast<uint32_t>(qnn_inputs.size()),
+                                                  qnn_outputs.data(),
+                                                  static_cast<uint32_t>(qnn_outputs.size()),
+                                                  profile_backend_handle,
+                                                  nullptr);
+  } else {
+    execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
+                                                qnn_inputs.data(),
+                                                static_cast<uint32_t>(qnn_inputs.size()),
+                                                qnn_outputs.data(),
+                                                static_cast<uint32_t>(qnn_outputs.size()),
+                                                profile_backend_handle,
+                                                nullptr);
+  }
 
   profiling_scope.Complete(profiling_info);
 

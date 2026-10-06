@@ -184,6 +184,11 @@ Environment variables
         action="store_true",
         help="Enable building Android AAR package.",
     )
+    parser.add_argument(
+        "--use_qairt_api",
+        action="store_true",
+        help="Enable QAIRT C++ API path (experimental).",
+    )
 
     args = parser.parse_args()
     if args.target_py_version.lower() == "none":
@@ -209,6 +214,7 @@ class TaskLibrary:
         build_nuget: bool,
         build_archive: bool,
         build_aar: bool,
+        use_qairt_api: bool = False,
     ) -> None:
         self.__python_executable = python_executable
         self.__venv_path = venv_path
@@ -221,6 +227,7 @@ class TaskLibrary:
         self.__build_nuget = build_nuget
         self.__build_archive = build_archive
         self.__build_aar = build_aar
+        self.__use_qairt_api = use_qairt_api
 
     @staticmethod
     def to_dot(highlight: list[str] | None = None) -> str:
@@ -715,6 +722,7 @@ class TaskLibrary:
                     False,
                     self.__build_nuget,
                     self.__build_archive,
+                    use_qairt_api=self.__use_qairt_api,
                 )
             )
 
@@ -1494,6 +1502,7 @@ def plan_from_dependencies(
     build_nuget: bool,
     build_archive: bool,
     build_aar: bool,
+    use_qairt_api: bool = False,
 ) -> Plan:
     """
     Uses a work list algorithm to create a Plan to build the given tasks and their
@@ -1510,6 +1519,7 @@ def plan_from_dependencies(
         build_nuget,
         build_archive,
         build_aar,
+        use_qairt_api,
     )
     plan = Plan()
 
@@ -1564,6 +1574,7 @@ def plan_from_task_list(
     build_nuget: bool,
     build_archive: bool,
     build_aar: bool,
+    use_qairt_api: bool = False,
 ) -> Plan:
     """
     Planner that just instantiates the given tasks with no attempt made to satisfy dependencies.
@@ -1580,6 +1591,7 @@ def plan_from_task_list(
         build_nuget,
         build_archive,
         build_aar,
+        use_qairt_api,
     )
     plan = Plan()
     for task_name in tasks:
@@ -1618,6 +1630,7 @@ def build_and_test():
             args.build_nuget,
             args.build_archive,
             args.build_aar,
+            args.use_qairt_api,
         )
 
     if args.skip is not None:

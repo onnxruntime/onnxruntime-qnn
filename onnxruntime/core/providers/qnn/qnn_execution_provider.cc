@@ -35,6 +35,10 @@
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#ifdef USE_QAIRT_API
+#include "core/providers/qnn/builder/qairt_backend_manager.h"
+#include "core/providers/qnn/builder/qairt_graph_emitter.h"
+#endif
 #include "core/providers/qnn/builder/qnn_ep_input_graph_dumper.h"
 #include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
@@ -1582,6 +1586,22 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      reused_io_limit_mb,
                                      enable_htp_cross_device_prepare},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
+#ifdef USE_QAIRT_API
+    {
+      Ort::Status qairt_status;
+      const auto inferred_type = InferBackendTypeFromPath(backend_path);
+      qairt_backend_manager_ = qnn::QairtBackendManager::Create(
+          qnn::QairtBackendManager::Config{backend_path,
+                                           inferred_type.value_or(qnn::QnnBackendType::HTP),
+                                           profiling_level != qnn::ProfilingLevel::OFF},
+          qairt_status);
+      if (!qairt_status.IsOK()) {
+        throw std::runtime_error(qairt_status.GetErrorMessage());
+      }
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                  "[QAIRT C++ API] QairtBackendManager initialized — backend + context created via QAIRT C++ API");
+    }
+#endif
     // Publish for later sessions. Always publish when htp_share_resource_optimization_==1,
     // even for a terminator session, because ContextCreateAsyncCallback retrieves the backend
     // manager from the singleton during SetupBackend (GetCapability). The terminator reset for
@@ -2513,6 +2533,10 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
                                    OrtNodeComputeInfo** node_compute_infos,
                                    const qnn::HtpGraphConfigs_t& htp_graph_configs,
                                    bool collect_subgraph_traces) {
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+              "[QAIRT C++ API] >>> CompileOnnxModel ENTRY <<<");
+  fprintf(stderr, "[QAIRT C++ API] >>> CompileOnnxModel ENTRY (stderr) <<<\n");
+  fflush(stderr);
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   // Initialize now for possible reuse in loop
   auto finalize_start = std::chrono::steady_clock::time_point::min();
@@ -2537,8 +2561,26 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     const OrtNode* fused_node = fused_nodes[graph_idx];
     const std::string fused_node_name = Ort::ConstNode(fused_node).GetName();
 
-    std::unique_ptr<qnn::QnnModel> qnn_model = std::make_unique<qnn::QnnModel>(
-        qnn_backend_manager_.get(), ApiPtrs{ort_api, ep_api, model_editor_api});
+    std::unique_ptr<qnn::QnnModel> qnn_model;
+#ifdef USE_QAIRT_API
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                ("[QAIRT C++ API] CompileOnnxModel entered — qairt_backend_manager_ is " +
+                 std::string(qairt_backend_manager_ ? "SET" : "NULL"))
+                    .c_str());
+    if (qairt_backend_manager_) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                  ("[QAIRT C++ API] Creating QairtGraphEmitter for graph: " + fused_node_name).c_str());
+      auto qairt_emitter = std::make_unique<qnn::QairtGraphEmitter>(
+          qairt_backend_manager_->GetApi(), qairt_backend_manager_->GetContext());
+      qnn_model = std::make_unique<qnn::QnnModel>(
+          qnn_backend_manager_.get(), ApiPtrs{ort_api, ep_api, model_editor_api},
+          std::move(qairt_emitter));
+    } else
+#endif
+    {
+      qnn_model = std::make_unique<qnn::QnnModel>(
+          qnn_backend_manager_.get(), ApiPtrs{ort_api, ep_api, model_editor_api});
+    }
 
     qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
         QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
@@ -3133,6 +3175,10 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+              "[QAIRT C++ API] >>> CompileImpl ENTRY <<<");
+  fprintf(stderr, "[QAIRT C++ API] >>> CompileImpl ENTRY (stderr) <<<\n");
+  fflush(stderr);
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     if (ep->prepare_and_load_) {

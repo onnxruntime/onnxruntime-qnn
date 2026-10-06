@@ -400,19 +400,22 @@ Ort::Status IsHtpUsrDrvEnabled(const std::string& backend_lib_dir, const uint32_
 
   const std::filesystem::path backend_lib_dir_path(backend_lib_dir);
 
+  auto has_htp_libs = [&](const std::string& prefix) {
 #ifdef _WIN32
-  const std::string prepare_lib_path = "QnnHtpPrepare.dll";
-  const std::string stub_lib_path = "QnnHtp" + htp_arch_string + "Stub.dll";
-  const std::string skel_lib_path = "libQnnHtp" + htp_arch_string + "Skel.so";
+    const std::string prepare = prefix + "HtpPrepare.dll";
+    const std::string stub = prefix + "Htp" + htp_arch_string + "Stub.dll";
+    const std::string skel = "lib" + prefix + "Htp" + htp_arch_string + "Skel.so";
 #else
-  const std::string prepare_lib_path = "libQnnHtpPrepare.so";
-  const std::string stub_lib_path = "libQnnHtp" + htp_arch_string + "Stub.so";
-  const std::string skel_lib_path = "libQnnHtp" + htp_arch_string + "Skel.so";
+    const std::string prepare = "lib" + prefix + "HtpPrepare.so";
+    const std::string stub = "lib" + prefix + "Htp" + htp_arch_string + "Stub.so";
+    const std::string skel = "lib" + prefix + "Htp" + htp_arch_string + "Skel.so";
 #endif
+    return std::filesystem::exists(backend_lib_dir_path / prepare) &&
+           std::filesystem::exists(backend_lib_dir_path / stub) &&
+           std::filesystem::exists(backend_lib_dir_path / skel);
+  };
 
-  if (!std::filesystem::exists(backend_lib_dir_path / prepare_lib_path) ||
-      !std::filesystem::exists(backend_lib_dir_path / stub_lib_path) ||
-      !std::filesystem::exists(backend_lib_dir_path / skel_lib_path)) {
+  if (!has_htp_libs("Qnn") && !has_htp_libs("Qairt")) {
     enabled = true;
   }
 

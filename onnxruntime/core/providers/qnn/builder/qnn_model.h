@@ -10,6 +10,12 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#ifdef USE_QAIRT_API
+#include "core/providers/qnn/builder/qairt_graph_emitter.h"
+#include "core/providers/qnn/builder/qairt_backend_manager.h"
+#endif
+#include "core/providers/qnn/builder/graph_emitter_interface.h"
+#include "core/providers/qnn/builder/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/rpcmem_library.h"
@@ -51,6 +57,16 @@ class QnnModel {
   QnnModel(QnnBackendManager* qnn_backend_manager,
            const ApiPtrs& api_ptrs)
       : qnn_backend_manager_(qnn_backend_manager),
+        api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}) {
+    qnn_backend_type_ = qnn_backend_manager_->GetQnnBackendType();
+    graph_emitter_ = std::make_unique<QnnGraphEmitter>(qnn_backend_manager_->GetQnnInterface());
+  }
+
+  QnnModel(QnnBackendManager* qnn_backend_manager,
+           const ApiPtrs& api_ptrs,
+           std::unique_ptr<IGraphEmitter> emitter)
+      : qnn_backend_manager_(qnn_backend_manager),
+        graph_emitter_(std::move(emitter)),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}) {
     qnn_backend_type_ = qnn_backend_manager_->GetQnnBackendType();
   }
@@ -210,6 +226,8 @@ class QnnModel {
   std::vector<QnnTensorInfo> qnn_input_infos_;
   std::vector<QnnTensorInfo> qnn_output_infos_;
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
+
+  std::unique_ptr<IGraphEmitter> graph_emitter_;
 
   // Mutex acquired during graph execution to support multi-threaded inference of a single session.
   std::mutex graph_exec_mutex_;

@@ -40,6 +40,9 @@ class QnnEpFactory;
 namespace qnn {
 class QnnBackendManager;
 class GenieBackendManager;
+#ifdef USE_QAIRT_API
+class QairtBackendManager;
+#endif
 }  // namespace qnn
 
 class QnnEp : public OrtEp, public ApiPtrs {
@@ -244,6 +247,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // QNN-related.
   std::shared_ptr<qnn::QnnBackendManager> qnn_backend_manager_;
+#ifdef USE_QAIRT_API
+  std::unique_ptr<qnn::QairtBackendManager> qairt_backend_manager_;
+#endif
   std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models_;
 
   // Configurations for HTP backend.

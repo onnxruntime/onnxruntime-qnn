@@ -34,6 +34,7 @@
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/op_package/op_package.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
+#include "core/providers/qnn/builder/backend_manager_interface.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
@@ -146,7 +147,8 @@ struct QnnBackendManagerConfig {
   bool configure_host_mode = false;
 };
 
-class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
+class QnnBackendManager : public IBackendManager,
+                          public std::enable_shared_from_this<QnnBackendManager> {
   friend class QnnBackendSystemDlcPlugin;
 
  private:
@@ -191,7 +193,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Caller owns *context_buffer and must delete[] it; recommend wrapping with std::unique_ptr.
   Ort::Status GetContextBinaryBuffer(bool is_multi_soc_buffer,
                                      /*out*/ unsigned char** context_buffer,
-                                     /*out*/ uint64_t& buffer_size);
+                                     /*out*/ uint64_t& buffer_size) override;
 
   Ort::Status LoadCachedQnnContextFromBuffer(
       char* buffer,
@@ -201,7 +203,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
       int64_t max_spill_fill_size,
       const qnn::EpContextIoDispatch& io_dispatch,
-      bool is_multi_soc_buffer = false);
+      bool is_multi_soc_buffer = false) override;
 
   // Remove a single context handle from all tracking structures and free it via contextFree.
   void ReleaseSpecificContextHandle(Qnn_ContextHandle_t context_handle);
@@ -311,13 +313,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void RemovePerThreadHtpPowerConfigMapping(const std::thread::id& thread_id);
 
-  const QNN_INTERFACE_VER_TYPE& GetQnnInterface() const { return qnn_interface_; }
+  const QNN_INTERFACE_VER_TYPE& GetQnnInterface() const override { return qnn_interface_; }
 
-  const QNN_INTERFACE_VER_TYPE& GetQnnValidatorInterface() const { return qnn_validator_interface_; }
+  const QNN_INTERFACE_VER_TYPE& GetQnnValidatorInterface() const override { return qnn_validator_interface_; }
 
   const QNN_SYSTEM_INTERFACE_VER_TYPE& GetQnnSystemInterface() const { return qnn_sys_interface_; }
 
-  const Qnn_ContextHandle_t& GetQnnContext(int index = 0) {
+  const Qnn_ContextHandle_t& GetQnnContext(int index = 0) override {
     if (!((contexts_.size() > 0) && (static_cast<size_t>(index) < contexts_.size()))) {
       ORT_CXX_API_THROW("No valid QNN context!", ORT_EP_FAIL);
     }
@@ -328,9 +330,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     return contexts_.size();
   }
 
-  const Qnn_BackendHandle_t& GetQnnBackendHandle() const { return backend_handle_; }
+  const Qnn_BackendHandle_t& GetQnnBackendHandle() const override { return backend_handle_; }
 
-  const Qnn_BackendHandle_t& GetQnnValidatorBackendHandle() const { return validator_backend_handle_; }
+  const Qnn_BackendHandle_t& GetQnnValidatorBackendHandle() const override { return validator_backend_handle_; }
 
   const Qnn_DeviceHandle_t& GetQnnDeviceHandle() const { return device_handle_; }
 
@@ -342,7 +344,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   uint32_t GetBackendId() { return backend_id_; }
 
   void SetQnnBackendType(uint32_t backend_id);
-  QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
+  QnnBackendType GetQnnBackendType() const override { return qnn_backend_type_; }
 
   void SetQnnAllocatorType(QnnAllocatorType allocator_type) { qnn_allocator_type_ = allocator_type; }
   QnnAllocatorType GetQnnAllocatorType() const { return qnn_allocator_type_; }
