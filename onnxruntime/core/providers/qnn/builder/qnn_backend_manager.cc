@@ -2575,13 +2575,14 @@ void QnnBackendManager::ReleaseResources() {
   // last session out), not when the first sharing session is destroyed.
   DeInitializePerfTimer();
 
-  // Ensure all buffers allocated from file mapping feature are deallocated
-  DeallocateMappedDmaBuffers();
-
   auto result = ReleaseContext();
   if (!result.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
   }
+
+  // Ensure all buffers allocated from file mapping feature are deallocated
+  // Called after QNN Context destruction to clean up leftover buffers
+  DeallocateMappedDmaBuffers();
 
   result = GetProfilingManager().ReleaseProfileHandle();
   if (!result.IsOK()) {

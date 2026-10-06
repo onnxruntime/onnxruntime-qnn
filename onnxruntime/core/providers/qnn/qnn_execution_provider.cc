@@ -2271,6 +2271,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
         size_t context_len = 0;
         if (ep->ort_api.ReadOpAttr(ep_cache_context_attr, ORT_OP_ATTR_STRING, context_buffer, sizeof(context_buffer) - 1, &context_len) == nullptr) {
           std::string context_bin_filepath(parent_path.string());
+          if (context_bin_filepath.empty()) {
+            context_bin_filepath.append(".");
+          }
           context_bin_filepath.append("/").append(std::string(context_buffer, context_len));
 
           if (context_bin_map.find(context_bin_filepath) == context_bin_map.end()) {
