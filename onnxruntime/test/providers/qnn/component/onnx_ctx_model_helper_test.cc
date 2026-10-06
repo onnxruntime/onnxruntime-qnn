@@ -57,6 +57,7 @@ using qnn::MAIN_CONTEXT;
 using qnn::MAX_SIZE;
 using qnn::ParseIoNameOverrides;
 using qnn::QnnModelLookupTable;
+using qnn::ResolveEpContextBinaryPath;
 using qnn::SOURCE;
 using qnn::TryGetMaxSpillFillSize;
 
@@ -733,6 +734,36 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedFileNotFou
                                          qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
 }
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, ResolveEpContextBinaryPath_ValidRelativePath_StaysInModelDirectory) {
+  std::filesystem::path resolved_path;
+  auto status = ResolveEpContextBinaryPath(std::filesystem::current_path(),
+                                           std::filesystem::path("contexts") / "model.bin",
+                                           resolved_path);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(resolved_path.parent_path().filename(), "contexts");
+  EXPECT_EQ(resolved_path.filename(), "model.bin");
+}
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, ResolveEpContextBinaryPath_ParentTraversal_ReturnsError) {
+  std::filesystem::path resolved_path;
+  auto status = ResolveEpContextBinaryPath(std::filesystem::current_path(), "../outside.bin", resolved_path);
+  EXPECT_FALSE(status.IsOK());
+}
+
+#ifdef _WIN32
+TEST(QnnUnit_OnnxCtxModelHelperTest, ResolveEpContextBinaryPath_RootRelativePath_ReturnsError) {
+  std::filesystem::path resolved_path;
+  auto status = ResolveEpContextBinaryPath(std::filesystem::current_path(), "\\outside.bin", resolved_path);
+  EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, ResolveEpContextBinaryPath_DriveRelativePath_ReturnsError) {
+  std::filesystem::path resolved_path;
+  auto status = ResolveEpContextBinaryPath(std::filesystem::current_path(), "C:outside.bin", resolved_path);
+  EXPECT_FALSE(status.IsOK());
+}
+#endif
 
 // =============================================================================
 // CreateEPContextNodes — IS_MULTI_SOC_EP_CONTEXT attribute

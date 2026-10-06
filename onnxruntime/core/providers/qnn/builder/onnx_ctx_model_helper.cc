@@ -88,6 +88,38 @@ Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const Ort
   return MAKE_EP_FAIL("Failed to extract dlc_path from EP_CONTEXT node");
 }
 
+Ort::Status ResolveEpContextBinaryPath(const std::filesystem::path& model_directory,
+                                       const std::filesystem::path& relative_context_path,
+                                       std::filesystem::path& resolved_context_path) {
+  RETURN_IF(relative_context_path.empty(), "The EPContext binary path must not be empty.");
+  RETURN_IF(relative_context_path.has_root_path(),
+            "The EPContext binary path must be relative to the model directory.");
+
+  const std::filesystem::path normalized_relative_path = relative_context_path.lexically_normal();
+  for (const auto& component : normalized_relative_path) {
+    RETURN_IF(component == "..", "The EPContext binary path must not point outside the model directory.");
+  }
+
+  std::error_code error_code;
+  const std::filesystem::path canonical_model_directory =
+      std::filesystem::weakly_canonical(model_directory, error_code);
+  RETURN_IF(error_code, "Failed to resolve the EPContext model directory: ", error_code.message());
+
+  const std::filesystem::path candidate_path =
+      std::filesystem::weakly_canonical(canonical_model_directory / normalized_relative_path, error_code);
+  RETURN_IF(error_code, "Failed to resolve the EPContext binary path: ", error_code.message());
+
+  const std::filesystem::path path_relative_to_model = candidate_path.lexically_relative(canonical_model_directory);
+  RETURN_IF(path_relative_to_model.empty() || path_relative_to_model.has_root_path(),
+            "The EPContext binary path must remain inside the model directory.");
+  for (const auto& component : path_relative_to_model) {
+    RETURN_IF(component == "..", "The EPContext binary path must remain inside the model directory.");
+  }
+
+  resolved_context_path = candidate_path;
+  return Ort::Status();
+}
+
 Ort::Status GetMainContextNode(const OrtGraph** graphs,
                                size_t count,
                                const OrtApi& ort_api,
@@ -179,36 +211,11 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                is_multi_soc_ep_context);
   }
 
-  std::filesystem::path folder_path = std::filesystem::path(ctx_onnx_model_path).parent_path();
+  const std::filesystem::path folder_path = std::filesystem::path(ctx_onnx_model_path).parent_path();
   std::string external_qnn_ctx_binary_file_name = node_helper.Get(EP_CACHE_CONTEXT, "");
   RETURN_IF(external_qnn_ctx_binary_file_name.empty(), "The file path in ep_cache_context should not be empty.");
-#ifdef _WIN32
-  auto ctx_file_path = std::filesystem::path(external_qnn_ctx_binary_file_name);
-  RETURN_IF(ctx_file_path.is_absolute(),
-            ("External mode should set ep_cache_context field with a relative path, but it is an absolute path: " +
-             external_qnn_ctx_binary_file_name)
-                .c_str());
-  auto relative_path = ctx_file_path.lexically_normal().make_preferred().wstring();
-  if (relative_path.find(L"..", 0) != std::string::npos) {
-    return Ort::Status(
-        "The file path in ep_cache_context field has '..'. It's not allowed to point outside the directory.",
-        ORT_INVALID_GRAPH);
-  }
-
-  std::filesystem::path context_binary_path = folder_path.append(relative_path);
-#else
-  RETURN_IF(external_qnn_ctx_binary_file_name[0] == '/',
-            ("External mode should set ep_cache_context field with a relative path, but it is an absolute path: " +
-             external_qnn_ctx_binary_file_name)
-                .c_str());
-  if (external_qnn_ctx_binary_file_name.find("..", 0) != std::string::npos) {
-    return Ort::Status(
-        "The file path in ep_cache_context field has '..'. It's not allowed to point outside the directory.",
-        ORT_INVALID_GRAPH);
-  }
-  std::filesystem::path context_binary_path = folder_path.append(external_qnn_ctx_binary_file_name);
-  std::string file_full_path = context_binary_path.string();
-#endif
+  std::filesystem::path context_binary_path;
+  RETURN_IF_ERROR(ResolveEpContextBinaryPath(folder_path, external_qnn_ctx_binary_file_name, context_binary_path));
   std::string context_binary_path_str = context_binary_path.string();
 
   // Read callback takes priority over file mapping: if it produces data, we return
