@@ -32,8 +32,8 @@ class QnnGraphEmitter final : public IGraphEmitter {
                           Qnn_GraphHandle_t& out) override;
 
   Ort::Status RetrieveGraph(Qnn_ContextHandle_t ctx,
-                             const char* name,
-                             Qnn_GraphHandle_t& out) override;
+                            const char* name,
+                            Qnn_GraphHandle_t& out) override;
 
   Ort::Status CreateTensor(Qnn_GraphHandle_t graph,
                            Qnn_Tensor_t& tensor) override;

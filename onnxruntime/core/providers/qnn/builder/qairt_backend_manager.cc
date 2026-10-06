@@ -17,7 +17,7 @@ const Qnn_BackendHandle_t QairtBackendManager::null_backend_handle_ = nullptr;
 const Qnn_ContextHandle_t QairtBackendManager::null_context_handle_ = nullptr;
 
 std::unique_ptr<QairtBackendManager> QairtBackendManager::Create(const Config& config,
-                                                                  Ort::Status& status) {
+                                                                 Ort::Status& status) {
   std::unique_ptr<QairtBackendManager> mgr(new QairtBackendManager());
   status = mgr->Initialize(config);
   if (!status.IsOK()) {

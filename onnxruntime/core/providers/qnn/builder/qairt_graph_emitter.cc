@@ -127,7 +127,8 @@ Ort::Status QairtGraphEmitter::AddNode(Qnn_GraphHandle_t /*graph*/,
         auto it = registered_tensors_.find(id);
         if (it == registered_tensors_.end()) {
           return MAKE_EP_FAIL(("QairtGraphEmitter::AddNode: param tensor id=" +
-                               std::to_string(id) + " not registered").c_str());
+                               std::to_string(id) + " not registered")
+                                  .c_str());
         }
         param.setTensor(it->second.shallowCopy());
       }
@@ -146,7 +147,8 @@ Ort::Status QairtGraphEmitter::AddNode(Qnn_GraphHandle_t /*graph*/,
       auto it = registered_tensors_.find(id);
       if (it == registered_tensors_.end()) {
         return MAKE_EP_FAIL(("QairtGraphEmitter::AddNode: input tensor id=" +
-                             std::to_string(id) + " not registered").c_str());
+                             std::to_string(id) + " not registered")
+                                .c_str());
       }
       inputs.push_back(it->second.shallowCopy());
     }
@@ -159,7 +161,8 @@ Ort::Status QairtGraphEmitter::AddNode(Qnn_GraphHandle_t /*graph*/,
       auto it = registered_tensors_.find(id);
       if (it == registered_tensors_.end()) {
         return MAKE_EP_FAIL(("QairtGraphEmitter::AddNode: output tensor id=" +
-                             std::to_string(id) + " not registered").c_str());
+                             std::to_string(id) + " not registered")
+                                .c_str());
       }
       outputs.push_back(it->second.shallowCopy());
     }
