@@ -411,22 +411,11 @@ std::ostream& operator<<(std::ostream& out, const Qnn_QuantizeParams_t& quantize
       out << " axis=" << lpbq.axis
           << " numBlocksPerAxis=" << lpbq.numBlocksPerAxis
           << " blockScaleBitwidth=" << lpbq.blockScaleBitwidth;
-      // For LPBQ, num_elems are not present in the quantize_params,
-      // we are using numBlocksPerAxis instead to print the first numBlocksPerAxis scale offset values
+      // The number of scale offsets is not carried by Qnn_QuantizeParams_t, so do not
+      // dereference scaleOffsets here. numBlocksPerAxis only describes blocksScale8.
       size_t num_elems = lpbq.numBlocksPerAxis;
       bool truncate = num_elems > 20;
       num_elems = truncate ? 20 : num_elems;
-      if (lpbq.scaleOffsets != nullptr) {
-        out << " scales=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << lpbq.scaleOffsets[i].scale << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")") << " offsets=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << lpbq.scaleOffsets[i].offset << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")");
-      }
       if (lpbq.blocksScale8 != nullptr) {
         out << " perBlockIntScales=(";
         for (size_t i = 0; i < num_elems; i++) {
@@ -1169,6 +1158,7 @@ Ort::Status QuantizeData(gsl::span<const float> data, gsl::span<const uint32_t> 
   size_t expected_num_quant_bytes = GetQnnTensorDataSizeInBytes(data.size(), data_type);
   RETURN_IF_NOT(quant_bytes.size() == expected_num_quant_bytes,
                 "Cannot quantize data because output buffer is not the correct size");
+  RETURN_IF_NOT(data_block_size != 0, "Data block size must be greater than zero");
 
   size_t block_count = 1;
   size_t broadcast_dim = 1;
