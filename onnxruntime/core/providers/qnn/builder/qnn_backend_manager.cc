@@ -1196,6 +1196,13 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
     ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(unaligned_data_ptr)).c_str());
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
+
+  mapped_fastrpc_buffers_.erase(
+    std::remove_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(), [unaligned_data_ptr](const auto& p) {
+      return p.first == unaligned_data_ptr;
+    }),
+    mapped_fastrpc_buffers_.end();
+  );
   return QNN_SUCCESS;
 }
 #endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -1364,17 +1371,7 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
                                                             profile_handle,
                                                             NULL);
     if (rt != QNN_SUCCESS) {
-      for (auto& mem_info : mapped_fastrpc_buffers_) {
-        auto ptr = mem_info.first;
-        auto size = mem_info.second;
-        ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, ("Attemping to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
-        rpcmem_library_->Api().register_buf(ptr, size, -1,
-                                            rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
-        auto fd = rpcmem_library_->Api().to_fd(ptr);
-        if (fd != -1) {
-          ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
-        }
-      }
+      DeallocateMappedDmaBuffers();
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
                       ("contextCreateFromBinaryWithCallback failed (" + QnnErrorHandleToString(rt) +
                        "). Retrying with direct read.")
@@ -1658,17 +1655,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                                 configs,
                                                                 nullptr);
   if (QNN_CONTEXT_NO_ERROR != result) {
-    for (auto& mem_info : mapped_fastrpc_buffers_) {
-      auto ptr = mem_info.first;
-      auto size = mem_info.second;
-      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, ("Attemping to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
-      rpcmem_library_->Api().register_buf(ptr, size, -1,
-                                          rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
-      auto fd = rpcmem_library_->Api().to_fd(ptr);
-      if (fd != -1) {
-        ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
-      }
-    }
+    DeallocateMappedDmaBuffers();
   }
 
   RETURN_IF(QNN_CONTEXT_NO_ERROR != result, ("Failed to create context with file mapping enabled. Error: " +
@@ -2589,6 +2576,9 @@ void QnnBackendManager::ReleaseResources() {
   // last session out), not when the first sharing session is destroyed.
   DeInitializePerfTimer();
 
+  // Ensure all buffers allocated from file mapping feature are deallocated
+  DeallocateMappedDmaBuffers();
+
   auto result = ReleaseContext();
   if (!result.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
@@ -3285,6 +3275,20 @@ Ort::Status QnnBackendManager::AddContextToDlc() {
   RETURN_IF(system_dlc_plugin_ == nullptr, "Unexpected call of this function without DLC initialized.");
   RETURN_IF_NOT(GetQnnContextSize() == 1, "Expecting only one context to be added into DLC.");
   return system_dlc_plugin_->AddContextToDlc(GetQnnContext());
+}
+
+void QnnBackendManager::DeallocateMappedDmaBuffers() {
+  for (auto& mem_info : mapped_fastrpc_buffers_) {
+    auto ptr = mem_info.first;
+    auto size = mem_info.second;
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, ("Attemping to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
+    rpcmem_library_->Api().register_buf(ptr, size, -1,
+                                        rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
+    auto fd = rpcmem_library_->Api().to_fd(ptr);
+    if (fd != -1) {
+      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
+    }
+  }
 }
 
 }  // namespace qnn
