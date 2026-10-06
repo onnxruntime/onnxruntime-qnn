@@ -39,6 +39,10 @@ on:
         description: "If true, skip building and uploading Android AAR/Maven artifacts."
         type: boolean
         default: false
+      maven_only:
+        description: "If true, only build and publish the Android Maven artifact."
+        type: boolean
+        default: false
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
@@ -50,8 +54,9 @@ jobs:
     with:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
+      maven_only: ${{ inputs.maven_only }}
       build_android_aarch64: false
-      build_android_aarch64_aar: ${{ !inputs.skip_android_builds }}
+      build_android_aarch64_aar: ${{ inputs.maven_only || !inputs.skip_android_builds }}
       build_linux_aarch64_oe_gcc11_2: false
       linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
       windows_target_archs: ${{ inputs.windows_target_archs }}
@@ -59,6 +64,7 @@ jobs:
 
   upload-wheel-workflow:
     name: "Upload Python Wheel artifacts to Artifactory"
+    if: ${{ !inputs.maven_only }}
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -251,6 +257,7 @@ jobs:
 
   upload-nuget-workflow:
     name: "Upload Nuget artifacts to Artifactory"
+    if: ${{ !inputs.maven_only }}
     runs-on: [Windows, self-hosted, Build, X64]
     needs: [build-artifacts]
 
@@ -365,6 +372,7 @@ jobs:
 
   upload-zip-workflow:
     name: "Upload Zip artifacts to Artifactory"
+    if: ${{ !inputs.maven_only }}
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -623,7 +631,7 @@ jobs:
     name: "Upload Android Maven artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
-    if: ${{ !inputs.skip_android_builds }}
+    if: ${{ inputs.maven_only || !inputs.skip_android_builds }}
 
     steps:
       - uses: actions/checkout@v6
