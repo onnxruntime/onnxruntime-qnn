@@ -481,7 +481,7 @@ jobs:
   windows-arm64-validation:
     # Preserve the existing Windows ARM64 test check name for self-hosted validation.
     name: "test-windows-arm64-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
-    if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && !inputs.qnn_internal_test_symbols && github.event.pull_request.head.repo.fork != true }}
+    if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && !inputs.build_test_same_runner && inputs.qnn_internal_test_symbols && github.event.pull_request.head.repo.fork != true }}
     needs: [build, test]
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     timeout-minutes: 5
