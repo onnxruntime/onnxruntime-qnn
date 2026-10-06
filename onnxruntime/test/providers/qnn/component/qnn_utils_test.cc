@@ -52,6 +52,28 @@ namespace test {
 using qnn::utils::operator<<;
 
 // =============================================================================
+// qnn::utils::InvertPerm
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, InvertPerm_ValidPermutation) {
+  const std::vector<int64_t> perm{2, 0, 1};
+  std::vector<int64_t> inverse(perm.size());
+
+  EXPECT_TRUE(qnn::utils::InvertPerm(gsl::make_span(perm), gsl::make_span(inverse)).IsOK());
+  EXPECT_EQ(inverse, (std::vector<int64_t>{1, 2, 0}));
+}
+
+TEST(QnnUnit_UtilsTest, InvertPerm_OutOfRangeElementReturnsError) {
+  for (const std::vector<int64_t>& perm : {
+           std::vector<int64_t>{0, -1},
+           std::vector<int64_t>{0, 2},
+       }) {
+    std::vector<int64_t> inverse(perm.size());
+    EXPECT_FALSE(qnn::utils::InvertPerm(gsl::make_span(perm), gsl::make_span(inverse)).IsOK());
+  }
+}
+
+// =============================================================================
 // qnn::utils::GetElementSizeByType(Qnn_DataType_t)
 // =============================================================================
 

@@ -7,6 +7,7 @@
 #include "onnxruntime_session_options_config_keys.h"
 #if !defined(ORT_MINIMAL_BUILD)
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -1965,6 +1966,21 @@ class QnnHTPBackendTests : public ::testing::Test {
   static BackendSupport cached_htp_support_;                                               // Set by the first test using this fixture.
   static BackendSupport cached_ir_support_;
 };
+
+// V79+ HTP devices can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels in each
+// fixed test vector. Pre-V79 targets retain the default tolerance.
+inline QDQTolerance GetV79OrLaterTieRoundingTolerance(unsigned int max_output_quantization_levels) {
+  if (!QnnHTPBackendTests::HasPlatformAttributes() ||
+      QnnHTPBackendTests::GetPlatformAttributes().htp_arch < QNN_HTP_DEVICE_ARCH_V79) {
+    return QDQTolerance{};
+  }
+
+  constexpr float kU8QuantizationRange = 255.0f;
+  constexpr float kFloatingPointComparisonSlack = 1.0e-5f;
+  return QDQTolerance(static_cast<float>(max_output_quantization_levels) / kU8QuantizationRange +
+                      kFloatingPointComparisonSlack);
+}
 
 // Testing fixture class for tests that require the QNN GPU backend. Checks if QNN GPU is available before the test
 // begins. The test is skipped if the GPU backend is unavailable (may occur on Windows ARM64).
