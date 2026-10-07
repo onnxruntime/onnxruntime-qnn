@@ -123,6 +123,12 @@ class FactoryStubContext {
   // Count of EpDevice_AddAllocatorInfo invocations.
   int add_allocator_info_calls = 0;
 
+  // If non-zero, the next EpDevice_AddAllocatorInfo call returns an error.
+  int fail_next_add_allocator_info = 0;
+
+  // Count of ReleaseEpDevice invocations.
+  int release_ep_device_calls = 0;
+
   // Version string reported by MakeFakeApiBase()'s GetVersionString. An empty
   // string is reported back as a nullptr (exercises the "(null)" branch of the
   // parse-error message); a non-empty string is passed through verbatim.
@@ -323,7 +329,9 @@ class FactoryStubContext {
       *ep_device = reinterpret_cast<OrtEpDevice*>(kFakeToken);
       return nullptr;
     };
-    stub_ep_api.ReleaseEpDevice = [](OrtEpDevice*) noexcept {};
+    stub_ep_api.ReleaseEpDevice = [](OrtEpDevice*) noexcept {
+      if (auto* self = current_) ++self->release_ep_device_calls;
+    };
     stub_ep_api.CreateHardwareDevice =
         [](OrtHardwareDeviceType, uint32_t, uint32_t, const char*,
            const OrtKeyValuePairs*, OrtHardwareDevice** out) noexcept -> OrtStatus* {
@@ -335,7 +343,13 @@ class FactoryStubContext {
     stub_ep_api.ReleaseHardwareDevice = [](OrtHardwareDevice*) noexcept {};
     stub_ep_api.EpDevice_AddAllocatorInfo =
         [](OrtEpDevice*, const OrtMemoryInfo*) noexcept -> OrtStatus* {
-      if (auto* self = current_) ++self->add_allocator_info_calls;
+      if (auto* self = current_) {
+        ++self->add_allocator_info_calls;
+        if (self->fail_next_add_allocator_info > 0) {
+          --self->fail_next_add_allocator_info;
+          return reinterpret_cast<OrtStatus*>(new StatusRecord{ORT_FAIL, "stub AddAllocatorInfo failure"});
+        }
+      }
       return nullptr;
     };
     stub_ep_api.DeviceEpIncompatibilityDetails_SetDetails =
@@ -754,6 +768,30 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CreateEpDeviceFails_Prop
   EXPECT_EQ(ep_devices[0], nullptr);
   EXPECT_TRUE(ctx.created_ep_devices.empty());
   EXPECT_EQ(ctx.add_allocator_info_calls, 0);
+  ctx.stub_ort_api.ReleaseStatus(status);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_AddAllocatorInfoFails_DoesNotPublishDevice) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  OrtHardwareDevice* npu = MakeFakeHwDevice(18);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+  ctx.fail_next_add_allocator_info = 1;
+
+  const OrtHardwareDevice* devices[] = {npu};
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  OrtStatus* status = factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num);
+
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(StubStatusCode(ctx, status), ORT_FAIL);
+  EXPECT_EQ(num, 0u);
+  EXPECT_EQ(ep_devices[0], nullptr);
+  EXPECT_EQ(ctx.add_allocator_info_calls, 1);
+  EXPECT_EQ(ctx.release_ep_device_calls, 1);
   ctx.stub_ort_api.ReleaseStatus(status);
 }
 

@@ -213,12 +213,9 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   size_t& num_ep_devices = *p_num_ep_devices;
   num_ep_devices = 0;
 
-  auto create_ep_device = [&factory, &ep_devices, &num_ep_devices](const OrtHardwareDevice* device) {
+  auto create_ep_device = [&factory, &ep_devices, &num_ep_devices](const OrtHardwareDevice* device) -> OrtStatus* {
     OrtEpDevice* ep_device = nullptr;
     RETURN_IF_NOT_NULL(factory->ep_api.CreateEpDevice(factory, device, nullptr, nullptr, &ep_device));
-
-    ep_devices[num_ep_devices++] = ep_device;
-    factory->ep_devices_.push_back(ep_device);
 
     // Advertise HOST_ACCESSIBLE memory for NPU devices so OrtEnv can create a
     // QnnHtpShared allocator before a QNN session exists. Loading RPCMEM is deferred
@@ -226,11 +223,18 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     const auto device_type = factory->ort_api.HardwareDevice_Type(device);
     if (device_type == OrtHardwareDeviceType_NPU &&
         factory->host_accessible_memory_info_ != nullptr) {
-      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(
-          ep_device, factory->host_accessible_memory_info_.get()));
+      OrtStatus* status = factory->ep_api.EpDevice_AddAllocatorInfo(
+          ep_device, factory->host_accessible_memory_info_.get());
+      if (status != nullptr) {
+        factory->ep_api.ReleaseEpDevice(ep_device);
+        return status;
+      }
     }
 
-    return static_cast<OrtStatus*>(nullptr);
+    ep_devices[num_ep_devices++] = ep_device;
+    factory->ep_devices_.push_back(ep_device);
+
+    return nullptr;
   };
 
   auto create_hw_device = [&factory](const OrtHardwareDeviceType device_type,
