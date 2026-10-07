@@ -1,9 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
@@ -495,28 +499,108 @@ void OverrideParamTypeForRequantize(Qnn_DataType_t x_dtype,
   }
 }
 
-// Single source of truth for float execution, shared by ProcessInputs (stores params) and
+// Smallest ratio input_scale * weight_scale / output_scale the depthwise decomposition may ask HTP to requantize
+// by. It only binds for channels whose fused scale is (near) zero, where the weight carries no information, so
+// raising it there costs no accuracy and keeps the requantization multiplier representable.
+constexpr double kMinDepthwiseRequantRatio = 1.0 / 65536.0;
+
+// The int32 bias of the depthwise conv stays within 2^30 so that adding the accumulator cannot overflow.
+constexpr double kMaxDepthwiseBiasMagnitude = 1073741824.0;
+
+// Single source of truth for how BN is executed, shared by ProcessInputs (stores params) and
 // ProcessAttributesAndOutputs (emits the op).
 //   - has_float_output: quantized input, no output Q -> float island; BN emits float directly.
-//   - use_float_params: also covers u8/u16 input with per-channel scale, whose fused weight
-//     gamma/sqrt(var+eps) can overflow a single per-tensor requant scale.
-struct BatchNormFloatExecution {
+//   - promote_per_channel: u8/u16 input with per-channel scale. Folding the four per-channel params into one
+//     per-tensor scale (gamma/sqrt(var+eps)) is lossy: the fused scales can span orders of magnitude more than a
+//     single 8-bit scale can represent, which zeroes whole channels.
+//   - use_depthwise: the promoted BN with a per-tensor input and output encoding is computed exactly as a 1x1
+//     depthwise conv with per-channel int8 weights and int32 bias, so it stays on the quantized datapath
+//     instead of Dequantize -> BN(F32) -> Quantize. Limited to uint8 activations on HTP arch >= v73 (an unknown
+//     arch counts as older): a uint16 per-channel DepthWiseConv2d, and any one on v68, can fail graph finalization
+//     (error 1002, "No constructible op for q::Transpose.2D") when it feeds the layout Transpose to NCHW. Op validation and graphAddNode both
+//     accept it, so the EP cannot fall back per node and the combination must be excluded up front.
+//   - use_float_params: the BN runs in F32 (float output or promoted without the depthwise form).
+struct BatchNormExecution {
   bool has_float_output;
+  bool use_depthwise;
   bool use_float_params;
 };
 
-BatchNormFloatExecution GetBatchNormFloatExecution(const TensorInfo& input_info,
-                                                   const TensorInfo& scale_info,
-                                                   const TensorInfo& output_info) {
+BatchNormExecution GetBatchNormExecution(const QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& node_unit,
+                                         const TensorInfo& input_info,
+                                         const TensorInfo& scale_info,
+                                         const TensorInfo& output_info) {
   const bool is_quantized_op = input_info.quant_param.IsQuantized();
   const bool has_float_output = is_quantized_op && !output_info.quant_param.IsQuantized();
-  const bool use_float_params =
-      has_float_output ||
-      (is_quantized_op &&
-       (input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
-        input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
-       scale_info.quant_param.IsPerChannel());
-  return {has_float_output, use_float_params};
+  const bool promote_per_channel =
+      is_quantized_op &&
+      (input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+       input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) &&
+      scale_info.quant_param.IsPerChannel();
+  // QNN activations are channels-last, so only the NHWC form of a rank-4 BN has its channels on the last axis.
+  const bool use_depthwise =
+      promote_per_channel && qnn_model_wrapper.GetHtpArch() >= QNN_HTP_DEVICE_ARCH_V73 &&
+      node_unit.Domain() == kMSInternalNHWCDomain && input_info.shape.size() == 4 &&
+      input_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 &&
+      output_info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 &&
+      input_info.quant_param.IsPerTensor() && output_info.quant_param.IsPerTensor();
+  const bool use_float_params = has_float_output || (promote_per_channel && !use_depthwise);
+  return {has_float_output, use_depthwise, use_float_params};
+}
+
+// Quantized parameters of the 1x1 depthwise conv that computes y = s[c] * x + b[c] on a quantized input.
+struct DepthwiseParams {
+  std::vector<int8_t> weight;
+  std::vector<float> weight_scales;
+  std::vector<int32_t> bias;
+  std::vector<float> bias_scales;
+};
+
+// Quantizes the fused BN parameters (s = gamma / sqrt(var + eps), b = beta - mean * s) per channel:
+//   weight_scale[c] = max(|s[c]| / 127, |b[c]| / (input_scale * 2^30), min_ratio * output_scale / input_scale)
+//   weight[c]       = round(s[c] / weight_scale[c]),   an int8 in [-127, 127]
+//   bias_scale[c]   = input_scale * weight_scale[c],   bias[c] = round(b[c] / bias_scale[c])
+// The first term gives every channel the full int8 range, the second keeps the int32 bias in range, and the third
+// bounds the requantization multiplier input_scale * weight_scale / output_scale from below.
+Ort::Status ComputeDepthwiseParams(const std::vector<double>& scale,
+                                   const std::vector<double>& bias,
+                                   const double input_scale,
+                                   const double output_scale,
+                                   DepthwiseParams& params) {
+  RETURN_IF_NOT(!scale.empty() && scale.size() == bias.size(),
+                "BatchNorm fused scale and bias must be non-empty and have the same size.");
+  RETURN_IF_NOT(std::isfinite(input_scale) && input_scale > 0.0 && std::isfinite(output_scale) && output_scale > 0.0,
+                "BatchNorm input and output scales must be positive and finite.");
+
+  const size_t num_channels = scale.size();
+  const double min_weight_scale = kMinDepthwiseRequantRatio * output_scale / input_scale;
+  params.weight.resize(num_channels);
+  params.weight_scales.resize(num_channels);
+  params.bias.resize(num_channels);
+  params.bias_scales.resize(num_channels);
+
+  for (size_t c = 0; c < num_channels; ++c) {
+    RETURN_IF_NOT(std::isfinite(scale[c]) && std::isfinite(bias[c]), "BatchNorm fused parameters must be finite.");
+    const double weight_scale = std::max({std::fabs(scale[c]) / 127.0,
+                                          std::fabs(bias[c]) / (input_scale * kMaxDepthwiseBiasMagnitude),
+                                          min_weight_scale});
+    // Quantize with the float scales that are stored in the encoding so the stored values reproduce exactly.
+    const float weight_scale_f = static_cast<float>(weight_scale);
+    RETURN_IF_NOT(std::isfinite(weight_scale_f) && weight_scale_f > 0.0f,
+                  "BatchNorm depthwise weight scale must be positive and finite.");
+    const float bias_scale_f = static_cast<float>(input_scale * static_cast<double>(weight_scale_f));
+    RETURN_IF_NOT(std::isfinite(bias_scale_f) && bias_scale_f > 0.0f,
+                  "BatchNorm depthwise bias scale must be positive and finite.");
+    const double bias_scale = static_cast<double>(bias_scale_f);
+    params.weight_scales[c] = weight_scale_f;
+    params.bias_scales[c] = bias_scale_f;
+    params.weight[c] = static_cast<int8_t>(std::clamp(std::round(scale[c] / static_cast<double>(weight_scale_f)),
+                                                      -127.0, 127.0));
+    params.bias[c] = static_cast<int32_t>(std::clamp(std::round(bias[c] / bias_scale),
+                                                     -kMaxDepthwiseBiasMagnitude, kMaxDepthwiseBiasMagnitude));
+  }
+  return Ort::Status();
 }
 
 }  // namespace
@@ -624,10 +708,12 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
     const bool is_quantized_op = input_info.quant_param.IsQuantized();
 
-    // When BN runs in float, params below are stored as f32 (see GetBatchNormFloatExecution).
+    // When BN runs in float, params below are stored as f32 (see GetBatchNormExecution).
     TensorInfo output_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
-    const bool use_float_params = GetBatchNormFloatExecution(input_info, scale_info, output_info).use_float_params;
+    const BatchNormExecution execution =
+        GetBatchNormExecution(qnn_model_wrapper, node_unit, input_info, scale_info, output_info);
+    const bool use_float_params = execution.use_float_params;
 
     // Check if bias needs conversion (will be done after preprocessing)
     const bool bias_is_float = !bias_info.quant_param.IsQuantized() &&
@@ -682,6 +768,49 @@ Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                    bias_rmax,
                                    bias_rmin,
                                    bias_double_tensor));
+
+    if (execution.use_depthwise) {
+      // y = s[c] * x + b[c] as a 1x1 depthwise conv with per-channel int8 weights and int32 bias. QNN Batchnorm
+      // cannot take per-channel parameters, and a single per-tensor scale cannot represent them.
+      float input_scale = 0.0f;
+      float output_scale = 0.0f;
+      int32_t zero_point = 0;
+      RETURN_IF_ERROR(input_info.quant_param.GetPerTensorScaleOffset(input_scale, zero_point));
+      RETURN_IF_ERROR(output_info.quant_param.GetPerTensorScaleOffset(output_scale, zero_point));
+
+      DepthwiseParams dw;
+      RETURN_IF_ERROR(ComputeDepthwiseParams(scale_double_tensor, bias_double_tensor, input_scale, output_scale, dw));
+
+      const uint32_t num_channels = gsl::narrow<uint32_t>(dw.weight.size());
+      const std::string dw_weight_name = node_prefix + "_bn_dw_weight";
+      const std::string dw_bias_name = node_prefix + "_bn_dw_bias";
+
+      if (!qnn_model_wrapper.IsQnnTensorWrapperExist(dw_weight_name)) {
+        // Depthwise weight is [filter_height, filter_width, 1, channels]; the channel axis is the last one.
+        std::vector<uint8_t> weight_data(dw.weight.size());
+        std::memcpy(weight_data.data(), dw.weight.data(), weight_data.size());
+        QnnTensorWrapper weight_tensor(
+            dw_weight_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_SFIXED_POINT_8,
+            QnnQuantParamsWrapper::PerChannel(dw.weight_scales, std::vector<int32_t>(num_channels, 0), 3),
+            std::vector<uint32_t>{1, 1, 1, num_channels}, std::move(weight_data));
+        RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor)),
+                      "Failed to add BatchNorm depthwise weight tensor.");
+      }
+      input_names.push_back(dw_weight_name);
+
+      if (!qnn_model_wrapper.IsQnnTensorWrapperExist(dw_bias_name)) {
+        std::vector<uint8_t> bias_data(dw.bias.size() * sizeof(int32_t));
+        std::memcpy(bias_data.data(), dw.bias.data(), bias_data.size());
+        QnnTensorWrapper bias_tensor(
+            dw_bias_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_SFIXED_POINT_32,
+            QnnQuantParamsWrapper::PerChannel(dw.bias_scales, std::vector<int32_t>(num_channels, 0), 0),
+            std::vector<uint32_t>{num_channels}, std::move(bias_data));
+        RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_tensor)),
+                      "Failed to add BatchNorm depthwise bias tensor.");
+      }
+      input_names.push_back(dw_bias_name);
+      return Ort::Status();
+    }
 
     // Apply QNN HTP type conversions
     OverrideParamTypeForRequantize(input_info.qnn_data_type,
@@ -762,9 +891,31 @@ Ort::Status BatchNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
 
   // has_float_output emits BN's float result with no trailing Quantize, feeding downstream float ops.
-  const BatchNormFloatExecution float_exec = GetBatchNormFloatExecution(input_info, scale_info, output_info);
-  const bool has_float_output = float_exec.has_float_output;
-  const bool use_float_params = float_exec.use_float_params;
+  const BatchNormExecution execution =
+      GetBatchNormExecution(qnn_model_wrapper, node_unit, input_info, scale_info, output_info);
+  const bool has_float_output = execution.has_float_output;
+  const bool use_float_params = execution.use_float_params;
+
+  if (execution.use_depthwise) {
+    // input_names = [x, depthwise weight, depthwise bias], as pushed by ProcessInputs. A 1x1 kernel with unit
+    // stride and no padding makes the depthwise conv a per-channel affine map. Dilation is optional and defaults
+    // to [1, 1].
+    std::vector<std::string> param_tensor_names;
+    QnnParamWrapper stride_param(node_unit.Index(), node_unit.Name(), QNN_OP_DEPTH_WISE_CONV_2D_PARAM_STRIDE,
+                                 {2}, std::vector<uint32_t>{1, 1});
+    param_tensor_names.push_back(stride_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(stride_param));
+
+    QnnParamWrapper pad_param(node_unit.Index(), node_unit.Name(), QNN_OP_DEPTH_WISE_CONV_2D_PARAM_PAD_AMOUNT,
+                              {2, 2}, std::vector<uint32_t>{0, 0, 0, 0});
+    param_tensor_names.push_back(pad_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(pad_param));
+
+    RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names),
+                                   std::move(param_tensor_names), logger, do_op_validation,
+                                   QNN_OP_DEPTH_WISE_CONV_2D));
+    return Ort::Status();
+  }
 
   if (!use_float_params) {
     RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {},

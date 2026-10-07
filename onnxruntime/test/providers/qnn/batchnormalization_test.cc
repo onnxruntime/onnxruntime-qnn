@@ -4,8 +4,11 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <cmath>
+#include <filesystem>
 #include <string>
+#include <vector>
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
@@ -769,9 +772,58 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U16) {
 #endif
 }
 
+// QDQ BatchNormalization whose scale is quantized per channel (axis 0) and whose input/output are per-tensor.
+//   DQ(x) + DQ(scale, per-channel) + DQ(bias) -> BN -> Q
+template <typename InputQType>
+static GetTestQDQModelFn<InputQType> BuildPerChannelScaleQDQBatchNormTestCase(const TestInputDef<float>& input_def,
+                                                                              const TestInputDef<float>& scale_def,
+                                                                              const TestInputDef<float>& bias_def) {
+  QNN_ASSERT(input_def.IsRawData());  // Need raw data to compute mean and variance inputs.
+
+  return [input_def, scale_def, bias_def](ModelTestBuilder& builder,
+                                          std::vector<QuantParams<InputQType>>& output_qparams) {
+    const auto& input_shape = input_def.GetShape();
+    const int64_t num_channels = input_shape[1];
+
+    MakeTestInput(builder, "X", input_def);
+    const bool symmetric = sizeof(InputQType) == sizeof(uint16_t);
+    QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def, symmetric);
+    std::string x_dq_name = AddQDQNodePair<InputQType>(builder, "qdq1", "X", input_qparams.scale,
+                                                       input_qparams.zero_point);
+
+    MakeTestInput(builder, "scale", scale_def);
+    std::vector<float> scale_scales;
+    std::vector<uint8_t> scale_zps;
+    GetTestInputQuantParamsPerChannel<uint8_t>(scale_def, scale_scales, scale_zps, 0);
+    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attr = {builder.MakeScalarAttribute("axis", int64_t{0})};
+    std::string scale_dq_name = AddQDQNodePair<uint8_t>(builder, "qdq2", "scale", scale_scales, scale_zps,
+                                                        axis_attr, axis_attr);
+
+    std::string bias_dq_name = MakeTestQDQBiasInput(builder, "bias", bias_def,
+                                                    input_qparams.scale * scale_scales[0], true);
+
+    std::vector<float> mean_vals(num_channels);
+    std::vector<float> var_vals(num_channels);
+    ComputeChannelMeanAndVar(input_def.GetRawData(), input_shape, mean_vals, var_vals);
+    builder.MakeInitializer<float>("mean", {num_channels}, mean_vals);
+    builder.MakeInitializer<float>("var", {num_channels}, var_vals);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
+    attributes.push_back(builder.MakeScalarAttribute("momentum", 0.9f));
+    builder.AddNode("bn", "BatchNormalization",
+                    {x_dq_name.c_str(), scale_dq_name.c_str(), bias_dq_name.c_str(), "mean", "var"},
+                    {"Y"}, "", attributes);
+
+    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, "qdq_out", "Y",
+                                                      output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
 // Test BatchNorm with near-zero variance channels (U8 input). When gamma/sqrt(var+eps) produces
-// outlier values, per-tensor uint8 quantization of fused weight overflows. The float-promotion path
-// (Convert U8->F32, BN in F32, Convert F32->U8) avoids this accuracy loss.
+// outlier values, per-tensor uint8 quantization of fused weight overflows. Keeping the per-channel parameters
+// avoids this accuracy loss, either as the float island (Convert U8->F32, BN in F32, Convert F32->U8) or, on
+// HTP arch >= v73, as a per-channel depthwise conv.
 TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U8) {
   constexpr int64_t batch = 1;
   constexpr int64_t channels = 4;
@@ -792,50 +844,13 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U8) {
   TestInputDef<float> scale_def({channels}, true, scale_data);
   TestInputDef<float> bias_def({channels}, true, bias_data);
 
-  // Need this custom method to test the float promotion logic to fp32. This lambda creates the op's inputs to be in per-channel mode
-  GetTestQDQModelFn<uint8_t> qdq_model_fn = [input_def, scale_def, bias_def](ModelTestBuilder& builder,
-                                                                             std::vector<QuantParams<uint8_t>>& output_qparams) {
-    const auto& input_shape = input_def.GetShape();
-    const auto& input_data_ref = input_def.GetRawData();
-    const int64_t num_channels = input_shape[1];
-
-    MakeTestInput(builder, "X", input_def);
-    QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
-    std::string x_dq_name = AddQDQNodePair<uint8_t>(builder, "qdq1", "X", input_qparams.scale, input_qparams.zero_point);
-
-    // Per-channel QDQ for scale (axis=0)
-    MakeTestInput(builder, "scale", scale_def);
-    std::vector<float> scale_scales;
-    std::vector<uint8_t> scale_zps;
-    GetTestInputQuantParamsPerChannel<uint8_t>(scale_def, scale_scales, scale_zps, 0);
-    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attr = {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0))};
-    std::string scale_dq_name = AddQDQNodePair<uint8_t>(builder, "qdq2", "scale", scale_scales, scale_zps, axis_attr, axis_attr);
-
-    std::string bias_dq_name = MakeTestQDQBiasInput(builder, "bias", bias_def, input_qparams.scale * scale_scales[0], true);
-
-    std::vector<float> mean_vals(num_channels);
-    std::vector<float> var_vals(num_channels);
-    ComputeChannelMeanAndVar(input_data_ref, input_shape, mean_vals, var_vals);
-
-    builder.MakeInitializer<float>("mean", {num_channels}, mean_vals);
-    builder.MakeInitializer<float>("var", {num_channels}, var_vals);
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
-    attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
-    attributes.push_back(builder.MakeScalarAttribute("momentum", 0.9f));
-    builder.AddNode("bn", "BatchNormalization",
-                    {x_dq_name.c_str(), scale_dq_name.c_str(), bias_dq_name.c_str(), "mean", "var"},
-                    {"Y"}, "", attributes);
-
-    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "Y",
-                                                   output_qparams[0].scale, output_qparams[0].zero_point);
-  };
-
+  // The per-channel scale QDQ model exercises the per-channel promotion logic (float island or depthwise conv).
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
-                       qdq_model_fn, provider_options, 21, ExpectedEPNodeAssignment::All);
+                       BuildPerChannelScaleQDQBatchNormTestCase<uint8_t>(input_def, scale_def, bias_def),
+                       provider_options, 21, ExpectedEPNodeAssignment::All);
 }
 
 // Builds the float (reference) form of the NASNet reduction-cell pattern:
@@ -1094,6 +1109,221 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_SharedBiasInitializer) {
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+// Input whose channel c holds a fixed pattern scaled by amplitudes[c], laid out [batch, channel, spatial...].
+static std::vector<float> MakeChannelAmplitudeData(int64_t batch, const std::vector<float>& amplitudes,
+                                                   int64_t spatial_size) {
+  const int64_t num_channels = static_cast<int64_t>(amplitudes.size());
+  std::vector<float> data;
+  data.reserve(static_cast<size_t>(batch * num_channels * spatial_size));
+  for (int64_t b = 0; b < batch; ++b) {
+    for (int64_t c = 0; c < num_channels; ++c) {
+      for (int64_t i = 0; i < spatial_size; ++i) {
+        const float pattern = static_cast<float>((i * 7 + c * 3 + b * 5) % 9 - 4) / 4.0f;  // [-1, 1]
+        data.push_back(amplitudes[static_cast<size_t>(c)] * pattern);
+      }
+    }
+  }
+  return data;
+}
+
+// Geometric progression from lo to hi over n values.
+static std::vector<float> GeometricRange(float lo, float hi, size_t n) {
+  std::vector<float> v(n);
+  for (size_t i = 0; i < n; ++i) {
+    v[i] = lo * std::pow(hi / lo, static_cast<float>(i) / static_cast<float>(n - 1));
+  }
+  return v;
+}
+
+// With no SoC given the EP does not know the simulator's HTP arch (the backend itself defaults to v68), and an
+// unknown arch counts as older than v73. Pin SM8550 (v73) there, as the other BN tests do.
+static std::string DefaultSocModelForSimulator() {
+#if defined(__linux__) && !defined(__aarch64__)
+  return std::to_string(QNN_SOC_MODEL_SM8550);
+#else
+  return "";
+#endif
+}
+
+// Op counts expected in the compiled QNN graph. With offload_graph_io_quantization=0 the float graph input is
+// quantized and the float graph output dequantized inside QNN, so a BN that stays on the quantized datapath leaves
+// one Quantize and one Dequantize. A Dequantize -> BN(F32) -> Quantize island adds one more of each.
+struct ExpectedBatchNormGraph {
+  size_t batchnorm = 0;
+  size_t depthwise_conv = 0;
+  size_t quantize = 1;
+  size_t dequantize = 1;
+};
+
+// Runs the per-channel-scale QDQ BatchNorm on HTP, compares it with the CPU EP running the same QDQ model, and checks
+// the compiled QNN graph.
+template <typename InputQType>
+static void RunPerChannelScaleBatchNormTest(const std::string& test_name,
+                                            const TestInputDef<float>& input_def,
+                                            const TestInputDef<float>& scale_def,
+                                            const TestInputDef<float>& bias_def,
+                                            const ExpectedBatchNormGraph& expected_graph,
+                                            QDQTolerance tolerance = QDQTolerance(),
+                                            const std::string& soc_model = DefaultSocModelForSimulator()) {
+  const std::filesystem::path json_qnn_graph_dir = test_name;
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+  if (!soc_model.empty()) {
+    provider_options["soc_model"] = soc_model;
+  }
+
+  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
+                       BuildPerChannelScaleQDQBatchNormTestCase<InputQType>(input_def, scale_def, bias_def),
+                       provider_options, 21, ExpectedEPNodeAssignment::All, tolerance);
+
+  // TestQDQModelAccuracy issues GTEST_SKIP() from the helper on unsupported HTP archs; without a dump there is
+  // nothing to assert.
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Batchnorm", expected_graph.batchnorm);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "DepthWiseConv2d", expected_graph.depthwise_conv);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", expected_graph.quantize);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", expected_graph.dequantize);
+}
+
+// Per-channel scale params with per-channel fused scales spanning ~4 orders of magnitude, with both signs. Folding
+// them into one per-tensor 8-bit scale zeroes the small channels and clips the large ones. The exact answer is a 1x1
+// depthwise conv with per-channel weights, so BN must become one DepthWiseConv2d and no Q/DQ around it.
+TEST_F(QnnHTPBackendTests, BatchNorm2D_PerChannelParams_DepthwiseConv_U8) {
+  constexpr int64_t channels = 16;
+  std::vector<float> amplitudes = GeometricRange(0.25f, 8.0f, channels);
+  std::vector<float> gamma = GeometricRange(0.05f, 6.0f, channels);
+  std::vector<float> beta(channels);
+  for (int64_t c = 0; c < channels; ++c) {
+    gamma[c] *= (c % 3 == 1) ? -1.0f : 1.0f;
+    beta[c] = 0.1f * static_cast<float>(c % 5) - 0.2f;
+  }
+
+  TestInputDef<float> input_def({2, channels, 4, 4}, false, MakeChannelAmplitudeData(2, amplitudes, 16));
+  TestInputDef<float> scale_def({channels}, true, gamma);
+  TestInputDef<float> bias_def({channels}, true, beta);
+
+  RunPerChannelScaleBatchNormTest<uint8_t>("BatchNorm2D_PerChannelParams_DepthwiseConv_U8", input_def, scale_def,
+                                           bias_def, {/*batchnorm*/ 0, /*depthwise_conv*/ 1, /*quantize*/ 1,
+                                                      /*dequantize*/ 1});
+}
+
+// uint16 activations keep the exact float island: a per-channel DepthWiseConv2d with uint16 activations fails
+// graph finalization when it feeds the output Transpose, and validation cannot see it.
+TEST_F(QnnHTPBackendTests, BatchNorm2D_PerChannelParams_KeepsFloatIsland_U16) {
+  constexpr int64_t channels = 16;
+  std::vector<float> amplitudes = GeometricRange(0.25f, 8.0f, channels);
+  std::vector<float> gamma = GeometricRange(0.05f, 6.0f, channels);
+  std::vector<float> beta(channels, 0.3f);
+  for (int64_t c = 0; c < channels; c += 4) gamma[c] = -gamma[c];
+
+  TestInputDef<float> input_def({1, channels, 4, 4}, false, MakeChannelAmplitudeData(1, amplitudes, 16));
+  TestInputDef<float> scale_def({channels}, true, gamma);
+  TestInputDef<float> bias_def({channels}, true, beta);
+
+  RunPerChannelScaleBatchNormTest<uint16_t>("BatchNorm2D_PerChannelParams_KeepsFloatIsland_U16", input_def, scale_def,
+                                            bias_def, {/*batchnorm*/ 1, /*depthwise_conv*/ 0, /*quantize*/ 2,
+                                                       /*dequantize*/ 2});
+}
+
+#if defined(__linux__) && !defined(__aarch64__)
+// On HTP v68 a per-channel DepthWiseConv2d that feeds the layout Transpose can fail graph finalization, so BN keeps
+// the float island. SM8350 maps to v68; the arch of a real device is fixed by the hardware, so simulator only.
+TEST_F(QnnHTPBackendTests, BatchNorm2D_PerChannelParams_KeepsFloatIsland_V68_U8) {
+  constexpr int64_t channels = 16;
+  std::vector<float> amplitudes = GeometricRange(0.25f, 8.0f, channels);
+  std::vector<float> gamma = GeometricRange(0.05f, 6.0f, channels);
+  std::vector<float> beta(channels, 0.1f);
+
+  TestInputDef<float> input_def({1, channels, 4, 4}, false, MakeChannelAmplitudeData(1, amplitudes, 16));
+  TestInputDef<float> scale_def({channels}, true, gamma);
+  TestInputDef<float> bias_def({channels}, true, beta);
+
+  RunPerChannelScaleBatchNormTest<uint8_t>("BatchNorm2D_PerChannelParams_KeepsFloatIsland_V68_U8", input_def,
+                                           scale_def, bias_def,
+                                           {/*batchnorm*/ 1, /*depthwise_conv*/ 0, /*quantize*/ 2,
+                                            /*dequantize*/ 2},
+                                           QDQTolerance(), std::to_string(QNN_SOC_MODEL_SM8350));
+}
+#endif
+
+// Channels the fused scale cannot see: gamma == 0 (dead channel, output is the bias alone), a constant channel whose
+// variance is ~0 so gamma / sqrt(var + eps) is huge, and a channel with a tiny gamma.
+TEST_F(QnnHTPBackendTests, BatchNorm2D_PerChannelParams_DepthwiseConv_DeadAndExtremeChannels) {
+  constexpr int64_t channels = 8;
+  std::vector<float> amplitudes = {2.0f, 3.0f, 0.0f, 1.0f, 4.0f, 0.5f, 2.5f, 1.5f};  // channel 2 is constant zero
+  std::vector<float> gamma = {1.0f, 0.0f, 0.5f, 1e-3f, -2.0f, 0.0f, 3.0f, -0.2f};
+  std::vector<float> beta = {0.0f, 0.7f, 0.25f, -0.5f, 0.1f, -0.3f, 0.0f, 0.4f};
+
+  TestInputDef<float> input_def({1, channels, 3, 3}, false, MakeChannelAmplitudeData(1, amplitudes, 9));
+  TestInputDef<float> scale_def({channels}, true, gamma);
+  TestInputDef<float> bias_def({channels}, true, beta);
+
+  RunPerChannelScaleBatchNormTest<uint8_t>("BatchNorm2D_PerChannelParams_DepthwiseConv_DeadAndExtremeChannels",
+                                           input_def, scale_def, bias_def, {0, 1, 1, 1});
+}
+
+// The decomposition needs the channel on a conv axis. A rank-3 BN keeps the exact float island.
+TEST_F(QnnHTPBackendTests, BatchNorm1D_PerChannelParams_KeepsFloatIsland_U8) {
+  constexpr int64_t channels = 8;
+  std::vector<float> amplitudes = GeometricRange(0.5f, 4.0f, channels);
+  std::vector<float> gamma = GeometricRange(0.1f, 3.0f, channels);
+  std::vector<float> beta(channels, 0.1f);
+
+  TestInputDef<float> input_def({2, channels, 6}, false, MakeChannelAmplitudeData(2, amplitudes, 6));
+  TestInputDef<float> scale_def({channels}, true, gamma);
+  TestInputDef<float> bias_def({channels}, true, beta);
+
+  RunPerChannelScaleBatchNormTest<uint8_t>("BatchNorm1D_PerChannelParams_KeepsFloatIsland_U8", input_def, scale_def,
+                                           bias_def, {/*batchnorm*/ 1, /*depthwise_conv*/ 0, /*quantize*/ 2,
+                                                      /*dequantize*/ 2});
+}
+
+// Per-tensor params fold exactly into a single quantized QNN Batchnorm; it must not be rewritten.
+TEST_F(QnnHTPBackendTests, BatchNorm2D_PerTensorParams_StaysQuantizedBatchnorm_U8) {
+  constexpr int64_t num_channels = 2;
+  const std::filesystem::path json_qnn_graph_dir = "BatchNorm2D_PerTensorParams_StaysQuantizedBatchnorm_U8";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+  if (const std::string soc_model = DefaultSocModelForSimulator(); !soc_model.empty()) {
+    provider_options["soc_model"] = soc_model;
+  }
+
+  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
+                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
+  TestInputDef<float> input_def({2, num_channels, 2, 2}, false, input_data);
+  TestInputDef<float> scale_def({num_channels}, true, {1.0f, 2.0f});
+  TestInputDef<float> bias_def({num_channels}, true, {1.1f, 2.1f});
+
+  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
+                       BuildQDQBatchNormTestCase<uint8_t, uint8_t>(input_def, scale_def, bias_def),
+                       provider_options, 21, ExpectedEPNodeAssignment::All);
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Batchnorm", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "DepthWiseConv2d", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", 1);
+}
 
 }  // namespace test
 }  // namespace onnxruntime
