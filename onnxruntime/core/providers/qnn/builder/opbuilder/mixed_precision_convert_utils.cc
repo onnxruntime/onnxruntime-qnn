@@ -62,19 +62,19 @@ Ort::Status AlignBinaryInputPrecision(QnnModelWrapper& qnn_model_wrapper,
     return Ort::Status();
   }
 
-  // 2. Same-precision inputs need no Convert.
+  // 2. Same-precision inputs need no Convert. Same-width but differing signedness (e.g.
+  // Mul(s8, u8)) also needs no Convert: it isn't a width mismatch, and QNN HTP validates
+  // mixed-signedness input pairs natively for these ops, so leave such inputs untouched and let
+  // op validation be the arbiter.
   const Qnn_DataType_t dt0 = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
   const Qnn_DataType_t dt1 = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetTensorDataType();
-  if (dt0 == dt1) {
+  if (dt0 == dt1 || FixedPointBitWidth(dt0) == FixedPointBitWidth(dt1)) {
     return Ort::Status();
   }
   RETURN_IF_NOT(NeedsPrecisionConvert(dt0, dt1),
                 "QNN EP's binary-op precision Convert only supports a mismatched fixed-point input pair.");
 
-  // 3. Convert the narrower input up to the wider input's precision. Same-width but differing
-  // signedness (e.g. Mul(s8, u8)) isn't a width mismatch, but a Convert is still required since
-  // the QNN dtypes differ; the tie-break below always picks input 1 in that case, converting it
-  // to input 0's dtype.
+  // 3. Convert the narrower input up to the wider input's precision.
   const size_t narrow_idx = FixedPointBitWidth(dt0) < FixedPointBitWidth(dt1) ? 0 : 1;
   const Qnn_DataType_t wide_dtype = narrow_idx == 0 ? dt1 : dt0;
   const auto& narrow_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[narrow_idx]);
