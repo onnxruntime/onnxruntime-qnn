@@ -225,6 +225,7 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   if (frame_step_index != -1) {
     const auto& frame_step_input = inputs[frame_step_index];
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(frame_step_input, frame_step));
+    RETURN_IF_NOT(frame_step.is_initializer, "STFT frame_step must be a constant initializer.");
     std::vector<uint8_t> frame_step_data;
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(frame_step.initializer_tensor, frame_step_data));
     RETURN_IF(frame_step_data.size() != sizeof(int64_t), "STFT frame_step must be a scalar int64 initializer.");
@@ -237,6 +238,7 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   if (frame_length_index != -1) {
     const auto& frame_length_input = inputs[frame_length_index];
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(frame_length_input, frame_length));
+    RETURN_IF_NOT(frame_length.is_initializer, "STFT frame_length must be a constant initializer.");
 
     std::vector<uint8_t> frame_length_data;
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(frame_length.initializer_tensor, frame_length_data));
