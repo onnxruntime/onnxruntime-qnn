@@ -300,6 +300,7 @@ Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
 
     OrtNodeAttrHelper node_helper(*ep_context_node);
     int64_t max_size = node_helper.Get(MAX_SIZE, static_cast<int64_t>(0));
+    RETURN_IF(max_size < 0, "EPContext max_size must not be negative.");
     if (max_size > max_spill_fill_size) {
       max_spill_fill_size = max_size;
       max_size_index = idx;

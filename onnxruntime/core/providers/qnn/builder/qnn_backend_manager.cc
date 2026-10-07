@@ -2001,6 +2001,33 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
   RETURN_IF(graph_count < 1 || graphs_info == nullptr, "Failed to get graph info from Qnn cached context.");
 
+  RETURN_IF(max_spill_fill_size < 0, "EPContext max_size must not be negative.");
+  const size_t current_contexts_size = GetQnnContextSize();
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+  uint64_t parsed_max_spill_fill_size = 0;
+  for (uint32_t i = 0; i < graph_count; ++i) {
+    if (graphs_info[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
+      auto* htp_graph_info =
+          reinterpret_cast<QnnHtpSystemContext_GraphBlobInfo_t*>(graphs_info[i].graphInfoV3.graphBlobInfo);
+      if (htp_graph_info != nullptr &&
+          htp_graph_info->version == QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_VERSION_V1) {
+        parsed_max_spill_fill_size =
+            std::max(parsed_max_spill_fill_size,
+                     static_cast<uint64_t>(htp_graph_info->contextBinaryGraphBlobInfoV1.spillFillBufferSize));
+      }
+    }
+  }
+  RETURN_IF(current_contexts_size == 0 &&
+                static_cast<uint64_t>(max_spill_fill_size) > parsed_max_spill_fill_size,
+            ("EPContext max_size " + std::to_string(max_spill_fill_size) +
+             " exceeds the spill-fill size " + std::to_string(parsed_max_spill_fill_size) +
+             " declared by the context binary.")
+                .c_str());
+#else
+  RETURN_IF(max_spill_fill_size != 0,
+            "EPContext max_size is unsupported by this QNN SDK version.");
+#endif
+
   ORT_CXX_LOG_PTR(logger_ptr_,
                   ORT_LOGGING_LEVEL_VERBOSE,
                   ("Graph count from QNN context: " + std::to_string(graph_count)).c_str());
@@ -2016,7 +2043,6 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   } else {
 #endif
     // Join the existing spill-fill group if one exists; otherwise start a new one.
-    size_t current_contexts_size = GetQnnContextSize();
     Qnn_ContextHandle_t first_group_handle =
         (max_spill_fill_size > 0 && current_contexts_size > 0) ? GetQnnContext(0) : 0x0;
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
