@@ -50,17 +50,22 @@ on:
         description: "If true, build a Windows ARM64 RelWithDebInfo archive."
         type: boolean
         default: false
+      maven_only:
+        description: "If true, only build the Android Maven inputs."
+        type: boolean
+        default: false
 
   workflow_dispatch:
     inputs: *common_inputs
 
 jobs:
   archive-testdata:
+    if: ${{ !inputs.maven_only }}
     uses: ./.github/workflows/qualcomm-internal-archive-testdata.yml
     secrets: inherit
 
   build-android-aarch64:
-    if: ${{ inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
+    if: ${{ always() && (inputs.build_android_aarch64 || inputs.build_android_aarch64_aar) && (inputs.maven_only || needs.archive-testdata.result == 'success') }}
     needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -79,7 +84,7 @@ jobs:
       upload_aar: ${{ inputs.build_android_aarch64_aar }}
 
   test-android-aarch64:
-    if: ${{ inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
+    if: ${{ !inputs.maven_only && (inputs.build_android_aarch64 || inputs.build_android_aarch64_aar) }}
     needs: [build-android-aarch64]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
@@ -88,7 +93,7 @@ jobs:
       target_arch: aarch64
 
   build-linux-aarch64-manylinux_2_34:
-    if: ${{ toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
+    if: ${{ !inputs.maven_only && toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
     strategy:
       matrix:
@@ -110,7 +115,7 @@ jobs:
       upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
 
   build-linux-aarch64-oe-gcc11_2:
-    if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
+    if: ${{ !inputs.maven_only && inputs.build_linux_aarch64_oe_gcc11_2 }}
     needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -125,7 +130,7 @@ jobs:
       upload_wheel: false
 
   build-linux-x86_64-ubuntu-22-04:
-    if: ${{ toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
+    if: ${{ !inputs.maven_only && toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
     strategy:
       matrix:
@@ -147,7 +152,7 @@ jobs:
       upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
 
   build-windows:
-    if: ${{ toJSON(fromJSON(inputs.windows_target_archs)) != '[]' && toJSON(fromJSON(inputs.windows_target_py_vsns)) != '[]' }}
+    if: ${{ !inputs.maven_only && toJSON(fromJSON(inputs.windows_target_archs)) != '[]' && toJSON(fromJSON(inputs.windows_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
     strategy:
       matrix:
@@ -179,6 +184,7 @@ jobs:
       upload_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
 
   build-windows-arm64x:
+    if: ${{ !inputs.maven_only }}
     needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -199,7 +205,7 @@ jobs:
       upload_pdb_archive: true
 
   setup-debug-matrix:
-    if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
+    if: ${{ !inputs.maven_only && (inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo) }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
@@ -218,7 +224,7 @@ jobs:
 
   build-windows-arm64-debug-builds:
     needs: [archive-testdata, setup-debug-matrix]
-    if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
+    if: ${{ !inputs.maven_only && (inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo) }}
     name: build-windows-arm64-${{ matrix.suffix }}
     strategy:
       matrix: ${{ fromJSON(needs.setup-debug-matrix.outputs.matrix) }}

@@ -19,6 +19,10 @@ on:
         description: "If true, skip building and uploading Android AAR/Maven artifacts."
         type: boolean
         default: false
+      maven_only:
+        description: "If true, only build and publish the Android Maven artifact."
+        type: boolean
+        default: false
 
 jobs:
   check-admin-permission:
@@ -60,3 +64,4 @@ jobs:
       skip_publish: false
       version_suffix: ${{ inputs.version_suffix }}
       skip_android_builds: ${{ inputs.skip_android_builds }}
+      maven_only: ${{ inputs.maven_only }}
