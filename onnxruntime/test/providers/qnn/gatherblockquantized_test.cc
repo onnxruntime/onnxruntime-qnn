@@ -71,6 +71,8 @@ struct GatherBQTestParams {
   int64_t block_size{32};
   int64_t gather_axis{0};
   int64_t quantize_axis{1};
+  bool indices_are_initializer{false};
+  std::vector<int64_t> indices;
 };
 
 // When weight_is_unpacked_int4 is true, the weight input arrives already-unpacked as INT4
@@ -153,17 +155,20 @@ static void RunGatherBlockQuantizedTest(
     // ------------------------------------------------------------
     // Indices
     // ------------------------------------------------------------
-    int64_t num_indices = params.batch_size * params.seq_len;
-    std::vector<int64_t> indices(num_indices);
-    for (int64_t i = 0; i < num_indices; ++i) {
-      indices[i] = i % params.vocab_size;
+    const int64_t num_indices = params.batch_size * params.seq_len;
+    std::vector<int64_t> indices = params.indices;
+    if (indices.empty()) {
+      indices.resize(num_indices);
+      for (int64_t i = 0; i < num_indices; ++i) {
+        indices[i] = i % params.vocab_size;
+      }
     }
 
     // ------------------------------------------------------------
     // Graph inputs
     // ------------------------------------------------------------
-    auto indices_def =
-        TestInputDef<int64_t>({params.batch_size, params.seq_len}, false, indices);
+    auto indices_def = TestInputDef<int64_t>({params.batch_size, params.seq_len},
+                                             params.indices_are_initializer, indices);
     MakeTestInput<int64_t>(builder, "indices", indices_def);
 
     auto scales_def =
@@ -228,6 +233,18 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_LargerIndices) {
   params.block_size = 32;
   params.gather_axis = 0;
   params.quantize_axis = 1;
+  RunGatherBlockQuantizedTest(params);
+}
+
+// Static negative indices are valid ONNX values. The builder must normalize them
+// against the Gather axis before creating QNN's int32 indices tensor.
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_StaticNegativeIndices) {
+  GatherBQTestParams params;
+  params.vocab_size = 128;
+  params.hidden_size = 64;
+  params.block_size = 32;
+  params.indices_are_initializer = true;
+  params.indices = {-1};
   RunGatherBlockQuantizedTest(params);
 }
 
