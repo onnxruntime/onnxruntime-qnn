@@ -46,8 +46,15 @@ Ort::Status ProcessGatherNDIndices(QnnModelWrapper& qnn_model_wrapper,
   TensorInfo indices_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(indices_input, indices_info));
 
+  RETURN_IF(indices_info.shape.empty(), "QNN EP: GatherND indices must have rank >= 1.");
+  RETURN_IF(batch_dims < 0, "QNN EP: GatherND batch_dims must be non-negative.");
   const uint32_t index_tuple_size = indices_info.shape.back();
   const auto num_batch_dims = static_cast<size_t>(batch_dims);
+  RETURN_IF(num_batch_dims >= indices_info.shape.size(),
+            "QNN EP: GatherND batch_dims must be smaller than the indices rank.");
+  RETURN_IF(num_batch_dims > data_shape.size() ||
+                static_cast<size_t>(index_tuple_size) > data_shape.size() - num_batch_dims,
+            "QNN EP: GatherND batch_dims plus indices tuple width exceeds the data rank.");
 
   // Column `col` of an index tuple addresses data dim `num_batch_dims + col`.
   const auto axis_dim_for_element =
@@ -125,6 +132,7 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
 
   OrtNodeAttrHelper node_helper(node_unit);
   const int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
+  RETURN_IF(batch_dims < 0, "QNN EP: GatherND batch_dims must be non-negative.");
 
   std::vector<std::string> param_tensor_names;
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
@@ -137,11 +145,16 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
 
   const auto& data_dims = data_tensor_wrapper.GetTensorDims();
   const auto& indices_dims = indices_tensor_wrapper.GetTensorDims();
+  RETURN_IF(indices_dims.empty(), "QNN EP: GatherND indices must have rank >= 1.");
 
   // ONNX GatherND output shape:
   //   data[:num_batch_dims] ++ indices[:-1] ++ data[num_batch_dims + indices.back():]
   const auto num_batch_dims = static_cast<size_t>(batch_dims);
   const size_t index_tuple_size = indices_dims.back();
+  RETURN_IF(num_batch_dims >= indices_dims.size(),
+            "QNN EP: GatherND batch_dims must be smaller than the indices rank.");
+  RETURN_IF(num_batch_dims > data_dims.size() || index_tuple_size > data_dims.size() - num_batch_dims,
+            "QNN EP: GatherND batch_dims plus indices tuple width exceeds the data rank.");
   const size_t first_trailing_data_dim = num_batch_dims + index_tuple_size;
 
   std::vector<uint32_t> qnn_output_shape;
