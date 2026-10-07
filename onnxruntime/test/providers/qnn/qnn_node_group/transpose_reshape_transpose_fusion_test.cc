@@ -21,23 +21,31 @@ GetTestModelFn BuildTransposeReshapeTransposeTestCase(
     const TestInputDef<float>& input_def,
     const std::vector<int64_t>& perm1,
     const std::vector<int64_t>& reshape_shape,
-    const std::vector<int64_t>& perm2) {
-  return [input_def, perm1, reshape_shape, perm2](ModelTestBuilder& builder) {
+    const std::vector<int64_t>& perm2,
+    bool omit_perm1 = false,
+    bool omit_perm2 = false) {
+  return [input_def, perm1, reshape_shape, perm2, omit_perm1, omit_perm2](ModelTestBuilder& builder) {
     // Input
     MakeTestInput<float>(builder, "input", input_def);
 
     // Transpose1: input -> transpose1_out
-    builder.AddNode("transpose1", "Transpose", {"input"}, {"transpose1_out"}, "",
-                    {test::MakeAttribute("perm", perm1)});
+    std::vector<ONNX_NAMESPACE::AttributeProto> transpose1_attrs;
+    if (!omit_perm1) {
+      transpose1_attrs.push_back(test::MakeAttribute("perm", perm1));
+    }
+    builder.AddNode("transpose1", "Transpose", {"input"}, {"transpose1_out"}, "", transpose1_attrs);
 
     // Reshape: transpose1_out -> reshape_out
     builder.Make1DInitializer<int64_t>("reshape_shape", reshape_shape);
     builder.AddNode("reshape", "Reshape", {"transpose1_out", "reshape_shape"}, {"reshape_out"});
 
     // Transpose2: reshape_out -> output
+    std::vector<ONNX_NAMESPACE::AttributeProto> transpose2_attrs;
+    if (!omit_perm2) {
+      transpose2_attrs.push_back(test::MakeAttribute("perm", perm2));
+    }
     builder.MakeOutput("output");
-    builder.AddNode("transpose2", "Transpose", {"reshape_out"}, {"output"}, "",
-                    {test::MakeAttribute("perm", perm2)});
+    builder.AddNode("transpose2", "Transpose", {"reshape_out"}, {"output"}, "", transpose2_attrs);
   };
 }
 
@@ -136,6 +144,31 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_Basic) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   // Verify fusion: should have Reshape, no Transpose
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 0);
+}
+
+// ONNX defines a missing Transpose perm as reversing the input dimensions.
+// Two default reversals around a no-op Reshape are equivalent to one Reshape.
+TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_DefaultPerms) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "TransposeReshapeTransposeFusion_DefaultPerms";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  const std::vector<int64_t> input_shape{2, 3, 4};
+  const auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+  RunQnnModelTest(BuildTransposeReshapeTransposeTestCase(
+                      input_def, /*perm1=*/{}, /*reshape_shape=*/{4, 3, 2}, /*perm2=*/{},
+                      /*omit_perm1=*/true, /*omit_perm2=*/true),
+                  provider_options, 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 0);
 }
