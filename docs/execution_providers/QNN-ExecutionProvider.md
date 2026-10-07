@@ -1654,6 +1654,10 @@ Refers to the [EPContext design doc](https://onnxruntime.ai/docs/execution-provi
 
 Note: QNN EP requires **Linux x86_64** or **Windows x86_64** platform.
 
+All sessions that enable shared EP contexts must belong to the same trust domain. The shared
+registry binds each cached graph to its EP context source before allowing another session to
+reuse it.
+
 Additionally, if user creates the QNN context binary (`qnn_ctx.bin`) with weight sharing using the QNN toolchain (`qnn-context-binary-generator`), they can use a script to generate the wrapper Onnx model from the context:  [gen_qnn_ctx_onnx_model.py](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/qnn/gen_qnn_ctx_onnx_model.py). The script creates multiple `model_x_ctx.onnx` files, each containing an `EPContext` node that references the shared `qnn_ctx.bin` file. Each `EPContext` node specifies a unique node name, referring to different Qnn graph from the QNN context.
 
 
