@@ -59,6 +59,8 @@ def run_preflight(
     download_fails: bool = False,
     fake_unzip: str | None = None,
     initial_github_env: str = "",
+    golden_dir: Path | None = None,
+    working_dir: Path | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -72,7 +74,8 @@ def run_preflight(
     if fake_unzip is not None:
         write_executable(fake_bin / "unzip", fake_unzip)
 
-    golden_dir = tmp_path / "goldens"
+    if golden_dir is None:
+        golden_dir = tmp_path / "goldens"
     github_env = tmp_path / "github_env"
     github_env.write_text(initial_github_env)
     env = os.environ.copy()
@@ -100,6 +103,7 @@ def run_preflight(
         capture_output=True,
         text=True,
         env=env,
+        cwd=working_dir,
     )
     return result, github_env, golden_dir
 
@@ -182,3 +186,28 @@ def test_aligned_archive_enables_golden_store(tmp_path: Path, build_dir: Path) -
     assert github_env.read_text() == f"QNN_UT_SNAPSHOT_GOLDEN_DIR=\nQNN_UT_SNAPSHOT_GOLDEN_DIR={golden_dir}\n"
     assert (golden_dir / "manifest.json").is_file()
     assert (golden_dir / "snapshot/builder/opbuilder/clip/Case.json").is_file()
+
+
+def test_relative_golden_dir_exports_absolute_store_for_provider_working_dir(tmp_path: Path, build_dir: Path) -> None:
+    source_zip = tmp_path / "goldens.zip"
+    create_zip(source_zip, {"qairt_version": QAIRT_VERSION, "ort_version": ORT_VERSION})
+    relative_golden_dir = Path("build/linux-x86_64/snapshot-goldens")
+    provider_working_dir = tmp_path / "build/linux-x86_64/RelWithDebInfo"
+    provider_working_dir.mkdir(parents=True)
+
+    result, github_env, _ = run_preflight(
+        tmp_path,
+        build_dir,
+        source_zip,
+        golden_dir=relative_golden_dir,
+        working_dir=tmp_path,
+    )
+
+    expected_golden_dir = (tmp_path / relative_golden_dir).resolve()
+    assert result.returncode == 0, result.stderr
+    assert github_env.read_text() == (
+        f"QNN_UT_SNAPSHOT_GOLDEN_DIR=\nQNN_UT_SNAPSHOT_GOLDEN_DIR={expected_golden_dir}\n"
+    )
+    exported_golden_dir = Path(github_env.read_text().splitlines()[-1].split("=", 1)[1])
+    assert exported_golden_dir.is_absolute()
+    assert (provider_working_dir / exported_golden_dir / "manifest.json").is_file()

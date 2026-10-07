@@ -107,6 +107,9 @@ then
 fi
 
 mkdir -p "${golden_dir}"
+if ! golden_dir="$(realpath "${golden_dir}")"; then
+    disable_store "failed to canonicalize destination: ${golden_dir}."
+fi
 if ! unzip -q "${zip_path}" -d "${golden_dir}"; then
     rmdir "${golden_dir}" 2>/dev/null || true
     disable_store "failed to extract goldens.zip."

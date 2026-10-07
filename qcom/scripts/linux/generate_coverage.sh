@@ -232,6 +232,17 @@ run_test_phase() {
     (
         cd "${build_dir}/${config}"
         export LD_LIBRARY_PATH="${build_dir}/${config}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+        if [ "${phase_name}" = "snapshot" ]; then
+            if [ -z "${QNN_UT_SNAPSHOT_GOLDEN_DIR:-}" ]; then
+                log_warn "Snapshot tests have no golden store configured; accuracy will use the full-run fallback."
+            elif [ ! -f "${QNN_UT_SNAPSHOT_GOLDEN_DIR}/manifest.json" ]; then
+                log_warn "Snapshot golden manifest is unavailable from test working directory $(pwd): ${QNN_UT_SNAPSHOT_GOLDEN_DIR}/manifest.json"
+            else
+                log_info "Snapshot test working directory: $(pwd)"
+                log_info "Snapshot tests using golden store: ${QNN_UT_SNAPSHOT_GOLDEN_DIR}"
+                log_info "Snapshot golden manifest: ${QNN_UT_SNAPSHOT_GOLDEN_DIR}/manifest.json"
+            fi
+        fi
         if [ -n "${json_out}" ]; then
             ./onnxruntime_provider_test --gtest_filter="${filter}" --gtest_output="json:${json_out}"
         else
