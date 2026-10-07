@@ -83,6 +83,10 @@ For the full list of supported operators, see [Supported ONNX Operators](executi
 
 **Full Changelog:** [rel-2.6.0...rel-2.7.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.6.0...rel-2.7.0)
 
+## Known Issues
+
+- **Python wheel compatibility with ONNX Runtime 1.24–1.27** — Using `onnxruntime-qnn` 2.7.0 with `onnxruntime` 1.24 through 1.27 may cause a native access violation during QNN EP session creation. Use `onnxruntime` 1.28.0 or later with the 2.7.0 Python wheel.
+
 ## Contributors
 
 This release includes contributions from:
