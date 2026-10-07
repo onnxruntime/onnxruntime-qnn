@@ -116,9 +116,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // Actual NPU hardware that ORT Core did not enumerate (e.g. Makena without DXCore).
   HardwareDeviceUniquePtr undetected_npu_hw_device_;
 
-  // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
-  qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
-
   // Custom op domains reported to ORT via GetCustomOpDomains. Holds both the qti_aisw block-op
   // domain (always registered) and any domains built from ORT_QNN_CUSTOM_OP_DOMAINS.
   // The domains and the op objects below must outlive any session that uses this factory
