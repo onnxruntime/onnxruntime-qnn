@@ -6,11 +6,13 @@
                     "repo": "${repo}",
                     "$and": [
                         {
-                            "created": { "$before": "1d" },
-                            "path": {
-                                "$match": "ci/*",
-                                "$nmatch": "ci/qnn-ep-test-store/*"
-                            }
+                            "created": { "$before": "1d" }
+                        },
+                        {
+                            "path": { "$match": "ci/*" }
+                        },
+                        {
+                            "path": { "$nmatch": "ci/qnn-ep-test-store/*" }
                         }
                     ]
                 }

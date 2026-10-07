@@ -1,0 +1,42 @@
+From: QNN EP team <noreply@qualcomm.com>
+Date: Wed, 09 Sep 2026 00:00:00 +0000
+Subject: [PATCH] session: deduplicate custom-op domains for AutoEP devices
+
+AutoEP can expose multiple devices backed by the same EP factory. Each device
+can return the same custom-op domain, such as the QNN qti_aisw domain.
+
+Single-device AutoEP sessions work without this patch. For a multi-device
+session, ORT collects each device's domains and registers them together in one
+session-local custom registry. Registering qti_aisw twice makes
+RegisterOpSet fail with "Domain already set in registry". Deduplicate domains
+within that collection before registering the session's custom registry.
+
+---
+diff --git a/onnxruntime/core/session/utils.cc b/onnxruntime/core/session/utils.cc
+index 8fc6c1d8c0..8d3a79740d 100644
+--- a/onnxruntime/core/session/utils.cc
++++ b/onnxruntime/core/session/utils.cc
+@@ -318,7 +318,10 @@ static OrtStatus* CreateSessionAndLoadSingleModelImpl(_In_ const OrtSessionOptio
+       ORT_API_RETURN_IF_STATUS_NOT_OK(GetCustomOpDomainsFromEpDevice(*ep_device, domains));
+ 
+       for (auto domain : domains) {
+-        if (ShouldAddDomain(domain, options->custom_op_domains_)) {
++        // Multiple EP devices can expose the same custom-op domain. Keep one copy
++        // in this session's collection before its custom registry is created.
++        if (ShouldAddDomain(domain, options->custom_op_domains_) &&
++            !DoesDomainWithNameExist(domain->domain_, all_ep_custom_op_domains)) {
+           all_ep_custom_op_domains.push_back(domain);
+         }
+       }
+@@ -431,7 +434,10 @@ static OrtStatus* CreateSessionAndLoadModelImpl(_In_ const OrtSessionOptions* op
+       ORT_API_RETURN_IF_STATUS_NOT_OK(GetCustomOpDomainsFromEpDevice(*ep_device, domains));
+ 
+       for (auto domain : domains) {
+-        if (ShouldAddDomain(domain, options->custom_op_domains_)) {
++        // Multiple EP devices can expose the same custom-op domain. Keep one copy
++        // in this session's collection before its custom registry is created.
++        if (ShouldAddDomain(domain, options->custom_op_domains_) &&
++            !DoesDomainWithNameExist(domain->domain_, all_ep_custom_op_domains)) {
+           all_ep_custom_op_domains.push_back(domain);
+         }
+       }
