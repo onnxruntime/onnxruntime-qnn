@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -1625,6 +1626,35 @@ TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_EmptySpanIsSafe) {
                                             gsl::make_span(bytes));
   EXPECT_TRUE(bytes.empty());
 }
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_ValidRelativePathStaysInModelDirectory) {
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(),
+                                                    std::filesystem::path("weights") / "data.bin",
+                                                    resolved_path);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(resolved_path.parent_path().filename(), "weights");
+  EXPECT_EQ(resolved_path.filename(), "data.bin");
+}
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_ParentTraversalReturnsError) {
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(),
+                                                    "../outside.bin", resolved_path);
+  EXPECT_FALSE(status.IsOK());
+}
+
+#ifdef _WIN32
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_RootedWindowsPathsReturnError) {
+  for (const std::filesystem::path& path : {std::filesystem::path("\\outside.bin"),
+                                           std::filesystem::path("C:outside.bin"),
+                                           std::filesystem::path("C:\\outside.bin")}) {
+    std::filesystem::path resolved_path;
+    auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(), path, resolved_path);
+    EXPECT_FALSE(status.IsOK()) << path.string();
+  }
+}
+#endif
 
 }  // namespace test
 }  // namespace onnxruntime
