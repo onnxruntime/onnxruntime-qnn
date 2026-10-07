@@ -99,6 +99,7 @@ jobs:
 
       - name: Prune Git history from the runner workspace
         if: always()
+        continue-on-error: true
         run: |
           git for-each-ref --format='delete %(refname)' refs/remotes refs/tags |
             git update-ref --stdin
