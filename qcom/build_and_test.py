@@ -1448,6 +1448,23 @@ class TaskLibrary:
                 )
             )
 
+        @task
+        @depends(["build_ort_windows_x86_64_internal_symbols"])
+        def test_ort_windows_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Testing ONNX Runtime for Windows on x86_64 with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_ut_symbols=True,
+                )
+            )
+
 
 def get_docker_ccache_root(root_from_args: Path | None) -> Path | None:
     ccache_root: Path | None = None
