@@ -9,8 +9,8 @@
 #      then runs the accuracy tier to verify numerical correctness).
 #   2. Read the accuracy JSON report to find which op GROUPS actually PASSED.
 #   3. Package ONLY the passing groups' goldens + a version-stamped manifest.json.
-#   4. Upload to Artifactory: a uniquely identified archive, then the mutable
-#      latest/ pointer the gate reads.
+#   4. Upload to Artifactory: a uniquely identified archive, then mutable
+#      latest/ pointers for both the package and its version manifest.
 #
 # A group is published iff every one of its QnnAcc_<Group>_Accuracy[_<Variant>]Test
 # cases PASSED (result COMPLETED, no failures). A group with any DRIFT/SKIPPED case is
@@ -287,7 +287,9 @@ fi
 log_info "Staged ${golden_count} golden file(s) from ${#pass_groups[@]} passing group(s)."
 
 # ---------------------------------------------------------------------------
-# Write manifest.json (version-stamped by resolve_tool_versions.sh).
+# Write manifest.json (version-stamped by resolve_tool_versions.sh). This same
+# file is packaged in goldens.zip and published as the lightweight sidecar that
+# consumers can inspect before downloading the package.
 # ---------------------------------------------------------------------------
 qairt_version="$(resolve_qairt_version "${bin_dir}")" \
     || die "QAIRT version undeterminable (checked ${bin_dir}/CMakeCache.txt) — refusing to produce an unversioned manifest."
@@ -349,26 +351,36 @@ zip_path="${staging}/goldens.zip"
 log_info "Packaged: goldens.zip ($(du -h "${zip_path}" | cut -f1))"
 
 # ---------------------------------------------------------------------------
-# Upload: uniquely keyed archive first, then the mutable latest/ pointer.
+# Upload: uniquely keyed archive first, then the mutable latest/ pointers.
 # ---------------------------------------------------------------------------
 if [ "${publish}" = true ]; then
     dest_base="${BUILD_ARTIFACTORY_REPO}/${repo_subpath}"
 else
     dest_base="<BUILD_ARTIFACTORY_REPO>/${repo_subpath}"
 fi
-archive_dest="${dest_base}/archive/${archive_id}/goldens.zip"
-latest_dest="${dest_base}/latest/goldens.zip"
+archive_dir="${dest_base}/archive/${archive_id}"
+archive_manifest_dest="${archive_dir}/manifest.json"
+archive_zip_dest="${archive_dir}/goldens.zip"
+latest_manifest_dest="${dest_base}/latest/manifest.json"
+latest_zip_dest="${dest_base}/latest/goldens.zip"
+manifest_path="${staging}/manifest.json"
 
 if [ "${publish}" = true ]; then
-    log_info "--- Uploading (archive, then latest) ---"
-    jf rt upload --flat "${zip_path}" "${archive_dest}"
-    jf rt upload --flat "${zip_path}" "${latest_dest}"
+    log_info "--- Uploading archive, then latest manifest + package ---"
+    jf rt upload --flat "${manifest_path}" "${archive_manifest_dest}"
+    jf rt upload --flat "${zip_path}" "${archive_zip_dest}"
+    jf rt upload --flat "${manifest_path}" "${latest_manifest_dest}"
+    jf rt upload --flat "${zip_path}" "${latest_zip_dest}"
     log_info "=== Published ==="
-    log_info "archive: ${archive_dest}"
-    log_info "latest : ${latest_dest}"
+    log_info "archive manifest: ${archive_manifest_dest}"
+    log_info "archive package : ${archive_zip_dest}"
+    log_info "latest manifest : ${latest_manifest_dest}"
+    log_info "latest package  : ${latest_zip_dest}"
 else
     log_info "--- DRY-RUN: would upload with these commands ---"
-    log_info "jf rt upload --flat \"${zip_path}\" \"${archive_dest}\""
-    log_info "jf rt upload --flat \"${zip_path}\" \"${latest_dest}\""
+    log_info "jf rt upload --flat \"${manifest_path}\" \"${archive_manifest_dest}\""
+    log_info "jf rt upload --flat \"${zip_path}\" \"${archive_zip_dest}\""
+    log_info "jf rt upload --flat \"${manifest_path}\" \"${latest_manifest_dest}\""
+    log_info "jf rt upload --flat \"${zip_path}\" \"${latest_zip_dest}\""
     log_warn "Dry-run: nothing uploaded. Re-run with --publish to upload."
 fi

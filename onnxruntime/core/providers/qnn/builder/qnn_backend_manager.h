@@ -523,6 +523,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 #endif
 
+  // Callback function for QNN logging.
+  static void QnnLogging(const char* format, QnnLog_Level_t level, uint64_t timestamp, va_list argument_parameter);
+
   // Shared implementation for InitializeQnnLog / InitializeQnnValidatorLog.
   Ort::Status InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
                                      Qnn_LogHandle_t& log_handle,
@@ -698,6 +701,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void InitializeProfilingManager(const QnnBackendManagerConfig& config);
 
+  void DeallocateMappedDmaBuffers();
+
   // Checks if act_ver is >= min_ver. An act_ver of 0.0.0 is considered invalid.
   static bool MinVersionMet(const Qnn_Version_t& act_ver, const Qnn_Version_t& min_ver) {
     if (act_ver.major == 0 && act_ver.minor == 0 && act_ver.patch == 0) {
@@ -814,6 +819,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // File mapping.
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
+  std::vector<std::pair<void*, uint64_t>> mapped_fastrpc_buffers_;
 
   // Backend plugin for system DLC APIs.
   bool system_dlc_created_ = false;

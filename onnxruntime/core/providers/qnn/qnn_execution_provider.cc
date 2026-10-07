@@ -1814,6 +1814,17 @@ static void LogNodeSupport(const Ort::Logger& logger,
                     " (" + qnn_node_group.GetTargetNodeUnit()->OpType() + ") :\n" +
                     oss.str();
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, msg.c_str());
+  if (!support_status.IsOK()) {
+    // One-line WARNING summary so unsupported groups are visible at default log levels
+    // (full member list stays VERBOSE-only).
+    Ort::ConstNode target_node(&qnn_node_group.GetTargetNodeUnit()->GetNode());
+    const std::string warn_msg = std::string("QNN EP does not support ") +
+                                 std::string(qnn_node_group.Type()) + " for " +
+                                 std::string(target_node.GetOperatorType()) + " node '" +
+                                 std::string(target_node.GetName()) + "': " +
+                                 support_status.GetErrorMessage();
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, warn_msg.c_str());
+  }
 }
 
 OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
@@ -2269,6 +2280,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
         size_t context_len = 0;
         if (ep->ort_api.ReadOpAttr(ep_cache_context_attr, ORT_OP_ATTR_STRING, context_buffer, sizeof(context_buffer) - 1, &context_len) == nullptr) {
           std::string context_bin_filepath(parent_path.string());
+          if (context_bin_filepath.empty()) {
+            context_bin_filepath.append(".");
+          }
           context_bin_filepath.append("/").append(std::string(context_buffer, context_len));
 
           if (context_bin_map.find(context_bin_filepath) == context_bin_map.end()) {
@@ -3827,8 +3841,7 @@ void QnnEp::WarnIfHnrdPathActive() {
   }
   ORT_CXX_LOG(logger_,
               ORT_LOGGING_LEVEL_WARNING,
-              "QNN EP fell back to HTP user-driver (HNRD) path; "
-              "QnnHtpPrepare/Stub/Skel libs missing from backend lib dir.");
+              "QNN EP fell back to HTP user-driver (HNRD) path; QNN Stub/Skel libs missing from backend lib dir.");
 }
 
 QnnEp::QnnNodeComputeInfo::QnnNodeComputeInfo(QnnEp& ep) : ep(ep) {

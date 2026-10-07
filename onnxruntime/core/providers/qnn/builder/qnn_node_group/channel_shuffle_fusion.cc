@@ -40,16 +40,6 @@ std::optional<std::vector<int64_t>> GetTransposePerm(const OrtNodeUnit& transpos
   return helper.Get(kAttrTransposePerm, std::vector<int64_t>());
 }
 
-std::vector<int64_t> InvertTransposePerm(gsl::span<const int64_t> perm) {
-  const size_t perm_size = perm.size();
-  std::vector<int64_t> perm_inverse(perm_size);
-  for (size_t i = 0; i < perm_size; ++i) {
-    size_t j = gsl::narrow_cast<size_t>(perm[i]);
-    perm_inverse[j] = gsl::narrow_cast<int64_t>(i);
-  }
-  return perm_inverse;
-}
-
 bool IsCancelingTransposePermPair(
     std::optional<gsl::span<const int64_t>> perm1,
     std::optional<gsl::span<const int64_t>> perm2) {
@@ -59,7 +49,10 @@ bool IsCancelingTransposePermPair(
   if (perm1->size() != perm2->size()) {
     return false;
   }
-  std::vector<int64_t> perm1_inverted_vector = InvertTransposePerm(*perm1);
+  std::vector<int64_t> perm1_inverted_vector(perm1->size());
+  if (!utils::InvertPerm(*perm1, gsl::make_span(perm1_inverted_vector)).IsOK()) {
+    return false;
+  }
   auto perm1_inverted = gsl::make_span<const int64_t>(
       perm1_inverted_vector.data(), perm1_inverted_vector.size());
   if (perm1_inverted != perm2.value()) {
@@ -369,7 +362,7 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
 
   // Intermediate transpose must only permute channels
   std::optional<std::vector<int64_t>> perm = GetTransposePerm(*transpose);
-  if (!perm.has_value()) {
+  if (!perm.has_value() || perm->size() != reshape1_output_dims_count) {
     return nullptr;
   }
   std::vector<int64_t> perm_to_check = perm.value();
