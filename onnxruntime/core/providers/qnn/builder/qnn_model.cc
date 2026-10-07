@@ -1096,6 +1096,8 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
   uint32_t graph_input_num = 0;
   uint32_t graph_output_num = 0;
   if (qnn_sys_ctx_graph_info.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1) {
+    RETURN_IF(qnn_sys_ctx_graph_info.graphInfoV1.graphName == nullptr,
+              "Context graph name is null.");
     graph_name.assign(qnn_sys_ctx_graph_info.graphInfoV1.graphName);
     graph_input_num = qnn_sys_ctx_graph_info.graphInfoV1.numGraphInputs;
     graph_output_num = qnn_sys_ctx_graph_info.graphInfoV1.numGraphOutputs;
@@ -1105,6 +1107,8 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
   }
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 18)  // start from 2.25
   else if (qnn_sys_ctx_graph_info.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_2) {
+    RETURN_IF(qnn_sys_ctx_graph_info.graphInfoV2.graphName == nullptr,
+              "Context graph name is null.");
     graph_name.assign(qnn_sys_ctx_graph_info.graphInfoV2.graphName);
     graph_input_num = qnn_sys_ctx_graph_info.graphInfoV2.numGraphInputs;
     graph_output_num = qnn_sys_ctx_graph_info.graphInfoV2.numGraphOutputs;
@@ -1115,6 +1119,8 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
 #endif
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)  // start from 2.28
   else if (qnn_sys_ctx_graph_info.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
+    RETURN_IF(qnn_sys_ctx_graph_info.graphInfoV3.graphName == nullptr,
+              "Context graph name is null.");
     graph_name.assign(qnn_sys_ctx_graph_info.graphInfoV3.graphName);
     graph_input_num = qnn_sys_ctx_graph_info.graphInfoV3.numGraphInputs;
     graph_output_num = qnn_sys_ctx_graph_info.graphInfoV3.numGraphOutputs;
