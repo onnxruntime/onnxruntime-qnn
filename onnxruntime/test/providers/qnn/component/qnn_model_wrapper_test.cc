@@ -1444,9 +1444,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_Validation_OutputNotInMap_ReturnsFa
 // Uses UFIXED_POINT_8 with per-tensor quant params — the representative HTP production path.
 TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
   QnnRealHtpBackendContext backend;
-  if (!backend.IsValid()) {
-    GTEST_SKIP() << QnnHtpBackendLibraryName() << " not available";
-  }
+  ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
@@ -1477,9 +1475,7 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (failure path).
 TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_InvalidOpType_Fails) {
   QnnRealHtpBackendContext backend;
-  if (!backend.IsValid()) {
-    GTEST_SKIP() << QnnHtpBackendLibraryName() << " not available";
-  }
+  ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;

@@ -1294,9 +1294,7 @@ TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerChannel_ScalesUpdated) {
 
 TEST(QnnUnit_UtilsTest, GetQnnErrorMessage_ReturnsNonEmptyString) {
   QnnRealHtpBackendContext backend;
-  if (!backend.IsValid()) {
-    GTEST_SKIP() << QnnHtpBackendLibraryName() << " not available";
-  }
+  ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
   std::string msg = qnn::utils::GetQnnErrorMessage(backend.qnn_interface,
                                                    static_cast<Qnn_ErrorHandle_t>(1));
   EXPECT_FALSE(msg.empty());
@@ -1304,9 +1302,7 @@ TEST(QnnUnit_UtilsTest, GetQnnErrorMessage_ReturnsNonEmptyString) {
 
 TEST(QnnUnit_UtilsTest, GetVerboseQnnErrorMessage_ReturnsNonEmptyString) {
   QnnRealHtpBackendContext backend;
-  if (!backend.IsValid()) {
-    GTEST_SKIP() << QnnHtpBackendLibraryName() << " not available";
-  }
+  ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
   std::string msg = qnn::utils::GetVerboseQnnErrorMessage(backend.qnn_interface,
                                                           static_cast<Qnn_ErrorHandle_t>(1));
   EXPECT_FALSE(msg.empty());
