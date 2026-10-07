@@ -1896,6 +1896,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
  * \param verification_params Describes node assignment, output verification, and graph verification.
  * \param log_severity The logger's minimum severity level.
  * \param verify_outputs True to verify that the outputs match (within tolerance).
+ * \param graph_optimization_level Optional override to preserve patterns under test.
  * \param ep_graph_checker Function called on the Session after EP assignment. Used to check node
  *                         EP assignment via public API.
  */
@@ -1903,7 +1904,8 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                      int opset_version, const EPVerificationParams& verification_params,
                      OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                      bool verify_outputs = true,
-                     Ort::CustomOpDomain* custom_op_domain = nullptr);
+                     Ort::CustomOpDomain* custom_op_domain = nullptr,
+                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt);
 
 enum class BackendSupport {
   SUPPORT_UNKNOWN,

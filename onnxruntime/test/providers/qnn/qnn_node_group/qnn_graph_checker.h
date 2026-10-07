@@ -3,8 +3,10 @@
 
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace onnxruntime {
 namespace test {
@@ -20,6 +22,11 @@ void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
 // the compiled QNN graph JSON (root["graph"]["nodes"]).
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
                              const std::string& node_name);
+
+// Asserts the dimensions of a named tensor in the compiled QNN graph JSON.
+void AssertTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
+                                 const std::string& tensor_name,
+                                 const std::vector<uint32_t>& expected_dims);
 
 }  // namespace test
 }  // namespace onnxruntime

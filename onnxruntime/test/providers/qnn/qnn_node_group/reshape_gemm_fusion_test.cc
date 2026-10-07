@@ -219,6 +219,43 @@ GetTestModelFn BuildReshapeGemmReshapeRank5InputTestCase() {
   };
 }
 
+// Window-reverse block of MobileSAM's window attention: Reshape -> Gemm -> Reshape (rank 6) -> Transpose -> Reshape.
+// HTP rejects the rank-6 Reshape, so the 3-node Reshape -> Gemm -> Reshape group must fail validation and not be
+// claimed. The Gemm then fuses with its input Reshape only, and Rank6ToRank5Fusion takes the rank-6 chain.
+GetTestModelFn BuildReshapeGemmWindowReverseTestCase(bool restore_window_shape = false) {
+  return [restore_window_shape](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("reshape_gemm_window_reverse_graph");
+
+    auto input_def = TestInputDef<float>({361, 49, 4, 32}, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    builder.Make1DInitializer<int64_t>("reshape1_shape", {17689, 128});
+    builder.AddNode("reshape1", "Reshape", {"input", "reshape1_shape"}, {"reshape1_out"}, kOnnxDomain);
+
+    builder.MakeInitializer<float>("weight", {128, 128}, -0.05f, 0.05f);
+    builder.MakeInitializer<float>("bias", {128}, -0.1f, 0.1f);
+    builder.AddNode("gemm", "Gemm", {"reshape1_out", "weight", "bias"}, {"gemm_out"}, kOnnxDomain);
+
+    std::string window_reverse_input = "gemm_out";
+    if (restore_window_shape) {
+      builder.Make1DInitializer<int64_t>("restore_shape", {361, 49, 128});
+      builder.AddNode("restore", "Reshape", {"gemm_out", "restore_shape"}, {"restore_out"}, kOnnxDomain);
+      window_reverse_input = "restore_out";
+    }
+
+    builder.Make1DInitializer<int64_t>("reshape2_shape", {1, 19, 19, 7, 7, 128});
+    builder.AddNode("reshape2", "Reshape", {window_reverse_input, "reshape2_shape"}, {"reshape2_out"}, kOnnxDomain);
+
+    builder.AddNode("transpose", "Transpose", {"reshape2_out"}, {"transpose_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", {0, 1, 3, 2, 4, 5})});
+
+    builder.Make1DInitializer<int64_t>("reshape3_shape", {1, 133, 133, 128});
+    builder.AddNode("reshape3", "Reshape", {"transpose_out", "reshape3_shape"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
 }  // namespace
 
 // Test 2-node fusion: Reshape -> Gemm (3D input)
@@ -856,6 +893,64 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_QDQ_NoFusion) {
                   provider_options,
                   /*opset_version=*/13,
                   EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(0.5f)});
+}
+
+TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusionNegativeRank6OutputReshape) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusionNegativeRank6OutputReshape";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildReshapeGemmWindowReverseTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+  if (IsSkipped() || HasFatalFailure()) {
+    return;
+  }
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 2);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 1);
+  AssertTensorShapeInQnnGraph(json_qnn_graph_dir, "reshape2_out", {19, 19, 7, 7, 128});
+  AssertTensorShapeInQnnGraph(json_qnn_graph_dir, "transpose_out", {19, 7, 19, 7, 128});
+}
+
+// A rejected four-node candidate must fall through to the supported three-node candidate,
+// leaving the rank-6 window-reverse chain available to Rank6ToRank5Fusion.
+TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusionNegativeRank6OutputReshape) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeReshapeFusionNegativeRank6OutputReshape";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildReshapeGemmWindowReverseTestCase(/*restore_window_shape=*/true),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/true,
+                  /*custom_op_domain=*/nullptr,
+                  // Preserve both output Reshapes so TryFusion4 is exercised.
+                  /*graph_optimization_level=*/ORT_DISABLE_ALL);
+  if (IsSkipped() || HasFatalFailure()) {
+    return;
+  }
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 3);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 1);
+  AssertTensorShapeInQnnGraph(json_qnn_graph_dir, "restore_out", {361, 49, 128});
+  AssertTensorShapeInQnnGraph(json_qnn_graph_dir, "reshape2_out", {19, 19, 7, 7, 128});
+  AssertTensorShapeInQnnGraph(json_qnn_graph_dir, "transpose_out", {19, 7, 19, 7, 128});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

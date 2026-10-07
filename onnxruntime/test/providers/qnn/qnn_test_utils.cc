@@ -274,7 +274,8 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, const EPVerificationParams& verification_params,
                      OrtLoggingLevel log_severity,
-                     bool verify_outputs, Ort::CustomOpDomain* custom_op_domain) {
+                     bool verify_outputs, Ort::CustomOpDomain* custom_op_domain,
+                     std::optional<GraphOptimizationLevel> graph_optimization_level) {
   CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -331,6 +332,9 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
+  if (graph_optimization_level.has_value()) {
+    session_options.SetGraphOptimizationLevel(*graph_optimization_level);
+  }
   if (custom_op_domain != nullptr) {
     session_options.Add(*custom_op_domain);
   }
