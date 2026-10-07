@@ -722,6 +722,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                         uint32_t& graph_count,
                                         QnnSystemContext_GraphInfo_t** graphs_info);
 
+  void DeallocateMappedDmaBuffers();
   // Checks if act_ver is >= min_ver. An act_ver of 0.0.0 is considered invalid.
   static bool MinVersionMet(const Qnn_Version_t& act_ver, const Qnn_Version_t& min_ver) {
     if (act_ver.major == 0 && act_ver.minor == 0 && act_ver.patch == 0) {
@@ -857,6 +858,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // File mapping.
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
+  std::vector<std::pair<void*, uint64_t>> mapped_fastrpc_buffers_;
 
   // Backend plugin for system DLC APIs.
   bool system_dlc_created_ = false;
