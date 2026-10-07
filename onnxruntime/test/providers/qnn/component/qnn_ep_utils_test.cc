@@ -261,7 +261,9 @@ TEST(QnnUnit_EpUtilsTest, Binary_RejectsMixedTypes) {
 // dq1 = UINT8, dq2 = INT8 — same bitwidth, differing signedness. Unlike Binary_RejectsMixedTypes,
 // Add IS Convert-compatible (see IsConvertCompatibleBinaryOp) and both types are convertible
 // fixed-point types, so the selector accepts the group; AlignBinaryInputPrecision (op-builder side)
-// later Converts dq2's INT8 up to dq1's UINT8 before Add runs (see mixed_precision_convert_utils.cc).
+// leaves the inputs untouched since same-width signedness mismatches aren't Converted (see
+// mixed_precision_convert_utils.cc), and QNN op validation is the arbiter of whether Add accepts
+// the mismatched-signedness pair natively.
 TEST(QnnUnit_EpUtilsTest, Binary_AcceptsSameWidthSignednessMismatch) {
   EpUtilsTestContext ctx;
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};

@@ -2131,8 +2131,10 @@ TEST_F(QnnHTPBackendTests, Mul_U8U8_U16Out_Mixed) {
       provider_options, 21, ExpectedEPNodeAssignment::All);
 }
 
-// Add with same-bitwidth but differing-signedness inputs (u8, s8); neither input is narrower, so
-// AlignBinaryInputPrecision's tie-break Converts the s8 input up to the u8 input's precision.
+// Add with same-bitwidth but differing-signedness inputs (u8, s8). AlignBinaryInputPrecision
+// leaves both inputs untouched (no width mismatch); QNN HTP op validation rejects the
+// mixed-signedness pair, so Add itself falls back to another EP (only the input Quantize
+// nodes remain assigned to QNN).
 TEST_F(QnnHTPBackendTests, Add_U8_S8_SameWidthSignednessMixed) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -2144,7 +2146,7 @@ TEST_F(QnnHTPBackendTests, Add_U8_S8_SameWidthSignednessMixed) {
   TestQDQModelAccuracy(
       BuildOpTestCase<float>("Add_node", "Add", {input0_def, input1_def}, {}, {}, kOnnxDomain),
       BuildQDQBinaryMixedDtypeTestCase<uint8_t, int8_t, uint8_t>("Add", input0_def, input1_def),
-      provider_options, 21, ExpectedEPNodeAssignment::All);
+      provider_options, 21, ExpectedEPNodeAssignment::Some);
 }
 
 // Builds a graph where a (DQ -> Q) sequence at the graph's output is fuse into a QNN Convert operator.
