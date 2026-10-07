@@ -1606,9 +1606,9 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
       std::string rpcmem_error;
       rpcmem_library_ = factory.GetOrCreateRpcMemLibrary(rpcmem_error);
       if (rpcmem_library_ == nullptr) {
-        ORT_CXX_LOGF(logger_, ORT_LOGGING_LEVEL_WARNING,
-                     "Unable to load RPCMEM; disabling HTP shared memory allocator: %s",
-                     rpcmem_error.c_str());
+        const std::string message =
+            "Unable to load RPCMEM for HTP shared memory allocator: " + rpcmem_error;
+        LOG_AND_THROW_ERROR(logger_, message.c_str());
       } else {
         qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
       }

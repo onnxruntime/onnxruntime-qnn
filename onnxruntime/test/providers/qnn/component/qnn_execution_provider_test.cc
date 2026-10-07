@@ -614,6 +614,20 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_RpcControlLatencyNonZero_Succeeds) {
 }
 
 #if defined(__linux__) && !defined(__aarch64__)
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_InferenceWithoutRpcmem_ThrowsWhenHtpSharedMemoryEnabled) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("enable_htp_shared_memory_allocator")] = "1";
+  auto factory = MakeFactory(ctx);
+
+  try {
+    auto ep = MakeEp(*factory, ctx);
+    FAIL() << "Expected missing RPCMEM to reject an inference session that explicitly enables HTP shared memory.";
+  } catch (const std::runtime_error& e) {
+    EXPECT_NE(std::string{e.what()}.find("Unable to load RPCMEM for HTP shared memory allocator"),
+              std::string::npos);
+  }
+}
+
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextGenerationWithoutRpcmem_PreservesSharedMemoryGraphContract) {
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
