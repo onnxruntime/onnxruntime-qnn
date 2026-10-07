@@ -529,6 +529,10 @@ Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& log
 #endif
   const bool can_use_shared_memory = uses_shared_memory && has_matching_shared_allocation;
 
+  if (uses_imported_memory && !can_use_imported_memory) {
+    return MAKE_EP_FAIL("GPU DEFAULT memory is not a registered imported memory handle.");
+  }
+
   if (can_use_shared_memory || can_use_imported_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t memHandle to ORT tensor shared memory.");
     Qnn_MemHandle_t qnn_mem_handle{};

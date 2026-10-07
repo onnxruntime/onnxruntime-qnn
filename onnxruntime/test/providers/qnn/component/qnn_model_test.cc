@@ -42,6 +42,19 @@ struct SetupTensorsTag {
 
 template struct QnnModelPrivateMember<SetupTensorsTag, &qnn::QnnModel::SetupTensors>;
 
+struct BindQnnTensorMemoryTag {
+  using type = Ort::Status (qnn::QnnModel::*)(const Ort::Logger&,
+                                              const OrtMemoryInfo*,
+                                              void*,
+                                              uint32_t,
+                                              Qnn_ContextHandle_t,
+                                              Qnn_Tensor_t&);
+  friend type GetQnnModelPrivateMember(BindQnnTensorMemoryTag);
+};
+
+template struct QnnModelPrivateMember<BindQnnTensorMemoryTag,
+                                      &qnn::QnnModel::BindQnnTensorMemoryToOrtValueMemory>;
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -60,7 +73,18 @@ struct QnnModelMinimalTestContext {
   std::shared_ptr<qnn::QnnBackendManager> manager;
   std::unique_ptr<qnn::QnnModel> model;
 
-  QnnModelMinimalTestContext() {
+  explicit QnnModelMinimalTestContext(bool use_gpu_default_memory = false) {
+    stub_ort_api.MemoryInfoGetDeviceType = use_gpu_default_memory
+                                               ? +[](const OrtMemoryInfo*, OrtMemoryInfoDeviceType* device_type) noexcept {
+                                                   *device_type = OrtMemoryInfoDeviceType_GPU;
+                                                 }
+                                               : +[](const OrtMemoryInfo*, OrtMemoryInfoDeviceType* device_type) noexcept {
+                                                   *device_type = OrtMemoryInfoDeviceType_CPU;
+                                                 };
+    stub_ort_api.MemoryInfoGetDeviceMemType = [](const OrtMemoryInfo*) noexcept {
+      return OrtDeviceMemoryType_DEFAULT;
+    };
+
     qnn::QnnBackendManagerConfig cfg;
     cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
@@ -303,6 +327,20 @@ TEST(QnnUnit_ModelTest, SetupTensors_OutputCountLessThanTensorWrapperCount_Retur
 
   const auto status = ((*ctx.model).*setup_tensors)(tensor_infos, tensor_wrappers, false);
   EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_ModelTest, BindTensor_UnregisteredGpuDefaultMemory_ReturnsError) {
+  QnnModelMinimalTestContext ctx(/*use_gpu_default_memory=*/true);
+  ASSERT_TRUE(ctx.IsValid());
+
+  const auto bind_tensor_memory = GetQnnModelPrivateMember(BindQnnTensorMemoryTag{});
+  int data = 0;
+  Qnn_Tensor_t qnn_tensor = QNN_TENSOR_INIT;
+  const auto status = ((*ctx.model).*bind_tensor_memory)(
+      ctx.logger, reinterpret_cast<const OrtMemoryInfo*>(1), &data, sizeof(data), nullptr, qnn_tensor);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(status.GetErrorMessage(), "GPU DEFAULT memory is not a registered imported memory handle.");
 }
 
 // ---------------------------------------------------------------------------
