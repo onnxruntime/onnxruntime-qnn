@@ -119,7 +119,6 @@ jobs:
           # matches this build's QAIRT and ORT versions. Otherwise the gate runs
           # every accuracy testcase.
           python3 qcom/build_and_test.py \
-            --target-py-version ${{ inputs.target_py_vsn }} \
             diff_coverage_linux_x86_64
 
       - name: Run Coverage (non-PR, Linux x86_64, always RelWithDebInfo)

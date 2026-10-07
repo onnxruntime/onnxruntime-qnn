@@ -57,12 +57,19 @@ build_dir="$(realpath "${build_dir}")"
 qairt_version="$(resolve_qairt_version "${build_dir}")" || disable_store "QAIRT version cannot be resolved from ${build_dir}."
 ort_version="$(resolve_ort_version "${build_dir}")" || disable_store "ORT version cannot be resolved from ${build_dir}."
 
-if [ -e "${golden_dir}" ] && [ -n "$(find "${golden_dir}" -mindepth 1 -print -quit 2>/dev/null)" ]; then
-    disable_store "destination is not empty: ${golden_dir}"
-fi
-
 golden_parent="$(dirname "${golden_dir}")"
 mkdir -p "${golden_parent}"
+if ! golden_dir="$(realpath -m "${golden_dir}")"; then
+    disable_store "failed to canonicalize destination: ${golden_dir}."
+fi
+golden_parent="$(dirname "${golden_dir}")"
+if [ -e "${golden_dir}" ]; then
+    if [ ! -d "${golden_dir}" ] || [ -n "$(find "${golden_dir}" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+        disable_store "destination is not an empty directory: ${golden_dir}"
+    fi
+    rmdir "${golden_dir}" || disable_store "failed to prepare empty destination: ${golden_dir}"
+fi
+
 staging="$(mktemp -d "${golden_parent}/.snapshot-goldens.XXXXXX")"
 trap 'rm -rf "${staging}"' EXIT
 
@@ -106,13 +113,17 @@ then
     disable_store "manifest is absent or versions do not match the coverage build."
 fi
 
-mkdir -p "${golden_dir}"
-if ! golden_dir="$(realpath "${golden_dir}")"; then
-    disable_store "failed to canonicalize destination: ${golden_dir}."
-fi
-if ! unzip -q "${zip_path}" -d "${golden_dir}"; then
-    rmdir "${golden_dir}" 2>/dev/null || true
+extract_dir="${staging}/extracted"
+mkdir "${extract_dir}"
+if ! unzip -q "${zip_path}" -d "${extract_dir}"; then
     disable_store "failed to extract goldens.zip."
+fi
+[ -f "${extract_dir}/manifest.json" ] || disable_store "extracted golden manifest is missing."
+
+# Publish only a complete store. staging and golden_dir share golden_parent, so
+# this rename is atomic and a failed extraction cannot leave partial goldens.
+if ! mv -T "${extract_dir}" "${golden_dir}"; then
+    disable_store "failed to publish extracted goldens."
 fi
 
 if [ -n "${GITHUB_ENV:-}" ]; then

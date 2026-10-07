@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parent.parent / "generate_coverage.sh"
 REPO_ROOT = SCRIPT.parents[3]
 
@@ -18,8 +20,15 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def test_failed_snapshot_cannot_reuse_stale_json(tmp_path: Path) -> None:
-    """A failed snapshot must use QnnAcc_* instead of stale PASS data."""
+@pytest.mark.parametrize(
+    ("skip_accuracy", "expected_exit"),
+    [(False, 0), (True, 1)],
+    ids=["accuracy-fallback", "accuracy-skipped"],
+)
+def test_failed_snapshot_uses_accuracy_fallback_or_fails_when_accuracy_skipped(
+    tmp_path: Path, skip_accuracy: bool, expected_exit: int
+) -> None:
+    """A failed snapshot must not silently bypass all correctness validation."""
     build_dir = tmp_path / "build"
     config_dir = build_dir / "RelWithDebInfo"
     config_dir.mkdir(parents=True)
@@ -82,8 +91,11 @@ def test_failed_snapshot_cannot_reuse_stale_json(tmp_path: Path) -> None:
         "ORT_BUILD_TOOLS_PATH": str(tmp_path / "tools"),
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
     }
+    command = ["bash", str(SCRIPT), f"--build-dir={build_dir}"]
+    if skip_accuracy:
+        command.append("--skip-accuracy")
     result = subprocess.run(
-        ["bash", str(SCRIPT), f"--build-dir={build_dir}"],
+        command,
         cwd=REPO_ROOT,
         env=env,
         check=False,
@@ -91,8 +103,13 @@ def test_failed_snapshot_cannot_reuse_stale_json(tmp_path: Path) -> None:
         text=True,
     )
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == expected_exit, result.stderr
     assert not stale_json.exists()
     assert not (config_dir / "accuracy_filter.txt").exists()
     assert not (config_dir / "accuracy_gate_summary.txt").exists()
-    assert "--gtest_filter=QnnAcc_*" in filter_log.read_text()
+    if skip_accuracy:
+        assert "Snapshot test phase failed while accuracy was skipped" in result.stderr
+        assert (config_dir / "coverage/coverage.xml").is_file()
+        assert not filter_log.exists()
+    else:
+        assert "--gtest_filter=QnnAcc_*" in filter_log.read_text()

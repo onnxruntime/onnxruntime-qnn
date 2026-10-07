@@ -256,8 +256,8 @@ def test_filter_joins_full_names():
 # ===========================================================================
 # manifest / version loading
 # ===========================================================================
-# Canonical current tool versions used by the end-to-end tests. A match requires
-# BOTH qairt and ort to equal the manifest.
+# Synthetic fixture versions for match/mismatch tests. They intentionally do
+# not track the QAIRT or ORT versions used by CI.
 def _cur(qairt="2.35.0", ort="1.20.0"):
     return gate.ToolVersions(qairt=qairt, ort=ort)
 

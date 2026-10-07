@@ -153,10 +153,11 @@ def test_extract_failure_never_enables_golden_store(tmp_path: Path, build_dir: P
         "exit 2\n"
     )
 
-    result, github_env, _ = run_preflight(tmp_path, build_dir, source_zip, fake_unzip=fake_unzip)
+    result, github_env, golden_dir = run_preflight(tmp_path, build_dir, source_zip, fake_unzip=fake_unzip)
 
     assert result.returncode == 0, result.stderr
     assert github_env.read_text().endswith("QNN_UT_SNAPSHOT_GOLDEN_DIR=\n")
+    assert not golden_dir.exists()
 
 
 def test_failed_preflight_clears_previously_exported_golden_store(tmp_path: Path, build_dir: Path) -> None:

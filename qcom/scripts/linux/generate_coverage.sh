@@ -473,6 +473,9 @@ if [ "${snapshot_exit}" -ne 0 ]; then
     log_warn "snapshot phase exited ${snapshot_exit} — graph-structure drift detected."
     log_warn "This is NON-gating. Run run_snapshot_accuracy.sh to verify numerical correctness,"
     log_warn "and --generate-goldens once the new structure is accepted."
+    if [ "${skip_accuracy}" = true ]; then
+        die "Snapshot test phase failed while accuracy was skipped; no numerical correctness gate ran. Coverage report was still generated at ${output_dir}."
+    fi
 fi
 
 if [ "${comp_exit}" -ne 0 ] && [ "${accuracy_exit}" -ne 0 ]; then
