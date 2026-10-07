@@ -3832,8 +3832,7 @@ void QnnEp::WarnIfHnrdPathActive() {
   }
   ORT_CXX_LOG(logger_,
               ORT_LOGGING_LEVEL_WARNING,
-              "QNN EP fell back to HTP user-driver (HNRD) path; "
-              "QnnHtpPrepare/Stub/Skel libs missing from backend lib dir.");
+              "QNN EP fell back to HTP user-driver (HNRD) path; QNN Stub/Skel libs missing from backend lib dir.");
 }
 
 QnnEp::QnnNodeComputeInfo::QnnNodeComputeInfo(QnnEp& ep) : ep(ep) {
