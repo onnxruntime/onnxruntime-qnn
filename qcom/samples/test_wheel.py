@@ -31,14 +31,17 @@ ep_names = qnn_ep.get_ep_names()
 # For this example we'll use the first one
 ep_name = ep_names[0]
 
-# Select an OrtEpDevice
-# Use the NPU device exposed by the QNN EP for the HTP backend.
+# Select OrtEpDevice(s) exposed by the QNN EP. Generic wheel smoke tests may
+# run on hosts without an NPU, so they retain all advertised QNN devices.
 all_ep_devices = ort.get_ep_devices()
-selected_ep_devices = [
-    ep_device
-    for ep_device in all_ep_devices
-    if ep_device.ep_name == ep_name and ep_device.device.type == ort.OrtHardwareDeviceType.NPU
-]
+selected_ep_devices = [ep_device for ep_device in all_ep_devices if ep_device.ep_name == ep_name]
+
+# Strict validation must exercise the packaged HTP backend on an NPU and must
+# not silently pass by falling back to the CPU EP.
+if args.disable_cpu_fallback:
+    selected_ep_devices = [
+        ep_device for ep_device in selected_ep_devices if ep_device.device.type == ort.OrtHardwareDeviceType.NPU
+    ]
 
 assert len(selected_ep_devices) > 0
 
