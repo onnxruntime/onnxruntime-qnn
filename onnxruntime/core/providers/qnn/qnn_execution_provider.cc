@@ -1721,13 +1721,16 @@ QnnEp::~QnnEp() {
     // shared across sessions (htp_share_resource_optimization_/weight sharing);
     // killing the timer on the first session's destruction would break the others.
     // The timer is released with the manager itself (QnnBackendManager::ReleaseResources).
-    std::lock_guard<std::mutex> lock(config_id_mutex_);
-    if (htp_power_config_id_.has_value()) {
-      // Drop this id from the (possibly still-live shared) timer's boosted set
-      // before destroying it, so the timer never relaxes a destroyed id.
-      qnn_backend_manager_->DropBoostedPowerConfigId(*htp_power_config_id_);
-      qnn_backend_manager_->DestroyHtpPowerConfigId(*htp_power_config_id_);
+    {
+      std::lock_guard<std::mutex> lock(config_id_mutex_);
+      if (htp_power_config_id_.has_value()) {
+        // Drop this id from the (possibly still-live shared) timer's boosted set
+        // before destroying it, so the timer never relaxes a destroyed id.
+        qnn_backend_manager_->DropBoostedPowerConfigId(*htp_power_config_id_);
+        qnn_backend_manager_->DestroyHtpPowerConfigId(*htp_power_config_id_);
+      }
     }
+    qnn_backend_manager_->ResetLoggerIfCurrent(logger_);
   }
 
   // Explicitly clear the QNN models map to ensure proper cleanup
@@ -1982,6 +1985,21 @@ OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
   return nullptr;
 }
 
+static std::string GetEpContextProvenance(const OrtGraph* graph,
+                                          const OrtNode& ep_context_node,
+                                          const OrtApi& ort_api) {
+  OrtNodeAttrHelper node_helper(ep_context_node);
+  const int64_t embed_mode = node_helper.Get(qnn::EMBED_MODE, static_cast<int64_t>(1));
+  const std::string context = node_helper.Get(qnn::EP_CACHE_CONTEXT, "");
+  if (embed_mode != 0) {
+    return "embedded:" + context;
+  }
+
+  const auto model_path = std::filesystem::path(GetModelPathString(graph, ort_api));
+  const auto context_path = (model_path.parent_path() / std::filesystem::u8path(context)).lexically_normal();
+  return "external:" + context_path.u8string();
+}
+
 static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& ort_api, const Ort::Logger& logger) {
   size_t num_nodes = 0;
   if (ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
@@ -2008,7 +2026,8 @@ static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& or
         return false;
       }
 
-      if (!SharedContext::GetInstance().HasQnnModel(node_name)) {
+      const std::string provenance = GetEpContextProvenance(graph, *node, ort_api);
+      if (!SharedContext::GetInstance().HasQnnModel(node_name, provenance)) {
         ORT_CXX_LOG(logger,
                     ORT_LOGGING_LEVEL_VERBOSE,
                     ("Graph: " +
@@ -2767,6 +2786,8 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
   // Collect graph and fused nodes names.
   std::vector<std::pair<std::string, std::string>> names;
   names.reserve(count);
+  std::vector<std::string> provenances;
+  provenances.reserve(count);
   std::vector<std::unordered_map<std::string, std::string>> io_name_overrides_per_graph(count);
 
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
@@ -2800,31 +2821,23 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
     }
 
     names.push_back(std::pair<std::string, std::string>(graph_name, ep_context_node_name));
+    provenances.push_back(GetEpContextProvenance(graphs[graph_idx], *ep_context_node, ort_api));
     io_name_overrides_per_graph[graph_idx] = qnn::ParseIoNameOverrides(ep_context_node);
   }
 
   // Get QnnModel from EP shared contexts
   if (share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
-    bool has_all_graphs = true;
+    std::vector<std::string> model_names;
+    model_names.reserve(names.size());
     for (const auto& name_pair : names) {
-      if (!SharedContext::GetInstance().HasQnnModel(name_pair.second)) {
-        has_all_graphs = false;
-        ORT_CXX_LOG(logger_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("Graph: " + name_pair.second + " from EpContext node not found from shared EP contexts.").c_str());
-        break;
-      }
+      model_names.push_back(name_pair.second);
     }
+    auto shared_qnn_models =
+        SharedContext::GetInstance().TakeSharedQnnModels(model_names, provenances);
 
-    if (has_all_graphs) {
+    if (shared_qnn_models.size() == count) {
       for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
-        auto qnn_model_shared = SharedContext::GetInstance().GetSharedQnnModel(names[graph_idx].second);
-        if (qnn_model_shared == nullptr) {
-          return ort_api.CreateStatus(ORT_EP_FAIL,
-                                      ("Graph: " + names[graph_idx].second +
-                                       " not found from shared EP contexts.")
-                                          .c_str());
-        }
+        auto qnn_model_shared = std::move(shared_qnn_models[graph_idx]);
 
         qnn::QnnModelContext context{
             /*ort_graph=*/*graphs[graph_idx],
@@ -2956,9 +2969,17 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
   }
 
   if (share_ep_contexts_ && qnn_models.size() > 0) {
-    std::vector<std::unique_ptr<qnn::QnnModel>> shared_qnn_models;
+    std::vector<SharedContext::SharedQnnModel> shared_qnn_models;
     for (auto& [key, value] : qnn_models) {
-      shared_qnn_models.push_back(std::move(qnn_models[key]));
+      auto name_it = std::find_if(names.begin(), names.end(),
+                                  [&key](const auto& name_pair) { return name_pair.second == key; });
+      if (name_it == names.end()) {
+        return ort_api.CreateStatus(ORT_EP_FAIL,
+                                    ("Unable to bind shared graph to its EPContext source: " + key).c_str());
+      }
+      const size_t graph_idx = static_cast<size_t>(name_it - names.begin());
+      shared_qnn_models.push_back(
+          SharedContext::SharedQnnModel{key, provenances[graph_idx], std::move(value)});
     }
     std::string duplicate_graph_names;
     bool has_duplicate_graph = SharedContext::GetInstance().SetSharedQnnModel(std::move(shared_qnn_models),
