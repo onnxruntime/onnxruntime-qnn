@@ -81,8 +81,8 @@ Ort::Status UpsampleOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                 ("QNN EP: Cannot get input shape for Onnx Upsample " + input_0.name).c_str());
   const size_t input_rank = input_shape.size();
 
-  RETURN_IF(is_npu_backend && (input_rank < 3 || input_rank > 5),
-            "QNN EP: The input rank for Resize must be at least 3 and no greater than 5 on the HTP.");
+  RETURN_IF(input_rank < 3 || (is_npu_backend && input_rank > 5),
+            "QNN EP: Resize input must have a rank >= 3. The maximum rank is 5 on the NPU.");
 
   const auto& output_0 = node_unit.Outputs()[0];
   std::vector<uint32_t> output_shape;
@@ -90,6 +90,9 @@ Ort::Status UpsampleOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                 ("QNN EP: Cannot get output shape for Onnx Upsample " + output_0.name +
                  ". Dynamic scales input is not supported in QNN EP.")
                     .c_str());
+
+  RETURN_IF_NOT(output_shape.size() == input_rank,
+                "QNN EP: Resize input and output ranks must match.");
 
   // Check that only the spatial dimensions (width, height) are resized. The batch_size (N) and channels (C) should
   // be untouched. This code runs before layout transformation, so we know that the current layout is "channel first"
