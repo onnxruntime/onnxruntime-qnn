@@ -619,7 +619,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_U16_CRD) {
                                       /*backend_type=*/"htp");
 }
 
-// Regression: HasSpaceToDepthCoreSignature was rejecting -1 (ONNX placeholder marker) in
+// Regression: GetSpaceToDepthCoreInfo was rejecting -1 (ONNX placeholder marker) in
 // the Reshape shape initializer. Shape inference resolves it from the concrete input.
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD_Reshape1BatchPlaceholder) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);

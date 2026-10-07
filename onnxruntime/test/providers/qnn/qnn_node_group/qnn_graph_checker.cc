@@ -111,9 +111,9 @@ void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
       << " occurrence(s), found " << actual_count << " in " << json_path;
 }
 
-void AssertOpNameContainsInQnnGraph(const std::filesystem::path& dump_dir,
-                                    const std::string& op,
-                                    const std::string& name_substring) {
+void AssertOpWithNameInQnnGraph(const std::filesystem::path& dump_dir,
+                                const std::string& op,
+                                const std::string& name_substring) {
   if (::testing::Test::IsSkipped()) {
     GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
   }

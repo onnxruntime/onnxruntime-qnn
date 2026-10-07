@@ -119,7 +119,7 @@ TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_FromReshape) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
-  AssertOpNameContainsInQnnGraph(json_qnn_graph_dir, "ChannelShuffle", "_from_reshape");
+  AssertOpWithNameInQnnGraph(json_qnn_graph_dir, "ChannelShuffle", "_from_reshape");
 }
 
 // Regression test for NCHW input with H=1. An NHWC-first channel-layout check
