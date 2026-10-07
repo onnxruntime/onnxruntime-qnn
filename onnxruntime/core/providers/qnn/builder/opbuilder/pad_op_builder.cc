@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <limits>
+
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -246,6 +248,8 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape of input 0.");
+  RETURN_IF(pad_amount.size() != input_shape.size() * 2,
+            "QNN Pad: pads length must be twice the rank of input 0.");
 
   std::string mode = node_helper.Get("mode", "constant");
 
@@ -256,7 +260,8 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
     mode_value = QNN_OP_PAD_SCHEME_CONSTANT;
   } else if ("reflect" == mode) {
     for (size_t i = 0; i < input_shape.size(); i++) {
-      RETURN_IF(pad_amount[i * 2] > input_shape[i] - 1 || pad_amount[(i * 2) + 1] > input_shape[i] - 1,
+      RETURN_IF(input_shape[i] == 0 || pad_amount[i * 2] >= input_shape[i] ||
+                    pad_amount[(i * 2) + 1] >= input_shape[i],
                 "Pad amount should not be greater than shape(input[0])[i] - 1");
     }
     mode_value = QNN_OP_PAD_SCHEME_MIRROR_REFLECT;
@@ -298,7 +303,12 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
     std::vector<uint32_t> pad_output_shape;
     for (uint32_t i = 0; i < input_shape.size(); ++i) {
-      pad_output_shape.push_back(input_shape[i] + pad_amount[2 * i] + pad_amount[2 * i + 1]);
+      const uint32_t pad_begin = pad_amount[2 * i];
+      const uint32_t pad_end = pad_amount[2 * i + 1];
+      RETURN_IF(pad_begin > std::numeric_limits<uint32_t>::max() - input_shape[i] ||
+                    pad_end > std::numeric_limits<uint32_t>::max() - input_shape[i] - pad_begin,
+                "QNN Pad: padded dimension exceeds uint32 range.");
+      pad_output_shape.push_back(input_shape[i] + pad_begin + pad_end);
     }
 
     std::string pad_output_name = utils::UniqueNameGenerator().New(node_unit, "_Pad_output");
