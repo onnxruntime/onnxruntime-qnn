@@ -8,7 +8,9 @@
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/custom_op/qnn_custom_op.h"
+#include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
+#include "onnxruntime_config.h"
 
 namespace onnxruntime {
 
@@ -62,9 +64,9 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
       _In_ size_t num_domains) noexcept;
 
   // const OrtApi& ort_api;
-  const std::string ep_name_;              // EP name
-  const std::string vendor_{"Qualcomm"};   // EP vendor name
-  const std::string ep_version_{"0.1.0"};  // EP version
+  const std::string ep_name_;                         // EP name
+  const std::string vendor_{"Qualcomm"};              // EP vendor name
+  const std::string ep_version_{ORT_QNN_EP_VERSION};  // EP version
 
   // Qualcomm vendor ID. Refer to the ACPI ID registry (search Qualcomm): https://uefi.org/ACPI_ID_List
   const uint32_t vendor_id_{'Q' | ('C' << 8) | ('O' << 16) | ('M' << 24)};
@@ -81,13 +83,17 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   HardwareDeviceUniquePtr undetected_npu_hw_device_;
 
   // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
-  qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
+  qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
 
-  // Custom op domains registered via ORT_QNN_CUSTOM_OP_DOMAINS.
-  // Both vectors must outlive any session that uses this factory (factory is a per-library singleton).
-  // domain.Add(op*) does NOT transfer ownership; op objects must be kept alive here.
+  // Custom op domains reported to ORT via GetCustomOpDomains. Holds both the qti_aisw block-op
+  // domain (always registered) and any domains built from ORT_QNN_CUSTOM_OP_DOMAINS.
+  // The domains and the op objects below must outlive any session that uses this factory
+  // (factory is a per-library singleton); domain.Add(op*) does NOT transfer ownership.
   std::vector<Ort::CustomOpDomain> custom_op_domains_;
+  // Placeholder ops built from ORT_QNN_CUSTOM_OP_DOMAINS (env-var UDO ops).
   std::vector<std::unique_ptr<qnn::QnnUdoPlaceholderOp>> custom_op_objects_;
+  // Placeholder ops for the qti_aisw block ops.
+  std::vector<std::unique_ptr<qnn::QtiAiswPlaceholderOp>> qti_aisw_op_objects_;
 };
 
 }  // namespace onnxruntime

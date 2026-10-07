@@ -287,8 +287,17 @@ inline GetTestQDQModelFn<InputAQType> BuildQDQGemmTestCase(const std::vector<Tes
     gemm_inputs.push_back(a_qdq);
     gemm_inputs.push_back(b_qdq);
 
+    // Check if beta=0.0 (bias is ignored)
+    float beta = 1.0f;
+    for (const auto& attr : attrs) {
+      if (attr.name() == "beta") {
+        beta = attr.f();
+        break;
+      }
+    }
+
     // Bias (optional): int32 -> DQ
-    if (num_inputs == 3) {
+    if (num_inputs == 3 && beta != 0.0f) {
       const std::string bias_dq = MakeTestQDQBiasInput(
           builder, "C", input_defs[2], a_qparams.scale * b_qparams.scale, use_contrib_qdq);
       gemm_inputs.push_back(bias_dq);
@@ -496,9 +505,10 @@ TEST_F(QnnHTPBackendTests, Gemm_ZeroBeta_Static_B_And_Bias_U8) {
 // qdq@QNN_EP val: 28.229671478271484 (err: 1.2051048278808594, err/output_range: 3.8336660861968994%)
 // qdq@CPU_EP val: 29.092588424682617 (err: 0.34218788146972656, err/output_range: 1.0885642766952515%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 2.7451016902923584%
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test 8-bit QDQ Gemm with transposed A/B and static B and Bias inputs.
 TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U8) {
-  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
   std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
   std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
@@ -507,7 +517,10 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U8) {
                                          TestInputDef<float>({1, 4}, true, input_c_data)},
                                         {test::MakeAttribute("transA", static_cast<int64_t>(1)),
                                          test::MakeAttribute("transB", static_cast<int64_t>(1))},
-                                        ExpectedEPNodeAssignment::All);
+                                        ExpectedEPNodeAssignment::All,
+                                        13,
+                                        false,
+                                        GetV79OrLaterTieRoundingTolerance(7));
 }
 
 // Test QDQ Gemm (16bit activation, 8bit weight) with transposed A/B and static B and Bias inputs.
@@ -532,9 +545,10 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U16Act_U8Weight) {
 // qdq@QNN_EP val: 28.229671478271484 (err: 1.2051048278808594, err/output_range: 3.8336660861968994%)
 // qdq@CPU_EP val: 29.092588424682617 (err: 0.34218788146972656, err/output_range: 1.0885642766952515%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 2.7451016902923584%
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test QDQ Gemm with transposed A/B and dynamic (i.e., not initializer) B and Bias inputs.
 TEST_F(QnnHTPBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
-  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
   std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
   std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
@@ -543,7 +557,10 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
                                          TestInputDef<float>({1, 4}, false, input_c_data)},
                                         {test::MakeAttribute("transA", static_cast<int64_t>(1)),
                                          test::MakeAttribute("transB", static_cast<int64_t>(1))},
-                                        ExpectedEPNodeAssignment::All);
+                                        ExpectedEPNodeAssignment::All,
+                                        13,
+                                        false,
+                                        GetV79OrLaterTieRoundingTolerance(7));
 }
 
 // Reproduces the CLIP text projection averaging pattern where ORT's MatMulAddFusion
@@ -927,15 +944,20 @@ struct DirectGemmReshapeQConfig {
   int64_t M = 4;
   int64_t K = 8;
   int64_t N = 6;
-  int64_t trans_b = 0;                  // 0 → weight [K,N]; 1 → weight [N,K]
-  bool include_bias = true;             // rank-1 bias by default
-  bool bias_from_intermediate = false;  // if true, bias is produced by an intermediate MatMul (NATIVE bias)
+  int64_t trans_a = 0;
+  int64_t trans_b = 0;       // 0 → weight [K,N]; 1 → weight [N,K]
+  bool include_bias = true;  // rank-1 bias by default
+  bool bias_is_initializer = true;
+  bool bias_is_overridable_initializer = false;  // bias initializer also declared as a graph input (IR>=4)
+  bool bias_from_intermediate = false;           // if true, bias is produced by an intermediate MatMul (NATIVE bias)
   std::optional<std::vector<int64_t>> bias_shape;
 };
 
 GetTestModelFn BuildDirectGemmReshapeQTestCase(const DirectGemmReshapeQConfig& cfg) {
   return [cfg](ModelTestBuilder& builder) {
-    const std::vector<int64_t> act_shape{cfg.M, cfg.K};
+    const std::vector<int64_t> act_shape = cfg.trans_a == 0
+                                               ? std::vector<int64_t>{cfg.M, cfg.K}
+                                               : std::vector<int64_t>{cfg.K, cfg.M};
     const std::vector<int64_t> weight_shape = cfg.trans_b == 0
                                                   ? std::vector<int64_t>{cfg.K, cfg.N}
                                                   : std::vector<int64_t>{cfg.N, cfg.K};
@@ -972,9 +994,24 @@ GetTestModelFn BuildDirectGemmReshapeQTestCase(const DirectGemmReshapeQConfig& c
                                                                   act_qp.zero_point, /*use_contrib_qdq=*/true);
         builder.AddNode("bias_mm", "MatMul", {bias_mm_dq_a, "bias_mm_w"}, {"bias_native"}, kOnnxDomain);
         gemm_inputs.push_back("bias_native");
+      } else if (cfg.bias_is_overridable_initializer) {
+        // Build an overridable initializer: the same tensor name appears as both a graph input and
+        // an initializer. The runtime feed, not the initializer default, must determine the bias.
+        const std::vector<int64_t> bias_shape = cfg.bias_shape.value_or(std::vector<int64_t>{cfg.N});
+        const size_t num_bias_elems = SizeOfShape(bias_shape);
+        const std::vector<int32_t> default_bias(num_bias_elems, 0);
+        std::vector<int32_t> override_bias(num_bias_elems);
+        for (size_t i = 0; i < num_bias_elems; ++i) {
+          override_bias[i] = static_cast<int32_t>(1000 + i);
+        }
+        builder.MakeInitializer<int32_t>("bias", bias_shape, default_bias);
+        builder.MakeInput<int32_t>("bias", bias_shape, override_bias);
+        builder.AddDequantizeLinearNode<int32_t>("bias_dq", "bias", act_qp.scale * wt_qp.scale, 0,
+                                                 "bias_dq_out", /*use_contrib_qdq=*/true);
+        gemm_inputs.push_back("bias_dq_out");
       } else {
         const std::vector<int64_t> bias_shape = cfg.bias_shape.value_or(std::vector<int64_t>{cfg.N});
-        TestInputDef<float> bias_def(bias_shape, /*is_initializer=*/true,
+        TestInputDef<float> bias_def(bias_shape, cfg.bias_is_initializer,
                                      GetFloatDataInRange(-0.2f, 0.2f, SizeOfShape(bias_shape)));
         const std::string bias_dq = MakeTestQDQBiasInput(builder, "bias", bias_def,
                                                          act_qp.scale * wt_qp.scale, /*use_contrib_qdq=*/true);
@@ -983,6 +1020,7 @@ GetTestModelFn BuildDirectGemmReshapeQTestCase(const DirectGemmReshapeQConfig& c
     }
 
     std::vector<ONNX_NAMESPACE::AttributeProto> gemm_attrs;
+    gemm_attrs.push_back(test::MakeAttribute("transA", cfg.trans_a));
     gemm_attrs.push_back(test::MakeAttribute("transB", cfg.trans_b));
     builder.AddNode("gemm", "Gemm", gemm_inputs, {"gemm_out"}, kOnnxDomain, gemm_attrs);
 
@@ -1032,6 +1070,34 @@ TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_TransB1_NotAbsorbed) {
 TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_NativeBias_NotAbsorbed) {
   DirectGemmReshapeQConfig cfg;
   cfg.bias_from_intermediate = true;
+  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// Negative gate (M-3): direct Gemm with a dynamic QDQ bias must NOT be absorbed
+// as FullyConnected bias. The regular QDQ Gemm path can still handle the graph.
+TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_DynamicQDQBias_NotAbsorbed) {
+  DirectGemmReshapeQConfig cfg;
+  cfg.bias_is_initializer = false;
+  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// Negative gate: direct Gemm with an overridable QDQ bias must NOT be absorbed as
+// FullyConnected bias. Although the bias has an initializer default, its matching graph
+// input can override the value at runtime. The regular QDQ Gemm path can still handle it.
+TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_OverridableQDQBias_NotAbsorbed) {
+  DirectGemmReshapeQConfig cfg;
+  cfg.bias_is_overridable_initializer = true;
+  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// Negative gate: direct Gemm(transA=1) -> Reshape -> Q must NOT be absorbed — the builder's
+// absorbed path hard-asserts transA=0. The graph still runs on QNN EP via the regular Gemm path.
+TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_TransA1_NotAbsorbed) {
+  DirectGemmReshapeQConfig cfg;
+  cfg.trans_a = 1;
   RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }

@@ -207,6 +207,9 @@ jobs:
       - name: Run Linting Tool
         run: |
           python3 qcom/build_and_test.py lint
+      - name: Run QNN Linux script tests
+        run: |
+          venv/bin/python -m pytest qcom/scripts/linux/tests -q
 
   build-android-aarch64:
     if: ${{ inputs.do_all }}

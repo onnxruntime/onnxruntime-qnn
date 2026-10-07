@@ -5,6 +5,8 @@
 
 #include <fstream>
 #include <limits>
+#include <map>
+#include <utility>
 
 #include "QnnTypes.h"
 #include "nlohmann/json.hpp"
@@ -177,113 +179,6 @@ void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
   EXPECT_FALSE(found) << "Unexpected QNN node found: '" << node_name << "' in " << json_path;
 }
 
-namespace {
-
-constexpr size_t kUnreadableDump = static_cast<size_t>(-1);
-
-// Summed from "dims" rather than "params_count": dims is emitted for every tensor, while
-// params_count is a stringified count present only when the dump omits static data.
-// Never throws: any malformed field returns kUnreadableDump so the caller emits a gtest
-// failure instead of terminating the test binary (which would leave no *.results.xml).
-size_t SumFp32StaticBytes(const std::filesystem::path& dump_dir) {
-  try {
-    std::filesystem::path json_path;
-    if (!FindQnnJsonGraph(dump_dir, json_path)) {
-      return kUnreadableDump;
-    }
-
-    nlohmann::json root;
-    if (!ParseQnnJsonGraph(json_path, root)) {
-      return kUnreadableDump;
-    }
-    if (!root.is_object() || !root.contains("graph") || !root["graph"].is_object() ||
-        !root["graph"].contains("tensors") || !root["graph"]["tensors"].is_object()) {
-      return kUnreadableDump;
-    }
-
-    const int kStaticType = static_cast<int>(QNN_TENSOR_TYPE_STATIC);
-    const int kFp32Type = static_cast<int>(QNN_DATATYPE_FLOAT_32);
-
-    size_t total_bytes = 0;
-    for (const auto& [name, tensor_json] : root["graph"]["tensors"].items()) {
-      if (!tensor_json.is_object()) {
-        continue;
-      }
-      // Guard with is_number(): value("type", -1) would throw if the dump ever
-      // emits a string enum on some SDK/runner.
-      if (!tensor_json.contains("type") || !tensor_json["type"].is_number() ||
-          tensor_json["type"].get<int>() != kStaticType) {
-        continue;
-      }
-      if (!tensor_json.contains("data_type") || !tensor_json["data_type"].is_number() ||
-          tensor_json["data_type"].get<int>() != kFp32Type) {
-        continue;
-      }
-      if (!tensor_json.contains("dims") || !tensor_json["dims"].is_array()) {
-        return kUnreadableDump;
-      }
-      size_t num_elems = 1;
-      for (const auto& dim : tensor_json["dims"]) {
-        if (!dim.is_number_unsigned() && !dim.is_number_integer()) {
-          return kUnreadableDump;
-        }
-        const long long dim_val = dim.get<long long>();
-        if (dim_val < 0) {
-          return kUnreadableDump;
-        }
-        const auto dim_u = static_cast<size_t>(dim_val);
-        if (dim_u != 0 && num_elems > kUnreadableDump / dim_u) {
-          // Would wrap (or collide with the kUnreadableDump sentinel): fail
-          // gracefully instead of under-counting.
-          return kUnreadableDump;
-        }
-        num_elems *= dim_u;
-      }
-      if (num_elems != 0 && sizeof(float) > kUnreadableDump / num_elems) {
-        return kUnreadableDump;
-      }
-      const size_t add = num_elems * sizeof(float);
-      if (total_bytes > kUnreadableDump - add) {
-        return kUnreadableDump;
-      }
-      total_bytes += add;
-      if (total_bytes == kUnreadableDump) {
-        // Keep the sentinel reserved for "unreadable".
-        return kUnreadableDump;
-      }
-    }
-    return total_bytes;
-  } catch (const std::exception&) {
-    return kUnreadableDump;
-  }
-}
-
-}  // namespace
-
-void AssertFp32StaticBytesBelow(const std::filesystem::path& dump_dir, size_t max_bytes) {
-  // Same skip-propagation safety net as AssertOpInQnnGraph above.
-  if (::testing::Test::IsSkipped()) {
-    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
-  }
-  const size_t total_bytes = SumFp32StaticBytes(dump_dir);
-  ASSERT_NE(total_bytes, kUnreadableDump) << "No readable QNN JSON graph in " << dump_dir;
-  EXPECT_LE(total_bytes, max_bytes)
-      << "FP32 STATIC bytes in the QNN graph exceed the budget: a large weight folded to FP32 "
-         "instead of staying compact.";
-}
-
-void AssertFp32StaticBytesAbove(const std::filesystem::path& dump_dir, size_t min_bytes) {
-  // Same skip-propagation safety net as AssertOpInQnnGraph above.
-  if (::testing::Test::IsSkipped()) {
-    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
-  }
-  const size_t total_bytes = SumFp32StaticBytes(dump_dir);
-  ASSERT_NE(total_bytes, kUnreadableDump) << "No readable QNN JSON graph in " << dump_dir;
-  EXPECT_GT(total_bytes, min_bytes)
-      << "FP32 STATIC bytes in the QNN graph are below the floor: the expected fold did not "
-         "materialize.";
-}
-
 void AssertTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
                                  const std::string& tensor_name,
                                  const std::vector<uint32_t>& expected_dims) {
@@ -340,6 +235,56 @@ void AssertTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
 
   EXPECT_EQ(actual_dims, expected_dims)
       << "QNN tensor '" << tensor_name << "': expected shape mismatch in " << json_path;
+}
+
+void AssertNodeInputsDistinctInQnnGraph(const std::filesystem::path& dump_dir,
+                                        const std::string& op,
+                                        size_t input_index) {
+  // Same skip-propagation safety net as AssertOpInQnnGraph above.
+  if (::testing::Test::IsSkipped()) {
+    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
+  }
+  std::filesystem::path json_path;
+  ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path))
+      << "No QNN JSON graph file found in " << dump_dir;
+
+  nlohmann::json root;
+  ASSERT_TRUE(ParseQnnJsonGraph(json_path, root))
+      << "Failed to parse QNN JSON graph: " << json_path;
+
+  ASSERT_TRUE(root.is_object() && root.contains("graph") && root["graph"].is_object() &&
+              root["graph"].contains("nodes") && root["graph"]["nodes"].is_object())
+      << "JSON missing 'graph.nodes' object in: " << json_path;
+
+  std::map<std::string, std::string> input_to_node;
+  try {
+    for (const auto& [node_name, node_json] : root["graph"]["nodes"].items()) {
+      if (!node_json.is_object() || !node_json.contains("type") || !node_json["type"].is_string() ||
+          node_json["type"].get<std::string>() != op) {
+        continue;
+      }
+
+      ASSERT_TRUE(node_json.contains("input_names") && node_json["input_names"].is_array() &&
+                  node_json["input_names"].size() > input_index)
+          << "QNN node '" << node_name << "' of type '" << op << "' has only "
+          << (node_json.contains("input_names") && node_json["input_names"].is_array()
+                  ? node_json["input_names"].size()
+                  : 0)
+          << " input(s) in " << json_path;
+
+      const auto& input_entry = node_json["input_names"][input_index];
+      ASSERT_TRUE(input_entry.is_string())
+          << "QNN node '" << node_name << "' of type '" << op << "' has non-string input at index "
+          << input_index << " in " << json_path;
+      const std::string input_name = input_entry.get<std::string>();
+      const auto [it, inserted] = input_to_node.emplace(input_name, node_name);
+      EXPECT_TRUE(inserted)
+          << "QNN nodes '" << it->second << "' and '" << node_name << "' (type '" << op
+          << "') both read tensor '" << input_name << "' at input " << input_index << " in " << json_path;
+    }
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to iterate QNN graph nodes in " << json_path << ": " << ex.what();
+  }
 }
 
 }  // namespace test

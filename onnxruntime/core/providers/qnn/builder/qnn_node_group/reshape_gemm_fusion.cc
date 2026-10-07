@@ -35,8 +35,10 @@ int64_t GetWeightInputChannel(const QnnModelWrapper& qnn_model_wrapper, const Or
   return static_cast<int64_t>(weight_shape[0]);
 }
 
-// Check if reshape input is reshapable to [batch, n] where n is Gemm's input channel (weight's K dim).
+// Check if reshape/flatten input is reshapable to [batch, n] where n is Gemm's input channel (weight's K dim).
 // QNN FullyConnected requires: input shape [n] or Rank >= 2 reshapable to [batch, n].
+// Applies to Reshape and Flatten heads: inferred shapes only, so Flatten's axis
+// needs no handling (always 2D; dynamic dims are rejected below).
 bool CheckShape(const QnnModelWrapper& qnn_model_wrapper, const OrtNode& reshape_node, int64_t weight_input_channel) {
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
 
@@ -131,14 +133,16 @@ static bool InputReshapeIsShared(const OrtNodeUnit* input_reshape) {
   return !reshape_outputs.empty() && reshape_outputs[0].GetConsumers().size() > 1;
 }
 
-// Get the input Reshape node unit that feeds into the Gemm node
+// Get the input Reshape (or Flatten) node unit that feeds into the Gemm node.
+// A leading Flatten is equivalent to an explicit Reshape here (both yield 2D for Gemm);
+// frontends emit Flatten when flattened dims may be dynamic.
 const OrtNodeUnit* GetInputReshapeNodeUnit(
     const QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& gemm_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group) {
-  const std::array<std::string_view, 1> reshape_types = {"Reshape"};
-  return GetParentOfType(qnn_model_wrapper, gemm_node_unit, reshape_types,
+  const std::array<std::string_view, 2> head_types = {"Reshape", "Flatten"};
+  return GetParentOfType(qnn_model_wrapper, gemm_node_unit, head_types,
                          node_to_node_unit, node_unit_to_qnn_node_group);
 }
 

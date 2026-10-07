@@ -43,9 +43,11 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.6.0         | v2.50.40          | v1.27.0              |
+| v2.7.40        | v2.51.40          | v1.29.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.6.0 was built and tested with ORT 1.27.0 but it is compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.7.40 was built for WinML with QAIRT 2.51.40 and is available only through WinML channels. 
+> **Note**: For mainline release of ORT QNN EP please use 2.7.0 which was built with QAIRT 2.51.0.
+> **Note**: ONNX Runtime QNN EP 2.7.0 and 2.7.40 were built and tested with ORT 1.29.0 but are compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
@@ -70,9 +72,9 @@ For build instructions, please see the [BUILD page](./build.md).
   - This release is validated against the following dependency versions:
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
-    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.27.0` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.50.0` |
-  - **Version note:** QNN EP v2.6.0 was built and tested with QAIRT SDK 2.50.0; the public Android Maven runtime artifact is versioned `2.50.0`.
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.29.0` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.51.0` |
+  - **Version note:** QNN EP v2.7.0 was built and tested with QAIRT SDK 2.51.0; the public Android Maven runtime artifact is versioned `2.51.0`.
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
@@ -371,6 +373,11 @@ The `enable_htp_prepare_and_load` option performs AOT compilation and context lo
 - Setting `enable_htp_prepare_and_load=1` with `ep.context_enable=0` AND an explicit `ep.context_file_path` raises an error (contradictory: "don't persist" + "here's where to persist").
 - If the input model is already a pre-compiled context model (`_ctx.onnx`), `enable_htp_prepare_and_load` is silently ignored with a warning — the model loads directly via the existing AOT path.
 
+|`"enable_htp_cross_device_prepare"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable HTP cross device prepare on WoS, allowing WoS to behave like Windows x86 host. Features originally restricted to Windows x86 host (e.g., Flexible Context Binary) are now supported on WoS when setting this option. Requires at least QAIRT 2.51 SDK (QNN API 2.40) for this feature. On older SDK build, this option is silently ignored with a warning.|
+
 |`"enable_htp_graph_splitting"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
@@ -380,6 +387,11 @@ The `enable_htp_prepare_and_load` option performs AOT compilation and context lo
 |---|---|
 |`UINT32_MAX` (default)|Auto-select: `min(max(1, hardware_concurrency), num_splits)`. Only effective when `enable_htp_graph_splitting=1`. Requires QAIRT SDK 2.51+; ignored on older builds.|
 |`N`|Use exactly N threads to prepare split sub-graphs in parallel. Value 0 or 1 means single-threaded. Values > 1 cap the number of splits.|
+
+|`"htp_num_cores"`|Description|
+|---|---|
+|`0` or unset|Default. Do not request a graph core count.|
+|Positive integer|Pass `QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES` when creating the graph. On ARM64 devices, also select the first requested HTP cores reported for `device_id`. On x86 hosts, offline AOT generation uses the requested graph core count without enumerating physical devices. It does not override the graph core count of an already compiled context binary.|
 
 |`"GPE_KWAY_PARTITIONS"`|Description|
 |---|---|
@@ -1445,6 +1457,8 @@ Profiling data is available with the HTP backend. Enabling QNN profiling will ge
 
 If onnxruntime is compiled with a more recent QAIRT SDK (2.39 or later), then a _qnn.log file will also be generated alongside the .csv file. This .log file is parsable by [qnn-profile-viewer](https://docs.qualcomm.com/doc/80-63442-10/topic/general_tools.html#qnn-profile-viewer), which is provided in the SDK.
 
+ORT profiling uses the unified JSON timeline described below. It is independent of provider CSV output.
+
 ### General Usage
 To utilize QNN profiling, simply set the EP option profiling_level to basic, detailed, or optrace. Additionally, the EP option profiling_file_path must also be set to the output .csv filepath you would like to write data to:
 ```python
@@ -1502,6 +1516,32 @@ Additionally, if the profiling_level is set to "detailed" or "optrace", addition
 > **Combining profiling with framework op tracing:** When `profiling_level` is `detailed` or `optrace` **and** `enable_framework_op_trace` is `'1'`, the profiling CSV gains an extra `ONNX Source Ops` column. For each per-layer `NODE` event row, this column lists the originating ONNX operator name(s) (semicolon-separated for fused groups). This makes it easy to correlate QNN-level hardware profiling data back to the original ONNX model operators without manual lookup.
 >
 > At `profiling_level=basic` the `ONNX Source Ops` column is **not** added because basic profiling does not emit per-layer `NODE` events.
+
+### ORT Profiling Timeline
+
+When ORT session profiling is enabled with `SessionOptions::EnableProfiling` (or `sess_options.enable_profiling`) or run profiling is enabled with `RunOptions::EnableProfiling`, QNN profiling events are also added to ORT's unified JSON profiling timeline. QNN events include `qnn_operation` (`execute`, `compose`, `finalize`, or `context_load`), `qnn_event_type`, `qnn_event_identifier`, `qnn_timing_source`, `qnn_graph_name`, `level` (`ROOT` or `SUB-EVENT`), `unit`, `value` for non-time events, and `parent_ort_node`.
+
+If `profiling_level` is not set, enabling ORT profiling activates QNN profiling at the `basic` level. Run profiling records only `execute` events. Session profiling additionally records synchronous graph `compose`, serial graph `finalize`, and synchronous EPContext `context_load` events under ORT's `session_initialization` event. QAIRT events use `qnn_timing_source=BACKEND`; when QAIRT does not report a setup operation, QNN emits one explicitly marked `HOST_OPERATION` event with `qnn_timing_source=HOST`. Parallel graph finalization is excluded from the ORT timeline because it runs on QNN worker threads without an ORT event that can safely own the work. SSR context recreation is retry work and is not profiled, so it is excluded from provider output and the ORT JSON timeline. Existing `profiling_file_path` CSV, `_qnn.log`, and ETW outputs remain available and can be used alongside the ORT timeline.
+
+Enable session profiling from Python and retrieve the generated JSON path after inference:
+```python
+sess_options = ort.SessionOptions()
+sess_options.enable_profiling = True
+sess_options.profile_file_prefix = "qnn_ort_profile"
+session = ort.InferenceSession("model.onnx", sess_options=sess_options)
+# Run inference.
+profile_path = session.end_profiling()
+```
+
+For a single C++ run, enable profiling on `Ort::RunOptions` before `Session::Run`:
+```cpp
+Ort::RunOptions run_options;
+run_options.EnableProfiling("qnn_ort_run_profile");
+auto outputs = session.Run(run_options, input_names, input_values, input_count,
+                           output_names, output_count);
+```
+
+Use either ORT session profiling or ORT run profiling for a session, not both at the same time. QNN provider CSV profiling remains independently controlled by `profiling_level` and `profiling_file_path`.
 
 ### Optrace-Level Profiling
 [Optrace-level profiling](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#qnn-htp-profiling) generates a profiling .log file that contains [Qualcomm Hexagon Tensor Processor Analaysis Summary (QHAS)](https://docs.qualcomm.com/doc/80-63442-10/topic/htp_backend.html#qnn-htp-analysis-summary-qhas-) data. This data can be used to generate chrometraces and provide a web browser-friendly UI to visualize data.

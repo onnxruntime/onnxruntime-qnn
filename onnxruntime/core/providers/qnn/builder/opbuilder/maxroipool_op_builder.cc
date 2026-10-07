@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/opbuilder/qdq_constant_folding.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -28,7 +27,8 @@ constexpr int64_t kMaxMaxRoiPoolBins = 4096;
 
 // Reads the constant rois [num_rois, 5] = [batch_index, x1, y1, x2, y2] and returns the
 // floating-point ROI corner coordinates (still in input-image space, before spatial_scale).
-// Handles both a plain fp32 initializer and a QDQ-folded 8-bit quantized constant.
+// The ROIs must be a real ONNX initializer. Standalone Q/DQ folding is intentionally
+// not used here, so a DQ-wrapped ROIs input falls back to the CPU EP.
 Ort::Status ReadRoisAsFloat(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnitIODef& rois_def,
                             uint32_t num_rois,
@@ -36,8 +36,9 @@ Ort::Status ReadRoisAsFloat(QnnModelWrapper& qnn_model_wrapper,
   TensorInfo rois_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(rois_def, rois_info));
 
+  RETURN_IF_NOT(rois_info.is_initializer, "MaxRoiPool rois must be a constant initializer.");
   std::vector<uint8_t> rois_bytes;
-  RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, rois_def.name, rois_bytes));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(rois_info.initializer_tensor, rois_bytes));
 
   const size_t num_elems = static_cast<size_t>(num_rois) * 5;
   rois_flat.resize(num_elems);
@@ -129,9 +130,8 @@ Ort::Status MaxRoiPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrappe
   OrtNodeAttrHelper node_helper(node_unit);
 
   // ROIs (input[1]) must be a constant so the bin geometry can be computed at build time.
-  // A non-constant rois (graph input) is rejected here, before the layout transform, for a clean
-  // CPU-EP fallback. A QDQ'd constant rois is not yet folded at GetCapability time, so the full
-  // constant check is deferred to ProcessInputs.
+  // A non-constant rois (including a standalone Q/DQ result) is rejected here, before the layout
+  // transform, for a clean CPU-EP fallback.
   RETURN_IF(qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[1].name),
             "MaxRoiPool requires rois to be a constant initializer.");
 
@@ -180,7 +180,7 @@ Ort::Status MaxRoiPoolOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrappe
   // ProcessAttributesAndOutputs), so input[1] is intentionally not processed here.
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
 
-  RETURN_IF_NOT(qnn_model_wrapper.IsEffectivelyConstantInput(inputs[1].name),
+  RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[1].name),
                 "MaxRoiPool requires rois to be a constant initializer.");
 
   return Ort::Status();

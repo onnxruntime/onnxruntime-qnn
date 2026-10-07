@@ -43,14 +43,14 @@ skip_accuracy=false
 #     tests + any other Qnn suite. Defined by EXCLUSION so new suites land here
 #     automatically. Non-zero exit fails this script.
 #   - snapshot phase (NON-gating): re-runs the migrated ops through the builder and
-#     compares the emitted graph against goldens (the QnnUnit_*_Snapshot* /
-#     QnnUnit_*_SessionSnapshot* suites). It re-exercises the full builder path so
+#     compares the emitted graph against goldens (the QnnSnapshot_*_OpBuilder* /
+#     QnnSnapshot_*_Session* suites). It re-exercises the full builder path so
 #     it contributes builder coverage. A golden byte-mismatch, missing golden,
 #     skipped testcase, or snapshot setup/assert failure marks that op group as
 #     unverified, but does NOT directly fail this script when matching accuracy
 #     tests are present. The snapshot JSON report is consumed after coverage
 #     capture to identify those unverified groups.
-#   - accuracy phase (GATING): QnnUnit_*_Accuracy* — the numerical-correctness
+#   - accuracy phase (GATING): QnnAcc_* — the numerical-correctness
 #     gate. Non-zero exit fails this script. Today this runs unconditionally
 #     (safe baseline: no golden store yet, so every case runs). When snapshot is
 #     unverified, the script also checks that the affected op group has a matching
@@ -66,11 +66,11 @@ skip_accuracy=false
 # gtest filter grammar: a single '-' separates the positive section from the
 # negative section; ':'-joined patterns after that '-' are ALL negative (do NOT
 # prefix each with its own '-', or they become literal, never-matching patterns).
-component_filter="*Qnn*:-QnnUnit_*_Snapshot*:QnnUnit_*_SessionSnapshot*:QnnUnit_*_Accuracy*"
-snapshot_filter="QnnUnit_*_Snapshot*:QnnUnit_*_SessionSnapshot*"
+component_filter="*Qnn*:-QnnSnapshot_*:QnnAcc_*"
+snapshot_filter="QnnSnapshot_*"
 # Safe baseline: run every accuracy test. Once the golden-version gate exists it
 # replaces this constant with a run-set computed from the snapshot JSON report.
-accuracy_filter="QnnUnit_*_Accuracy*"
+accuracy_filter="QnnAcc_*"
 
 for arg in "$@"; do
     case "${arg}" in
@@ -244,7 +244,7 @@ run_test_phase() {
 #     or missing snapshot JSON) falls back to accuracy instead of enforcing zero
 #     graph diff.
 #   - The only setup failure is an unverified snapshot group without a matching
-#     QnnUnit_<Op>_Accuracy* test, because then correctness is not gated.
+#     QnnAcc_<Op>_Accuracy* test, because then correctness is not gated.
 extract_unverified_snapshot_groups() {
     local snapshot_json="$1"
     python3 - "${snapshot_json}" <<'PY'
@@ -253,7 +253,7 @@ import re
 import sys
 
 snapshot_json = sys.argv[1]
-pattern = re.compile(r"^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$")
+pattern = re.compile(r"^QnnSnapshot_(.+?)_(?:OpBuilder|Session)(?:_\w+)?Test$")
 
 with open(snapshot_json, encoding="utf-8") as f:
     data = json.load(f)
@@ -305,7 +305,7 @@ import re
 import sys
 
 list_file = sys.argv[1]
-pattern = re.compile(r"^QnnUnit_(.+?)_(?:SessionSnapshot|Snapshot)(?:_\w+)?Test$")
+pattern = re.compile(r"^QnnSnapshot_(.+?)_(?:OpBuilder|Session)(?:_\w+)?Test$")
 
 ops = set()
 with open(list_file, encoding="utf-8") as f:
@@ -339,7 +339,7 @@ assert_accuracy_exists_for_groups() {
         probe=$(
             cd "${build_dir}/${config}" &&
                 export LD_LIBRARY_PATH="${build_dir}/${config}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" &&
-                ./onnxruntime_provider_test --gtest_list_tests --gtest_filter="QnnUnit_${group}_Accuracy*Test.*" 2>/dev/null || true
+                ./onnxruntime_provider_test --gtest_list_tests --gtest_filter="QnnAcc_${group}_Accuracy*Test.*" 2>/dev/null || true
         )
         if [ -z "${probe}" ]; then
             if [ -n "${missing}" ]; then
@@ -349,13 +349,13 @@ assert_accuracy_exists_for_groups() {
         fi
     done
     if [ -n "${missing}" ]; then
-        die "No matching QnnUnit_<Op>_Accuracy* tests found for unverified snapshot groups: ${missing}. Coverage report was still generated at ${output_dir}."
+        die "No matching QnnAcc_<Op>_Accuracy* tests found for unverified snapshot groups: ${missing}. Coverage report was still generated at ${output_dir}."
     fi
 }
 
 # Snapshot-phase JSON report path. The normal CI path below runs the three-phase
 # flow and consumes this file to identify unverified snapshot groups.
-# Holds the QnnUnit_*_Snapshot* / QnnUnit_*_SessionSnapshot* per-case results.
+# Holds the QnnSnapshot_*_OpBuilder* / QnnSnapshot_*_Session* per-case results.
 snapshot_json="${build_dir}/${config}/snapshot_results.json"
 snapshot_list="${build_dir}/${config}/snapshot_tests.txt"
 rm -f "${snapshot_json}" "${snapshot_list}"
