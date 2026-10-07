@@ -55,6 +55,9 @@ inline Ort::Status PrepareForComputeHelper(const gsl::span<const int64_t>& raw_s
   // Iterate through the provided axes and override the start/end/steps ranges
   using AxesSet = InlinedHashSet<int64_t>;
   const auto axes_count = axes.size();
+  if (raw_starts.size() < axes_count || raw_ends.size() < axes_count) {
+    return MAKE_EP_FAIL("'starts' and 'ends' must have at least as many elements as 'axes'");
+  }
   AxesSet unique_axes;
   unique_axes.reserve(axes_count);
 

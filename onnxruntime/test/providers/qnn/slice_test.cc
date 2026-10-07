@@ -129,7 +129,16 @@ static void RunSliceNonQDQOnHTP(const TestInputDef<DataType>& data_def,
                   EPVerificationParams{expected_ep_assignment});
 }
 
-// Check that QNN compiles DQ -> Slice -> Q as a single unit.
+// A malformed Slice must fall back instead of indexing past its short starts/ends initializers.
+TEST_F(QnnHTPBackendTests, SliceStartsShorterThanAxesFallsBack) {
+  RunSliceNonQDQOnHTP<float>(TestInputDef<float>({2, 4}, false, 0.0f, 1.0f),
+                             TestInputDef<int64_t>({1}, true, {0}),
+                             TestInputDef<int64_t>({1}, true, {2}),
+                             TestInputDef<int64_t>({2}, true, {0, 1}),
+                             TestInputDef<int64_t>({2}, true, {1, 1}),
+                             ExpectedEPNodeAssignment::None);
+}
+
 TEST_F(QnnHTPBackendTests, SliceSmallDataQDQU8) {
   RunSliceQDQTest(TestInputDef<float>({8}, false, 0.0f, 1.0f),
                   TestInputDef<int64_t>({1}, true, {0}),
