@@ -529,6 +529,10 @@ class QnnParamWrapper {
     ss << node_name << "_" << node_index << "_" << name;
     tensor_name_ = ss.str();
     qnn_param_.scalarParam = scalarParam;
+    if (scalarParam.dataType == QNN_DATATYPE_STRING && scalarParam.stringValue != nullptr) {
+      string_value_ = scalarParam.stringValue;
+      qnn_param_.scalarParam.stringValue = string_value_.c_str();
+    }
   }
 
   QnnParamWrapper(size_t node_index,
@@ -579,12 +583,16 @@ class QnnParamWrapper {
     std::swap(tensor_name_, other.tensor_name_);
     std::swap(shape_, other.shape_);
     std::swap(param_data_, other.param_data_);
+    std::swap(string_value_, other.string_value_);
     std::swap(qnn_param_, other.qnn_param_);
     qnn_param_.name = name_.c_str();
     if (qnn_param_.paramType == QNN_PARAMTYPE_TENSOR) {
       SetQnnTensorName(qnn_param_.tensorParam, tensor_name_.c_str());
       SetQnnTensorDim(qnn_param_.tensorParam, shape_);
       SetQnnTensorClientBuf(qnn_param_.tensorParam, param_data_);
+    } else if (qnn_param_.scalarParam.dataType == QNN_DATATYPE_STRING &&
+               qnn_param_.scalarParam.stringValue != nullptr) {
+      qnn_param_.scalarParam.stringValue = string_value_.c_str();
     }
   }
 
@@ -617,6 +625,7 @@ class QnnParamWrapper {
   std::string tensor_name_;
   std::vector<uint32_t> shape_;
   std::vector<uint8_t> param_data_;
+  std::string string_value_;
   Qnn_Param_t qnn_param_ = QNN_PARAM_INIT;
 };
 
