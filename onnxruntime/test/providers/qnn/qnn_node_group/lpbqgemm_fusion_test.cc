@@ -25,8 +25,8 @@ namespace test {
 
 namespace {
 
-GetQDQTestCaseFn BuildLPBQGemmTestCase() {
-  return [](ModelTestBuilder& builder) -> void {
+GetQDQTestCaseFn BuildLPBQGemmTestCase(bool dynamic_bias = false) {
+  return [dynamic_bias](ModelTestBuilder& builder) -> void {
     // Define the test case for LPBQGemm fusion here
     const int64_t input_channels = 16;
     const int64_t output_channels = 16;
@@ -86,7 +86,11 @@ GetQDQTestCaseFn BuildLPBQGemmTestCase() {
                      builder.MakeScalarAttribute("block_size", static_cast<int64_t>(4))});
 
     // Gemm
-    builder.MakeInitializer<float>("gemm_bias", {output_channels}, -1.0f, 1.0f);
+    if (dynamic_bias) {
+      builder.MakeInput<float>("gemm_bias", {output_channels}, -1.0f, 1.0f);
+    } else {
+      builder.MakeInitializer<float>("gemm_bias", {output_channels}, -1.0f, 1.0f);
+    }
     builder.AddNode("gemm", "Gemm",
                     {"act_dql_output", "w_dql_output", "gemm_bias"},
                     {"gemm_output"});
@@ -140,6 +144,16 @@ TEST_F(QnnHTPBackendTests, LPBQGemmFusion) {
                   /*verify_outputs=*/false);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected");
+}
+
+TEST_F(QnnHTPBackendTests, LPBQGemmFusion_DynamicBiasFallsBack) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnModelTest(BuildLPBQGemmTestCase(true),
+                  GetProviderOptions(),
+                  21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some},
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  false);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)
