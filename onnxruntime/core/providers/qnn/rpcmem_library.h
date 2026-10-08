@@ -70,14 +70,21 @@ struct RpcMemApi {
   rpcmem::RegisterBufFnPtr register_buf;
 };
 
+// Interface class to allow unit testing of FastRPC-based memory allocation calls
+class IRpcMemLibrary {
+ public:
+  virtual ~IRpcMemLibrary() = default;
+  virtual const RpcMemApi& Api() const = 0;
+};
+
 // Loads and provides access to the RPCMEM API functions from a dynamically loaded library.
-class RpcMemLibrary {
+class RpcMemLibrary : public IRpcMemLibrary {
  public:
   RpcMemLibrary();
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(RpcMemLibrary);
 
-  const RpcMemApi& Api() const { return api_; }
+  const RpcMemApi& Api() const override { return api_; }
 
  private:
   UniqueDynamicLibraryHandle library_handle_;

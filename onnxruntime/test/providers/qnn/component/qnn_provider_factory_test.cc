@@ -1159,6 +1159,15 @@ TEST_F(QnnUnit_ProviderFactoryHtpTest,
       << "Validate should have added backend_type=htp before temp-EP construction";
 
   if (status != nullptr) ctx.stub_ort_api.ReleaseStatus(status);
+
+  // Clear the fake default logger while the global API override (`use`) is still active, rather
+  // than relying solely on TearDown() to do it afterward. OrtLoggingManager is process-wide and
+  // outlives this test; QnnBackendManager::QnnLogging is a QNN-SDK log callback that the SDK can
+  // invoke asynchronously (see its own comment on that hazard), and if it fires after `use` has
+  // restored the real global OrtApi while HasDefaultLogger() is still true for this bogus token,
+  // it would dereference `kFakeToken` through the real (non-stubbed) API. Resetting here first
+  // closes that window instead of leaving it open until TearDown() runs.
+  OrtLoggingManager::SetDefaultLogger(nullptr);
 }
 
 // GetHardwareDeviceIncompatibilityDetailsImpl temp-EP path: NPU/Qualcomm
@@ -1193,6 +1202,10 @@ TEST_F(QnnUnit_ProviderFactoryHtpTest,
       << "Incompatibility should have added backend_type=htp before temp-EP construction";
 
   if (status != nullptr) ctx.stub_ort_api.ReleaseStatus(status);
+
+  // See the matching comment in ValidateCompatibilityInfo_NpuNoQnnEp_WiresHtpBackendType above:
+  // clear the fake default logger while `use`'s global API override is still active.
+  OrtLoggingManager::SetDefaultLogger(nullptr);
 }
 
 }  // namespace test

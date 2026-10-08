@@ -337,11 +337,11 @@ Ort::Status QnnBackendManager::LoadBackend() {
     constexpr std::string_view kAdspLibraryPathEnvVar{"ADSP_LIBRARY_PATH"};
     const char* existingPath = getenv(kAdspLibraryPathEnvVar.data());
     if (existingPath != nullptr) {
-      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                  ORT_LOGGING_LEVEL_WARNING,
-                  ("Using existing ADSP_LIBRARY_PATH setting of " +
-                   std::string(existingPath) + ", which may cause the HTP backend to fail.")
-                      .c_str());
+      ORT_CXX_LOG_DEFAULT(
+          ORT_LOGGING_LEVEL_WARNING,
+          ("Using existing ADSP_LIBRARY_PATH setting of " +
+           std::string(existingPath) + ", which may cause the HTP backend to fail.")
+              .c_str());
       return;
     }
 
@@ -349,9 +349,9 @@ Ort::Status QnnBackendManager::LoadBackend() {
     std::filesystem::path qnnLibPath = _backend_path.is_absolute()
                                            ? _backend_path.parent_path()
                                            : std::filesystem::path(OrtGetRuntimePath());
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                ORT_LOGGING_LEVEL_WARNING,
-                ("Setting " + std::string(kAdspLibraryPathEnvVar) + " = " + qnnLibPath.string()).c_str());
+    ORT_CXX_LOG_DEFAULT(
+        ORT_LOGGING_LEVEL_WARNING,
+        ("Setting " + std::string(kAdspLibraryPathEnvVar) + " = " + qnnLibPath.string()).c_str());
     setenv(kAdspLibraryPathEnvVar.data(), qnnLibPath.c_str(), 1);
   });
 #endif
@@ -562,7 +562,7 @@ void QnnBackendManager::QnnLogging(const char* format,
   }
   // QNN-EP COPY END
 
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, stream.str().c_str());
+  ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_VERBOSE, stream.str().c_str());
 }
 
 Ort::Status QnnBackendManager::InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
@@ -1076,13 +1076,13 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
 static Qnn_ErrorHandle_t MapDmaDataCallback(Qnn_ContextBinaryDataRequest_t request,
                                             Qnn_ContextBinaryDmaDataResponse_t* response, void* notify_param) {
   if (notify_param == nullptr) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: notify_param is null");
+    ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: notify_param is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
   auto callback_info = reinterpret_cast<QnnBackendManager::FileMappingCallbackInfo_t*>(notify_param);
 
   if (callback_info->backend_manager == nullptr) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: QnnBackendManager is null");
+    ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: QnnBackendManager is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
@@ -1153,14 +1153,14 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
 // Callback required for releasing file mapping resources
 static Qnn_ErrorHandle_t ReleaseDmaDataCallback(Qnn_ContextBinaryDmaDataMem_t data_mem, void* notify_param) {
   if (notify_param == nullptr) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "ReleaseDmaDataCallback: notify_param is null");
+    ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_ERROR, "ReleaseDmaDataCallback: notify_param is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
   auto callback_info = reinterpret_cast<QnnBackendManager::FileMappingCallbackInfo_t*>(notify_param);
 
   if (callback_info->backend_manager == nullptr) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "ReleaseDmaDataCallback: QnnBackendManager is null");
+    ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_ERROR, "ReleaseDmaDataCallback: QnnBackendManager is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
@@ -1172,16 +1172,16 @@ static Qnn_ErrorHandle_t ReleaseDmaDataCallback(Qnn_ContextBinaryDmaDataMem_t da
 Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem,
                                                     void* mapped_base_ptr) {
   if (mapped_base_ptr == nullptr) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Attempting to release DMA data for null memory mapped pointer"));
+    ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_ERROR, ("Attempting to release DMA data for null memory mapped pointer"));
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-              ORT_LOGGING_LEVEL_INFO,
-              ("Releasing DMA data mapping for memory mapped pointer(" + utils::PtrToString(mapped_base_ptr) + "), address(" + utils::PtrToString(data_mem.dmaBuffer.data) + "), size: (" + std::to_string(data_mem.memSize) + ")").c_str());
+  ORT_CXX_LOG_DEFAULT(
+      ORT_LOGGING_LEVEL_INFO,
+      ("Releasing DMA data mapping for memory mapped pointer(" + utils::PtrToString(mapped_base_ptr) + "), address(" + utils::PtrToString(data_mem.dmaBuffer.data) + "), size: (" + std::to_string(data_mem.memSize) + ")").c_str());
 
   if (data_mem.dmaBuffer.data == nullptr || data_mem.memSize == 0) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "Mapping release request address must not be null and size must be > 0");
+    ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_ERROR, "Mapping release request address must not be null and size must be > 0");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
@@ -1193,7 +1193,7 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
 
   auto fd = rpcmem_library_->Api().to_fd(unaligned_data_ptr);
   if (fd != -1) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(unaligned_data_ptr)).c_str());
+    ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(unaligned_data_ptr)).c_str());
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
 
@@ -2086,7 +2086,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool share_ep_contexts,
     int htp_share_resource_optimization,
     bool enable_file_mapped_weights,
-    std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
+    std::shared_ptr<qnn::IRpcMemLibrary> rpcmem_library,
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
     const qnn::EpContextIoDispatch& io_dispatch,
     bool enable_htp_extended_udma_mode,
@@ -2939,7 +2939,7 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
                 << memory_address
                 << ", error: "
                 << unregister_status.GetErrorMessage();
-            ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+            ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
           }
         };
 
@@ -3216,11 +3216,11 @@ bool QnnBackendManager::IsDx12SharedMemoryAllocatorSupported() {
     const auto register_result = qnn_interface_.memRegister(context, &mem_descriptor, 1, &raw_mem_handle);
 
     if (IsGpuBackend(qnn_backend_type_) && register_result == QNN_MEM_ERROR_MAPPING) {
-      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                  ORT_LOGGING_LEVEL_ERROR,
-                  "QnnMem_register failed with QNN_MEM_ERROR_MAPPING when using the DX12 shared memory allocator with the GPU"
-                  " backend on Windows. This is likely due to outdated graphics drivers on the device. Please try installing"
-                  " new drivers from https://softwarecenter.qualcomm.com/catalog/item/Windows_Graphics_Driver.");
+      ORT_CXX_LOG_DEFAULT(
+          ORT_LOGGING_LEVEL_ERROR,
+          "QnnMem_register failed with QNN_MEM_ERROR_MAPPING when using the DX12 shared memory allocator with the GPU"
+          " backend on Windows. This is likely due to outdated graphics drivers on the device. Please try installing"
+          " new drivers from https://softwarecenter.qualcomm.com/catalog/item/Windows_Graphics_Driver.");
     }
 
     if (register_result != QNN_SUCCESS) {
@@ -3277,13 +3277,13 @@ void QnnBackendManager::DeallocateMappedDmaBuffers() {
   for (const auto& mem_info : mapped_fastrpc_buffers_) {
     auto ptr = mem_info.first;
     auto size = mem_info.second;
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, ("Attempting to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
+    ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_VERBOSE, ("Attempting to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
     // setting third input arg to -1 here indicates a deregistration request
     rpcmem_library_->Api().register_buf(ptr, size, -1,
                                         rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
     auto fd = rpcmem_library_->Api().to_fd(ptr);
     if (fd != -1) {
-      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
+      ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
       failed_deregisters.push_back(mem_info);
     }
   }

@@ -5,8 +5,92 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include "gtest/gtest.h"
+
+// Public entry point from qnn_provider_factory.cc (extern "C" linkage). Declared
+// locally rather than via a shared header -- qnn_provider_factory_test.cc
+// declares the identical signature the same way.
+extern "C" {
+OrtStatus* CreateEpFactories(const char* registration_name,
+                             const OrtApiBase* ort_api_base,
+                             const OrtLogger* default_logger,
+                             OrtEpFactory** factories,
+                             size_t max_factories,
+                             size_t* num_factories);
+}
+
 namespace onnxruntime {
 namespace test {
+namespace {
+
+// QnnBackendManager::ReleaseResources() (and other EP-internal code) uses
+// Ort::Status, whose move-assignment calls OrtRelease() -> Ort::GetApi() ->
+// detail::Global::Api(). That function's cached OrtApi* is a function-local
+// static defined inline in the vendored onnxruntime_cxx_api.h header.
+//
+// In the class-level-UT build the EP is compiled as its own SHARED library
+// (onnxruntime_providers_qnn.dll/.so) that onnxruntime_provider_test merely
+// links against (cmake/onnxruntime_unittests.cmake:
+// target_link_libraries(onnxruntime_provider_test PRIVATE
+// onnxruntime_providers_qnn)) -- it is NOT compiled directly into the test
+// binary. Header-defined inline statics are not shared across a DLL/.so
+// boundary: the EP library gets its own copy of detail::Global::Api()'s cache,
+// independent of whatever copy exists inside onnxruntime_provider_test.exe
+// itself. So seeding Ort::InitApi() from test-side code (anything compiled
+// into the test executable, including this file or StubApiEnv) has no effect
+// on the EP library's copy.
+//
+// QnnEpFactory's constructor -- reached via the real, always-exported
+// CreateEpFactories() entry point -- is the EP's own intended way to seed that
+// cache: qnn_provider_factory.cc calls Ort::InitApi(ort_api) once it has
+// resolved a real OrtApi* from the host. That call executes as EP-library
+// code, so it seeds the EP library's copy. Any test that builds a
+// QnnBackendManager directly via Create()/StubBackendManager -- bypassing
+// QnnEpFactory entirely (qnn_backend_manager_test.cc,
+// qnn_backend_system_dlc_plugin_test.cc, qnn_ep_profiler_test.cc,
+// qnn_backend_profiling_manager_test.cc, qnn_model_test.cc,
+// onnx_ctx_model_helper_test.cc, backend_contexts.h) -- never runs that ctor,
+// so the EP library's cache is left null. The first Ort::Status
+// destroyed/reassigned during that manager's teardown
+// (QnnBackendManager::ReleaseResources(), e.g.
+// `result = ...ReleaseProfileHandle();`) then dereferences a null OrtApi* and
+// crashes.
+//
+// Fix: force the EP library's own copy of the cache to be seeded exactly once,
+// before any test runs, by calling the real CreateEpFactories() entry point
+// with the REAL OrtApiBase (OrtGetApiBase()). max_factories = 0 deliberately
+// stops CreateEpFactories right after its Ort::InitApi(ort_api) call
+// (qnn_provider_factory.cc) and before it would touch
+// OrtLoggingManager::SetDefaultLogger or construct a QnnEpFactory -- this
+// mirrors qnn_provider_factory_test.cc's own
+// CreateEpFactories_MaxFactoriesZero_ReturnsInvalidArgument test, whose
+// comment already documents that seeding with the REAL api table this way is
+// safe ("no pollution") for every other test sharing the process.
+//
+// Registered as a gtest Environment (rather than called from
+// StubBackendManager/StubApiEnv) so it runs exactly once, before any test in
+// the binary, regardless of which test file/test case happens to run first --
+// a per-call-site seed would have to be duplicated at every site listed above
+// and would be easy to miss when a new one is added.
+class QnnEpApiSeedEnvironment : public ::testing::Environment {
+ public:
+  void SetUp() override {
+    OrtEpFactory* factories[1] = {nullptr};
+    size_t num_factories = 0;
+    OrtStatus* status = CreateEpFactories("qnn_unit_test_ep_api_seed", OrtGetApiBase(),
+                                          /*default_logger*/ nullptr, factories,
+                                          /*max_factories*/ 0, &num_factories);
+    if (status != nullptr) {
+      OrtGetApiBase()->GetApi(ORT_API_VERSION)->ReleaseStatus(status);
+    }
+  }
+};
+
+::testing::Environment* const g_qnn_ep_api_seed_env =
+    ::testing::AddGlobalTestEnvironment(new QnnEpApiSeedEnvironment());
+
+}  // namespace
+
 namespace {
 
 // Friend-injection helper: instantiating PrivateMember<Tag, Member> injects a

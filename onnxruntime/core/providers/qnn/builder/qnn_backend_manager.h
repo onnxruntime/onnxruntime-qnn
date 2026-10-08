@@ -265,7 +265,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool share_ep_contexts,
       int htp_share_resource_optimization,
       bool enable_file_mapped_weights,
-      std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
+      std::shared_ptr<qnn::IRpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
       // Defaults to a no-callback dispatch so callers that have nothing to do with EPContext
       // encryption (e.g. compatibility probes) don't have to construct and pass a dummy.
@@ -818,7 +818,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   uint32_t vtcm_size_internal_ = 0;
 
   // File mapping.
-  std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
+  std::shared_ptr<IRpcMemLibrary> rpcmem_library_ = nullptr;
   std::vector<std::pair<void*, uint64_t>> mapped_fastrpc_buffers_;
 
   // Backend plugin for system DLC APIs.

@@ -10,9 +10,9 @@ namespace thread {
 
 QnnJobThreadPool::QnnJobThread::QnnJobThread(uint8_t thread_num, QnnJobThreadPool* thread_pool_ptr)
     : thread_num_(thread_num), tp_(thread_pool_ptr) {
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-              ORT_LOGGING_LEVEL_VERBOSE,
-              ("QnnJobThread: Thread " + std::to_string(thread_num_) + " created").c_str());
+  ORT_CXX_LOG_DEFAULT(
+      ORT_LOGGING_LEVEL_VERBOSE,
+      ("QnnJobThread: Thread " + std::to_string(thread_num_) + " created").c_str());
 
   // Used to exit out of QnnJobThreadPool::WaitForJobQueueUpdate() regardless of job queue status
   exit_predicate_ = [this]() {
@@ -24,9 +24,9 @@ QnnJobThreadPool::QnnJobThread::~QnnJobThread() {
   try {
     Stop();
   } catch (const std::exception& e) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                ORT_LOGGING_LEVEL_ERROR,
-                ("QnnJobThread: Thread " + std::to_string(thread_num_) + ": Error on destruction: " + std::string(e.what())).c_str());
+    ORT_CXX_LOG_DEFAULT(
+        ORT_LOGGING_LEVEL_ERROR,
+        ("QnnJobThread: Thread " + std::to_string(thread_num_) + ": Error on destruction: " + std::string(e.what())).c_str());
   }
 }
 
@@ -57,9 +57,9 @@ void QnnJobThreadPool::QnnJobThread::Start() {
     } while (!IsStopped());
   });
 
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-              ORT_LOGGING_LEVEL_VERBOSE,
-              ("QnnJobThread: Thread " + std::to_string(thread_num_) + " started").c_str());
+  ORT_CXX_LOG_DEFAULT(
+      ORT_LOGGING_LEVEL_VERBOSE,
+      ("QnnJobThread: Thread " + std::to_string(thread_num_) + " started").c_str());
 }
 
 void QnnJobThreadPool::QnnJobThread::Stop() {
@@ -67,9 +67,9 @@ void QnnJobThreadPool::QnnJobThread::Stop() {
   {
     std::unique_lock<std::mutex> lock(thread_state_mutex_);
     if (thread_ && !thread_stopped_) {
-      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                  ORT_LOGGING_LEVEL_VERBOSE,
-                  ("QnnJobThread: Thread " + std::to_string(thread_num_) + " stopping").c_str());
+      ORT_CXX_LOG_DEFAULT(
+          ORT_LOGGING_LEVEL_VERBOSE,
+          ("QnnJobThread: Thread " + std::to_string(thread_num_) + " stopping").c_str());
       thread_stopped_ = true;
     } else {
       return;
@@ -79,9 +79,9 @@ void QnnJobThreadPool::QnnJobThread::Stop() {
   thread_->join();
   thread_.reset();
 
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-              ORT_LOGGING_LEVEL_VERBOSE,
-              ("QnnJobThread: Thread " + std::to_string(thread_num_) + " stopped").c_str());
+  ORT_CXX_LOG_DEFAULT(
+      ORT_LOGGING_LEVEL_VERBOSE,
+      ("QnnJobThread: Thread " + std::to_string(thread_num_) + " stopped").c_str());
 }
 
 void QnnJobThreadPool::QnnJobThread::WaitUntilInactive() {
@@ -104,9 +104,9 @@ QnnJobThreadPool::~QnnJobThreadPool() {
   try {
     Stop();
   } catch (const std::exception& e) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                ORT_LOGGING_LEVEL_ERROR,
-                ("QnnJobThreadPool: Error on destruction: " + std::string(e.what())).c_str());
+    ORT_CXX_LOG_DEFAULT(
+        ORT_LOGGING_LEVEL_ERROR,
+        ("QnnJobThreadPool: Error on destruction: " + std::string(e.what())).c_str());
   }
 }
 
@@ -115,7 +115,7 @@ void QnnJobThreadPool::Start() const {
     return;
   }
 
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Start");
+  ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Start");
   std::unique_lock<std::mutex> s_lock(state_mutex_);
   running_ = true;
 
@@ -129,7 +129,7 @@ void QnnJobThreadPool::Stop() const {
     return;
   }
 
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Stop");
+  ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Stop");
   std::unique_lock<std::mutex> s_lock(state_mutex_);
   running_ = false;
 
@@ -139,9 +139,9 @@ void QnnJobThreadPool::Stop() const {
 }
 
 void QnnJobThreadPool::WaitForQueuedJobsToFinish() {
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-              ORT_LOGGING_LEVEL_VERBOSE,
-              "QnnJobThreadPool: Waiting for all jobs to finish");
+  ORT_CXX_LOG_DEFAULT(
+      ORT_LOGGING_LEVEL_VERBOSE,
+      "QnnJobThreadPool: Waiting for all jobs to finish");
 
   // Block all newly submitted jobs from entering the queue
   std::unique_lock<std::mutex> lock(queue_mutex_);
@@ -156,25 +156,25 @@ void QnnJobThreadPool::WaitForQueuedJobsToFinish() {
     thread->WaitUntilInactive();
   }
 
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Done waiting on all jobs");
+  ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Done waiting on all jobs");
 }
 
 void QnnJobThreadPool::SubmitJob(std::function<void()> job) {
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Job submitted");
+  ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Job submitted");
 
   std::unique_lock<std::mutex> lock(queue_mutex_);
   job_queue_.push(std::move(job));
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-              ORT_LOGGING_LEVEL_VERBOSE,
-              ("QnnJobThreadPool: Job pushed to queue, current size: " + std::to_string(job_queue_.size())).c_str());
+  ORT_CXX_LOG_DEFAULT(
+      ORT_LOGGING_LEVEL_VERBOSE,
+      ("QnnJobThreadPool: Job pushed to queue, current size: " + std::to_string(job_queue_.size())).c_str());
   job_submitted_cv_.notify_one();
 }
 
 void QnnJobThreadPool::WaitForJobQueueUpdate(const uint8_t thread_num, const std::function<bool()>& exit_predicate) {
   std::unique_lock<std::mutex> lock(queue_mutex_);
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-              ORT_LOGGING_LEVEL_VERBOSE,
-              ("QnnJobThreadPool: Thread " + std::to_string(thread_num) + " waiting for a job").c_str());
+  ORT_CXX_LOG_DEFAULT(
+      ORT_LOGGING_LEVEL_VERBOSE,
+      ("QnnJobThreadPool: Thread " + std::to_string(thread_num) + " waiting for a job").c_str());
   job_submitted_cv_.wait_for(lock, std::chrono::milliseconds(200), [this, &exit_predicate] {
     return !job_queue_.empty() || exit_predicate();
   });
@@ -182,13 +182,13 @@ void QnnJobThreadPool::WaitForJobQueueUpdate(const uint8_t thread_num, const std
 
 std::function<void()> QnnJobThreadPool::GetJobFromQueueIfExists(const uint8_t thread_num) {
   std::unique_lock<std::mutex> lock(queue_mutex_);
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-              ORT_LOGGING_LEVEL_VERBOSE,
-              ("QnnJobThreadPool: Thread " + std::to_string(thread_num) + " checking for job, queue size: " + std::to_string(job_queue_.size())).c_str());
+  ORT_CXX_LOG_DEFAULT(
+      ORT_LOGGING_LEVEL_VERBOSE,
+      ("QnnJobThreadPool: Thread " + std::to_string(thread_num) + " checking for job, queue size: " + std::to_string(job_queue_.size())).c_str());
   if (!job_queue_.empty()) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("QnnJobThreadPool: Thread " + std::to_string(thread_num) + " received a job").c_str());
+    ORT_CXX_LOG_DEFAULT(
+        ORT_LOGGING_LEVEL_VERBOSE,
+        ("QnnJobThreadPool: Thread " + std::to_string(thread_num) + " received a job").c_str());
     auto job = job_queue_.front();
     job_queue_.pop();
     return job;

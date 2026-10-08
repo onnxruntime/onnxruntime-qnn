@@ -81,6 +81,15 @@ option(onnxruntime_DONT_VECTORIZE "Do not vectorize operations in Eigen" OFF)
 # Pass -DENABLE_COVERAGE=ON to cmake to enable (e.g. via build.sh --enable-coverage).
 option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
 
+# Links the QNN EP into onnxruntime_provider_test and exports its internal symbols so the
+# class-level (component-tier) unit tests under test/providers/qnn/component/ can call them.
+# Implied by ENABLE_COVERAGE on Linux x86-64; set explicitly to enable the tier on Windows
+# ARM64 (the only other supported platform -- see the onnxruntime_QNN_INTERNAL_UT_ENABLED
+# derivation below, after onnxruntime_target_platform is known). Never enable for a shipping
+# binary -- it exports all symbols from the EP library.
+option(onnxruntime_QNN_ENABLE_INTERNAL_UT
+       "Link the QNN EP into the provider test to enable class-level unit tests (not for release)" OFF)
+
 option(onnxruntime_USE_FULL_PROTOBUF "Link to libprotobuf instead of libprotobuf-lite when this option is ON" OFF)
 option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS "Dump debug information about node inputs and outputs when executing the model." OFF)
 cmake_dependent_option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS_ENABLE_DUMP_TO_SQLDB "Build dump debug information about node inputs and outputs with support for sql database." OFF "onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS" OFF)
@@ -144,6 +153,25 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" AND CMAKE_C_COMPILER_VERSION VERSION_
 endif()
 
 include(detect_onnxruntime_target_platform.cmake)
+
+# Derived condition consumed by onnxruntime_providers_qnn.cmake (library kind + export surface)
+# and onnxruntime_unittests.cmake (link dependency, QNN_EP_INTERNAL_SYMBOL_ACCESS, and which
+# component/ test files are even compiled). Exactly two triggers, each restricted to its own
+# supported platform, so the component-tier unit tests never compile anywhere else:
+#   1. ENABLE_COVERAGE on Linux x86-64 -- the original path, used by CI.
+#   2. onnxruntime_QNN_ENABLE_INTERNAL_UT on Windows ARM64 (or its ARM64EC half) -- explicit
+#      opt-in, requires onnxruntime_target_platform (set just above).
+if((ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+   OR (onnxruntime_QNN_ENABLE_INTERNAL_UT AND WIN32 AND onnxruntime_target_platform MATCHES "^ARM64"))
+  set(onnxruntime_QNN_INTERNAL_UT_ENABLED ON)
+else()
+  set(onnxruntime_QNN_INTERNAL_UT_ENABLED OFF)
+  if(onnxruntime_QNN_ENABLE_INTERNAL_UT AND NOT (WIN32 AND onnxruntime_target_platform MATCHES "^ARM64"))
+    message(WARNING "onnxruntime_QNN_ENABLE_INTERNAL_UT was requested, but QNN EP component-tier "
+                     "unit tests are only supported on Windows ARM64 (via this option) or Linux "
+                     "x86-64 (via ENABLE_COVERAGE). Ignoring on this target.")
+  endif()
+endif()
 
 
 # Single output directory for all binaries

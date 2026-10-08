@@ -46,6 +46,10 @@ param (
     [ValidateSet("", "3.11", "3.12", "3.13", "3.14")]
     [string]$TargetPyVersion = "",
 
+    [Parameter(Mandatory = $false,
+               HelpMessage = "If true, link the QNN EP into onnxruntime_provider_test and enable the class-level (component-tier) unit tests. Exports all EP symbols - never use for a release build.")]
+    [bool]$EnableInternalUT = $false,
+
     [Parameter(Mandatory = $true,
                HelpMessage = "Python virtual environment to activate.")]
     [string]$PyVEnv
@@ -189,6 +193,14 @@ else {
 
 if ($BuildAsX) {
     $CommonArgs += "--buildasx"
+}
+
+if ($EnableInternalUT) {
+    # Mirrors --enable-coverage in qcom/scripts/linux/build.sh, which is what turns the
+    # component tier on for Linux x86-64. Builds the QNN EP as SHARED, exports all of its
+    # symbols, and defines QNN_EP_INTERNAL_SYMBOL_ACCESS for onnxruntime_provider_test.
+    Write-Host "Class-level UT build: exporting ALL QNN EP symbols. Do not ship this binary."
+    $CommonArgs += "--cmake_extra_defines", "onnxruntime_QNN_ENABLE_INTERNAL_UT:BOOL=ON"
 }
 
 $BuildNugetArgs = @()

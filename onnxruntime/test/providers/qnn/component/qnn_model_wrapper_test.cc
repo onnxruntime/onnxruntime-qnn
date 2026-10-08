@@ -1887,7 +1887,8 @@ static const void* g_tensor_raw_data = nullptr;
 
 OrtStatus* StubGraphGetModelPathEmpty(const OrtGraph*,
                                       const ORTCHAR_T** model_path) noexcept {
-  static const ORTCHAR_T empty_path[] = "";
+  // ORT_TSTR so this compiles where ORTCHAR_T is wchar_t (Windows) as well as char.
+  static const ORTCHAR_T empty_path[] = ORT_TSTR("");
   *model_path = empty_path;
   return nullptr;
 }

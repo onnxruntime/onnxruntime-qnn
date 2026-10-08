@@ -32,9 +32,9 @@ void DynamicLibraryHandleDeleter::operator()(void* library_handle) noexcept {
   const auto unload_status = OrtUnloadDynamicLibrary(library_handle);
 
   if (!unload_status.IsOK()) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                ORT_LOGGING_LEVEL_WARNING,
-                ("Failed to unload dynamic library. Error: " + unload_status.GetErrorMessage()).c_str());
+    ORT_CXX_LOG_DEFAULT(
+        ORT_LOGGING_LEVEL_WARNING,
+        ("Failed to unload dynamic library. Error: " + unload_status.GetErrorMessage()).c_str());
   }
 }
 
@@ -226,8 +226,8 @@ Ort::Status GetServiceBinaryDirectoryPath(const wchar_t* service_name,
 Ort::Status GetMcdmDriverDirectoryPath(std::filesystem::path& driver_directory_path_out) {
   std::wstring service_name{};
   if (!GetMcdmServiceName(service_name).IsOK() || service_name.empty()) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_WARNING,
-                "QNN driver lookup: MCDM service name discovery failed; falling back to 'qcnspmcdm'.");
+    ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_WARNING,
+                        "QNN driver lookup: MCDM service name discovery failed; falling back to 'qcnspmcdm'.");
     service_name = L"qcnspmcdm";
   }
 

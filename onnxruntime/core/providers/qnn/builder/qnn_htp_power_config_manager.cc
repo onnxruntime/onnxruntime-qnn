@@ -40,13 +40,13 @@ Ort::Status HtpPowerConfigManager::AddRpcPollingTime(uint32_t rpc_polling_time, 
   RETURN_IF(rpc_polling_time_set_, "There is already a pending RPC polling time config");
 
   if (rpc_polling_time == last_set_rpc_polling_time_) {
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Requested rpc polling time is the same as last set (" + std::to_string(last_set_rpc_polling_time_) + "). Ignoring request").c_str());
+    ORT_CXX_LOG_SAFE(logger,
+                     ORT_LOGGING_LEVEL_VERBOSE,
+                     ("Requested rpc polling time is the same as last set (" + std::to_string(last_set_rpc_polling_time_) + "). Ignoring request").c_str());
   } else {
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Updating rpc polling time to: " + std::to_string(rpc_polling_time) + "us.").c_str());
+    ORT_CXX_LOG_SAFE(logger,
+                     ORT_LOGGING_LEVEL_VERBOSE,
+                     ("Updating rpc polling time to: " + std::to_string(rpc_polling_time) + "us.").c_str());
     auto& rpc_polling_time_cfg = power_configs_.emplace_back();
     rpc_polling_time_cfg.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_POLLING_TIME;
     rpc_polling_time_cfg.rpcPollingTimeConfig = rpc_polling_time;
@@ -60,15 +60,15 @@ Ort::Status HtpPowerConfigManager::AddRpcPollingTime(uint32_t rpc_polling_time, 
 Ort::Status HtpPowerConfigManager::AddRpcControlLatency(uint32_t rpc_control_latency, const Ort::Logger& logger) {
   RETURN_IF(rpc_control_latency_set_, "There is already a pending RPC control latency config");
   if (rpc_control_latency == last_set_rpc_control_latency_) {
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Requested rpc control latency is the same as last set (" +
-                 std::to_string(last_set_rpc_control_latency_) + "). Ignoring request")
-                    .c_str());
+    ORT_CXX_LOG_SAFE(logger,
+                     ORT_LOGGING_LEVEL_VERBOSE,
+                     ("Requested rpc control latency is the same as last set (" +
+                      std::to_string(last_set_rpc_control_latency_) + "). Ignoring request")
+                         .c_str());
   } else {
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Updating rpc control latency to: " + std::to_string(rpc_control_latency) + "us.").c_str());
+    ORT_CXX_LOG_SAFE(logger,
+                     ORT_LOGGING_LEVEL_VERBOSE,
+                     ("Updating rpc control latency to: " + std::to_string(rpc_control_latency) + "us.").c_str());
     auto& rpc_control_latency_cfg = power_configs_.emplace_back();
     rpc_control_latency_cfg.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_CONTROL_LATENCY;
     rpc_control_latency_cfg.rpcControlLatencyConfig = rpc_control_latency;
@@ -114,11 +114,11 @@ Ort::Status HtpPowerConfigManager::AddHtpPerformanceMode(HtpPerformanceMode htp_
                                                          uint32_t htp_power_config_client_id,
                                                          const Ort::Logger& logger) {
   RETURN_IF(htp_performance_mode_set_, "There is already a pending HTP performance mode config");
-  ORT_CXX_LOG(logger,
-              ORT_LOGGING_LEVEL_VERBOSE,
-              ("Updating htp performance mode to: " +
-               std::string(PerformanceModeToString(htp_performance_mode)) + ".")
-                  .c_str());
+  ORT_CXX_LOG_SAFE(logger,
+                   ORT_LOGGING_LEVEL_VERBOSE,
+                   ("Updating htp performance mode to: " +
+                    std::string(PerformanceModeToString(htp_performance_mode)) + ".")
+                       .c_str());
 
   QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg{};
   RETURN_IF_ERROR(SetHtpPerformancePowerConfig(htp_performance_cfg,
@@ -158,7 +158,7 @@ Ort::Status HtpPowerConfigManager::SetPowerConfig(uint32_t htp_power_config_clie
       // vote is rejected. This is not a correctness gate for graph execution, so
       // warn and continue rather than failing the run with an exception. The
       // pending state below is still reset so the next request starts clean.
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "SetPowerConfig failed; continuing without applying HTP power config.");
+      ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_WARNING, "SetPowerConfig failed; continuing without applying HTP power config.");
     }
 
     rpc_polling_time_set_ = false;
@@ -166,7 +166,7 @@ Ort::Status HtpPowerConfigManager::SetPowerConfig(uint32_t htp_power_config_clie
     htp_performance_mode_set_ = false;
     power_configs_.clear();
   } else {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SetPowerConfig called but no configs to be set.");
+    ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_VERBOSE, "SetPowerConfig called but no configs to be set.");
   }
 
   return Ort::Status();
@@ -374,17 +374,17 @@ void HtpPowerConfigManager::CreateTimerThread(uint32_t htp_power_config_client_i
       timer_ = std::move(temp);
       timer_callback_arg_ = std::make_unique<TimerCallbackArg>(htp_power_config_client_id, this);
       if (!timer_->Initialize(TimerCallback, timer_callback_arg_.get())) {
-        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create timer to set performance");
+        ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create timer to set performance");
         timer_callback_arg_.reset();
         timer_.reset();
       } else {
         timer_resource_.timer_active_ = true;
       }
     } else {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Failed: Timer is nullptr");
+      ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_VERBOSE, "Failed: Timer is nullptr");
     }
   } else {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Timer already created");
+    ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_VERBOSE, "Timer already created");
   }
 }
 
@@ -435,8 +435,8 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
   std::unique_lock<std::mutex> lk(perf_mutex_, std::defer_lock);
   if (state == GraphState::TIMEOUT) {
     if (!lk.try_lock()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                  "Release timer contended with a run transition; skipping relax (will re-arm).");
+      ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                       "Release timer contended with a run transition; skipping relax (will re-arm).");
       return Ort::Status();
     }
   } else {
@@ -468,8 +468,8 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
       // gate: the graph has already executed. Log and continue rather than failing
       // the run; the timer is re-armed on the next RUN_DONE.
       if (!timer_->Launch(sustainedDurationUs)) {
-        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                    "Release timer busy (concurrent timeout); power-down will be re-armed on next run.");
+        ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_WARNING,
+                         "Release timer busy (concurrent timeout); power-down will be re-armed on next run.");
       }
       break;
     case GraphState::RUN_START:
@@ -521,8 +521,8 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
                                                               config.rpc_polling_time,
                                                               config.rpc_control_latency, logger);
           if (!relax_status.IsOK()) {
-            ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                        "Failed to relax HTP perf for a power-config id on timeout.");
+            ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_WARNING,
+                             "Failed to relax HTP perf for a power-config id on timeout.");
           }
         }
         // All boosted ids have been relaxed; the next RUN_START re-registers.
@@ -531,7 +531,7 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(GraphState state, con
       break;
     }
     default:
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Invalid graph state");
+      ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_VERBOSE, "Invalid graph state");
       break;
   }
   return status;
@@ -567,7 +567,7 @@ Ort::Status HtpPowerConfigManager::SetPerformance(GraphState state, const HtpPer
           break;
         }
         default:
-          ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Invalid performance mode");
+          ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_VERBOSE, "Invalid performance mode");
           break;
       }
       break;
@@ -576,7 +576,7 @@ Ort::Status HtpPowerConfigManager::SetPerformance(GraphState state, const HtpPer
       status = SetHtpPowerConfigs(config, logger);
       break;
     default:
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Invalid graph state");
+      ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_VERBOSE, "Invalid graph state");
       break;
   }
   return status;
@@ -666,7 +666,7 @@ void HtpPowerConfigManager::TimerCallback(void* user_data) {
     const Ort::Logger& logger = OrtLoggingManager::GetDefaultLogger();
     auto rt = instance->SetState(GraphState::TIMEOUT, {args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance, 0, 0}, logger);
     if (!rt.IsOK()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "State update failed");
+      ORT_CXX_LOG_SAFE(logger, ORT_LOGGING_LEVEL_VERBOSE, "State update failed");
     }
   }
 }

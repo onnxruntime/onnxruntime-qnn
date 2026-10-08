@@ -25,9 +25,8 @@ static void UnmapFile(void* addr) noexcept {
   bool successful = UnmapViewOfFile(addr);
   if (!successful) {
     const auto error_code = GetLastError();
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                ORT_LOGGING_LEVEL_ERROR,
-                ("Failed to unmap view of file with ptr: " + utils::PtrToString(addr) + ", Error code: " + std::to_string(error_code) + ", \"" + std::system_category().message(error_code) + "\"").c_str());
+    ORT_CXX_LOG_DEFAULT(ORT_LOGGING_LEVEL_ERROR,
+                        ("Failed to unmap view of file with ptr: " + utils::PtrToString(addr) + ", Error code: " + std::to_string(error_code) + ", \"" + std::system_category().message(error_code) + "\"").c_str());
   }
 }
 

@@ -20,7 +20,7 @@ namespace onnxruntime::qnn {
 class HtpSharedMemoryAllocator : public OrtAllocator {
  public:
   HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info,
-                           std::shared_ptr<RpcMemLibrary> rpcmem_lib)
+                           std::shared_ptr<IRpcMemLibrary> rpcmem_lib)
       : memory_info_(mem_info),
         rpcmem_lib_{std::move(rpcmem_lib)},
         logger_(OrtLoggingManager::GetDefaultLogger()) {
@@ -86,7 +86,7 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   std::mutex allocations_mutex_;  // synchronize access to allocations_
 
   const OrtMemoryInfo* memory_info_;
-  std::shared_ptr<RpcMemLibrary> rpcmem_lib_;
+  std::shared_ptr<IRpcMemLibrary> rpcmem_lib_;
   const Ort::Logger& logger_;
 };
 

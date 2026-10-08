@@ -14,6 +14,11 @@
 #include <dlfcn.h>
 #endif
 
+#if defined(_WIN32) && defined(_M_ARM64)
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "QnnInterface.h"
 
 #include "core/providers/qnn/ort_api.h"
@@ -60,19 +65,36 @@ struct OrtApiStubContext {
   }
 };
 
+namespace {
+// Platform shims for QnnRealHtpBackendContext below. Only defined where the
+// constructor/destructor actually run: POSIX, Windows ARM64, Windows ARM64EC.
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
+constexpr const char* kQnnHtpLibName = "QnnHtp.dll";
+inline void* HtpDlOpen(const char* name) { return static_cast<void*>(::LoadLibraryA(name)); }
+inline void* HtpDlSym(void* handle, const char* name) {
+  return reinterpret_cast<void*>(::GetProcAddress(static_cast<HMODULE>(handle), name));
+}
+inline void HtpDlClose(void* handle) { ::FreeLibrary(static_cast<HMODULE>(handle)); }
+#elif !defined(_WIN32)
+constexpr const char* kQnnHtpLibName = "libQnnHtp.so";
+inline void* HtpDlOpen(const char* name) { return ::dlopen(name, RTLD_NOW | RTLD_GLOBAL); }
+inline void* HtpDlSym(void* handle, const char* name) { return ::dlsym(handle, name); }
+inline void HtpDlClose(void* handle) { ::dlclose(handle); }
+#endif
+}  // namespace
+
 // Context for tests that need a real QNN HTP backend handle for validation.
 struct QnnRealHtpBackendContext {
   QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
   Qnn_BackendHandle_t backend_handle = nullptr;
 
   QnnRealHtpBackendContext() {
-#ifndef _WIN32
-    lib_handle_ = ::dlopen("libQnnHtp.so", RTLD_NOW | RTLD_GLOBAL);
+#if !defined(_WIN32) || defined(_M_ARM64) || defined(_M_ARM64EC)
+    lib_handle_ = HtpDlOpen(kQnnHtpLibName);
     if (!lib_handle_) return;
 
     using GetProvidersFn = Qnn_ErrorHandle_t (*)(const QnnInterface_t***, uint32_t*);
-    auto get_providers = reinterpret_cast<GetProvidersFn>(
-        ::dlsym(lib_handle_, "QnnInterface_getProviders"));
+    auto get_providers = reinterpret_cast<GetProvidersFn>(HtpDlSym(lib_handle_, "QnnInterface_getProviders"));
     if (!get_providers) return;
 
     const QnnInterface_t** providers = nullptr;
@@ -91,11 +113,11 @@ struct QnnRealHtpBackendContext {
   }
 
   ~QnnRealHtpBackendContext() {
-#ifndef _WIN32
+#if !defined(_WIN32) || defined(_M_ARM64) || defined(_M_ARM64EC)
     if (initialized_ && qnn_interface.backendFree) {
       qnn_interface.backendFree(backend_handle);
     }
-    if (lib_handle_) ::dlclose(lib_handle_);
+    if (lib_handle_) HtpDlClose(lib_handle_);
 #endif
   }
 

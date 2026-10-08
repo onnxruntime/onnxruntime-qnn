@@ -179,6 +179,36 @@ inline bool IsNullLogger(const Ort::Logger& logger) {
     }                                                          \
   } while (false)
 
+// Guards an arbitrary Ort::Logger lvalue/reference/temporary before logging through
+// it. Unlike ORT_CXX_LOG_PTR (which guards a logger *pointer*), this guards a logger
+// *value or reference* directly -- e.g. a function parameter whose caller may have
+// passed OrtLoggingManager::GetDefaultLogger() before anything ever seeded it (see
+// OrtLoggingManager below), or a local bound once via
+// `const Ort::Logger& logger = OrtLoggingManager::GetDefaultLogger();` and reused
+// across several ORT_CXX_LOG calls in the same function.
+//
+// This guard is necessary even after OrtLoggingManager is fixed to never throw on an
+// unseeded logger (MakeLogger below): a null-constructed Ort::Logger's cached
+// severity level value-initializes to 0 == ORT_LOGGING_LEVEL_VERBOSE, so ORT_CXX_LOG's
+// own `message_severity >= logger.GetLoggingSeverityLevel()` check can never filter
+// it out -- every call would otherwise still reach LogMessage() with a null
+// OrtLogger* underneath and crash there instead.
+#define ORT_CXX_LOG_SAFE(logger_expr, message_severity, message) \
+  do {                                                           \
+    if (!IsNullLogger(logger_expr)) {                            \
+      ORT_CXX_LOG((logger_expr), message_severity, message);     \
+    }                                                            \
+  } while (false)
+
+// Printf-style counterpart of ORT_CXX_LOG_SAFE; see its comment for why the guard is
+// necessary.
+#define ORT_CXX_LOGF_SAFE(logger_expr, message_severity, /*format,*/...) \
+  do {                                                                   \
+    if (!IsNullLogger(logger_expr)) {                                    \
+      ORT_CXX_LOGF((logger_expr), message_severity, __VA_ARGS__);        \
+    }                                                                    \
+  } while (false)
+
 // QNN-EP COPY START
 // Below are macors copied from core/common/common.h directly.
 #ifdef _WIN32
@@ -230,8 +260,19 @@ class OrtLoggingManager {
     return GetLoggerPtr() != nullptr;
   }
 
+  // NOTE: Must also refresh the cached Ort::Logger (GetLoggerInstance()) here. GetLoggerInstance()
+  // used to lazily construct its function-local static from whatever GetLoggerPtr() held on its
+  // *first ever* call and never touch it again - so SetDefaultLogger() looked like a normal setter
+  // but silently became a no-op for GetDefaultLogger() after the first call in the process. In a
+  // single long-running process (e.g. a gtest binary) that is a real hazard: an earlier caller can
+  // latch GetDefaultLogger() to a short-lived or non-dereferenceable OrtLogger* (e.g. a test's fake
+  // token), and every *later* caller - including real EP code reached via a different, unrelated
+  // test - would keep observing that stale pointer forever, regardless of subsequent
+  // SetDefaultLogger() calls. Eagerly rebuilding the cached Ort::Logger on every Set keeps
+  // GetDefaultLogger() consistent with the pointer this setter was just given.
   static void SetDefaultLogger(const OrtLogger* default_logger) {
     GetLoggerPtr() = default_logger;
+    GetLoggerInstance() = MakeLogger(default_logger);
   }
 
  private:
@@ -242,11 +283,34 @@ class OrtLoggingManager {
     return default_logger_;
   }
 
-  static const Ort::Logger& GetLoggerInstance() {
-    static const Ort::Logger ort_logger_ = Ort::Logger(GetLoggerPtr());
+  // Ort::Logger's pointer-taking ctor (used unconditionally below prior to this fix)
+  // is NOT a safe way to construct a possibly-unseeded logger: it unconditionally
+  // calls the real OrtApi::Logger_GetLoggingSeverityLevel(ptr, ...), which dereferences
+  // ptr. When ptr is null (nobody has called SetDefaultLogger() yet -- the common case
+  // for component-tier unit tests, which build EP classes directly and never go
+  // through QnnEpFactory's CreateEpFactories()/SetDefaultLogger() call), that crashes
+  // the first time ANY code in the process calls GetDefaultLogger(), since
+  // GetLoggerInstance()'s static is initialized exactly once, lazily, on that first
+  // call. Ort::Logger has two safe alternatives for exactly this case
+  // (onnxruntime_cxx_api.h): the default ctor and the explicit-nullptr_t ctor, neither
+  // of which touches the C API. Route through whichever is safe for a given ptr so
+  // GetDefaultLogger() can be called at any time, matching IsNullLogger()'s contract.
+  static Ort::Logger MakeLogger(const OrtLogger* ptr) {
+    return ptr != nullptr ? Ort::Logger(ptr) : Ort::Logger(nullptr);
+  }
+
+  static Ort::Logger& GetLoggerInstance() {
+    static Ort::Logger ort_logger_ = MakeLogger(GetLoggerPtr());
     return ort_logger_;
   }
 };
+
+// Convenience wrapper over ORT_CXX_LOG_SAFE for the common case of logging directly
+// through the process-wide default logger (OrtLoggingManager::GetDefaultLogger(),
+// above). See ORT_CXX_LOG_SAFE's comment for why the guard is necessary even though
+// GetDefaultLogger() itself can no longer throw.
+#define ORT_CXX_LOG_DEFAULT(message_severity, message) \
+  ORT_CXX_LOG_SAFE(OrtLoggingManager::GetDefaultLogger(), message_severity, message)
 
 struct ApiPtrs {
   const OrtApi& ort_api;

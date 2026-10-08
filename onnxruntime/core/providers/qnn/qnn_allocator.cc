@@ -222,7 +222,7 @@ void ORT_API_CALL HtpSharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_,
       if (!unregistered) {
         std::ostringstream oss;
         oss << "Attempted to deregister allocation but it is untracked for address (" << allocation_address << ").";
-        ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+        ORT_CXX_LOG_SAFE(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
       }
     }
 
@@ -236,13 +236,13 @@ void ORT_API_CALL HtpSharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_,
         std::ostringstream oss;
         oss << "Caught exception while running clean up callback for address (" << allocation_address << "): "
             << e.what();
-        ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+        ORT_CXX_LOG_SAFE(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
       }
     }
   } catch (const std::exception& e) {
     std::ostringstream oss;
     oss << "Caught exception while freeing address (" << allocation_address << "): " << e.what();
-    ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+    ORT_CXX_LOG_SAFE(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
   }
 }
 
@@ -357,17 +357,17 @@ void* ORT_API_CALL Dx12SharedMemoryAllocator::AllocImpl(struct OrtAllocator* thi
     AllocationRecord allocation_record{};
     allocation_record.dx12_info = std::move(dx12_info);
 
-    ORT_CXX_LOGF(allocator->logger_,
-                 ORT_LOGGING_LEVEL_INFO,
-                 "\nMaking DX12 allocation:"
-                 "\n  resource   = %p"
-                 "\n  offset     = %llu"
-                 "\n  total_size = %llu"
-                 "\n  mapped_ptr = %p\n",
-                 allocation_record.dx12_info.resource,
-                 allocation_record.dx12_info.offset,
-                 allocation_record.dx12_info.total_size,
-                 mapped_ptr);
+    ORT_CXX_LOGF_SAFE(allocator->logger_,
+                      ORT_LOGGING_LEVEL_INFO,
+                      "\nMaking DX12 allocation:"
+                      "\n  resource   = %p"
+                      "\n  offset     = %llu"
+                      "\n  total_size = %llu"
+                      "\n  mapped_ptr = %p\n",
+                      allocation_record.dx12_info.resource,
+                      allocation_record.dx12_info.offset,
+                      allocation_record.dx12_info.total_size,
+                      mapped_ptr);
 
     std::scoped_lock g{allocator->allocations_mutex_};
     const bool inserted = allocator->allocations_.emplace(mapped_ptr, std::move(allocation_record)).second;
@@ -413,17 +413,17 @@ void ORT_API_CALL Dx12SharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_
     const auto& allocation_record = allocation_node.mapped();
     ID3D12Resource* resource = allocation_record.dx12_info.resource;
 
-    ORT_CXX_LOGF(allocator->logger_,
-                 ORT_LOGGING_LEVEL_INFO,
-                 "\nFreeing DX12 allocation:"
-                 "\n  resource           = %p"
-                 "\n  offset             = %llu"
-                 "\n  total_size         = %llu"
-                 "\n  allocation_address = %p\n",
-                 allocation_record.dx12_info.resource,
-                 allocation_record.dx12_info.offset,
-                 allocation_record.dx12_info.total_size,
-                 allocation_address);
+    ORT_CXX_LOGF_SAFE(allocator->logger_,
+                      ORT_LOGGING_LEVEL_INFO,
+                      "\nFreeing DX12 allocation:"
+                      "\n  resource           = %p"
+                      "\n  offset             = %llu"
+                      "\n  total_size         = %llu"
+                      "\n  allocation_address = %p\n",
+                      allocation_record.dx12_info.resource,
+                      allocation_record.dx12_info.offset,
+                      allocation_record.dx12_info.total_size,
+                      allocation_address);
 
     // Unregister from global tracker.
     {
@@ -432,7 +432,7 @@ void ORT_API_CALL Dx12SharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_
         std::ostringstream oss;
         oss << "Dx12SharedMemoryAllocator: Attempted to deregister allocation but it is untracked for address ("
             << allocation_address << ").";
-        ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+        ORT_CXX_LOG_SAFE(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
       }
     }
 
@@ -444,7 +444,7 @@ void ORT_API_CALL Dx12SharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_
         std::ostringstream oss;
         oss << "Dx12SharedMemoryAllocator: Exception in clean up callback for address ("
             << allocation_address << "): " << e.what();
-        ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+        ORT_CXX_LOG_SAFE(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
       }
     }
 
@@ -456,7 +456,7 @@ void ORT_API_CALL Dx12SharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_
   } catch (const std::exception& e) {
     std::ostringstream oss;
     oss << "Dx12SharedMemoryAllocator: Exception while freeing address (" << allocation_address << "): " << e.what();
-    ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+    ORT_CXX_LOG_SAFE(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
   }
 }
 

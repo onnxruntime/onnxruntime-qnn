@@ -44,13 +44,15 @@
     list(APPEND onnxruntime_providers_qnn_all_srcs "${ONNXRUNTIME_ROOT}/core/providers/qnn/onnxruntime_providers_qnn.rc")
   endif()
 
-  if(ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-    # Coverage build: build as SHARED library so onnxruntime_provider_test can
-    # call EP-internal functions directly via target_link_libraries(). On Linux, SHARED and
-    # MODULE both produce .so files; SHARED additionally allows linking at build time.
+  if(onnxruntime_QNN_INTERNAL_UT_ENABLED AND NOT APPLE)
+    # Class-level UT build: build as SHARED rather than MODULE so onnxruntime_provider_test
+    # can call EP-internal functions directly via target_link_libraries(). CMake forbids
+    # linking a MODULE library into another target on every platform, and on Windows a MODULE
+    # target produces no import library. The output is still a .so/.dll loadable at runtime
+    # exactly as before; only the link-time surface changes.
     message(WARNING
-            "QNN EP coverage build: using SHARED library + version_script_coverage.lds "
-            "(exports ALL symbols). DO NOT use the resulting binary in production.")
+            "QNN EP class-level UT build: using SHARED library and exporting ALL EP symbols. "
+            "DO NOT use the resulting binary in production.")
     onnxruntime_add_shared_library(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
   else()
     onnxruntime_add_shared_library_module(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
@@ -125,9 +127,10 @@
 
   # Set linker flags for function(s) exported by EP DLL
   if(UNIX)
-    if(ENABLE_COVERAGE AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-      # Coverage build: export all symbols so the test binary can call EP-internal functions.
-      # --gc-sections is intentionally omitted to preserve all gcov-instrumented sections.
+    if(onnxruntime_QNN_INTERNAL_UT_ENABLED AND NOT APPLE)
+      # Class-level UT build: export all symbols so the test binary can call EP-internal
+      # functions. --gc-sections is intentionally omitted to preserve all gcov-instrumented
+      # sections when this is a coverage build.
       target_link_options(onnxruntime_providers_qnn PRIVATE
                           "LINKER:--version-script=${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script_coverage.lds"
                           "LINKER:-rpath=\$ORIGIN"
@@ -140,8 +143,15 @@
       )
     endif()
   elseif(WIN32)
-    set_property(TARGET onnxruntime_providers_qnn APPEND_STRING PROPERTY LINK_FLAGS
-                  "-DEF:${ONNXRUNTIME_ROOT}/core/providers/qnn/symbols.def")
+    if(onnxruntime_QNN_INTERNAL_UT_ENABLED)
+      # Class-level UT build: the Windows analogue of version_script_coverage.lds. CMake
+      # generates a .def exporting every symbol and passes its own /DEF:, so this cannot
+      # coexist with the explicit /DEF:symbols.def below -- MSVC accepts only one /DEF:.
+      set_target_properties(onnxruntime_providers_qnn PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+      set_property(TARGET onnxruntime_providers_qnn APPEND_STRING PROPERTY LINK_FLAGS
+                    "-DEF:${ONNXRUNTIME_ROOT}/core/providers/qnn/symbols.def")
+    endif()
     # Generate PDB for Release builds.
     # /DEBUG tells the linker to emit a .pdb; /OPT:REF and /OPT:ICF re-enable
     # linker optimizations that /DEBUG implicitly turns off via /OPT:NOREF /OPT:NOICF.

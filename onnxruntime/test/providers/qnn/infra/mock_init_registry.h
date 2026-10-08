@@ -309,7 +309,8 @@ inline OrtStatus* MakeMockChainMissStatus() {
 
 inline OrtStatus* StubMockGraphGetModelPath(const OrtGraph*,
                                             const ORTCHAR_T** out) noexcept {
-  static const ORTCHAR_T empty[] = "";
+  // ORT_TSTR so this compiles where ORTCHAR_T is wchar_t (Windows) as well as char.
+  static const ORTCHAR_T empty[] = ORT_TSTR("");
   *out = empty;
   return nullptr;
 }

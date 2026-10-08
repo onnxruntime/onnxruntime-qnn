@@ -197,8 +197,15 @@ set(onnxruntime_test_framework_src_patterns)
 if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/accuracy/builder/opbuilder/*)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/component/*)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/component/builder/opbuilder/*)
+  # Component (class-level) tier: on Windows ARM64, only qnn_backend_manager_test.cc is
+  # enabled for now -- the rest of component/ has not been validated on that platform yet.
+  # Linux x86-64 (the original coverage build) keeps the full glob unchanged.
+  if(WIN32 AND onnxruntime_target_platform MATCHES "^ARM64")
+    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/component/qnn_backend_manager_test.cc)
+  else()
+    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/component/*)
+    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/component/builder/opbuilder/*)
+  endif()
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/infra/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/infra/specs/builder/opbuilder/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/integration/*)
@@ -391,25 +398,28 @@ block()
     target_compile_options(onnxruntime_provider_test PRIVATE -Wno-error=shorten-64-to-32)
   endif()
 
-  # Coverage build: link against the SHARED QNN EP library so tests can call
-  # EP-internal functions directly. Coverage is recorded in the .so's .gcda files and
-  # collected by lcov --directory <build_dir> (recursive search finds them automatically).
-  if(ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+  # Class-level (component-tier) unit tests: link against the SHARED QNN EP library so tests
+  # can call EP-internal functions directly. Under ENABLE_COVERAGE this additionally lets
+  # coverage be recorded in the .so's .gcda files and collected by lcov --directory <build_dir>
+  # (recursive search finds them automatically).
+  if(onnxruntime_QNN_INTERNAL_UT_ENABLED)
     target_link_libraries(onnxruntime_provider_test PRIVATE onnxruntime_providers_qnn)
     # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
-    # It tracks whether the test binary is link-time bound to the SHARED EP library
-    # (i.e., the cmake conditions above hold), not whether any production source is
-    # under #if. When the macro is off, tier test bodies (component/, snapshot/,
-    # session_snapshot/, accuracy/) compile to empty translation units, so
-    # non-coverage builds do not see undefined references.
-    # Today this is only enabled under ENABLE_COVERAGE; once the UT migration plan
-    # stabilises, the gate can be widened to other CI build configurations without
-    # touching the test code.
+    # It tracks whether the test binary is link-time bound to the SHARED EP library,
+    # not whether any production source is under #if. When the macro is off, tier test
+    # bodies (component/, snapshot/, session_snapshot/, accuracy/) compile to empty
+    # translation units, so default builds do not see undefined references.
+    # Enabled by the Linux x86-64 coverage build, or explicitly via
+    # -Donnxruntime_QNN_ENABLE_INTERNAL_UT=ON (see cmake/CMakeLists.txt).
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
-    # Accuracy tier: gates the per-op accuracy test files (e.g.
-    # accuracy/builder/opbuilder/clip_test.cc). Shares the
-    # INTERNAL_SYMBOL_ACCESS prereqs (Linux x86_64 + shared QNN EP), so it
-    # is enabled together with coverage rather than as a separate opt-in.
+  endif()
+
+  # Accuracy tier: gates the per-op accuracy test files (e.g.
+  # accuracy/builder/opbuilder/clip_test.cc). Deliberately keyed off the coverage condition
+  # rather than onnxruntime_QNN_INTERNAL_UT_ENABLED above -- these files have only ever been
+  # built on Linux x86-64, so enabling the component tier on another platform should not drag
+  # them in.
+  if(ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ACCURACY_UT=1)
   endif()
 
