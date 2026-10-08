@@ -335,7 +335,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   }
 
   const bool build_json_graph = !context.json_qnn_graph_path.empty();
-  RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
+  RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph, build_json_graph), "Failed to compose Qnn graph.");
 
   profiling_scope.Complete(profiling_info);
 
@@ -361,7 +361,23 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
     std::ofstream ofs(context.json_qnn_graph_path);
 
     if (ofs.is_open()) {
-      ofs << json_graph.dump();
+      if (context.htp_graph_configs != nullptr) {
+        const HtpGraphConfigs_t& configs = *context.htp_graph_configs;
+        nlohmann::json snapshot_graph = json_graph;
+        snapshot_graph["qnn_json_graph_schema_version"] = 1;
+        snapshot_graph["qnn_ep_graph_configs"] = {
+            {"vtcm_size_in_mb", configs.vtcm_size_in_mb},
+            {"htp_graph_finalization_opt_mode", static_cast<int>(configs.htp_graph_finalization_opt_mode)},
+            {"enable_htp_fp16_precision", configs.enable_htp_fp16_precision},
+            {"enable_htp_monolithic_lstm", configs.enable_htp_monolithic_lstm},
+            {"enable_htp_fp16_clamp_overflow", configs.enable_htp_fp16_clamp_overflow},
+            {"enable_htp_matmul_lut", configs.enable_htp_matmul_lut},
+            {"htp_num_cores", configs.htp_num_cores},
+        };
+        ofs << snapshot_graph.dump();
+      } else {
+        ofs << json_graph.dump();
+      }
       ofs.close();
     } else {
       ORT_CXX_LOG(logger,

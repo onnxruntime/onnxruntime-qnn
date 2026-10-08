@@ -44,6 +44,10 @@ struct QnnModelContext {
 
   // Non-null when tracing is enabled; ComposeGraph writes one OpTraceInfo here.
   OpTraceInfo* op_trace_output = nullptr;
+
+  // Non-null only for a JSON graph dump produced while compiling an HTP graph.
+  // The serialized values make graph-affecting HTP options part of a snapshot.
+  const HtpGraphConfigs_t* htp_graph_configs = nullptr;
 };
 
 class QnnModel {

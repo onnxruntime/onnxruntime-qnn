@@ -719,7 +719,7 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
          run(graph_outputs_.names, QNN_TENSOR_TYPE_APP_READ, "output");
 }
 
-bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
+bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph, bool include_static_data_hash) {
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Compose Qnn Graph.");
   if (qnn_op_property_list_.empty()) {
     return false;
@@ -778,7 +778,7 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
     }
 
     if (build_json_qnn_graph) {
-      json_qnn_graph_.AddOp(op_config_wrapper);
+      json_qnn_graph_.AddOp(op_config_wrapper, include_static_data_hash);
     }
   }
 
