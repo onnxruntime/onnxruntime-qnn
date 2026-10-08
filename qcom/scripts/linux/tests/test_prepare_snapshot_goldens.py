@@ -16,6 +16,7 @@ import pytest
 SCRIPT = Path(__file__).resolve().parent.parent / "prepare_snapshot_goldens.sh"
 QAIRT_VERSION = "2.50.40"
 ORT_VERSION = "1.29.0"
+GOLDEN_PROFILE = "linux-x86_64-htp-simulator"
 
 
 def write_executable(path: Path, content: str) -> None:
@@ -47,7 +48,8 @@ def create_zip(path: Path, manifest: object | None) -> None:
             if isinstance(manifest, str):
                 archive.writestr("manifest.json", manifest)
             else:
-                archive.writestr("manifest.json", json.dumps(manifest))
+                manifest_with_profile = {"golden_profile": GOLDEN_PROFILE, **manifest}
+                archive.writestr("manifest.json", json.dumps(manifest_with_profile))
         archive.writestr("snapshot/builder/opbuilder/clip/Case.json", "{}")
 
 
@@ -61,6 +63,7 @@ def run_preflight(
     initial_github_env: str = "",
     golden_dir: Path | None = None,
     working_dir: Path | None = None,
+    golden_profile: str = GOLDEN_PROFILE,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -98,6 +101,7 @@ def run_preflight(
             str(SCRIPT),
             f"--build-dir={build_dir}",
             f"--golden-dir={golden_dir}",
+            f"--golden-profile={golden_profile}",
         ],
         check=False,
         capture_output=True,
@@ -187,6 +191,35 @@ def test_aligned_archive_enables_golden_store(tmp_path: Path, build_dir: Path) -
     assert github_env.read_text() == f"QNN_UT_SNAPSHOT_GOLDEN_DIR=\nQNN_UT_SNAPSHOT_GOLDEN_DIR={golden_dir}\n"
     assert (golden_dir / "manifest.json").is_file()
     assert (golden_dir / "snapshot/builder/opbuilder/clip/Case.json").is_file()
+
+
+def test_profile_mismatch_never_enables_golden_store(tmp_path: Path, build_dir: Path) -> None:
+    source_zip = tmp_path / "goldens.zip"
+    create_zip(
+        source_zip,
+        {
+            "golden_profile": "windows-arm64-htp-v73",
+            "qairt_version": QAIRT_VERSION,
+            "ort_version": ORT_VERSION,
+        },
+    )
+
+    result, github_env, golden_dir = run_preflight(tmp_path, build_dir, source_zip)
+
+    assert result.returncode == 0, result.stderr
+    assert "profile='windows-arm64-htp-v73'" in result.stderr
+    assert github_env.read_text().endswith("QNN_UT_SNAPSHOT_GOLDEN_DIR=\n")
+    assert not golden_dir.exists()
+
+
+def test_preflight_downloads_from_profile_namespace(tmp_path: Path, build_dir: Path) -> None:
+    source_zip = tmp_path / "goldens.zip"
+    create_zip(source_zip, {"qairt_version": QAIRT_VERSION, "ort_version": ORT_VERSION})
+
+    result, _, _ = run_preflight(tmp_path, build_dir, source_zip)
+
+    assert result.returncode == 0, result.stderr
+    assert f"snapshot-goldens/{GOLDEN_PROFILE}/latest/goldens.zip" in result.stderr
 
 
 def test_relative_golden_dir_exports_absolute_store_for_provider_working_dir(tmp_path: Path, build_dir: Path) -> None:

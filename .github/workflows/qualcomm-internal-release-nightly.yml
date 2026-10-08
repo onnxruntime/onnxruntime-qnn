@@ -58,3 +58,4 @@ jobs:
       # Scheduled producer explicitly opts into the real upload; the reusable
       # workflow defaults dry_run=true so manual dispatches stay safe.
       dry_run: false
+      golden_profile: linux-x86_64-htp-simulator

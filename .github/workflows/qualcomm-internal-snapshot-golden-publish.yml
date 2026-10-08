@@ -18,6 +18,10 @@ on:
         description: "Artifactory path prefix under BUILD_ARTIFACTORY_REPO."
         type: string
         default: 'ci/qnn-ep-test-store/snapshot-goldens'
+      golden_profile:
+        description: "Required execution profile below repo_subpath (for example, linux-x86_64-htp-simulator)."
+        type: string
+        required: true
       dry_run:
         description: "Do everything except the actual Artifactory upload. Defaults true so a manual dispatch never clobbers the shared store by accident; the scheduled producer passes false explicitly."
         type: boolean
@@ -70,6 +74,7 @@ jobs:
         env:
           FILTER_INPUT: ${{ inputs.filter }}
           REPO_SUBPATH_INPUT: ${{ inputs.repo_subpath }}
+          GOLDEN_PROFILE_INPUT: ${{ inputs.golden_profile }}
           DRY_RUN_INPUT: ${{ inputs.dry_run }}
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
@@ -93,6 +98,8 @@ jobs:
             fi
             args+=(--repo-subpath="${REPO_SUBPATH_INPUT}")
           fi
+
+          args+=(--golden-profile="${GOLDEN_PROFILE_INPUT}")
 
           if [ "${DRY_RUN_INPUT}" = "true" ]; then
             args+=(--dry-run)
