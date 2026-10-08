@@ -9,6 +9,7 @@ namespace qnn {
 #if ORT_API_HAS_EPCONTEXT_ENCRYPTION
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* session_options,
+                                         uint32_t effective_api_version,
                                          const Ort::Logger* logger) noexcept
     : config_{nullptr} {
   // A null session options pointer is used by code paths that do not have an
@@ -16,6 +17,16 @@ EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* session_option
   // cannot be application callbacks in that case, and wrapping nullptr in
   // ConstSessionOptions would still try to resolve the experimental v28 API.
   if (session_options == nullptr) {
+    return;
+  }
+
+  // effective_api_version is the version negotiated with the actual runtime, not just
+  // compile-time ORT_API_VERSION. Below v28, the experimental APIs don't exist in the
+  // runtime's OrtApi struct, so skip them here rather than crashing on an ABI mismatch.
+  if (effective_api_version < 28) {
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_WARNING,
+                    "ORT runtime API version is below 28 (v1.28). EPContext encryption "
+                    "callbacks are unavailable; upgrade to onnxruntime >= 1.28 to enable.");
     return;
   }
 
@@ -98,6 +109,7 @@ Ort::Status EpContextIoDispatch::Write(const std::string& name,
 #else  // ORT_API_HAS_EPCONTEXT_ENCRYPTION — stub for pre-v28 ORT
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* /*session_options*/,
+                                         uint32_t /*effective_api_version*/,
                                          const Ort::Logger* /*logger*/) noexcept {}
 
 bool EpContextIoDispatch::HasReadCallback() const noexcept { return false; }
