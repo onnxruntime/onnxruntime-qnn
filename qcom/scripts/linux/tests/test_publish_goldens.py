@@ -15,6 +15,7 @@ QAIRT_VERSION = "2.50.40"
 ORT_VERSION = "1.29.0"
 REPO = "test-repo"
 SUBPATH = "ci/snapshot-goldens-pr923-test"
+GOLDEN_PROFILE = "linux-x86_64-htp-simulator"
 
 
 def write_executable(path: Path, content: str) -> None:
@@ -101,6 +102,7 @@ def test_publish_sidecars_match_zip_manifest_and_upload_in_order(tmp_path: Path)
             f"--build-dir={build_dir}",
             f"--golden-dir={golden_dir}",
             f"--repo-subpath={SUBPATH}",
+            f"--golden-profile={GOLDEN_PROFILE}",
             "--skip-regen",
             "--publish",
         ],
@@ -117,16 +119,17 @@ def test_publish_sidecars_match_zip_manifest_and_upload_in_order(tmp_path: Path)
     assert uploads == [
         f"{archive_dir}/manifest.json",
         f"{archive_dir}/goldens.zip",
-        f"{REPO}/{SUBPATH}/latest/manifest.json",
-        f"{REPO}/{SUBPATH}/latest/goldens.zip",
+        f"{REPO}/{SUBPATH}/{GOLDEN_PROFILE}/latest/manifest.json",
+        f"{REPO}/{SUBPATH}/{GOLDEN_PROFILE}/latest/goldens.zip",
     ]
 
     archive_manifest = fake_store / f"{archive_dir}/manifest.json"
     archive_zip = fake_store / f"{archive_dir}/goldens.zip"
-    latest_manifest = fake_store / f"{REPO}/{SUBPATH}/latest/manifest.json"
-    latest_zip = fake_store / f"{REPO}/{SUBPATH}/latest/goldens.zip"
+    latest_manifest = fake_store / f"{REPO}/{SUBPATH}/{GOLDEN_PROFILE}/latest/manifest.json"
+    latest_zip = fake_store / f"{REPO}/{SUBPATH}/{GOLDEN_PROFILE}/latest/goldens.zip"
     assert archive_manifest.read_bytes() == latest_manifest.read_bytes()
     assert archive_zip.read_bytes() == latest_zip.read_bytes()
 
     with zipfile.ZipFile(latest_zip) as archive:
         assert archive.read("manifest.json") == latest_manifest.read_bytes()
+    assert json.loads(latest_manifest.read_text())["golden_profile"] == GOLDEN_PROFILE
