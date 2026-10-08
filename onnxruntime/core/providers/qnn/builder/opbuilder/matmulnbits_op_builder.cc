@@ -527,11 +527,11 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
         }
 
         bool used_bw_block_mapped = false;
-#if defined(QNN_SDK_VERSION_MINOR) && (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
+#ifdef QNN_W2A16_BW_BLOCK_MAPPED_AVAILABLE
         // 2-bit BW_BLOCK_MAPPED: keeps int16 activations natively (no DQ needed).
         // Gated to SDK >= 2.51: the native W2A16 HTP kernel is not available until 2.51.
         // Symmetric → STANDARD_SYMMETRIC (offsets=0), Asymmetric → ASYMMETRIC_PLUS_ONE (offsets from ZP tensor).
-        if (!used_lpbq && bits == 2 && is_act_16bitquant) {
+        if (bits == 2 && is_act_16bitquant) {
           const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
 
           Qnn_QuantizationEncodingMapping_t mapping;
@@ -554,12 +554,13 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
           ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
                       ("MatMulNBits weight encoding: BW_BLOCK_MAPPED (" + std::string(mapping_str) + ") for " + weight_tensor_name).c_str());
         }
-#endif  // QNN_SDK_VERSION_MINOR >= 51
+#endif  // QNN_W2A16_BW_BLOCK_MAPPED_AVAILABLE
 
         if (!used_lpbq && !used_bw_block_mapped) {
           // Non-LPBQ, non-BW_BLOCK_MAPPED path: native BQ (BLOCK) or BW_FLOAT_BLOCK, decided below.
           const char* reason = !is_act_16bitquant ? "activation not 16-bit quantized"
-                               : bits != 4        ? "bits != 4 (LPBQ only supports INT4)"
+                               : bits == 2        ? "BW_BLOCK_MAPPED unavailable (SDK < 2.51)"
+                               : bits != 4        ? "unsupported bit-width for LPBQ"
                                : !zp_is_symmetric ? "zero-points not symmetric"
                                                   : "LPBQ conversion failed (enable_block_quant_weight_optimization=0)";
           ORT_CXX_LOG(logger,
@@ -739,7 +740,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
     // Determine the Conv2D output data type from the registered weight tensor's quant encoding.
     // Only BW_FLOAT_BLOCK forces the kernel to compute in FP16; LPBQ (BLOCKWISE_EXPANSION), native BQ
     // (BLOCK), and BW_BLOCK_MAPPED all produce the actual output data type (e.g. uint16/int16) directly.
-    // NOTE: IsBlockQuantized() is also true for BW_BLOCK_MAPPED, so match the encoding directly.
+    // NOTE: IsBlockQuantized() is true for several block-type quant params, so match the encoding directly.
     bool is_bw_float_block = false;
     if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1])) {
       const auto& weight_quant_params = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().Get();
