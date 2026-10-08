@@ -826,6 +826,7 @@ class TaskLibrary:
                     "Generating diff coverage report (Linux x86_64)",
                     self.__venv_path,
                     build_dir,
+                    base_commit=os.environ.get("ORT_DIFF_BASE_COMMIT"),
                 )
             )
 

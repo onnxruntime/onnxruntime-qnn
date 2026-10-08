@@ -8,10 +8,12 @@
 #include <string>
 #include <vector>
 
+#include <gsl/util>
+#include <gtest/gtest.h>
+
 #include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpCommon.h"
 #include "QnnSdkBuildId.h"
-#include "gtest/gtest.h"
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
@@ -31,16 +33,13 @@ namespace test {
 // Expected usage is used along with smart pointer to automatically restore temporarily moved libraries.
 class HnrdTestHandle {
  public:
-  HnrdTestHandle(uint32_t htp_arch, bool keep_prepare_lib = false) : htp_arch_(htp_arch) {
-    // Move Prepare/Skel/Stub libraries to a temporary directory to trigger HNRD.
+  HnrdTestHandle(uint32_t htp_arch) : htp_arch_(htp_arch) {
+    // Move Skel/Stub libraries to a temporary directory to trigger HNRD.
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
     temp_dir_ = std::string("temp_") + info->test_suite_name() + "-" + info->name();
 
     std::filesystem::create_directory(temp_dir_);
     for (const std::string& lib : GetRelatedLibs()) {
-      if (keep_prepare_lib && lib.find("HtpPrepare") != std::string::npos) {
-        continue;
-      }
       if (std::filesystem::exists(lib)) {
         std::filesystem::rename(lib, temp_dir_ / lib);
       }
@@ -61,12 +60,10 @@ class HnrdTestHandle {
  private:
   std::vector<std::string> GetRelatedLibs() {
 #ifdef _WIN32
-    return {"QnnHtpPrepare.dll",
-            "libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
+    return {"libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
             "QnnHtpV" + std::to_string(htp_arch_) + "Stub.dll"};
 #else
-    return {"libQnnHtpPrepare.so",
-            "libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
+    return {"libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
             "libQnnHtpV" + std::to_string(htp_arch_) + "Stub.so"};
 #endif
   }
@@ -592,7 +589,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_HostModeNoHnrd) {
   auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
   const uint32_t htp_arch = static_cast<uint32_t>(platform_attrs.htp_arch);
   // Host mode is not affected by missing Stub/Skel libraries.
-  auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(htp_arch, /*keep_prepare_lib*/ true);
+  auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(htp_arch);
 
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx.onnx");
@@ -933,6 +930,22 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbMoreVtcm) {
   test_info.vtcm_mbs[0] = 9999;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
+}
+
+TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_NoHnrdWithoutPrepareLib) {
+  // Rename prepare lib to pretend it does not exist and rename it back later.
+  const std::string prepare_lib_path = "QnnHtpPrepare.dll";
+  const std::string prepare_lib_temp_path = "QnnHtpPrepare_temp.dll";
+  ASSERT_TRUE(std::filesystem::exists(prepare_lib_path));
+  std::filesystem::rename(prepare_lib_path, prepare_lib_temp_path);
+  auto cleanup = gsl::finally([&prepare_lib_path, &prepare_lib_temp_path]() {
+    std::filesystem::rename(prepare_lib_temp_path, prepare_lib_path);
+  });
+
+  CompatibilityTestInfoV2 test_info;
+  test_info.FillPlatformInfo();
+
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
 #endif  // defined(_WIN32) && defined(_M_ARM64)
 
