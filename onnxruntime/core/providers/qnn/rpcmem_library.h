@@ -85,8 +85,16 @@ class RpcMemLibrary {
   RpcMemApi api_;
 };
 
-// Returns the process-wide RPCMEM library instance, creating it on first use.
-// Returns nullptr and sets error_message if the library cannot be loaded.
-std::shared_ptr<RpcMemLibrary> GetOrCreateRpcMemLibrary(std::string& error_message);
+class RpcMemLibraryManager {
+ public:
+  // Returns the process-wide RPCMEM library instance, creating it on first use.
+  // Returns nullptr and sets error_message if the library cannot be loaded.
+  static std::shared_ptr<RpcMemLibrary> GetOrCreate(std::string& error_message);
+
+ private:
+  RpcMemLibraryManager() = delete;
+
+  static const std::shared_ptr<RpcMemLibrary>& GetInstance();
+};
 
 }  // namespace onnxruntime::qnn

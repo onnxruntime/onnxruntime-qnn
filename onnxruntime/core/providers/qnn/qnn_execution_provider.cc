@@ -1333,7 +1333,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     // Attempt to init rpcmem_library_ if needed. If this fails, then
     // disable file mapped weights and proceed with normal operation
     std::string rpcmem_error;
-    rpcmem_library_ = qnn::GetOrCreateRpcMemLibrary(rpcmem_error);
+    rpcmem_library_ = qnn::RpcMemLibraryManager::GetOrCreate(rpcmem_error);
     if (rpcmem_library_ == nullptr) {
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_WARNING,
@@ -1605,7 +1605,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     // A context-generation session only needs to preserve the MEMHANDLE graph I/O contract.
     if (!context_cache_enabled_) {
       std::string rpcmem_error;
-      rpcmem_library_ = qnn::GetOrCreateRpcMemLibrary(rpcmem_error);
+      rpcmem_library_ = qnn::RpcMemLibraryManager::GetOrCreate(rpcmem_error);
       if (rpcmem_library_ == nullptr) {
         const std::string message =
             "Unable to load RPCMEM for HTP shared memory allocator: " + rpcmem_error;

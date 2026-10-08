@@ -153,7 +153,7 @@ OrtStatus* QnnEpFactory::CreateHtpSharedMemoryAllocator(
       htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(
           memory_info,
           [](std::string& error_message) {
-            return qnn::GetOrCreateRpcMemLibrary(error_message);
+            return qnn::RpcMemLibraryManager::GetOrCreate(error_message);
           });
     }
 
