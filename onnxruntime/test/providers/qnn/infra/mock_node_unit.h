@@ -99,10 +99,11 @@ struct MockNodeUnitImpl {
   // deque: push_back never invalidates existing element addresses.
   std::deque<FakeValueInfo> vis;
   std::deque<FakeNode> nodes;
+  std::deque<FakeOpAttr> attrs;
   OrtApi ctor_api{};
   std::unique_ptr<OrtNodeUnit> unit;
-  // Constructed last, destroyed first: routes global Ort::GetApi() to ctor_api
-  // so OrtNodeUnit accessors decode the fake node.
+  // Declared after `unit`, so it is destroyed first and restores the global API
+  // before the fake node backing is released.
   std::unique_ptr<OrtGlobalApiOverride> global_guard;
 };
 
@@ -187,8 +188,8 @@ inline MockNodeUnit MakeMockNodeUnit(
   impl->nodes.push_back(std::move(node));
 
   const OrtNode* node_ptr = impl->nodes.back().AsNode();
-  impl->unit = std::make_unique<OrtNodeUnit>(node_ptr, impl->ctor_api);
   impl->global_guard = std::make_unique<OrtGlobalApiOverride>(&impl->ctor_api);
+  impl->unit = std::make_unique<OrtNodeUnit>(node_ptr, impl->ctor_api);
 
   return MockNodeUnit(std::move(impl));
 }
@@ -246,6 +247,14 @@ inline MockNodeUnit MakeMockQDQNodeUnit(
     if (d.quant_param->zero_point != nullptr) {
       dq.inputs.push_back(detail::AsFakeVi(d.quant_param->zero_point));
     }
+    if (d.quant_param->axis.has_value()) {
+      impl->attrs.push_back(FakeOpAttr::MakeInt64("axis", *d.quant_param->axis));
+      dq.attrs.emplace("axis", &impl->attrs.back());
+    }
+    if (d.quant_param->block_size.has_value()) {
+      impl->attrs.push_back(FakeOpAttr::MakeInt64("block_size", *d.quant_param->block_size));
+      dq.attrs.emplace("block_size", &impl->attrs.back());
+    }
     impl->nodes.push_back(std::move(dq));
     const FakeNode* dq_ptr = &impl->nodes.back();
     dq_nodes.push_back(dq_ptr->AsNode());
@@ -277,6 +286,14 @@ inline MockNodeUnit MakeMockQDQNodeUnit(
     if (d.quant_param->zero_point != nullptr) {
       q.inputs.push_back(detail::AsFakeVi(d.quant_param->zero_point));
     }
+    if (d.quant_param->axis.has_value()) {
+      impl->attrs.push_back(FakeOpAttr::MakeInt64("axis", *d.quant_param->axis));
+      q.attrs.emplace("axis", &impl->attrs.back());
+    }
+    if (d.quant_param->block_size.has_value()) {
+      impl->attrs.push_back(FakeOpAttr::MakeInt64("block_size", *d.quant_param->block_size));
+      q.attrs.emplace("block_size", &impl->attrs.back());
+    }
     q.outputs.push_back(q_out);
     impl->nodes.push_back(std::move(q));
     const FakeNode* q_ptr = &impl->nodes.back();
@@ -304,9 +321,9 @@ inline MockNodeUnit MakeMockQDQNodeUnit(
   node_group.redundant_clip_node = nullptr;
 
   // graph arg is unused by the ctor; pass nullptr.
+  impl->global_guard = std::make_unique<OrtGlobalApiOverride>(&impl->ctor_api);
   impl->unit = std::make_unique<OrtNodeUnit>(static_cast<const OrtGraph*>(nullptr),
                                              node_group, impl->ctor_api);
-  impl->global_guard = std::make_unique<OrtGlobalApiOverride>(&impl->ctor_api);
 
   return MockNodeUnit(std::move(impl));
 }
