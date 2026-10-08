@@ -430,9 +430,6 @@ class OrtWheelHtpModelTestTask(OrtWheelModelTestTask):
                 "ORT_MODEL_ZOO_TEST_ROOTS": str(get_model_zoo_root(venv) / "winml-cert"),
                 "ORT_MODEL_ZOO_TEST_XFAILS": "",
                 "ORT_MODEL_ZOO_BACKEND": "htp",
-                "ORT_MODEL_ZOO_SNAPSHOT_DIR": os.getenv(
-                    "ORT_MODEL_ZOO_SNAPSHOT_DIR", str(REPO_ROOT / "build" / "modelzoo_snapshots")
-                ),
             },
         )
 

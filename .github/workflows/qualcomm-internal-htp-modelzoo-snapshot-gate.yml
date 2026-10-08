@@ -1,0 +1,55 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal HTP ModelZoo Snapshot Gate
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs: &common_inputs
+      modelzoo_platform:
+        required: true
+        type: string
+      htp_arch:
+        required: true
+        type: string
+      repo_subpath:
+        type: string
+        default: "ci/qnn-ep-test-store/modelzoo-snapshot-goldens"
+  workflow_dispatch:
+    inputs: *common_inputs
+
+jobs:
+  gate-modelzoo-snapshots:
+    name: "Gate HTP ModelZoo snapshots (${{ inputs.modelzoo_platform }}-htp-${{ inputs.htp_arch }})"
+    runs-on: ["self-hosted", "Windows", "ARM64", "Test"]
+    env:
+      ORT_MODEL_ZOO_PLATFORM: "${{ inputs.modelzoo_platform }}"
+      ORT_MODEL_ZOO_HTP_ARCH: "${{ inputs.htp_arch }}"
+      ORT_MODEL_ZOO_SNAPSHOT_GOLDEN_DIR: "${{ github.workspace }}\\build\\modelzoo_snapshot_golden"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Initialize submodules
+        run: git submodule update --init --recursive
+      - name: Set up JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+      - name: Download ARM64 wheel and snapshot golden
+        env:
+          BUILD_ARTIFACTORY_REPO: ${{ secrets.BUILD_ARTIFACTORY_REPO }}
+        run: |
+          python.exe qcom/scripts/artifactory/download_ci.py --name "windows-arm64-py3.12-wheels"
+          New-Item -ItemType Directory -Force "${{ env.ORT_MODEL_ZOO_SNAPSHOT_GOLDEN_DIR }}" | Out-Null
+          jf rt download --flat "${{ secrets.BUILD_ARTIFACTORY_REPO }}/${{ inputs.repo_subpath }}/${{ inputs.modelzoo_platform }}-htp-${{ inputs.htp_arch }}/latest/snapshots.zip" "${{ env.ORT_MODEL_ZOO_SNAPSHOT_GOLDEN_DIR }}\\snapshots.zip"
+          Expand-Archive -Force "${{ env.ORT_MODEL_ZOO_SNAPSHOT_GOLDEN_DIR }}\\snapshots.zip" "${{ env.ORT_MODEL_ZOO_SNAPSHOT_GOLDEN_DIR }}"
+      - name: Gate HTP ModelZoo execution
+        run: >
+          python.exe qcom/build_and_test.py --target-py-version 3.12 --config Release
+          create_venv test_ort_windows_arm64_pyhtp --only
