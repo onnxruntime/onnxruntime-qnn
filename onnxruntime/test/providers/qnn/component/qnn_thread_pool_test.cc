@@ -37,3 +37,5 @@ TEST(QnnUnit_ThreadPoolTest, WaitForQueuedJobsToFinishWaitsForEveryJob) {
 
 }  // namespace test
 }  // namespace onnxruntime
+
+#endif  // defined(_WIN32) && !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
