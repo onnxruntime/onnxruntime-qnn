@@ -113,7 +113,7 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   std::vector<OrtEpDevice*> ep_devices_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
-  // Actual NPU hardware that ORT Core did not enumerate (e.g. Makena without DXCore).
+  // This is an actual NPU hardware but unable to be detected by ORT Core (e.g., Makena).
   HardwareDeviceUniquePtr undetected_npu_hw_device_;
 
   // Custom op domains reported to ORT via GetCustomOpDomains. Holds both the qti_aisw block-op
