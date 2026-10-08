@@ -36,14 +36,16 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test.yml
     secrets: inherit
     with:
+      # The approved fork path runs from a temporary branch whose head is the
+      # immutable reviewed commit, so the normal full matrix validates that SHA.
       do_all: true
 
   coverage:
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
     uses: ./.github/workflows/qualcomm-internal-coverage.yml
     secrets: inherit
 
   asan:
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
     uses: ./.github/workflows/qualcomm-internal-asan.yml
     secrets: inherit

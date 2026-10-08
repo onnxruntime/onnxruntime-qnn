@@ -2,65 +2,316 @@
 # SPDX-License-Identifier: MIT
 
 # Lets developers trigger CI on a draft PR by commenting "/ci" on the PR.
-# Useful because draft PRs don't auto-trigger CI (see qualcomm-internal-ci.yml).
+# After reviewing a fork contributor's complete commit, maintainers can comment
+# "/approve-ci <full-head-SHA>" to run that immutable commit through the full required CI pipeline,
+# including device tests, from a temporary branch in this repository.
+# The command is valid for either draft or ready-for-review open fork PRs.
+# Approval covers the entire commit, including its workflows, actions, and scripts:
+# the reviewed code will execute with repository secrets and access to internal runners.
 #
-# Any collaborator with write access (COLLABORATOR, MEMBER, OWNER) may trigger.
-# Fork contributors (CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, etc.) are rejected to
-# prevent unprivileged access to internal runners and secrets.
+# Only users with write, maintain, or admin repository permission may trigger.
 
 name: Qualcomm Internal CI Trigger
 
 permissions:
-  contents: read
+  contents: write       # to create and clean up temporary approve-ci branches
   pull-requests: write  # to post the acknowledgement comment
-  actions: write        # to dispatch qualcomm-internal-ci.yml via createWorkflowDispatch
+  actions: write        # to dispatch the reviewed workflow via createWorkflowDispatch
 
 on:
   issue_comment:
     types: [created]
+  workflow_run:
+    workflows: ["Qualcomm Internal PR Workflow"]
+    types: [completed]
+  # Fallback for approved commits that rename the dispatched workflow and
+  # therefore cannot match the workflow_run name filter above.
+  schedule:
+    - cron: "23 */6 * * *"
 
 jobs:
   trigger:
     name: Trigger CI from PR comment
-    # Only act on PR comments whose body is exactly "/ci" or starts with "/ci " or "/ci\n".
-    # Require write-level association so fork contributors cannot trigger builds.
+    # Only act on PR comments beginning with "/ci" or "/approve-ci".
+    # Exact command syntax and repository permission are verified in the
+    # GitHub-hosted step before any privileged workflow is dispatched.
     if: |
+      github.event_name == 'issue_comment' &&
       github.event.issue.pull_request != null &&
       (github.event.comment.body == '/ci' ||
        startsWith(github.event.comment.body, '/ci ') ||
-       startsWith(github.event.comment.body, '/ci\n')) &&
-      contains(fromJSON('["COLLABORATOR", "MEMBER", "OWNER"]'),
-               github.event.comment.author_association)
-    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+       startsWith(github.event.comment.body, '/ci\n') ||
+       github.event.comment.body == '/approve-ci' ||
+       startsWith(github.event.comment.body, '/approve-ci ') ||
+       startsWith(github.event.comment.body, '/approve-ci\n'))
+    # Unprivileged comments must not schedule work on an internal runner.
+    runs-on: ubuntu-latest
     steps:
-      - name: Dispatch CI workflow on PR branch
+      - name: Dispatch requested workflow
         uses: actions/github-script@v8
         with:
           script: |
-            // Fetch the PR to get its head branch and draft status.
+            const parts = context.payload.comment.body.trim().split(/\s+/);
+            const command = parts[0];
+            if (!['/ci', '/approve-ci'].includes(command)) {
+              return;
+            }
+
+            const commenter = context.payload.comment.user.login;
+            if (context.payload.comment.user.type !== 'User') {
+              core.setFailed(`${command} must be submitted by a maintainer user account.`);
+              return;
+            }
+
+            // author_association describes the commenter's relationship to the
+            // repository, not their effective permission. Fail closed unless
+            // GitHub confirms that the commenter can write to the repository.
+            let permission;
+            try {
+              const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: commenter,
+              });
+              permission = response.data.permission;
+            } catch (error) {
+              core.setFailed(`Unable to verify repository permission for @${commenter}: ${error.message}`);
+              return;
+            }
+            if (!['write', 'maintain', 'admin'].includes(permission)) {
+              core.setFailed(`@${commenter} needs write, maintain, or admin repository permission to trigger ${command}.`);
+              return;
+            }
+
+            // Fetch the PR rather than trusting comment-controlled data. In particular,
+            // approved CI must use an immutable reviewed commit, never a fork branch name.
             const pr = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.issue.number,
             });
+            if (pr.data.state !== 'open' || !pr.data.head.repo) {
+              core.setFailed('CI requires an open PR with an available source repository.');
+              return;
+            }
 
-            const branch = pr.data.head.ref;
-            const isDraft = pr.data.draft;
-            const prUrl = pr.data.html_url;
+            let dispatchRef;
+            let inputs;
+            let message;
+            let temporaryBranch;
+            if (command === '/ci') {
+              if (parts.length !== 1) {
+                core.setFailed('Usage: /ci');
+                return;
+              }
+              // /ci remains the draft-CI escape hatch for branches in this repository.
+              // A fork branch is not a ref in context.repo, so do not dispatch it here.
+              if (pr.data.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: '❌ `/ci` cannot dispatch a fork branch. After reviewing the complete commit, use `/approve-ci <full-40-character-head-SHA>`.',
+                });
+                core.setFailed('/ci cannot dispatch a fork branch. Use /approve-ci with the reviewed head SHA.');
+                return;
+              }
+              dispatchRef = pr.data.head.ref;
+              inputs = {};
+              message = `🔄 CI triggered on \`${pr.data.head.ref}\`${pr.data.draft ? ' (draft PR — CI was skipped on push)' : ''}`;
+            } else {
+              if (parts.length !== 2 || !/^[0-9a-fA-F]{40}$/.test(parts[1])) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: '❌ Usage: `/approve-ci <full-40-character-head-SHA>`.',
+                });
+                core.setFailed('A full 40-character PR head SHA is required.');
+                return;
+              }
+              if (pr.data.head.repo.full_name === `${context.repo.owner}/${context.repo.repo}`) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: '❌ `/approve-ci` is only for fork pull requests. Use `/ci` for a branch in this repository.',
+                });
+                core.setFailed('/approve-ci requires a fork pull request.');
+                return;
+              }
+              const approvedSha = parts[1].toLowerCase();
+              if (approvedSha !== pr.data.head.sha) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `❌ \`${approvedSha}\` is not the current PR head \`${pr.data.head.sha}\`. Review the latest commit and approve that exact SHA.`,
+                });
+                core.setFailed('The approved SHA is not the current PR head.');
+                return;
+              }
+              // A unique branch per approval attempt prevents a later approval
+              // from moving the ref while an earlier run is queued or checking out.
+              temporaryBranch = `ci/approve-ci/${pr.data.number}/${approvedSha}/${context.runId}-${process.env.GITHUB_RUN_ATTEMPT}`;
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/heads/${temporaryBranch}`,
+                sha: approvedSha,
+              });
+              dispatchRef = temporaryBranch;
+              inputs = {};
+              message = `✅ Maintainer-approved full CI triggered for PR #${pr.data.number} at \`${approvedSha}\` using \`${temporaryBranch}\`. Approval covers the commit's source, workflows, actions, and scripts`;
+            }
 
-            // Dispatch the main CI workflow on the PR's head branch.
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'qualcomm-internal-ci.yml',
-              ref: branch,
-            });
+            // Workflow definitions, helper code, and build/test source all come
+            // from the reviewed commit. /ci keeps dispatching the internal branch.
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'qualcomm-internal-ci.yml',
+                ref: dispatchRef,
+                inputs,
+              });
+            } catch (error) {
+              // A definite API rejection leaves no run to perform cleanup.
+              // On network/server errors the dispatch may have succeeded; retain
+              // the ref so that a queued run can still check out its source.
+              if (temporaryBranch && error.status >= 400 && error.status < 500) {
+                const { data: ref } = await github.rest.git.getRef({
+                  ...context.repo, ref: `heads/${temporaryBranch}`,
+                });
+                if (ref.object.sha === pr.data.head.sha) {
+                  await github.rest.git.deleteRef({
+                    ...context.repo, ref: `heads/${temporaryBranch}`,
+                  });
+                }
+              }
+              throw error;
+            }
 
-            // Post an acknowledgement comment so the developer has a clear signal.
-            const draftNote = isDraft ? ' (draft PR — CI was skipped on push)' : '';
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `🔄 CI triggered on \`${branch}\`${draftNote} by @${context.actor}. Check the [Actions tab](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions) for progress.`,
+              body: `${message} by @${commenter}. Check the [Actions tab](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions) for progress.`,
             });
+
+  cleanup-approved-ci-branch:
+    name: Clean up completed approved-CI branch
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      startsWith(github.event.workflow_run.head_branch, 'ci/approve-ci/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # This handler runs from the default branch and never checks out PR code.
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const branch = run.head_branch;
+            const match = /^ci\/approve-ci\/\d+\/([0-9a-f]{40})\/\d+-\d+$/.exec(branch);
+            if (!match || match[1] !== run.head_sha ||
+                run.head_repository?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                run.path !== '.github/workflows/qualcomm-internal-ci.yml') {
+              core.info('Not a matching temporary approved-CI branch; no cleanup needed.');
+              return;
+            }
+            try {
+              const { data: ref } = await github.rest.git.getRef({
+                ...context.repo, ref: `heads/${branch}`,
+              });
+              if (ref.object.sha !== run.head_sha) {
+                core.warning(`Branch ${branch} has moved; leaving it untouched.`);
+                return;
+              }
+              await github.rest.git.deleteRef({
+                ...context.repo, ref: `heads/${branch}`,
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info('Temporary branch was already removed.');
+            }
+
+  cleanup-stale-approved-ci-branches:
+    name: Clean up stale approved-CI branches
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      # This scheduled fallback runs only from the default branch. It handles
+      # temporary branches whose reviewed workflow changed its display name,
+      # preventing the workflow_run fast path above from matching.
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const refs = await github.paginate(github.rest.git.listMatchingRefs, {
+              ...context.repo,
+              ref: 'heads/ci/approve-ci/',
+              per_page: 100,
+            });
+            const staleAfterMs = 24 * 60 * 60 * 1000;
+
+            for (const ref of refs) {
+              const branch = ref.ref.replace(/^refs\/heads\//, '');
+              const match = /^ci\/approve-ci\/\d+\/([0-9a-f]{40})\/(\d+)-\d+$/.exec(branch);
+              if (!match || ref.object.type !== 'commit' || ref.object.sha !== match[1]) {
+                core.warning(`Skipping unexpected temporary ref ${ref.ref}.`);
+                continue;
+              }
+
+              let triggerRun;
+              try {
+                const response = await github.rest.actions.getWorkflowRun({
+                  ...context.repo,
+                  run_id: Number(match[2]),
+                });
+                triggerRun = response.data;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                core.warning(`Cannot verify the trigger run for ${branch}; leaving it untouched.`);
+                continue;
+              }
+
+              if (triggerRun.event !== 'issue_comment' ||
+                  triggerRun.path !== '.github/workflows/qualcomm-internal-ci-trigger.yml' ||
+                  Date.now() - Date.parse(triggerRun.created_at) < staleAfterMs) {
+                continue;
+              }
+
+              const branchRuns = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
+                ...context.repo,
+                branch,
+                per_page: 100,
+              });
+              if (branchRuns.some(run => run.status !== 'completed')) {
+                core.info(`A workflow is still active for ${branch}; leaving it untouched.`);
+                continue;
+              }
+
+              try {
+                const { data: currentRef } = await github.rest.git.getRef({
+                  ...context.repo,
+                  ref: `heads/${branch}`,
+                });
+                if (currentRef.object.sha !== match[1]) {
+                  core.warning(`Branch ${branch} has moved; leaving it untouched.`);
+                  continue;
+                }
+                await github.rest.git.deleteRef({
+                  ...context.repo,
+                  ref: `heads/${branch}`,
+                });
+                core.info(`Deleted stale temporary branch ${branch}.`);
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                core.info(`Temporary branch ${branch} was already removed.`);
+              }
+            }
