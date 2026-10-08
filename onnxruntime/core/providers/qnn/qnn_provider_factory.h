@@ -4,7 +4,6 @@
 #pragma once
 
 #include <memory>
-#include <mutex>
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
@@ -26,12 +25,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // Effective ORT API version: min(runtime, compile-time). Set by CreateEpFactories after
   // construction. Used by QnnEp to gate features that require a minimum runtime version.
   uint32_t effective_api_version_ = ORT_API_VERSION;
-
-  // Loads RPCMEM on first use. This is intentionally factory-owned so an allocator
-  // created through OrtEnv before session creation and a QnnEp share one library handle.
-  // ORT releases environment allocators before unloading their EP factory, so a
-  // deferred allocator may safely retain a callback to this factory.
-  std::shared_ptr<qnn::RpcMemLibrary> GetOrCreateRpcMemLibrary(std::string& error_message) const;
 
   // Creates the HTP allocator used by both the factory and QnnEp ABI
   // callbacks. If rpcmem_library is null, RPCMEM loading is deferred until the
@@ -102,12 +95,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   using MemoryInfoUniquePtr = std::unique_ptr<OrtMemoryInfo, std::function<void(OrtMemoryInfo*)>>;
   MemoryInfoUniquePtr host_accessible_memory_info_;
-
-  // Created on the first allocation or opted-in session request. Merely
-  // registering the factory and its environment allocator must remain usable on
-  // hosts without RPCMEM (for example, offline context generation on x86).
-  mutable std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_;
-  mutable std::mutex rpcmem_library_mutex_;
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;

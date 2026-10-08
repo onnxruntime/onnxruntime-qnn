@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 #include "core/providers/qnn/ort_api.h"
 
@@ -83,5 +84,9 @@ class RpcMemLibrary {
   UniqueDynamicLibraryHandle library_handle_;
   RpcMemApi api_;
 };
+
+// Returns the process-wide RPCMEM library instance, creating it on first use.
+// Returns nullptr and sets error_message if the library cannot be loaded.
+std::shared_ptr<RpcMemLibrary> GetOrCreateRpcMemLibrary(std::string& error_message);
 
 }  // namespace onnxruntime::qnn

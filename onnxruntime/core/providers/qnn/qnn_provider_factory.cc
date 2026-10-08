@@ -139,20 +139,6 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
 }
 
-std::shared_ptr<qnn::RpcMemLibrary> QnnEpFactory::GetOrCreateRpcMemLibrary(std::string& error_message) const {
-  std::lock_guard<std::mutex> lock(rpcmem_library_mutex_);
-  if (rpcmem_library_ != nullptr) {
-    return rpcmem_library_;
-  }
-
-  try {
-    rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-  } catch (const std::exception& e) {
-    error_message = e.what();
-  }
-  return rpcmem_library_;
-}
-
 OrtStatus* QnnEpFactory::CreateHtpSharedMemoryAllocator(
     const OrtMemoryInfo* memory_info,
     std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
@@ -166,8 +152,8 @@ OrtStatus* QnnEpFactory::CreateHtpSharedMemoryAllocator(
     } else {
       htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(
           memory_info,
-          [this](std::string& error_message) {
-            return GetOrCreateRpcMemLibrary(error_message);
+          [](std::string& error_message) {
+            return qnn::GetOrCreateRpcMemLibrary(error_message);
           });
     }
 

@@ -3,6 +3,8 @@
 
 #include "core/providers/qnn/rpcmem_library.h"
 
+#include <exception>
+
 #if defined(_WIN32)
 #include <filesystem>
 
@@ -306,6 +308,16 @@ RpcMemApi CreateApi(void* library_handle) {
 RpcMemLibrary::RpcMemLibrary()
     : library_handle_(GetRpcMemDynamicLibraryHandle()),
       api_{CreateApi(library_handle_.get())} {
+}
+
+std::shared_ptr<RpcMemLibrary> GetOrCreateRpcMemLibrary(std::string& error_message) {
+  try {
+    static auto rpcmem_library = std::make_shared<RpcMemLibrary>();
+    return rpcmem_library;
+  } catch (const std::exception& e) {
+    error_message = e.what();
+    return nullptr;
+  }
 }
 
 }  // namespace onnxruntime::qnn
