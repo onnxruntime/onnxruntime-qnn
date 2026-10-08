@@ -697,6 +697,18 @@ class TaskLibrary:
                 )
             )
 
+        @public_task("Generate a full coverage report from an existing Linux x86_64 coverage build")
+        @depends(["create_venv"])
+        def coverage_report_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            return plan.add_step(
+                GenerateCoverageTask(
+                    "Generating HTML coverage report",
+                    self.__venv_path,
+                    build_dir,
+                )
+            )
+
     if is_host_windows():
 
         @public_task("Build ONNX Runtime for ARM64 Windows")

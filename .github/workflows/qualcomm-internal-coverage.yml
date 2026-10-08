@@ -124,11 +124,11 @@ jobs:
       - name: Run Coverage (non-PR, Linux x86_64, always RelWithDebInfo)
         if: steps.gate.outputs.run == 'true' && github.event_name != 'pull_request'
         run: |
-          # A non-PR run has no exact PR base SHA. Generate full coverage only rather
-          # than producing an inaccurate diff from a shallow checkout.
+          # The build and snapshot-golden preflight already completed above. A non-PR
+          # run has no exact PR base SHA, so generate a full report without rebuilding
+          # the coverage binary or producing an inaccurate diff from a shallow checkout.
           python3 qcom/build_and_test.py \
-            --target-py-version ${{ inputs.target_py_vsn }} \
-            coverage_linux_x86_64
+            coverage_report_linux_x86_64
 
       - name: Upload Coverage Report
         uses: actions/upload-artifact@v7
