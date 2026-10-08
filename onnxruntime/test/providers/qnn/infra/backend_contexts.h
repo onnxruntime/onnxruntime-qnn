@@ -120,7 +120,7 @@ struct OpBuilderTestContext {
 //
 // Usage:
 //   QnnRealHtpBackendManagerContext htp;
-//   if (!htp.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
+//   if (!htp.IsValid()) GTEST_SKIP() << "QNN HTP backend not available";
 //   auto wrapper = MakeSnapshotWrapperHtpJson(ctx, htp, {"in"}, {"out"});
 struct QnnRealHtpBackendManagerContext {
   QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
@@ -130,9 +130,12 @@ struct QnnRealHtpBackendManagerContext {
   // need_load_system_lib additionally loads libQnnSystem.so so that the manager's
   // QNN system interface (SystemContext / SystemLog / SystemDlc) is populated.
   explicit QnnRealHtpBackendManagerContext(bool need_load_system_lib = false) {
-#ifndef _WIN32
     qnn::QnnBackendManagerConfig cfg;
+#ifdef _WIN32
+    cfg.backend_path = "QnnHtp.dll";
+#else
     cfg.backend_path = "libQnnHtp.so";
+#endif
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -162,7 +165,6 @@ struct QnnRealHtpBackendManagerContext {
     backend_handle = manager_->GetQnnBackendHandle();
     context_handle = manager_->GetQnnContext(0);
     initialized_ = true;
-#endif
   }
 
   ~QnnRealHtpBackendManagerContext() = default;

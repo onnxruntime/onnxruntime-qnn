@@ -46,6 +46,10 @@ param (
     [ValidateSet("", "3.11", "3.12", "3.13", "3.14")]
     [string]$TargetPyVersion = "",
 
+    [Parameter(Mandatory = $false,
+               HelpMessage = "Build QNN EP with internal symbols exported for unit tests. Not for production.")]
+    [bool]$QnnInternalUtSymbols = $false,
+
     [Parameter(Mandatory = $true,
                HelpMessage = "Python virtual environment to activate.")]
     [string]$PyVEnv
@@ -71,6 +75,10 @@ else {
         }
     }
     $BuildDir = (Join-Path $BuildRoot "windows-$BuildDirArch")
+}
+
+if ($QnnInternalUtSymbols) {
+    $BuildDir = "$BuildDir-internal-symbols"
 }
 
 if (-not (Test-Path $BuildDir)) {
@@ -206,6 +214,10 @@ if ($BuildNuget) {
 if ($CMakeGenerator -eq "Ninja") {
     # The default somehow gives us paths that are too long in CI
     $PlatformArgs += "--cmake_extra_defines", "CMAKE_OBJECT_PATH_MAX=240"
+}
+
+if ($QnnInternalUtSymbols) {
+    $PlatformArgs += "--cmake_extra_defines", "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS=ON"
 }
 
 $VersionSuffixArg = @()
