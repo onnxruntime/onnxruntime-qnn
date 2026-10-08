@@ -167,6 +167,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   OrtNodeAttrHelper node_helper(*main_context_node);
   bool is_embed_mode = node_helper.Get(EMBED_MODE, true);
   bool is_multi_soc_ep_context = node_helper.Get(IS_MULTI_SOC_EP_CONTEXT, false);
+  const int64_t declared_max_spill_fill_size = node_helper.Get(MAX_SIZE, static_cast<int64_t>(0));
   if (is_embed_mode) {
     const std::string& context_binary = node_helper.Get(EP_CACHE_CONTEXT, "");
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(const_cast<char*>(context_binary.c_str()),
@@ -175,6 +176,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                main_context_node_name,
                                                                qnn_models,
                                                                max_spill_fill_size,
+                                                               declared_max_spill_fill_size,
                                                                io_dispatch,
                                                                is_multi_soc_ep_context);
   }
@@ -224,6 +226,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                main_context_node_name,
                                                                qnn_models,
                                                                max_spill_fill_size,
+                                                               declared_max_spill_fill_size,
                                                                io_dispatch,
                                                                is_multi_soc_ep_context);
   }
@@ -240,6 +243,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                main_context_node_name,
                                                                qnn_models,
                                                                max_spill_fill_size,
+                                                               declared_max_spill_fill_size,
                                                                io_dispatch,
                                                                is_multi_soc_ep_context);
   }
@@ -272,6 +276,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                              main_context_node_name,
                                                              qnn_models,
                                                              max_spill_fill_size,
+                                                             declared_max_spill_fill_size,
                                                              io_dispatch,
                                                              is_multi_soc_ep_context);
 }

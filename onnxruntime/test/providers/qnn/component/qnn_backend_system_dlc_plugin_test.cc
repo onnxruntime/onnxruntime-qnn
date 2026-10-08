@@ -43,6 +43,8 @@
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_model.h"
+#include "core/providers/qnn/builder/qnn_spill_fill_utils.h"
 #include "core/providers/qnn/ort_api.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
@@ -102,6 +104,7 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
 #endif  // QNN_SYSTEM_DLC_API_ENABLED
     // Reached by QnnBackendManager::QnnErrorHandleToString on every QNN failure path.
     QnnInterface().errorGetMessage = ErrorGetMessage;
+    QnnInterface().contextFree = ContextFree;
 
     plugin_ = std::make_unique<qnn::QnnBackendSystemDlcPlugin>(backend_manager_.GetMutable());
   }
@@ -333,6 +336,10 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
     return QNN_SUCCESS;
   }
 
+  static Qnn_ErrorHandle_t ContextFree(Qnn_ContextHandle_t /*context*/, Qnn_ProfileHandle_t /*profile*/) {
+    return QNN_SUCCESS;
+  }
+
   static QnnUnit_BackendSystemDlcPluginTest* current_;
 
   // Declared before backend_manager_ so the manager's stored logger pointer stays valid.
@@ -356,6 +363,37 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
 };
 
 QnnUnit_BackendSystemDlcPluginTest* QnnUnit_BackendSystemDlcPluginTest::current_ = nullptr;
+
+#ifdef QNN_HTP_SPILL_FILL_BUFFER_AVAILABLE
+TEST(QnnUnit_SpillFillUtilsTest, ValidateSpillFillBufferSize_RejectsOnlyOversizedDeclarations) {
+  EXPECT_TRUE(qnn::ValidateSpillFillBufferSize(0, 300).IsOK());
+  EXPECT_TRUE(qnn::ValidateSpillFillBufferSize(200, 300).IsOK());
+  EXPECT_TRUE(qnn::ValidateSpillFillBufferSize(300, 300).IsOK());
+
+  ExpectErrorContains(qnn::ValidateSpillFillBufferSize(301, 300), "exceeds the spill-fill size 300");
+  ExpectErrorContains(qnn::ValidateSpillFillBufferSize(-1, 300), "must not be negative");
+}
+
+TEST(QnnUnit_SpillFillUtilsTest, GetMaxSpillFillBufferSizeFromGraphInfo_UsesOnlySupportedHtpV1Graphs) {
+  QnnHtpSystemContext_GraphBlobInfo_t valid_blob{};
+  valid_blob.version = QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_VERSION_V1;
+  valid_blob.contextBinaryGraphBlobInfoV1.spillFillBufferSize = 300;
+
+  QnnHtpSystemContext_GraphBlobInfo_t unsupported_blob{};
+  unsupported_blob.version = QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_UNDEFINED;
+  unsupported_blob.contextBinaryGraphBlobInfoV1.spillFillBufferSize = 1000;
+
+  QnnSystemContext_GraphInfo_t graph_infos[3]{};
+  graph_infos[0].version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3;
+  graph_infos[0].graphInfoV3.graphBlobInfo = &valid_blob;
+  graph_infos[1].version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3;
+  graph_infos[1].graphInfoV3.graphBlobInfo = &unsupported_blob;
+  graph_infos[2].version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1;
+
+  EXPECT_EQ(qnn::GetMaxSpillFillBufferSizeFromGraphInfo(graph_infos, 3), 300u);
+  EXPECT_EQ(qnn::GetMaxSpillFillBufferSizeFromGraphInfo(nullptr, 0), 0u);
+}
+#endif  // QNN_HTP_SPILL_FILL_BUFFER_AVAILABLE
 
 // ---------------------------------------------------------------------------
 // Release / destructor — nothing created
@@ -907,6 +945,37 @@ TEST_F(QnnUnit_BackendSystemDlcPluginTest, GetDlcMaxSpillFillBufferSize_NoHtpGra
   uint64_t max_size = 12345;
   ASSERT_TRUE(Plugin().GetDlcMaxSpillFillBufferSize(max_size).IsOK());
   EXPECT_EQ(max_size, 0u);
+}
+
+// The validation must not be skipped merely because another context already exists.
+// This also proves multi-SoC validation derives the maximum across every DLC record,
+// rather than only the record selected for deserialization.
+TEST_F(QnnUnit_BackendSystemDlcPluginTest,
+       LoadCachedQnnContextFromBuffer_MultiSocOversizedMaxWithExistingContext_ReturnsError) {
+  uint8_t dlc[4] = {0};
+  GraphSpec first_record_graph;
+  first_record_graph.spill_fill_buffer_size = 100;
+  AddRecord({first_record_graph});
+  GraphSpec second_record_graph;
+  second_record_graph.spill_fill_buffer_size = 300;
+  AddRecord({second_record_graph});
+
+  ASSERT_TRUE(backend_manager_.GetMutable()->AddQnnContextHandle(FakeContextHandle()).IsOK());
+  ASSERT_EQ(backend_manager_.GetMutable()->GetQnnContextSize(), 1u);
+
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models;
+  ExpectErrorContains(
+      backend_manager_.GetMutable()->LoadCachedQnnContextFromBuffer(
+          reinterpret_cast<char*>(dlc),
+          sizeof(dlc),
+          "",
+          "node",
+          qnn_models,
+          301,
+          301,
+          qnn::EpContextIoDispatch(nullptr),
+          /*is_multi_soc_buffer=*/true),
+      "exceeds the spill-fill size 300");
 }
 
 #else  // !QNN_SYSTEM_DLC_API_ENABLED

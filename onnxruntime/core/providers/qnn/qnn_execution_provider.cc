@@ -3304,6 +3304,7 @@ OrtStatus* QnnEp::ReloadCompiledContext(const OrtGraph** graphs,
       fused_node_names[0],
       loaded_models,
       0,
+      0,
       *io_dispatch_);
   if (!load_status.IsOK()) {
     return ort_api.CreateStatus(ORT_EP_FAIL,
