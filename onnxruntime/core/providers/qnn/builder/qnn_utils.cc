@@ -4,6 +4,8 @@
 #include "core/providers/qnn/builder/qnn_utils.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <map>
@@ -711,6 +713,138 @@ static nlohmann::json GetQnnClientBufJSON(const Qnn_ClientBuffer_t& buf, Qnn_Dat
   return curr[0];
 }
 
+// SHA-256 is used only to fingerprint static tensor bytes in diagnostic graph
+// snapshots. Keeping the digest in the JSON avoids serializing model weights
+// while still making a content-only weight change observable to a consumer.
+class Sha256 final {
+ public:
+  void Update(const uint8_t* data, size_t size) {
+    total_size_ += static_cast<uint64_t>(size);
+    while (size > 0) {
+      const size_t to_copy = std::min(size, block_.size() - block_size_);
+      std::copy_n(data, to_copy, block_.begin() + block_size_);
+      block_size_ += to_copy;
+      data += to_copy;
+      size -= to_copy;
+      if (block_size_ == block_.size()) {
+        Transform();
+        block_size_ = 0;
+      }
+    }
+  }
+
+  std::array<uint8_t, 32> Finalize() {
+    const uint64_t bit_size = total_size_ * 8;
+    block_[block_size_++] = 0x80;
+
+    if (block_size_ > 56) {
+      std::fill(block_.begin() + block_size_, block_.end(), 0);
+      Transform();
+      block_size_ = 0;
+    }
+
+    std::fill(block_.begin() + block_size_, block_.begin() + 56, 0);
+    for (size_t i = 0; i < sizeof(bit_size); ++i) {
+      block_[63 - i] = static_cast<uint8_t>(bit_size >> (i * 8));
+    }
+    Transform();
+
+    std::array<uint8_t, 32> digest{};
+    for (size_t i = 0; i < state_.size(); ++i) {
+      const uint32_t word = state_[i];
+      digest[i * 4] = static_cast<uint8_t>(word >> 24);
+      digest[i * 4 + 1] = static_cast<uint8_t>(word >> 16);
+      digest[i * 4 + 2] = static_cast<uint8_t>(word >> 8);
+      digest[i * 4 + 3] = static_cast<uint8_t>(word);
+    }
+    return digest;
+  }
+
+ private:
+  static uint32_t RotateRight(uint32_t value, uint32_t count) {
+    return (value >> count) | (value << (32 - count));
+  }
+
+  void Transform() {
+    static constexpr std::array<uint32_t, 64> kRoundConstants = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+
+    std::array<uint32_t, 64> schedule{};
+    for (size_t i = 0; i < 16; ++i) {
+      schedule[i] = (static_cast<uint32_t>(block_[i * 4]) << 24) |
+                    (static_cast<uint32_t>(block_[i * 4 + 1]) << 16) |
+                    (static_cast<uint32_t>(block_[i * 4 + 2]) << 8) |
+                    static_cast<uint32_t>(block_[i * 4 + 3]);
+    }
+    for (size_t i = 16; i < schedule.size(); ++i) {
+      const uint32_t s0 = RotateRight(schedule[i - 15], 7) ^ RotateRight(schedule[i - 15], 18) ^ (schedule[i - 15] >> 3);
+      const uint32_t s1 = RotateRight(schedule[i - 2], 17) ^ RotateRight(schedule[i - 2], 19) ^ (schedule[i - 2] >> 10);
+      schedule[i] = schedule[i - 16] + s0 + schedule[i - 7] + s1;
+    }
+
+    uint32_t a = state_[0];
+    uint32_t b = state_[1];
+    uint32_t c = state_[2];
+    uint32_t d = state_[3];
+    uint32_t e = state_[4];
+    uint32_t f = state_[5];
+    uint32_t g = state_[6];
+    uint32_t h = state_[7];
+    for (size_t i = 0; i < schedule.size(); ++i) {
+      const uint32_t s1 = RotateRight(e, 6) ^ RotateRight(e, 11) ^ RotateRight(e, 25);
+      const uint32_t choose = (e & f) ^ (~e & g);
+      const uint32_t temp1 = h + s1 + choose + kRoundConstants[i] + schedule[i];
+      const uint32_t s0 = RotateRight(a, 2) ^ RotateRight(a, 13) ^ RotateRight(a, 22);
+      const uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
+      const uint32_t temp2 = s0 + majority;
+      h = g;
+      g = f;
+      f = e;
+      e = d + temp1;
+      d = c;
+      c = b;
+      b = a;
+      a = temp1 + temp2;
+    }
+    state_[0] += a;
+    state_[1] += b;
+    state_[2] += c;
+    state_[3] += d;
+    state_[4] += e;
+    state_[5] += f;
+    state_[6] += g;
+    state_[7] += h;
+  }
+
+  std::array<uint32_t, 8> state_ = {
+      0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+      0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+  std::array<uint8_t, 64> block_{};
+  size_t block_size_ = 0;
+  uint64_t total_size_ = 0;
+};
+
+static std::string Sha256Hex(const void* data, size_t size) {
+  Sha256 hasher;
+  hasher.Update(static_cast<const uint8_t*>(data), size);
+  const auto digest = hasher.Finalize();
+  static constexpr char kHexDigits[] = "0123456789abcdef";
+  std::string result;
+  result.reserve(digest.size() * 2);
+  for (uint8_t byte : digest) {
+    result.push_back(kHexDigits[byte >> 4]);
+    result.push_back(kHexDigits[byte & 0x0f]);
+  }
+  return result;
+}
+
 // Returns a JSON representation of a QNN tensor.
 // Example:
 //
@@ -724,7 +858,9 @@ static nlohmann::json GetQnnClientBufJSON(const Qnn_ClientBuffer_t& buf, Qnn_Dat
 //     "axis_format" : "NOT_YET_DEFINED",
 //     "src_axis_format" : "NOT_YET_DEFINED",
 // }
-static nlohmann::json GetQnnTensorJSON(const Qnn_Tensor_t& tensor, bool include_static_data = false) {
+static nlohmann::json GetQnnTensorJSON(const Qnn_Tensor_t& tensor,
+                                       bool include_static_data = false,
+                                       bool include_static_data_hash = false) {
   using json = nlohmann::json;
   json tensor_json = json::object();
   const Qnn_TensorType_t tensor_type = GetQnnTensorType(tensor);
@@ -790,8 +926,22 @@ static nlohmann::json GetQnnTensorJSON(const Qnn_Tensor_t& tensor, bool include_
   tensor_json["dims"] = JSONFromSpan(dims);
 
   if (tensor_type == Qnn_TensorType_t::QNN_TENSOR_TYPE_STATIC) {
+    const Qnn_ClientBuffer_t& client_buffer = GetQnnTensorClientBuf(tensor);
+    if (include_static_data_hash) {
+      nlohmann::json static_data_hash = {{"algorithm", "sha256"}};
+      static_data_hash["byte_count"] = client_buffer.dataSize;
+      if (client_buffer.data != nullptr) {
+        static_data_hash["digest"] = Sha256Hex(client_buffer.data, client_buffer.dataSize);
+      } else {
+        // A graph snapshot must not treat an opaque/static memory handle as a
+        // verified match. The future gate will fall back to real execution.
+        static_data_hash["status"] = "unavailable";
+      }
+      tensor_json["static_data_hash"] = std::move(static_data_hash);
+    }
+
     if (include_static_data) {
-      tensor_json["data"] = GetQnnClientBufJSON(GetQnnTensorClientBuf(tensor), GetQnnTensorDataType(tensor), dims);
+      tensor_json["data"] = GetQnnClientBufJSON(client_buffer, GetQnnTensorDataType(tensor), dims);
     } else {
       std::stringstream ss;
       ss << CalcQnnTensorNumElems(tensor);
@@ -862,7 +1012,7 @@ static nlohmann::json GetQnnTensorNamesJSON(gsl::span<const Qnn_Tensor_t> tensor
 //     "tensor_params": { "stride": {...} },
 //     "macs_per_inference": ""
 // }
-static nlohmann::json GetQnnOpJSON(const QnnOpConfigWrapper& op_config) {
+static nlohmann::json GetQnnOpJSON(const QnnOpConfigWrapper& op_config, bool include_static_data_hash) {
   using json = nlohmann::json;
   json op_json = json::object();
   op_json["package"] = op_config.GetPackageName();
@@ -876,7 +1026,8 @@ static nlohmann::json GetQnnOpJSON(const QnnOpConfigWrapper& op_config) {
     if (param.paramType == QNN_PARAMTYPE_SCALAR) {
       scalar_params_json[param.name] = GetQnnScalarParamJSON(param.scalarParam);
     } else if (param.paramType == QNN_PARAMTYPE_TENSOR) {
-      tensor_params_json[param.name][GetQnnTensorName(param.tensorParam)] = GetQnnTensorJSON(param.tensorParam, true);
+      tensor_params_json[param.name][GetQnnTensorName(param.tensorParam)] =
+          GetQnnTensorJSON(param.tensorParam, true, include_static_data_hash);
     }
   }
 
@@ -907,10 +1058,10 @@ QnnJSONGraph::QnnJSONGraph() {
       {"graph", {{"tensors", json::object()}, {"nodes", json::object()}}}};
 }
 
-void QnnJSONGraph::AddOp(const QnnOpConfigWrapper& op_conf_wrapper) {
+void QnnJSONGraph::AddOp(const QnnOpConfigWrapper& op_conf_wrapper, bool include_static_data_hash) {
   // Serialize inputs and outputs.
-  AddOpTensors({op_conf_wrapper.GetInputTensors(), op_conf_wrapper.GetInputsNum()});
-  AddOpTensors({op_conf_wrapper.GetOutputTensors(), op_conf_wrapper.GetOutputsNum()});
+  AddOpTensors({op_conf_wrapper.GetInputTensors(), op_conf_wrapper.GetInputsNum()}, include_static_data_hash);
+  AddOpTensors({op_conf_wrapper.GetOutputTensors(), op_conf_wrapper.GetOutputsNum()}, include_static_data_hash);
 
   // Track unique op types (serialized in Finalize()).
   const std::string& op_type = op_conf_wrapper.GetTypeName();
@@ -919,14 +1070,14 @@ void QnnJSONGraph::AddOp(const QnnOpConfigWrapper& op_conf_wrapper) {
   }
 
   // Serialize op
-  json_["graph"]["nodes"][op_conf_wrapper.GetOpName()] = GetQnnOpJSON(op_conf_wrapper);
+  json_["graph"]["nodes"][op_conf_wrapper.GetOpName()] = GetQnnOpJSON(op_conf_wrapper, include_static_data_hash);
 }
 
-void QnnJSONGraph::AddOpTensors(gsl::span<const Qnn_Tensor_t> tensors) {
+void QnnJSONGraph::AddOpTensors(gsl::span<const Qnn_Tensor_t> tensors, bool include_static_data_hash) {
   for (const auto& tensor : tensors) {
     std::string name = GetQnnTensorName(tensor);  // Copies name into std::string, which is moved into seen_tensors_.
     if (seen_tensors_.count(name) == 0) {
-      json_["graph"]["tensors"][name] = GetQnnTensorJSON(tensor);
+      json_["graph"]["tensors"][name] = GetQnnTensorJSON(tensor, false, include_static_data_hash);
       seen_tensors_.insert(std::move(name));
     }
   }
