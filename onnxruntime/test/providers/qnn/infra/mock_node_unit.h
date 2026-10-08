@@ -220,7 +220,8 @@ inline MockNodeUnit MakeMockQDQNodeUnit(
     std::string name = "",
     std::string domain = "",
     int since_version = 1,
-    size_t index = 0) {
+    size_t index = 0,
+    std::vector<FakeOpAttr> attrs = {}) {
   auto impl = std::make_unique<detail::MockNodeUnitImpl>();
   InstallFakeGraphApiStubs(impl->ctor_api);
 
@@ -301,6 +302,10 @@ inline MockNodeUnit MakeMockQDQNodeUnit(
   target.id = index;
   target.inputs = std::move(target_inputs);
   target.outputs = std::move(target_outputs);
+  for (auto& attr : attrs) {
+    impl->attrs.push_back(std::move(attr));
+    target.attrs[impl->attrs.back().name] = &impl->attrs.back();
+  }
   impl->nodes.push_back(std::move(target));
   const OrtNode* target_ptr = impl->nodes.back().AsNode();
 
