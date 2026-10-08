@@ -69,3 +69,13 @@ jobs:
       modelzoo_platform: windows-arm64
       htp_arch: v73
       dry_run: false
+
+  htp-modelzoo-snapshot-gate:
+    name: Gate HTP ModelZoo Snapshots
+    needs: htp-modelzoo-snapshot-publish
+    if: ${{ success() }}
+    uses: ./.github/workflows/qualcomm-internal-htp-modelzoo-snapshot-gate.yml
+    secrets: inherit
+    with:
+      modelzoo_platform: windows-arm64
+      htp_arch: v73

@@ -78,6 +78,10 @@ class ModelTestCase:
             sess_options=session_options,
         )
 
+    def dump_graph_only(self) -> None:
+        """Release the compiled session after QNN graph dump without inference."""
+        del self.__session
+
     def load_inputs(self) -> list[dict[str, np.ndarray]]:
         return self.__tensors_from_files(self.input_paths)
 
