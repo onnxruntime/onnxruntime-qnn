@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 #include <gsl/gsl_util>
 #include "gtest/gtest.h"
@@ -560,7 +561,10 @@ static GetTestQDQModelFn<OutputQType> BuildQDQConvMixedDtypeTestCase(
         AddQDQNodePair<ActivationQType>(builder, "qdq_input", "input", input_qparams.scale, input_qparams.zero_point));
 
     MakeTestInput<float>(builder, "weights", weights_def);
-    const QuantParams<WeightQType> weights_qparams = GetTestInputQuantParams<WeightQType>(weights_def);
+    // Signed weight types must be symmetric: QNN rejects a nonzero zero-point for a signed weight.
+    const bool weight_symmetric = std::is_signed<WeightQType>::value;
+    const QuantParams<WeightQType> weights_qparams =
+        GetTestInputQuantParams<WeightQType>(weights_def, weight_symmetric);
     conv_input_names.push_back(
         AddQDQNodePair<WeightQType>(builder, "qdq_weights", "weights", weights_qparams.scale,
                                     weights_qparams.zero_point));
@@ -1590,6 +1594,27 @@ TEST_F(QnnHTPBackendTests, Conv2D_U8In_U16Weight_Mixed) {
   TestQDQModelAccuracy(
       BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
       BuildQDQConvMixedDtypeTestCase<uint8_t, uint16_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Signed int16 weight variant of Conv2D_U8In_U16Weight_Mixed: u8 activation, s16 weight, u16 output.
+TEST_F(QnnHTPBackendTests, Conv2D_U8In_S16Weight_U16Out_Mixed) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint8_t, int16_t, uint16_t>(
           "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
       provider_options, 21, ExpectedEPNodeAssignment::All);
 }
