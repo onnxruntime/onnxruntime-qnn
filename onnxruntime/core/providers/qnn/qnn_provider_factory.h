@@ -18,6 +18,10 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
 
+  // Effective ORT API version: min(runtime, compile-time). Set by CreateEpFactories after
+  // construction. Used by QnnEp to gate features that require a minimum runtime version.
+  uint32_t effective_api_version_ = ORT_API_VERSION;
+
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEpFactory* this_ptr) noexcept;
   static const char* ORT_API_CALL GetVendorImpl(const OrtEpFactory* this_ptr) noexcept;

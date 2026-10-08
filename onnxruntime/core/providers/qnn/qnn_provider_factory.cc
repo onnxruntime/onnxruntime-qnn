@@ -712,6 +712,7 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     return ort_api->CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP factory.");
   }
 
+  factory->effective_api_version_ = requested_api_version;
   factories[0] = factory.release();
   *num_factories = 1;
 
