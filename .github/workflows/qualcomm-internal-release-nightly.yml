@@ -58,3 +58,14 @@ jobs:
       # Scheduled producer explicitly opts into the real upload; the reusable
       # workflow defaults dry_run=true so manual dispatches stay safe.
       dry_run: false
+
+  htp-modelzoo-snapshot-publish:
+    name: Publish HTP ModelZoo Snapshots
+    needs: publish-artifacts
+    if: ${{ success() }}
+    uses: ./.github/workflows/qualcomm-internal-htp-modelzoo-snapshot-publish.yml
+    secrets: inherit
+    with:
+      modelzoo_platform: windows-arm64
+      htp_arch: v73
+      dry_run: false
