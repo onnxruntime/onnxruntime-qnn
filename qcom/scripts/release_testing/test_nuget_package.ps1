@@ -9,9 +9,7 @@ param(
     [Parameter(Mandatory=$true)]
     [string[]]$RuntimeIdentifiers,
     [Parameter(Mandatory=$true)]
-    [string]$ModelPath,
-    [Parameter(Mandatory=$true)]
-    [string]$BackendDll
+    [string]$ModelPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,6 +107,62 @@ try {
     Write-Host ""
     Write-Host "Step 4 PASSED" -ForegroundColor Green
 
+    # Write the plugin-based QNN EP smoke test before building the project.
+    $programCs = Join-Path $projectDir "Program.cs"
+    Set-Content -Path $programCs -Encoding UTF8 -Value @"
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
+using Qualcomm.ML.OnnxRuntime.QNN;
+
+var modelPath = args[0];
+var requireQnnOnly = args[1] == "win-arm64";
+
+using var env = OrtEnv.Instance();
+var epLibraryPath = QnnEpHelper.GetLibraryPath();
+var backendLibraryPath = QnnEpHelper.GetQnnHtpLibraryPath();
+var epName = QnnEpHelper.GetEpName();
+const string epRegistrationName = "QNNExecutionProvider";
+
+env.RegisterExecutionProviderLibrary(epRegistrationName, epLibraryPath);
+try
+{
+    var selectedEpDevices = env.GetEpDevices()
+        .Where(epDevice => epDevice.EpName == epName)
+        .ToList();
+    if (selectedEpDevices.Count == 0)
+    {
+        throw new InvalidOperationException("No matching QNN EP devices found");
+    }
+
+    using var options = new SessionOptions();
+    options.AppendExecutionProvider(
+        env,
+        selectedEpDevices,
+        new Dictionary<string, string> { { "backend_path", backendLibraryPath } });
+    if (requireQnnOnly)
+    {
+        options.AddSessionConfigEntry("session.disable_cpu_ep_fallback", "1");
+    }
+
+    using var session = new InferenceSession(modelPath, options);
+    var input = session.InputMetadata.First();
+    var shape = input.Value.Dimensions.Select(dimension => dimension > 0 ? dimension : 1).ToArray();
+    var tensor = new DenseTensor<float>(new float[shape.Aggregate(1, (size, dimension) => size * dimension)], shape);
+    using var results = session.Run(new[] { NamedOnnxValue.CreateFromTensor(input.Key, tensor) });
+    if (!results.Any())
+    {
+        throw new InvalidOperationException("QNN EP inference returned no outputs");
+    }
+
+    var validationMode = requireQnnOnly ? "QNN-only" : "CPU fallback allowed";
+    Console.WriteLine(`$"QNN EP smoke test PASSED - inference completed with backend: {backendLibraryPath} ({validationMode})");
+}
+finally
+{
+    env.UnregisterExecutionProviderLibrary(epRegistrationName);
+}
+"@
+
     # =============================================================================
     # Step 5: Build for each Runtime Identifier and verify native DLL output
     # =============================================================================
@@ -151,30 +205,22 @@ try {
         }
         Write-Host "  BUILD PASS: onnxruntime_providers_qnn.dll found at $($dll.FullName)" -ForegroundColor Green
 
-        # --- Step 6: Write a minimal C# smoke test and run inference ---
-        $programCs = Join-Path $projectDir "Program.cs"
-        Set-Content -Path $programCs -Encoding UTF8 -Value @"
-using Microsoft.ML.OnnxRuntime;
+        # --- Step 6: Build and run the plugin-based QNN EP smoke test ---
+        # Keep stderr separate because Windows PowerShell converts redirected ORT warnings into NativeCommandError.
+        $runOutput = @(& dotnet run -p:RuntimeIdentifier=$rid --no-restore -- "$ModelPath" "$rid")
+        $runExitCode = $LASTEXITCODE
+        $runOutput | ForEach-Object { Write-Host $_ }
 
-var modelPath  = args[0];
-var backendDll = args[1];
-
-var options = new SessionOptions();
-options.AppendExecutionProvider("QNN", new Dictionary<string, string>
-{
-    ["backend_path"] = backendDll
-});
-
-using var session = new InferenceSession(modelPath, options);
-Console.WriteLine(`$"QNN EP smoke test PASSED — session created with backend: {backendDll}");
-"@
-
-        & dotnet run -p:RuntimeIdentifier=$rid --no-build -- "$ModelPath" "$BackendDll"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "  SMOKE FAIL: inference exited with code $LASTEXITCODE for RID $rid" -ForegroundColor Red
+        if ($runExitCode -ne 0) {
+            Write-Host "  SMOKE FAIL: inference exited with code $runExitCode for RID $rid" -ForegroundColor Red
             $buildFailures++
+        } elseif (($runOutput -join "`n") -notmatch "QNN EP smoke test PASSED") {
+            Write-Host "  SMOKE FAIL: expected QNN EP success marker was not found for RID $rid" -ForegroundColor Red
+            $buildFailures++
+        } elseif ($rid -eq "win-arm64") {
+            Write-Host "  SMOKE PASS: QNN-only inference completed for RID $rid" -ForegroundColor Green
         } else {
-            Write-Host "  SMOKE PASS: QNN EP loaded and session created for RID $rid" -ForegroundColor Green
+            Write-Host "  SMOKE PASS: package inference completed for RID $rid (CPU fallback allowed)" -ForegroundColor Green
         }
     }
 
