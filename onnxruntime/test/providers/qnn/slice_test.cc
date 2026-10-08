@@ -130,13 +130,19 @@ static void RunSliceNonQDQOnHTP(const TestInputDef<DataType>& data_def,
 }
 
 // A malformed Slice must fall back instead of indexing past its short starts/ends initializers.
+// ORT's native CPU Slice kernel itself rejects starts/ends shorter than axes (throws during the
+// CPU-EP baseline run inside RunAndVerifyOutputsWithEP), before QNN EP's own node-assignment
+// check is ever reached. Verify the expected failure so this test actively guards against silent
+// regressions (mirrors range_op_test.cc's Range_delta_zero_rejected).
 TEST_F(QnnHTPBackendTests, SliceStartsShorterThanAxesFallsBack) {
-  RunSliceNonQDQOnHTP<float>(TestInputDef<float>({2, 4}, false, 0.0f, 1.0f),
-                             TestInputDef<int64_t>({1}, true, {0}),
-                             TestInputDef<int64_t>({1}, true, {2}),
-                             TestInputDef<int64_t>({2}, true, {0, 1}),
-                             TestInputDef<int64_t>({2}, true, {1, 1}),
-                             ExpectedEPNodeAssignment::None);
+  EXPECT_THROW(
+      RunSliceNonQDQOnHTP<float>(TestInputDef<float>({2, 4}, false, 0.0f, 1.0f),
+                                 TestInputDef<int64_t>({1}, true, {0}),
+                                 TestInputDef<int64_t>({1}, true, {2}),
+                                 TestInputDef<int64_t>({2}, true, {0, 1}),
+                                 TestInputDef<int64_t>({2}, true, {1, 1}),
+                                 ExpectedEPNodeAssignment::None),
+      std::exception);
 }
 
 TEST_F(QnnHTPBackendTests, SliceSmallDataQDQU8) {
