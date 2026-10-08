@@ -125,7 +125,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
                               size_t count,
                               OrtNodeComputeInfo** node_compute_infos,
                               const qnn::HtpGraphConfigs_t& htp_graph_configs,
-                              bool collect_subgraph_traces = true);
+                              bool collect_subgraph_traces = true,
+                              bool dry_run = false);
+
+  OrtStatus* CompileQnnGraphWrapper(const std::vector<qnn::QnnGraphWrapper>& qnn_graph_wrappers,
+                                    const qnn::HtpGraphConfigs_t& htp_graph_configs);
 
   OrtStatus* CompileMultiSocOnnxModel(const OrtGraph** graphs,
                                       const OrtNode** fused_nodes,
@@ -163,6 +167,20 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
   std::unique_ptr<qnn::QnnSerializerConfig> InitQnnSerializerConfig() const;
+
+  // Container for bundling config builder and vector to avoid lifetime issue.
+  struct QnnGraphConfigsHolder {
+    qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_builder{QNN_GRAPH_CONFIG_INIT,
+                                                                                      QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT};
+    std::vector<const QnnGraph_Config_t*> configs;
+
+    const QnnGraph_Config_t** GetRawPtr() { return configs.empty() ? nullptr : configs.data(); }
+  };
+
+  QnnGraphConfigsHolder BuildQnnGraphConfigs(const qnn::HtpGraphConfigs_t& htp_graph_configs,
+                                             const std::string& graph_name) const;
+
+  OrtStatus* FinalizeQnnModel(qnn::QnnModel& qnn_model);
 
   std::string FormatEPConfigKey(const std::string& key) const {
     return GetProviderOptionPrefix(name_) + key;

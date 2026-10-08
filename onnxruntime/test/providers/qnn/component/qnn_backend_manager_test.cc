@@ -877,6 +877,28 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupDeviceAndContext_HTP_PublishesHtpArch
   EXPECT_EQ(manager->GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_UNKNOWN));
 }
 
+// Multi-SoC weight sharing creates each per-SoC context with weight sharing enabled,
+// which SetupDeviceAndContext now forwards to CreateContext. The context must still
+// come up so every cached graph can be composed into it.
+TEST_F(QnnUnit_BackendManagerHtpTest, SetupDeviceAndContext_HTP_WithWeightSharing_CreatesContext) {
+  StubApiEnv env;
+  auto manager = MakeHTPManager(env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+
+  auto partial = manager->SetupBackendExceptDeviceAndContext();
+  ASSERT_TRUE(partial.IsOK()) << "SetupBackendExceptDeviceAndContext failed: "
+                              << partial.GetErrorMessage();
+
+  auto status = manager->SetupDeviceAndContext(QNN_HTP_DEVICE_ARCH_V73, QNN_SOC_MODEL_SM8550,
+                                               /*enable_htp_weight_sharing=*/true);
+  ASSERT_TRUE(status.IsOK()) << "SetupDeviceAndContext failed: " << status.GetErrorMessage();
+  EXPECT_NE(manager->GetQnnContext(), nullptr);
+  EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_V73);
+
+  manager->ReleaseDeviceAndContext();
+  EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+}
+
 // Smoke-tests that SetupBackend accepts enable_htp_graph_splitting=true and
 // the new htp_graph_splitting_num_prepare_threads parameter without crashing or
 // returning an unexpected error code.

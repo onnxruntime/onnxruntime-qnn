@@ -102,7 +102,7 @@ struct OpBuilderTestContext {
       const qnn::ModelSettings& settings,
       qnn::QnnBackendType backend_type = qnn::QnnBackendType::HTP) {
     backend_manager.BackendType() = backend_type;
-    const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
+    const OrtGraph* fake_graph = reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
     return std::make_unique<qnn::QnnModelWrapper>(
         fake_graph,
         api_ptrs,

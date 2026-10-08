@@ -240,7 +240,7 @@ TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_Basic_PopulatesInputsOutputs) {
   std::vector<std::string> in_names{"x"};
   std::vector<std::string> out_names{"y"};
   qnn::ModelSettings settings{};
-  qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+  qnn::QnnModelContext mc{graph.AsGraph(), fused.AsNode(), ctx.logger,
                           &in_names, &out_names, &settings};
 
   auto status = ctx.model->SetGraphInputOutputInfo(mc);
@@ -260,7 +260,7 @@ TEST(QnnUnit_ModelTest, SetupTensors_SparseOutputIndex_ReturnsCompactedTensorInf
   std::vector<std::string> input_names;
   std::vector<std::string> output_names{"output0", "output1"};
   qnn::ModelSettings settings{};
-  qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+  qnn::QnnModelContext model_context{graph.AsGraph(), fused.AsNode(), ctx.logger,
                                      &input_names, &output_names, &settings};
   ASSERT_TRUE(ctx.model->SetGraphInputOutputInfo(model_context).IsOK());
 
@@ -289,7 +289,7 @@ TEST(QnnUnit_ModelTest, SetupTensors_OutputCountLessThanTensorWrapperCount_Retur
   std::vector<std::string> input_names;
   std::vector<std::string> output_names{"output0"};
   qnn::ModelSettings settings{};
-  qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+  qnn::QnnModelContext model_context{graph.AsGraph(), fused.AsNode(), ctx.logger,
                                      &input_names, &output_names, &settings};
   ASSERT_TRUE(ctx.model->SetGraphInputOutputInfo(model_context).IsOK());
 
@@ -322,7 +322,7 @@ TEST(QnnUnit_ModelTest, ComposeGraph_NullInputNames_ReturnsError) {
 
   std::vector<std::string> out_names{"y"};
   qnn::ModelSettings settings{};
-  qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+  qnn::QnnModelContext mc{graph.AsGraph(), fused.AsNode(), ctx.logger,
                           /*onnx_input_names=*/nullptr, &out_names, &settings};
 
   EXPECT_FALSE(ctx.model->ComposeGraph(mc).IsOK());
@@ -341,7 +341,7 @@ TEST(QnnUnit_ModelTest, ComposeGraph_NullOutputNames_ReturnsError) {
 
   std::vector<std::string> in_names{"x"};
   qnn::ModelSettings settings{};
-  qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+  qnn::QnnModelContext mc{graph.AsGraph(), fused.AsNode(), ctx.logger,
                           &in_names, /*onnx_output_names=*/nullptr, &settings};
 
   EXPECT_FALSE(ctx.model->ComposeGraph(mc).IsOK());
@@ -360,7 +360,7 @@ TEST(QnnUnit_ModelTest, ComposeGraph_NullModelSettings_ReturnsError) {
 
   std::vector<std::string> in_names{"x"};
   std::vector<std::string> out_names{"y"};
-  qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+  qnn::QnnModelContext mc{graph.AsGraph(), fused.AsNode(), ctx.logger,
                           &in_names, &out_names, /*model_settings=*/nullptr};
 
   EXPECT_FALSE(ctx.model->ComposeGraph(mc).IsOK());
@@ -392,7 +392,7 @@ TEST(QnnUnit_ModelTest, ComposeGraph_IdentityGraph_WithJsonPath_TriggersLogTenso
   std::vector<std::string> in_names{"x"};
   std::vector<std::string> out_names{"y"};
   qnn::ModelSettings settings{};
-  qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+  qnn::QnnModelContext mc{graph.AsGraph(), fused.AsNode(), ctx.logger,
                           &in_names, &out_names, &settings,
                           /*graph_configs=*/nullptr,
                           /*tensor_name_overrides=*/nullptr,
@@ -429,7 +429,7 @@ static void RunComposeGraphWithDtype(ONNXTensorElementDataType elem_type) {
   std::vector<std::string> in_names{"x"};
   std::vector<std::string> out_names{"y"};
   qnn::ModelSettings settings{};
-  qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+  qnn::QnnModelContext mc{graph.AsGraph(), fused.AsNode(), ctx.logger,
                           &in_names, &out_names, &settings,
                           nullptr, nullptr, tmp_json};
   auto status = ctx.model->ComposeGraph(mc);
@@ -487,7 +487,7 @@ TEST(QnnUnit_ModelTest, LogTensorDetails_JsonPathWithoutDot_CoversElseBranch) {
   std::vector<std::string> in_names{"x"};
   std::vector<std::string> out_names{"y"};
   qnn::ModelSettings settings{};
-  qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+  qnn::QnnModelContext mc{graph.AsGraph(), fused.AsNode(), ctx.logger,
                           &in_names, &out_names, &settings,
                           nullptr, nullptr, tmp_json};
 
@@ -518,12 +518,110 @@ TEST(QnnUnit_ModelTest, LogTensorDetails_InvalidJsonPath_CoversFileOpenFailure) 
   std::vector<std::string> in_names{"x"};
   std::vector<std::string> out_names{"y"};
   qnn::ModelSettings settings{};
-  qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+  qnn::QnnModelContext mc{graph.AsGraph(), fused.AsNode(), ctx.logger,
                           &in_names, &out_names, &settings,
                           nullptr, nullptr, bad_json};
 
   // ComposeGraph itself still succeeds (the JSON write failure is just a warning).
   EXPECT_TRUE(ctx.model->ComposeGraph(mc).IsOK());
+}
+
+// ---------------------------------------------------------------------------
+// ComposeGraph dry run + ComposeGraphFromGraphWrapper (real HTP backend)
+//
+// Multi-SoC weight sharing: a dry run translates ONNX into a cached
+// QnnGraphWrapper without creating a QNN graph; ComposeGraphFromGraphWrapper
+// later composes that cache onto a QNN context with no OrtGraph available.
+// ---------------------------------------------------------------------------
+
+TEST(QnnUnit_ModelTest, ComposeGraph_DryRun_FillsGraphWrapperWithoutComposing) {
+  QnnModelHtpTestContext ctx;
+  if (!ctx.IsValid()) GTEST_SKIP() << "HTP backend not available on this host";
+  InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+  FakeValueInfo x{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeValueInfo y{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeNode inner{"identity_0", "Identity", "", 13, {&x}, {&y}};
+  FakeGraph graph{{inner}, {&x}, {&y}, {}};
+  FakeNode fused{"fused", "QnnPartition_0", "", 13, {&x}, {&y}};
+
+  std::string tmp_json = (std::filesystem::temp_directory_path() / "qnn_unit_model_test_dry_run.json").string();
+  std::remove(tmp_json.c_str());
+
+  std::vector<std::string> in_names{"x"};
+  std::vector<std::string> out_names{"y"};
+  qnn::ModelSettings settings{};
+  qnn::QnnModelContext mc{graph.AsGraph(), fused.AsNode(), ctx.logger,
+                          &in_names, &out_names, &settings,
+                          nullptr, nullptr, tmp_json};
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  auto status = ctx.model->ComposeGraph(mc, /*dry_run=*/true, &graph_wrapper);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+
+  EXPECT_EQ(graph_wrapper.graph_name, "fused");
+  EXPECT_FALSE(graph_wrapper.ops.empty());
+  EXPECT_FALSE(graph_wrapper.tensors_map.empty());
+  EXPECT_EQ(graph_wrapper.graph_inputs.names, (std::vector<std::string>{"x"}));
+  EXPECT_EQ(graph_wrapper.graph_outputs.names, (std::vector<std::string>{"y"}));
+  for (const auto& [name, tensor] : graph_wrapper.tensors_map) {
+    EXPECT_EQ(qnn::GetQnnTensorID(tensor.GetQnnTensor()), 0u) << name;
+  }
+
+  // No QNN graph is composed during a dry run, so no JSON graph is dumped.
+  EXPECT_FALSE(std::filesystem::exists(tmp_json));
+  std::string log_file = tmp_json.substr(0, tmp_json.rfind('.')) + "_tensor_log.json";
+  EXPECT_FALSE(std::filesystem::exists(log_file));
+}
+
+TEST(QnnUnit_ModelTest, ComposeGraphFromGraphWrapper_AfterDryRun_ComposesWithoutOrtGraph) {
+  QnnModelHtpTestContext ctx;
+  if (!ctx.IsValid()) GTEST_SKIP() << "HTP backend not available on this host";
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  {
+    InstallFakeGraphApiStubs(ctx.stub_ort_api);
+    OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+    FakeValueInfo x{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+    FakeValueInfo y{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+    FakeNode inner{"identity_0", "Identity", "", 13, {&x}, {&y}};
+    FakeGraph graph{{inner}, {&x}, {&y}, {}};
+    FakeNode fused{"fused", "QnnPartition_0", "", 13, {&x}, {&y}};
+
+    std::vector<std::string> in_names{"x"};
+    std::vector<std::string> out_names{"y"};
+    qnn::ModelSettings settings{};
+    qnn::QnnModelContext mc{graph.AsGraph(), fused.AsNode(), ctx.logger,
+                            &in_names, &out_names, &settings};
+    ASSERT_TRUE(ctx.model->ComposeGraph(mc, /*dry_run=*/true, &graph_wrapper).IsOK());
+  }
+  // The fake ONNX graph is gone; the cached graph wrapper must be self-contained.
+
+  // json_qnn_graph_path is left empty: LogTensorDetails reads the OrtGraph, which is null on this path.
+  ApiPtrs api_ptrs{ctx.stub_ort_api, ctx.stub_ep_api, ctx.stub_editor_api};
+  qnn::QnnModel model(ctx.manager.get(), api_ptrs);
+  qnn::QnnModelContext mc{/*ort_graph=*/nullptr, /*fused_node=*/nullptr, ctx.logger,
+                          /*onnx_input_names=*/nullptr, /*onnx_output_names=*/nullptr,
+                          &graph_wrapper.model_settings};
+  auto status = model.ComposeGraphFromGraphWrapper(mc, graph_wrapper);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(model.Name(), "fused");
+
+  // The cache is cloned, not consumed, and carries no QNN-assigned tensor IDs back.
+  EXPECT_FALSE(graph_wrapper.ops.empty());
+  for (const auto& [name, tensor] : graph_wrapper.tensors_map) {
+    EXPECT_EQ(qnn::GetQnnTensorID(tensor.GetQnnTensor()), 0u) << name;
+  }
+
+  // Re-compose the same cache as another graph in the same context, as done once per SoC.
+  graph_wrapper.graph_name = "fused_again";
+  qnn::QnnModel model2(ctx.manager.get(), api_ptrs);
+  qnn::QnnModelContext mc2{nullptr, nullptr, ctx.logger, nullptr, nullptr, &graph_wrapper.model_settings};
+  status = model2.ComposeGraphFromGraphWrapper(mc2, graph_wrapper);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(model2.Name(), "fused_again");
 }
 
 // ---------------------------------------------------------------------------

@@ -80,12 +80,12 @@ bool QnnModel::GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::
 }
 
 Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
-  const OrtGraph& ort_graph = context.ort_graph;
+  const OrtGraph* ort_graph = context.ort_graph;
 
   graph_inputs_.Clear();
   graph_outputs_.Clear();
 
-  Ort::ConstNode fused_node{&context.fused_node};
+  Ort::ConstNode fused_node{context.fused_node};
   std::vector<Ort::ConstValueInfo> input_defs = fused_node.GetInputs();
 
   // Collect non-initializer inputs
@@ -256,30 +256,63 @@ const OrtNodeUnit& QnnModel::GetNodeUnit(const OrtNode* node,
   return *node_unit_it->second;
 }
 
-Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
+Ort::Status QnnModel::ComposeGraphCommon(const QnnModelContext& context,
+                                         QnnModelWrapper& qnn_model_wrapper,
+                                         const std::string& graph_name) {
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(),
+                                                graph_name,
+                                                context.graph_configs),
+                "Failed to create QNN graph.");
+
+  const bool build_json_graph = !context.json_qnn_graph_path.empty();
+  RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose QNN graph.");
+
+  if (build_json_graph) {
+    LogTensorDetails(qnn_model_wrapper, graph_name, context.json_qnn_graph_path, context.logger);
+
+    const nlohmann::json& json_graph = qnn_model_wrapper.GetQnnJSONGraph();
+    std::ofstream ofs(context.json_qnn_graph_path);
+
+    if (ofs.is_open()) {
+      ofs << json_graph.dump();
+      ofs.close();
+    } else {
+      ORT_CXX_LOG(context.logger,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Could not open JSON graph file: " + context.json_qnn_graph_path).c_str());
+    }
+  }
+
+  RETURN_IF_NOT(GetGraphInfoFromModel(qnn_model_wrapper, context.logger), "GetGraphInfoFromModel failed.");
+  ORT_CXX_LOG(context.logger, ORT_LOGGING_LEVEL_VERBOSE, "GetGraphInfoFromModel completed.");
+
+  return Ort::Status();
+}
+
+Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context, bool dry_run, QnnGraphWrapper* qnn_graph_wrapper) {
   utils::UniqueNameGenerator().Reset();
 
   RETURN_IF(context.onnx_input_names == nullptr, "onnx_input_names is required for ComposeGraph");
   RETURN_IF(context.onnx_output_names == nullptr, "onnx_output_names is required for ComposeGraph");
   RETURN_IF(context.model_settings == nullptr, "model_settings is required for ComposeGraph");
 
-  const OrtGraph& ort_graph = context.ort_graph;
-  const OrtNode& fused_node = context.fused_node;
+  const OrtGraph* ort_graph = context.ort_graph;
+  const OrtNode* fused_node = context.fused_node;
   const Ort::Logger& logger = context.logger;
 
   ORT_CXX_LOG(logger,
               ORT_LOGGING_LEVEL_VERBOSE,
-              ("ComposeGraph Graph name: " + Ort::ConstGraph(&ort_graph).GetName()).c_str());
+              ("ComposeGraph Graph name: " + Ort::ConstGraph(ort_graph).GetName()).c_str());
 
   // Holder for the OrtNodes in the graph, this will guarantee the OrtNodes is
   // valid throughout the lifetime of the ModelBuilder
   std::vector<std::unique_ptr<OrtNodeUnit>> node_unit_holder;
   std::unordered_map<const OrtNode*, const OrtNodeUnit*> node_unit_map;
   // GetQDQNodeUnits
-  std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(api_ptrs_.ort_api, &ort_graph, logger);
+  std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(api_ptrs_.ort_api, ort_graph, logger);
 
   // This name must be same with the EPContext node name
-  const auto& graph_name = Ort::ConstNode(&fused_node).GetName();
+  const auto& graph_name = Ort::ConstNode(fused_node).GetName();
   RETURN_IF_ERROR(SetGraphInputOutputInfo(context));
 
   // Framework op trace: create collector before QnnModelWrapper so it can be
@@ -309,10 +342,6 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
       ProfilingMethodType::COMPOSE_GRAPHS,
       profiling_scope));
 
-  bool rt = qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, context.graph_configs);
-
-  RETURN_IF_NOT(rt, "Failed to initialize qnn_model_wrapper.");
-
   std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
   qnn_node_groups.reserve(node_unit_holder.size());
 
@@ -334,17 +363,6 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
     }
   }
 
-  const bool build_json_graph = !context.json_qnn_graph_path.empty();
-  RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
-
-  profiling_scope.Complete(profiling_info);
-
-  // Drain after the complete QNN graph composition so both provider CSV and ORT session
-  // profiling include the graph-add and graph-compose QAIRT events.
-  if (!profiling_info.graph_name.empty()) {
-    RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().ExtractBackendProfilingInfo(profiling_info, logger));
-  }
-
   // Collect framework op trace after graph composition
   if (trace_collector) {
     OpTraceLookup per_graph_lookup;
@@ -354,24 +372,34 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
     qnn_backend_manager_->GetProfilingManager().MergeOpTraceLookup(std::move(per_graph_lookup));
   }
 
-  LogTensorDetails(qnn_model_wrapper, graph_name, context.json_qnn_graph_path, logger);
-
-  if (build_json_graph) {
-    const nlohmann::json& json_graph = qnn_model_wrapper.GetQnnJSONGraph();
-    std::ofstream ofs(context.json_qnn_graph_path);
-
-    if (ofs.is_open()) {
-      ofs << json_graph.dump();
-      ofs.close();
-    } else {
-      ORT_CXX_LOG(logger,
-                  ORT_LOGGING_LEVEL_WARNING,
-                  ("Could not open JSON graph file: " + context.json_qnn_graph_path).c_str());
-    }
+  if (dry_run) {
+    qnn_graph_wrapper->graph_name = graph_name;
+    RETURN_IF_ERROR(qnn_model_wrapper.TakeInternalWrappers(*qnn_graph_wrapper));
+  } else {
+    RETURN_IF_ERROR(ComposeGraphCommon(context, qnn_model_wrapper, graph_name));
   }
 
-  RETURN_IF_NOT(GetGraphInfoFromModel(qnn_model_wrapper, logger), "GetGraphInfoFromModel failed.");
-  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "GetGraphInfoFromModel completed.");
+  profiling_scope.Complete(profiling_info);
+
+  // Drain after the complete QNN graph composition so both provider CSV and ORT session
+  // profiling include the graph-add and graph-compose QAIRT events.
+  if (!profiling_info.graph_name.empty()) {
+    RETURN_IF_ERROR(qnn_backend_manager_->GetProfilingManager().ExtractBackendProfilingInfo(profiling_info, logger));
+  }
+
+  return Ort::Status();
+}
+
+Ort::Status QnnModel::ComposeGraphFromGraphWrapper(const QnnModelContext& context,
+                                                   const QnnGraphWrapper& qnn_graph_wrapper) {
+  utils::UniqueNameGenerator().Reset();
+
+  QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(api_ptrs_,
+                                                      context.logger,
+                                                      *qnn_backend_manager_,
+                                                      qnn_graph_wrapper);
+  RETURN_IF_ERROR(ComposeGraphCommon(context, qnn_model_wrapper, qnn_graph_wrapper.graph_name));
+
   return Ort::Status();
 }
 

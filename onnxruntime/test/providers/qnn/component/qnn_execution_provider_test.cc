@@ -1180,14 +1180,40 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithoutContextCache_Throws) {
   EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithShareEpContexts_Throws) {
+// Multi-SoC EP context generation now supports weight sharing across sessions.
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithShareEpContexts_Succeeds) {
   EpStubContext ctx;
   ctx.session_config[EPKey("soc_model")] = "60,73";
   ctx.session_config[EPKey("htp_arch")] = "73,75";
   ctx.session_config["ep.context_enable"] = "1";
   ctx.session_config["ep.share_ep_contexts"] = "1";
   auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+// The last session of a weight-sharing group sets both flags.
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithShareAndStopShareEpContexts_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("soc_model")] = "60,73";
+  ctx.session_config[EPKey("htp_arch")] = "73,75";
+  ctx.session_config["ep.context_enable"] = "1";
+  ctx.session_config["ep.share_ep_contexts"] = "1";
+  ctx.session_config["ep.stop_share_ep_contexts"] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithStopShareOnly_Throws) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("soc_model")] = "60,73";
+  ctx.session_config[EPKey("htp_arch")] = "73,75";
+  ctx.session_config["ep.context_enable"] = "1";
+  ctx.session_config["ep.stop_share_ep_contexts"] = "1";
+  auto factory = MakeFactory(ctx);
   EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+               "Unexpected stop_share_ep_contexts without share_ep_contexts enabled.");
 }
 
 // ===========================================================================
