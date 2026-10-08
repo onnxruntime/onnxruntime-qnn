@@ -69,6 +69,13 @@ on:
         description: "If true, also run a smoke test on the wheel."
         default: false
         type: boolean
+      wheel_backward_compat_ort_version:
+        description: |
+          ONNX Runtime version used for the wheel backward compatibility smoke test.
+          Empty disables the test. This requires test_wheel to be true and a native
+          Windows ARM64 test runner.
+        default: ""
+        type: string
       upload_test_archive:
         description: "If true, build a test archive and include is as an artifact."
         default: false
@@ -403,3 +410,14 @@ jobs:
           create_venv
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pysmoke
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pygpu --only
+
+      - name: Test Wheel Backward Compatibility with ONNX Runtime ${{ inputs.wheel_backward_compat_ort_version }}
+        if: ${{ inputs.has_code_changes && inputs.wheel_backward_compat_ort_version != '' }}
+        shell: powershell
+        run: |
+          & "${{ github.workspace }}/qcom/scripts/release_testing/verify_backward_compatibility.ps1" `
+            -PythonVersion "${{ inputs.target_py_vsn }}" `
+            -WheelArch "win_arm64" `
+            -WheelDirectory "${{ github.workspace }}/build/windows-arm64/${{ inputs.build_config }}/dist" `
+            -OnnxruntimeVersion "${{ inputs.wheel_backward_compat_ort_version }}" `
+            -SamplePath "${{ github.workspace }}/qcom/samples/test_wheel.py"

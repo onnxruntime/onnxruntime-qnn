@@ -37,6 +37,8 @@ jobs:
     secrets: inherit
     with:
       do_all: true
+      # A native ARM64 build is required to produce and validate the Windows ARM64 Python wheel.
+      windows_arm64_runner_arch: ARM64
 
   coverage:
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
