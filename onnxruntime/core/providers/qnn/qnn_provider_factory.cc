@@ -94,18 +94,32 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   GetNumCustomOpDomains = GetNumCustomOpDomainsImpl;
   GetCustomOpDomains = GetCustomOpDomainsImpl;
 
-  // Build custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var.
-  // GetCustomOpDomains is called at SessionOptionsAppendExecutionProvider_V2 time (before CreateEp),
-  // so we parse once here at factory construction and cache the result for all sessions.
-  // SetDefaultLogger is called before factory construction in CreateEpFactories, so
-  // OrtLoggingManager::GetDefaultLoggerPtr() is already set and valid here.
-  BuildCustomOpDomainsFromEnv(OrtLoggingManager::GetDefaultLogger(), ep_name_, custom_op_domains_, custom_op_objects_);
-
 #ifdef _WIN32
   CreateExternalResourceImporterForDevice = CreateExternalResourceImporterForDeviceImpl;
 #else
   CreateExternalResourceImporterForDevice = nullptr;
 #endif
+
+  // Register QNN-only placeholder ops for the qti_aisw block ops so models that use them pass ORT
+  // model validation (Graph::Resolve) when this EP is appended. Their fixed OPTIONAL schema
+  // preserves empty ONNX RNN input slots. QNN fuses/compiles supported nodes; unsupported block
+  // ops have no CPU fallback and fail during session initialization.
+  {
+    Ort::CustomOpDomain qti_aisw_domain{kQtiAiswDomain};
+    for (const char* op_type : kQtiAiswBlockOpTypes) {
+      qti_aisw_op_objects_.push_back(
+          std::make_unique<qnn::QtiAiswPlaceholderOp>(op_type, ep_name_));
+      qti_aisw_domain.Add(qti_aisw_op_objects_.back().get());
+    }
+    custom_op_domains_.push_back(std::move(qti_aisw_domain));
+  }
+
+  // Build additional custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var (env-var UDO ops).
+  // GetCustomOpDomains is called at SessionOptionsAppendExecutionProvider_V2 time (before CreateEp),
+  // so we parse once here at factory construction and cache the result for all sessions.
+  // SetDefaultLogger is called before factory construction in CreateEpFactories, so
+  // OrtLoggingManager::GetDefaultLoggerPtr() is already set and valid here.
+  BuildCustomOpDomainsFromEnv(OrtLoggingManager::GetDefaultLogger(), ep_name_, custom_op_domains_, custom_op_objects_);
 
   // HOST_ACCESSIBLE memory for HTP and GPU backends.
   OrtMemoryInfo* mem_info = nullptr;
@@ -342,11 +356,19 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
   }
 
-  factory->qnn_allocator_type_ = qnn_ep->qnn_allocator_type_;
-  if (factory->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+  if (qnn_ep->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
     for (OrtEpDevice* ep_device : factory->ep_devices_) {
       RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
     }
+    factory->registered_allocator_type_ = qnn_ep->qnn_allocator_type_;
+  }
+
+  if (factory->registered_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+    // Inform EP if a previous EP session has already enabled shared memory of some kind
+    // Note: if the factory's registered allocator type is not None, a new allocator of
+    // the registered type will be created
+    qnn_ep->registered_allocator_type_ = factory->registered_allocator_type_;
+    qnn_ep->registered_memory_info_ = factory->host_accessible_memory_info_.get();
   }
 
   factory->qnn_ep_ = qnn_ep.get();
@@ -367,10 +389,16 @@ void ORT_API_CALL QnnEpFactory::ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp*
 void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
-  if (qnn::IsHtpSharedMemoryAllocator(factory->qnn_allocator_type_)) {
+  if (allocator == nullptr) {
+    return;
+  }
+
+  // Use registered_allocator_type_ to deallocate any shared allocators created as a result of
+  // previous sessions successfully enabling shared allocator
+  if (qnn::IsHtpSharedMemoryAllocator(factory->registered_allocator_type_)) {
     delete static_cast<qnn::HtpSharedMemoryAllocator*>(allocator);
 #ifdef _WIN32
-  } else if (qnn::IsDx12SharedMemoryAllocator(factory->qnn_allocator_type_)) {
+  } else if (qnn::IsDx12SharedMemoryAllocator(factory->registered_allocator_type_)) {
     delete static_cast<qnn::Dx12SharedMemoryAllocator*>(allocator);
 #endif
   } else {
@@ -684,6 +712,7 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     return ort_api->CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP factory.");
   }
 
+  factory->effective_api_version_ = requested_api_version;
   factories[0] = factory.release();
   *num_factories = 1;
 

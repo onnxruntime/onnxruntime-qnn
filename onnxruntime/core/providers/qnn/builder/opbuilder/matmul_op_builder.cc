@@ -892,15 +892,15 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                      op_output_quant_param.Copy(),
                                                      op_output_shape, do_op_validation));
   } else {
-    QnnTensorWrapper op_output_tensor_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
-                                              op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(op_output_tensor_wrapper)),
-                  "Failed to add output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW, qnn_op_type,
-                                                  std::move(input_names), {op_output_name},
-                                                  std::move(param_tensor_names), do_op_validation),
-                  "Failed to add fused Matmul node.");
+    const Qnn_DataType_t activation_qnn_data_type =
+        qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+    RETURN_IF_ERROR(utils::AddOpWithQuantizedOutput(qnn_model_wrapper, utils::UniqueNameGenerator().New(node_unit),
+                                                    qnn_op_type, std::move(input_names),
+                                                    std::move(param_tensor_names), op_output_name,
+                                                    op_output_tensor_type, output_info.qnn_data_type,
+                                                    op_output_quant_param.Copy(),
+                                                    std::vector<uint32_t>(op_output_shape),
+                                                    activation_qnn_data_type, do_op_validation));
   }
 
   if (reshape_output) {

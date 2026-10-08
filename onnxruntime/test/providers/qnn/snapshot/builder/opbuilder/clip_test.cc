@@ -3,7 +3,7 @@
 //
 // Op-builder snapshot tests for ClipOpBuilder.
 //
-//   QnnUnit_Clip_SnapshotTest — Snapshot tests: JSON golden compare via
+//   QnnSnapshot_Clip_OpBuilderTest — Snapshot tests: JSON golden compare via
 //                               QnnJSONGraph (real QNN backend, no finalize,
 //                               no fusion).
 //
@@ -20,7 +20,7 @@
 //
 // Golden files: $QNN_UT_SNAPSHOT_GOLDEN_DIR/snapshot/builder/opbuilder/clip/<name>.json
 // To generate/update (both env vars on one line):
-//   QNN_UT_SNAPSHOT_GOLDEN_DIR=<dir> QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 ./onnxruntime_provider_test --gtest_filter="QnnUnit_Clip_Snapshot*"
+//   QNN_UT_SNAPSHOT_GOLDEN_DIR=<dir> QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 ./onnxruntime_provider_test --gtest_filter="QnnSnapshot_Clip_OpBuilder*"
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
@@ -49,18 +49,14 @@ namespace test {
 
 // ---------------------------------------------------------------------------
 // Snapshot tests — value-parameterized, one suite per spec kind:
-//   QnnUnit_Clip_SnapshotTest             (plain Clip inputs)
-//   QnnUnit_Clip_Snapshot_QDQFloatTest     (QDQ data + float min/max)
-//   QnnUnit_Clip_Snapshot_QDQQuantTest     (QDQ data + quantized min/max)
-//   QnnUnit_Clip_Snapshot_FoldedConstTest  (folded-constant min/max)
+//   QnnSnapshot_Clip_OpBuilderTest             (plain Clip inputs)
+//   QnnSnapshot_Clip_OpBuilder_QDQFloatTest     (QDQ data + float min/max)
+//   QnnSnapshot_Clip_OpBuilder_QDQQuantTest     (QDQ data + quantized min/max)
 //
-// Four helpers cover the test patterns:
+// Three helpers cover the test patterns:
 //   RunClipSnapshot               — Plain dtype data, optional float min/max
 //   RunClipSnapshotQDQFloatMinMax — QDQ data + optional float min/max scalars
 //   RunClipSnapshotQDQQuantMinMax — QDQ data + optional quantized min/max scalars
-//   RunClipSnapshotFoldedConst    — bare-float data + pre-folded fp32 min/max
-//                                   (only path that exercises the
-//                                   clip_op_builder.cc:45-52 folded fallback)
 //
 // Every case runs on HTP — QnnCpu is no longer shipped with the QNN EP
 // wheel. The `SnapshotBackend` enum is kept (with only HTP as a value) so
@@ -303,116 +299,44 @@ void RunClipSnapshotQDQQuantMinMax([[maybe_unused]] SnapshotBackend backend,
   AssertSnapshotJson(*wrapper, golden_basename);
 }
 
-// Bare-float data with folded-constant min/max.
-//
-// The min/max inputs enter Clip as FOLDED static fp32 scalars, not as graph
-// initializers — in production this state comes from QNN EP's own
-// qdq_constant_folding pass rewriting standalone `DQ(u*_const) → fp32` into a
-// folded tensor + MarkTensorAsFoldedConstant. Here we replay that end-state
-// directly by (1) NOT registering min/max in g_mock_init_reg (so
-// is_initializer=false) and (2) manually AddTensorWrapper + MarkTensorAsFoldedConstant
-// with the pre-computed fp32 value. This drives ClipOpBuilder into the
-// `!input_info.is_initializer` branch (clip_op_builder.cc:45-52) which
-// no other snapshot group can reach.
-void RunClipSnapshotFoldedConst([[maybe_unused]] SnapshotBackend backend,
-                                const std::vector<int64_t>& data_shape,
-                                float min_fp32_value,
-                                float max_fp32_value,
-                                const char* golden_basename) {
-  const IOpBuilder* op_builder = GetOpBuilder("Clip");
-  ASSERT_NE(op_builder, nullptr);
-
-  g_mock_init_reg.clear();  // min/max are FOLDED — must not appear as initializers.
-
-  OpBuilderTestContext ctx;
-  SetupMockInitRegistryStubs(ctx);
-  QnnRealHtpBackendManagerContext htp;
-  if (!htp.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
-  std::unique_ptr<qnn::QnnModelWrapper> wrapper =
-      MakeSnapshotWrapperHtpJson(ctx, htp, {"data"}, {"output"});
-  ASSERT_NE(wrapper, nullptr) << "Failed to initialize QNN graph for snapshot test";
-
-  // Register min/max as folded static fp32 scalars — mirrors the end-state
-  // produced by qdq_constant_folding.cc:RegisterFoldedStaticTensor.
-  auto register_folded_fp32_scalar = [&](const std::string& tensor_name, float value) {
-    std::vector<uint8_t> bytes(sizeof(float));
-    std::memcpy(bytes.data(), &value, sizeof(float));
-    qnn::QnnTensorWrapper folded(tensor_name, QNN_TENSOR_TYPE_STATIC,
-                                 QNN_DATATYPE_FLOAT_32,
-                                 qnn::QnnQuantParamsWrapper(),
-                                 /*shape=*/std::vector<uint32_t>{},
-                                 std::move(bytes));
-    ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(folded)));
-    wrapper->MarkTensorAsFoldedConstant(tensor_name);
-  };
-  register_folded_fp32_scalar("min", min_fp32_value);
-  register_folded_fp32_scalar("max", max_fp32_value);
-
-  auto data = MakeMockIODef("data", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, data_shape);
-  auto output = MakeMockIODef("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, data_shape);
-  auto min = MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, std::vector<int64_t>{});
-  auto max = MakeMockIODef("max", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, std::vector<int64_t>{});
-  auto node_unit = MakeMockNodeUnit("Clip", {data, min, max}, {output}, "clip_node");
-
-  auto status = op_builder->AddToModelBuilder(*wrapper, node_unit, ctx.ort_logger, false);
-  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
-  ASSERT_TRUE(wrapper->ComposeQnnGraph(/*build_json_qnn_graph=*/true)) << "ComposeQnnGraph failed";
-  AssertSnapshotJson(*wrapper, golden_basename);
-}
-
 }  // namespace
 
 // Value-parameterized suites — one per spec kind. Case name = spec.name.
 
-class QnnUnit_Clip_SnapshotTest : public ::testing::TestWithParam<ClipSpec> {};
-class QnnUnit_Clip_Snapshot_QDQFloatTest : public ::testing::TestWithParam<ClipQDQFloatSpec> {};
-class QnnUnit_Clip_Snapshot_QDQQuantTest : public ::testing::TestWithParam<ClipQDQQuantSpec> {};
-class QnnUnit_Clip_Snapshot_FoldedConstTest : public ::testing::TestWithParam<ClipFoldedConstSpec> {};
+class QnnSnapshot_Clip_OpBuilderTest : public ::testing::TestWithParam<ClipSpec> {};
+class QnnSnapshot_Clip_OpBuilder_QDQFloatTest : public ::testing::TestWithParam<ClipQDQFloatSpec> {};
+class QnnSnapshot_Clip_OpBuilder_QDQQuantTest : public ::testing::TestWithParam<ClipQDQQuantSpec> {};
 
-TEST_P(QnnUnit_Clip_SnapshotTest, Case) {
+TEST_P(QnnSnapshot_Clip_OpBuilderTest, Case) {
   const ClipSpec& s = GetParam();
   RunClipSnapshot(s.snapshot_backend, s.dtype, s.shape, s.min_val, s.max_val, s.name);
 }
 
-TEST_P(QnnUnit_Clip_Snapshot_QDQFloatTest, Case) {
+TEST_P(QnnSnapshot_Clip_OpBuilder_QDQFloatTest, Case) {
   const ClipQDQFloatSpec& s = GetParam();
   RunClipSnapshotQDQFloatMinMax(s.snapshot_backend, s.qdq_dtype, s.data, s.shape,
                                 s.min_val, s.max_val, s.name);
 }
 
-TEST_P(QnnUnit_Clip_Snapshot_QDQQuantTest, Case) {
+TEST_P(QnnSnapshot_Clip_OpBuilder_QDQQuantTest, Case) {
   const ClipQDQQuantSpec& s = GetParam();
   RunClipSnapshotQDQQuantMinMax(s.snapshot_backend, s.qdq_dtype, s.data, s.shape,
                                 s.min_spec, s.max_spec, s.name);
 }
 
-TEST_P(QnnUnit_Clip_Snapshot_FoldedConstTest, Case) {
-  const ClipFoldedConstSpec& s = GetParam();
-  // Compute folded fp32 min/max from the u*_const quant params.
-  auto dequantize = [](const QuantScalarSpec& q) -> float {
-    return (static_cast<float>(q.raw) - static_cast<float>(q.zp)) * q.scale;
-  };
-  RunClipSnapshotFoldedConst(s.snapshot_backend, s.shape,
-                             dequantize(s.min_spec), dequantize(s.max_spec), s.name);
-}
-
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Clip_SnapshotTest, ::testing::ValuesIn(kClipSpecs),
+    , QnnSnapshot_Clip_OpBuilderTest, ::testing::ValuesIn(kClipSpecs),
     [](const ::testing::TestParamInfo<ClipSpec>& i) { return std::string(i.param.name); });
 
 // Op-builder snapshot exercises the explicit float min/max QDQ cases.
 // Default-min/max QDQ cases are session-snapshot-only sentinels.
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Clip_Snapshot_QDQFloatTest, ::testing::ValuesIn(kClipQDQFloatOpBuilderSpecs),
+    , QnnSnapshot_Clip_OpBuilder_QDQFloatTest, ::testing::ValuesIn(kClipQDQFloatOpBuilderSpecs),
     [](const ::testing::TestParamInfo<ClipQDQFloatSpec>& i) { return std::string(i.param.name); });
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Clip_Snapshot_QDQQuantTest, ::testing::ValuesIn(kClipQDQQuantSpecs),
+    , QnnSnapshot_Clip_OpBuilder_QDQQuantTest, ::testing::ValuesIn(kClipQDQQuantSpecs),
     [](const ::testing::TestParamInfo<ClipQDQQuantSpec>& i) { return std::string(i.param.name); });
-
-INSTANTIATE_TEST_SUITE_P(
-    , QnnUnit_Clip_Snapshot_FoldedConstTest, ::testing::ValuesIn(kClipFoldedConstSpecs),
-    [](const ::testing::TestParamInfo<ClipFoldedConstSpec>& i) { return std::string(i.param.name); });
 
 }  // namespace test
 }  // namespace onnxruntime

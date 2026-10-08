@@ -90,6 +90,13 @@ namespace qnn {
 #define QNN_HTP_NATIVE_BQ_AVAILABLE
 #endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
 
+// Cross device prepare is only available on WoS starting from QAIRT 2.51 (or QNN API 2.40).
+#if defined(_WIN32) && QNN_ARCH_ARM64
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#define QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+#endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#endif  // defined(_WIN32) && QNN_ARCH_ARM64
+
 // QNN only support subset of POSIX of dlopen/dlsym/dladdr/dlerror/dlclose
 // except the following flags for dlopen, others should be done only
 // when we really need them
@@ -186,6 +193,7 @@ typedef struct HtpGraphConfigs {
   bool enable_htp_monolithic_lstm = false;
   bool enable_htp_fp16_clamp_overflow = false;  // Intentionally undocumented; for internal/diagnostic use only.
   bool enable_htp_matmul_lut = ORT_QNN_HTP_MATMUL_LUT_SUPPORTED;
+  uint32_t htp_num_cores = 0;
 } HtpGraphConfigs_t;
 
 enum class QnnBackendType : uint8_t {

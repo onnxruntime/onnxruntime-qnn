@@ -80,6 +80,16 @@ option(onnxruntime_DONT_VECTORIZE "Do not vectorize operations in Eigen" OFF)
 # Coverage builds are only supported on Linux with GCC.
 # Pass -DENABLE_COVERAGE=ON to cmake to enable (e.g. via build.sh --enable-coverage).
 option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
+option(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS
+       "Build QNN EP with internal symbols exported for unit tests. Do not use for production binaries." OFF)
+
+# This mode must keep the QNN EP export/link configuration and its direct-access
+# test bodies in lockstep. It is consumed by both provider and unit-test targets.
+set(onnxruntime_qnn_internal_ut_symbols_enabled OFF)
+if(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS OR
+   (ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+  set(onnxruntime_qnn_internal_ut_symbols_enabled ON)
+endif()
 
 option(onnxruntime_USE_FULL_PROTOBUF "Link to libprotobuf instead of libprotobuf-lite when this option is ON" OFF)
 option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS "Dump debug information about node inputs and outputs when executing the model." OFF)
@@ -431,7 +441,10 @@ endif()
 include(external/onnxruntime_prebuilt.cmake)
 
 # Generate onnxruntime_config.h
-file (STRINGS "${REPO_ROOT}/VERSION_NUMBER" ORT_VERSION)
+file (STRINGS "${REPO_ROOT}/VERSION_NUMBER" ORT_QNN_EP_VERSION)
+file (READ "${REPO_ROOT}/qcom/packages.yml" _packages_yml)
+string(REGEX MATCH "ort_prebuilt_windows_x64:[^\n]*\n[[:space:]]*version:[[:space:]]*([0-9.]+)" _ort_ver_match "${_packages_yml}")
+set(ORT_VERSION "${CMAKE_MATCH_1}")
 
 set(ORT_PROVIDER_FLAGS)
 list(APPEND ORT_PROVIDER_FLAGS -DUSE_QNN=1)
@@ -789,11 +802,11 @@ set(VERSION_BUILD_PART       0 CACHE STRING "Third part of numeric file/product 
 set(VERSION_PRIVATE_PART     0 CACHE STRING "Fourth part of numeric file/product version.")
 set(VERSION_STRING       "Internal Build" CACHE STRING "String representation of file/product version.")
 if(VERSION_MAJOR_PART STREQUAL "0" AND VERSION_MINOR_PART STREQUAL "0" AND VERSION_BUILD_PART STREQUAL "0" AND VERSION_PRIVATE_PART STREQUAL "0")
-    string(REPLACE "." ";"  ORT_VERSION_STRING_LIST ${ORT_VERSION})
+    string(REPLACE "." ";"  ORT_VERSION_STRING_LIST ${ORT_QNN_EP_VERSION})
     list(GET ORT_VERSION_STRING_LIST 0 VERSION_MAJOR_PART)
     list(GET ORT_VERSION_STRING_LIST 1 VERSION_MINOR_PART)
     list(GET ORT_VERSION_STRING_LIST 2 VERSION_BUILD_PART)
-    set(VERSION_STRING ${ORT_VERSION})
+    set(VERSION_STRING ${ORT_QNN_EP_VERSION})
 endif()
 
 
@@ -928,7 +941,7 @@ configure_package_config_file(
 
 write_basic_package_version_file(
     "${PROJECT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
-    VERSION ${ORT_VERSION}
+    VERSION ${ORT_QNN_EP_VERSION}
     COMPATIBILITY SameMajorVersion)
 
 install(

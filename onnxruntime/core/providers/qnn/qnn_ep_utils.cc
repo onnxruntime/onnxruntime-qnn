@@ -9,6 +9,7 @@
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
+#include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 
 namespace onnxruntime {
 namespace QDQ {
@@ -96,6 +97,73 @@ const OrtValue* GetInitializerFromValueInfo(const OrtGraph* graph, const OrtApi&
     return nullptr;
   }
   return GetConstantInitializer(graph, ort_api, name);
+}
+
+bool IsConstantInitializerValueInfo(const OrtGraph* graph, const OrtApi& ort_api, const OrtValueInfo* value_info) {
+  if (value_info == nullptr || GetInitializerFromValueInfo(graph, ort_api, value_info) == nullptr) {
+    return false;
+  }
+
+  // Graph_GetInitializers also returns overridable initializers (ONNX IR version >= 4, default
+  // value for a matching graph input); those can be overridden with a dynamic feed at inference
+  // time, so only a true constant initializer is safe to hand to FullyConnected as a static bias.
+  bool is_constant_initializer = false;
+  OrtStatus* status = ort_api.ValueInfo_IsConstantInitializer(value_info, &is_constant_initializer);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return false;
+  }
+  return is_constant_initializer;
+}
+
+bool IsConstantOrInitializerValueInfo(const OrtGraph* graph, const OrtApi& ort_api, const OrtValueInfo* value_info) {
+  if (value_info == nullptr) return false;
+  if (IsConstantInitializerValueInfo(graph, ort_api, value_info)) return true;
+
+  const OrtNode* producer = nullptr;
+  if (ort_api.ValueInfo_GetValueProducer(value_info, &producer, nullptr) != nullptr || producer == nullptr) {
+    return false;
+  }
+  return Ort::ConstNode(producer).GetOperatorType() == "Constant";
+}
+
+bool GetNodeInputValueInfo(const OrtApi& ort_api, const OrtNode* node, size_t index,
+                           const OrtValueInfo*& input) {
+  input = nullptr;
+  size_t num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(node, &num_inputs) != nullptr || index >= num_inputs) return false;
+  std::vector<const OrtValueInfo*> inputs(num_inputs);
+  if (ort_api.Node_GetInputs(node, inputs.data(), inputs.size()) != nullptr) return false;
+  input = inputs[index];
+  return input != nullptr;
+}
+
+bool IsStaticQdqBias(const OrtGraph* graph, const OrtApi& ort_api, const OrtValueInfo* bias_vi) {
+  if (IsConstantOrInitializerValueInfo(graph, ort_api, bias_vi)) return true;
+
+  const OrtNode* bias_producer = nullptr;
+  if (ort_api.ValueInfo_GetValueProducer(bias_vi, &bias_producer, nullptr) != nullptr || bias_producer == nullptr) {
+    return false;
+  }
+
+  if (Ort::ConstNode(bias_producer).GetOperatorType() != "DequantizeLinear") {
+    return false;
+  }
+
+  const OrtValueInfo* dq_data_input = nullptr;
+  if (!GetNodeInputValueInfo(ort_api, bias_producer, 0, dq_data_input)) return false;
+  if (IsConstantOrInitializerValueInfo(graph, ort_api, dq_data_input)) return true;
+
+  const OrtNode* dq_data_producer = nullptr;
+  if (ort_api.ValueInfo_GetValueProducer(dq_data_input, &dq_data_producer, nullptr) != nullptr ||
+      dq_data_producer == nullptr ||
+      Ort::ConstNode(dq_data_producer).GetOperatorType() != "QuantizeLinear") {
+    return false;
+  }
+
+  const OrtValueInfo* q_data_input = nullptr;
+  return GetNodeInputValueInfo(ort_api, dq_data_producer, 0, q_data_input) &&
+         IsConstantOrInitializerValueInfo(graph, ort_api, q_data_input);
 }
 
 // 2.2 Read a scalar of type T from an initializer.
@@ -312,8 +380,9 @@ bool IsGemmWeightBlockQuantized(const OrtApi& ort_api, const OrtValueInfo* weigh
 
 // 3b.0 Guard for the absorb-Reshape path. Reject configurations that require another builder path:
 // transposed B, non-FC bias shapes, NATIVE bias, and BQ weight.
-bool IsGemmSafeForAbsorbedReshape(const OrtApi& ort_api, const OrtNode* gemm_node) {
+bool IsGemmSafeForAbsorbedReshape(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* gemm_node) {
   OrtNodeAttrHelper attrs(*gemm_node);
+  if (attrs.Get("transA", static_cast<int64_t>(0)) != 0) return false;
   if (attrs.Get("transB", static_cast<int64_t>(0)) != 0) return false;
 
   size_t num_inputs = 0;
@@ -347,23 +416,9 @@ bool IsGemmSafeForAbsorbedReshape(const OrtApi& ort_api, const OrtNode* gemm_nod
   }
   if (!qnn::utils::IsCompatibleFcBiasShape(bias_shape, weight_shape[1])) return false;
 
-  // 3b.0.2 NATIVE-bias gate: walk through a DQ (if any) to the true producer. If that
-  //         producer is another op, the bias is NATIVE (intermediate) and the builder
-  //         would require a separate Add.
-  const OrtNode* bias_producer = nullptr;
-  if (ort_api.ValueInfo_GetValueProducer(bias_vi, &bias_producer, nullptr) != nullptr) return false;
-  if (bias_producer == nullptr) return true;  // graph input / initializer
-
-  if (Ort::ConstNode(bias_producer).GetOperatorType() != "DequantizeLinear") {
-    return false;  // Bias directly produced by another op.
-  }
-  size_t dq_num_inputs = 0;
-  if (ort_api.Node_GetNumInputs(bias_producer, &dq_num_inputs) != nullptr || dq_num_inputs == 0) return false;
-  std::vector<const OrtValueInfo*> dq_inputs(dq_num_inputs);
-  if (ort_api.Node_GetInputs(bias_producer, dq_inputs.data(), dq_inputs.size()) != nullptr) return false;
-  const OrtNode* upstream = nullptr;
-  if (ort_api.ValueInfo_GetValueProducer(dq_inputs[0], &upstream, nullptr) != nullptr) return false;
-  return upstream == nullptr;  // DQ's own input must originate at a graph input / initializer.
+  // 3b.0.2 Static-bias gate: FullyConnected consumes bias as a static tensor. Accept
+  //         initializer/Constant bias, including quantized static bias behind DQ or Q->DQ.
+  return IsStaticQdqBias(graph, ort_api, bias_vi);
 }
 
 // 3b. Detect  Gemm -> Reshape -> [Relu/Clip ->] Q  (MatMulAddFusion sandwich) and, if
@@ -382,7 +437,7 @@ bool TryAbsorbTrailingReshape(const OrtGraph* graph, const OrtApi& ort_api, cons
                               const OrtNode*& absorbed_reshape, const OrtNode*& folded_activation) {
   // 3b.1 Op-type and safety gate on the Gemm attrs/inputs.
   if (Ort::ConstNode(gemm_node).GetOperatorType() != "Gemm") return false;
-  if (!IsGemmSafeForAbsorbedReshape(ort_api, gemm_node)) return false;
+  if (!IsGemmSafeForAbsorbedReshape(graph, ort_api, gemm_node)) return false;
 
   // 3b.2 Gemm -> single-consumer output feeding a Reshape.
   const OrtValueInfo* gemm_out = GetSingleOutput(ort_api, gemm_node);
@@ -1023,10 +1078,69 @@ bool OrtSplitNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
   return true;
 }
 
+// A 16-bit activation with an 8-bit per-tensor output is built as a 16-bit op followed by a Convert.
+static bool IsSupportedActivationOutputTypePair(const OrtGraph* graph, const OrtApi& ort_api,
+                                                ONNXTensorElementDataType dt_input,
+                                                ONNXTensorElementDataType dt_output,
+                                                const OrtNode* q_node) {
+  if (dt_input == dt_output) {
+    return true;
+  }
+  const bool is_16bit_input = dt_input == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16 ||
+                              dt_input == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16;
+  const bool is_8bit_output = dt_output == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8 ||
+                              dt_output == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+  return is_16bit_input && is_8bit_output && IsQOrDQScalePositiveConstantScalar(graph, ort_api, q_node);
+}
+
+// Float activation with a weight-only DQ of a constant per-channel initializer. QNN takes the weight as a
+// static quantized tensor, whereas a standalone per-channel DQ is unsupported and would leave the weight
+// as a graph input.
+static bool IsPerChannelConstantWeightOnlyGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+                                                const std::vector<const OrtNode*>& dq_nodes,
+                                                const std::vector<const OrtNode*>& q_nodes) {
+  if (dq_nodes.size() != 1 || !q_nodes.empty()) {
+    return false;
+  }
+  size_t num_inputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
+  if (num_inputs < 2) {
+    return false;
+  }
+  std::vector<const OrtValueInfo*> inputs(num_inputs);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api);
+  if (inputs[1] == nullptr) {
+    return false;
+  }
+  const OrtNode* weight_producer = nullptr;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(inputs[1], &weight_producer, nullptr), ort_api);
+  const OrtNode* weight_consumer = nullptr;
+  if (weight_producer != dq_nodes[0] || !GetSoleNonOutputConsumer(ort_api, inputs[1], weight_consumer) ||
+      weight_consumer != node) {
+    return false;
+  }
+
+  size_t dq_num_inputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(dq_nodes[0], &dq_num_inputs), ort_api);
+  if (dq_num_inputs < 2) {
+    return false;
+  }
+  std::vector<const OrtValueInfo*> dq_inputs(dq_num_inputs);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(dq_nodes[0], dq_inputs.data(), dq_inputs.size()), ort_api);
+  if (GetInitializerFromValueInfo(graph, ort_api, dq_inputs[0]) == nullptr) {
+    return false;
+  }
+  std::vector<int64_t> scale_shape;
+  return GetValueInfoShape(ort_api, dq_inputs[1], scale_shape) && scale_shape.size() == 1 && scale_shape[0] > 1;
+}
+
 bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
                                      const OrtNode* redundant_clip_node,
                                      const std::vector<const OrtNode*>& dq_nodes,
                                      const std::vector<const OrtNode*>& q_nodes) const {
+  if (IsPerChannelConstantWeightOnlyGroup(graph, ort_api, node, dq_nodes, q_nodes)) {
+    return true;
+  }
   // Conv allows the bias (input[2]) to lack a DQ node; inputs[0] (data) and inputs[1] (weight)
   // must always be DQ-produced. Unlike ORT-core ConvNodeGroupSelector (which requires all inputs
   // to be quantized), we relax the count to [2,3] to support a float bias at input[2].
@@ -1063,7 +1177,6 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     }
   }
 
-  // Input and output types need to be same
   auto dt_input = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
   auto dt_weight = GetNodeInputDataType(dq_nodes[1], ort_api, 0);
   auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
@@ -1072,7 +1185,7 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (dt_input.value() != dt_output.value()) {
+  if (!IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0])) {
     return false;
   }
 
@@ -1158,6 +1271,9 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
                                        const OrtNode* redundant_clip_node,
                                        const std::vector<const OrtNode*>& dq_nodes,
                                        const std::vector<const OrtNode*>& q_nodes) const {
+  if (IsPerChannelConstantWeightOnlyGroup(graph, ort_api, node, dq_nodes, q_nodes)) {
+    return true;
+  }
   if (dq_nodes.size() != 2) {
     return false;
   }
@@ -1185,7 +1301,8 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   }
 
   auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
-  return dt_output.has_value() && dt_input.value() == dt_output.value();
+  return dt_output.has_value() &&
+         IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]);
 }
 
 bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1708,6 +1825,7 @@ void OrtSelectorManager::CreateSelectors() {
       {"Asin", {}},
       {"Atan", {}},
       {"AveragePool", {}},
+      {"Buffer", {}},
       {"Ceil", {}},
       {"Cos", {}},
       {"DepthToSpace", {}},
@@ -1806,7 +1924,9 @@ void OrtSelectorManager::CreateSelectors() {
   ort_selectors_.RegisterSelector(gemm_ops, std::make_unique<OrtGemmNodeGroupSelector>());
 
   // Register GRU ops
-  OrtOpVersionsAndSelector::OpVersionsMap gru_ops = {{"GRU", {}}};
+  OrtOpVersionsAndSelector::OpVersionsMap gru_ops = {
+      {"GRU", {}},
+      {"StatefulGru", {}}};
   ort_selectors_.RegisterSelector(gru_ops, std::make_unique<OrtGRUNodeGroupSelector>());
 
   // Register instance and layer normalization ops
@@ -1907,7 +2027,11 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
 
     // Check domain (similar to the GraphViewer version)
     std::string domain_str(domain);
-    if (domain_str != kOnnxDomain && domain_str != kMSInternalNHWCDomain && domain_str != kMSDomain && domain_str != kMLOnnxDomain) {
+    if (domain_str != kOnnxDomain &&
+        domain_str != kMSInternalNHWCDomain &&
+        domain_str != kMSDomain &&
+        domain_str != kMLOnnxDomain &&
+        domain_str != kQtiAiswDomain) {
       continue;
     }
 

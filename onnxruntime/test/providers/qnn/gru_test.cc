@@ -194,6 +194,30 @@ static GetTestModelFn BuildGRUTestCase(const TestInputDef<float>& X_def,
   };
 }
 
+// Uses a concrete feed for execution while making X's sequence dimension symbolic in the model.
+// This models the unresolved shape metadata that must prevent QNN EP assignment.
+static GetTestModelFn BuildDynamicXShapeGRUTestCase() {
+  return [](ModelTestBuilder& builder) {
+    constexpr uint32_t kNumDirections = 1;
+    constexpr uint32_t kSequenceLength = 2;
+    constexpr uint32_t kBatchSize = 1;
+    constexpr uint32_t kHiddenSize = 2;
+    constexpr uint32_t kInputSize = 3;
+
+    auto b_def = TestInputDef<float>({kNumDirections, 6 * kHiddenSize}, false, -1.0f, 1.0f);
+    auto h_def = TestInputDef<float>({kNumDirections, kBatchSize, kHiddenSize}, false, -1.0f, 1.0f);
+    _BuildGRUTestCase<float>(builder,
+                             TestInputDef<float>({kSequenceLength, kBatchSize, kInputSize}, false, -1.0f, 1.0f),
+                             TestInputDef<float>({kNumDirections, 3 * kHiddenSize, kInputSize}, false, -1.0f, 1.0f),
+                             TestInputDef<float>({kNumDirections, 3 * kHiddenSize, kHiddenSize}, false, -1.0f, 1.0f),
+                             std::ref(b_def), std::ref(h_def), true, true, "forward", kHiddenSize, 0, 0, {});
+
+    auto* x_shape = builder.graph_->mutable_input(0)->mutable_type()->mutable_tensor_type()->mutable_shape();
+    x_shape->mutable_dim(0)->clear_dim_value();
+    x_shape->mutable_dim(0)->set_dim_param("sequence_length");
+  };
+}
+
 template <typename InputQType>
 static GetTestQDQModelFn<InputQType> BuildQDQGRUTestCase(const TestInputDef<float>& X_def,
                                                          const TestInputDef<float>& W_def,
@@ -899,6 +923,16 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_u8_bias_fp_degrade) {
 // HTP FP16 Tests
 // ============================================================
 
+TEST_F(QnnHTPBackendTests, GRU_dynamic_X_shape_not_assigned) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  RunQnnModelTest(BuildDynamicXShapeGRUTestCase(),
+                  provider_options,
+                  22,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None});
+}
+
 TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_forward) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
@@ -932,11 +966,14 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_reverse) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  // Linux x86_64 accumulates larger FP16 rounding error in the reverse unroll
-  // (observed: Y max-rel ~0.14, Y_h max-rel ~0.008).
-  // TODO: Remove the platform-aware tolerance once the accuracy issue on Linux x86_64 is solved
+  // Some HTP targets accumulate larger FP16 rounding error in the reverse unroll
+  // (observed: Linux x86_64 Y max-rel ~0.14, Y_h max-rel ~0.008; GlymurW/Windows ARM64
+  // Y max-rel ~0.010). Keep the tighter tolerance for other platforms.
+  // TODO: Remove the platform-aware tolerance once the accuracy issue is solved.
 #if defined(__linux__) && defined(__x86_64__)
   constexpr float kTolerance = 0.15f;
+#elif defined(_WIN32) && defined(_M_ARM64)
+  constexpr float kTolerance = 0.012f;
 #else
   constexpr float kTolerance = 0.006f;
 #endif

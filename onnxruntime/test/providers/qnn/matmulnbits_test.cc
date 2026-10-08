@@ -301,6 +301,15 @@ static void RunHtpQDQMatMulNBitsTest(const TestParams params,
   }
 }
 
+bool IsNativeBqExpected([[maybe_unused]] QnnHtpDevice_Arch_t htp_arch) {
+#if defined(__linux__) && !defined(__aarch64__)
+  // Assume SoC model is set at least V81, which is the case in the above test functions.
+  return true;
+#else
+  return htp_arch >= QNN_HTP_DEVICE_ARCH_V81;
+#endif  // defined(__linux__) && !defined(__aarch64__)
+}
+
 #if defined(_M_ARM64)
 // QNN GPU only support FP16 activations and Q4_0 weights, with zero_points = 8
 // Accumulation with larger channel accumulates more error. Set higher abs_error with respect to K.
@@ -646,7 +655,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS32) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/IsNativeBqExpected(htp_arch));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS32_ZP) {
@@ -696,7 +705,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/IsNativeBqExpected(htp_arch));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64_ZP) {
@@ -722,7 +731,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B4_BS128) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/IsNativeBqExpected(htp_arch));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B4_BS128_ZP) {
@@ -1027,6 +1036,62 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_S16_M1_N64_K256_B8_BS128_ZP) {
   RunHtpQDQMatMulNBitsTest<8, int16_t>(params, /*expect_native_bq=*/false);
 }
 
+// MatMulNBits with padded zero points during packing due to non-divisible k_blocks * bits / 8.
+
+// (k_blocks * 2bits) % 8 = 2
+TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_ZP_PADDING_M1_N32_K160_B2_BS32_ZP) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 32;
+  params.K = 160;
+  params.block_size = 32;
+  params.has_zero_point = true;
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
+}
+
+// (k_blocks * 2bits) % 8 = 4
+TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_ZP_PADDING_M1_N32_K192_B2_BS32_ZP) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 32;
+  params.K = 192;
+  params.block_size = 32;
+  params.has_zero_point = true;
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
+}
+
+// (k_blocks * 2bits) % 8 = 6
+TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_ZP_PADDING_M1_N32_K224_B2_BS32_ZP) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 32;
+  params.K = 224;
+  params.block_size = 32;
+  params.has_zero_point = true;
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
+}
+
+// (k_blocks * 4bits) % 8 = 4
+TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_ZP_PADDING_M1_N32_K96_B4_BS32_ZP) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 32;
+  params.K = 96;
+  params.block_size = 32;
+  params.has_zero_point = true;
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/false);
+}
+
+// QDQ MatMulNBits with LBPQ conversion.
+
 TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K64_B4_BS16) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
@@ -1073,6 +1138,20 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N8_K64_B4_BS32_ZP) {
   params.M = 1;
   params.N = 8;
   params.K = 64;
+  params.block_size = 32;
+  params.has_zero_point = true;
+  params.is_zp_symmetric = true;
+  params.enable_lpbq = true;
+  RunHtpQDQMatMulNBitsTest<4, int16_t>(params, std::nullopt, ExpectedEPNodeAssignment::All, QDQTolerance(0.02f));
+}
+
+TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_ZP_PADDING_M1_N2_K96_B4_BS32_ZP) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 8;
+  params.K = 96;
   params.block_size = 32;
   params.has_zero_point = true;
   params.is_zp_symmetric = true;

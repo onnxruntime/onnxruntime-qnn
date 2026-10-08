@@ -120,17 +120,22 @@ struct OpBuilderTestContext {
 //
 // Usage:
 //   QnnRealHtpBackendManagerContext htp;
-//   if (!htp.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
+//   if (!htp.IsValid()) GTEST_SKIP() << "QNN HTP backend not available";
 //   auto wrapper = MakeSnapshotWrapperHtpJson(ctx, htp, {"in"}, {"out"});
 struct QnnRealHtpBackendManagerContext {
   QNN_INTERFACE_VER_TYPE qnn_interface = QNN_INTERFACE_VER_TYPE_INIT;
   Qnn_BackendHandle_t backend_handle = nullptr;
   Qnn_ContextHandle_t context_handle = nullptr;
 
-  QnnRealHtpBackendManagerContext() {
-#ifndef _WIN32
+  // need_load_system_lib additionally loads libQnnSystem.so so that the manager's
+  // QNN system interface (SystemContext / SystemLog / SystemDlc) is populated.
+  explicit QnnRealHtpBackendManagerContext(bool need_load_system_lib = false) {
     qnn::QnnBackendManagerConfig cfg;
+#ifdef _WIN32
+    cfg.backend_path = "QnnHtp.dll";
+#else
     cfg.backend_path = "libQnnHtp.so";
+#endif
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -145,7 +150,7 @@ struct QnnRealHtpBackendManagerContext {
 
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
     auto status = manager_->SetupBackend(/*load_from_cached_context=*/false,
-                                         /*need_load_system_lib=*/false,
+                                         need_load_system_lib,
                                          /*share_ep_contexts=*/false,
                                          /*htp_share_resource_optimization=*/-1,
                                          /*enable_file_mapped_weights=*/false,
@@ -160,12 +165,14 @@ struct QnnRealHtpBackendManagerContext {
     backend_handle = manager_->GetQnnBackendHandle();
     context_handle = manager_->GetQnnContext(0);
     initialized_ = true;
-#endif
   }
 
   ~QnnRealHtpBackendManagerContext() = default;
 
   bool IsValid() const { return initialized_; }
+
+  // Underlying manager; nullptr when !IsValid().
+  qnn::QnnBackendManager* Manager() { return manager_.get(); }
 
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnRealHtpBackendManagerContext);
 

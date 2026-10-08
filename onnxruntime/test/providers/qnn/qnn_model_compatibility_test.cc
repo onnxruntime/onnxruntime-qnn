@@ -8,10 +8,12 @@
 #include <string>
 #include <vector>
 
+#include <gsl/util>
+#include <gtest/gtest.h>
+
 #include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpCommon.h"
 #include "QnnSdkBuildId.h"
-#include "gtest/gtest.h"
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
@@ -32,7 +34,7 @@ namespace test {
 class HnrdTestHandle {
  public:
   HnrdTestHandle(uint32_t htp_arch) : htp_arch_(htp_arch) {
-    // Move Prepare/Skel/Stub libraries to a temporary directory to trigger HNRD.
+    // Move Skel/Stub libraries to a temporary directory to trigger HNRD.
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
     temp_dir_ = std::string("temp_") + info->test_suite_name() + "-" + info->name();
 
@@ -58,12 +60,10 @@ class HnrdTestHandle {
  private:
   std::vector<std::string> GetRelatedLibs() {
 #ifdef _WIN32
-    return {"QnnHtpPrepare.dll",
-            "libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
+    return {"libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
             "QnnHtpV" + std::to_string(htp_arch_) + "Stub.dll"};
 #else
-    return {"libQnnHtpPrepare.so",
-            "libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
+    return {"libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
             "libQnnHtpV" + std::to_string(htp_arch_) + "Stub.so"};
 #endif
   }
@@ -316,18 +316,6 @@ struct CompatibilityTestInfoV2 {
             serialize_array(soc_models) + ":" +
             serialize_array(vtcm_mbs) + ":" +
             (is_htp_usr_drv ? "1" : "0"));
-  }
-};
-
-struct MallocAllocator : OrtAllocator {
-  MallocAllocator() {
-    OrtAllocator::Alloc = [](OrtAllocator* this_, size_t size) {
-      return static_cast<MallocAllocator*>(this_)->Alloc(size);
-    };
-  }
-
-  void* Alloc(size_t size) {
-    return malloc(size);
   }
 };
 
@@ -589,6 +577,64 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MultiSoc_Override
 #endif  // !defined(_M_ARM64) && !defined(__aarch64__)
 
 #if defined(_WIN32) && defined(_M_ARM64)
+TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_HostModeNoHnrd) {
+#ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+  // Use AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after GTEST_SKIP().
+  if (::testing::internal::AlwaysTrue()) {
+    GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+  }
+#endif
+
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
+  auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
+  const uint32_t htp_arch = static_cast<uint32_t>(platform_attrs.htp_arch);
+  // Host mode is not affected by missing Stub/Skel libraries.
+  auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(htp_arch);
+
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
+  const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx.onnx");
+  std::filesystem::remove(output_model_file);
+
+  ProviderOptions qnn_options = {{"backend_type", "htp"},
+                                 {"enable_htp_cross_device_prepare", "1"},
+                                 {"htp_arch", std::to_string(htp_arch)},
+                                 {"vtcm_mb", "8"},
+                                 {"num_graph_prepare_threads", "1"}};
+
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, std::filesystem::path(output_model_file).string().c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+    ASSERT_TRUE(std::filesystem::exists(output_model_file));
+  }
+
+  {
+    CompatibilityTestInfoV2 expected_info;
+    // Override SDK-dependent fields from runtime SDK.
+    expected_info.sdk_build_id = platform_attrs.sdk_version;
+    expected_info.backend_api_version_major = platform_attrs.backend_api_version.major;
+    expected_info.backend_api_version_minor = platform_attrs.backend_api_version.minor;
+    expected_info.backend_api_version_patch = platform_attrs.backend_api_version.patch;
+    // Set platform related fields.
+    expected_info.htp_archs.push_back(htp_arch);
+    expected_info.soc_models.push_back(0);
+    expected_info.vtcm_mbs.push_back(8);
+    // HNRD should be false due to host mode set.
+    expected_info.is_htp_usr_drv = false;
+
+    std::string info_str = GetInfoFromModelMetadata(output_model_file);
+    ASSERT_TRUE(info_str == expected_info.ToString());
+  }
+
+  std::filesystem::remove(output_model_file);
+}
+
 template <typename INFO_VER>
 static void TestModelCompatibilityApiValidate(const INFO_VER& test_info,
                                               const OrtCompiledModelCompatibility expected_compatibility) {
@@ -884,6 +930,22 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbMoreVtcm) {
   test_info.vtcm_mbs[0] = 9999;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
+}
+
+TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_NoHnrdWithoutPrepareLib) {
+  // Rename prepare lib to pretend it does not exist and rename it back later.
+  const std::string prepare_lib_path = "QnnHtpPrepare.dll";
+  const std::string prepare_lib_temp_path = "QnnHtpPrepare_temp.dll";
+  ASSERT_TRUE(std::filesystem::exists(prepare_lib_path));
+  std::filesystem::rename(prepare_lib_path, prepare_lib_temp_path);
+  auto cleanup = gsl::finally([&prepare_lib_path, &prepare_lib_temp_path]() {
+    std::filesystem::rename(prepare_lib_temp_path, prepare_lib_path);
+  });
+
+  CompatibilityTestInfoV2 test_info;
+  test_info.FillPlatformInfo();
+
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
 #endif  // defined(_WIN32) && defined(_M_ARM64)
 

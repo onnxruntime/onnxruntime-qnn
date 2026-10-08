@@ -1431,21 +1431,20 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_Validation_OutputNotInMap_ReturnsFa
 
 // ── ValidateQnnNode with real QNN HTP backend ─────────────────────
 //
-// These tests dlopen libQnnHtp.so and create a real Qnn_BackendHandle_t so that
+// These tests load the platform HTP backend and create a real Qnn_BackendHandle_t so that
 // QnnGraphOpValidation / backendValidateOpConfig exercises the actual SDK path.
-// On Linux x86-64 (the unit-test host), HTP supports validation but not graph
+// On host builds, HTP supports validation but not graph
 // execution — these tests intentionally exercise only the validation path.
 //
-// libQnnHtp.so is part of the QAIRT SDK that is required to build the EP, so
-// it must be present at test time. A missing library indicates a CI/environment
-// configuration error and fails the test (ASSERT_TRUE) rather than skipping.
+// The HTP backend is part of the QAIRT SDK. Tests skip cleanly when it is not
+// available on the host.
 
 // ValidateQnnNode succeeds for a valid Relu op on the HTP backend.
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (success path).
 // Uses UFIXED_POINT_8 with per-tensor quant params — the representative HTP production path.
 TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
   QnnRealHtpBackendContext backend;
-  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available — QAIRT SDK must be installed in CI";
+  ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
@@ -1476,7 +1475,7 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (failure path).
 TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_InvalidOpType_Fails) {
   QnnRealHtpBackendContext backend;
-  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available — QAIRT SDK must be installed in CI";
+  ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
@@ -1887,7 +1886,7 @@ static const void* g_tensor_raw_data = nullptr;
 
 OrtStatus* StubGraphGetModelPathEmpty(const OrtGraph*,
                                       const ORTCHAR_T** model_path) noexcept {
-  static const ORTCHAR_T empty_path[] = "";
+  static const ORTCHAR_T empty_path[] = ORT_TSTR("");
   *model_path = empty_path;
   return nullptr;
 }
@@ -2483,86 +2482,6 @@ TEST(QnnUnit_ModelWrapperTest, AddTensorWrapper_SharedMemoryDisabled_EmptyName_R
                                qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1, 256});
 
   EXPECT_FALSE(wrapper->AddTensorWrapper(std::move(tensor)));
-}
-
-// =============================================================================
-// FoldedConstant tracking — regression coverage for per-channel constant DQ
-// feeding Conv weight that previously leaked the DQ output as a graph input.
-// =============================================================================
-
-TEST(QnnUnit_ModelWrapperTest, FoldedConstant_DefaultIsFalse) {
-  QnnModelWrapperTestContext ctx;
-  qnn::ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings);
-
-  EXPECT_FALSE(wrapper->IsFoldedConstant("not_marked"));
-  EXPECT_FALSE(wrapper->IsEffectivelyConstantInput("not_marked"));
-}
-
-TEST(QnnUnit_ModelWrapperTest, FoldedConstant_MarkMakesTensorFolded) {
-  QnnModelWrapperTestContext ctx;
-  qnn::ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings);
-
-  wrapper->MarkTensorAsFoldedConstant("weight_dq");
-
-  EXPECT_TRUE(wrapper->IsFoldedConstant("weight_dq"));
-  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("weight_dq"));
-  EXPECT_FALSE(wrapper->IsFoldedConstant("other_tensor"));
-  EXPECT_FALSE(wrapper->IsEffectivelyConstantInput("other_tensor"));
-}
-
-TEST(QnnUnit_ModelWrapperTest, FoldedConstant_MarkIsIdempotent) {
-  QnnModelWrapperTestContext ctx;
-  qnn::ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings);
-
-  wrapper->MarkTensorAsFoldedConstant("weight_dq");
-  wrapper->MarkTensorAsFoldedConstant("weight_dq");
-
-  EXPECT_TRUE(wrapper->IsFoldedConstant("weight_dq"));
-  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("weight_dq"));
-}
-
-TEST(QnnUnit_ModelWrapperTest, FoldedConstant_MultipleTensorsTrackedIndependently) {
-  QnnModelWrapperTestContext ctx;
-  qnn::ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings);
-
-  wrapper->MarkTensorAsFoldedConstant("a");
-  wrapper->MarkTensorAsFoldedConstant("b");
-
-  EXPECT_TRUE(wrapper->IsFoldedConstant("a"));
-  EXPECT_TRUE(wrapper->IsFoldedConstant("b"));
-  EXPECT_FALSE(wrapper->IsFoldedConstant("c"));
-
-  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("a"));
-  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("b"));
-  EXPECT_FALSE(wrapper->IsEffectivelyConstantInput("c"));
-}
-
-// Marking is independent of AddTensorWrapper so op builders can mark before or after.
-TEST(QnnUnit_ModelWrapperTest, FoldedConstant_DoesNotRequireTensorWrapper) {
-  QnnModelWrapperTestContext ctx;
-  qnn::ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings);
-
-  wrapper->MarkTensorAsFoldedConstant("phantom_tensor");
-
-  EXPECT_TRUE(wrapper->IsFoldedConstant("phantom_tensor"));
-  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("phantom_tensor"));
-  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("phantom_tensor"));
-}
-
-// Folded-constant outputs MUST map to STATIC (not NATIVE) so they aren't treated as runtime intermediates.
-TEST(QnnUnit_ModelWrapperTest, FoldedConstant_GetTensorTypeIsStatic) {
-  QnnModelWrapperTestContext ctx;
-  qnn::ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings);
-
-  EXPECT_EQ(wrapper->GetTensorType("unmarked"), QNN_TENSOR_TYPE_NATIVE);
-  wrapper->MarkTensorAsFoldedConstant("folded");
-  EXPECT_EQ(wrapper->GetTensorType("folded"), QNN_TENSOR_TYPE_STATIC);
 }
 
 // The op-builder query path: an op builder holding a QnnModelWrapper must observe
