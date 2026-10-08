@@ -1700,18 +1700,10 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
-  // Owns the EPContext callbacks resolved from session_options. On pre-v28 ORT this is a no-op
-  // stub with HasReadCallback()/HasWriteCallback() returning false.
-  // When running on ORT < 1.28, pass nullptr to skip the Experimental::EpContextConfig path
-  // that would dereference API vtable entries that don't exist in older runtimes (crash).
-  const OrtSessionOptions* session_opts_for_epctx = &session_options_;
-  if (factory.effective_api_version_ < 28) {
-    session_opts_for_epctx = nullptr;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "ORT runtime API version is below 28 (v1.28). "
-                "EPContext encryption callbacks are unavailable; upgrade to onnxruntime >= 1.28 to enable.");
-  }
-  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_opts_for_epctx, &logger_);
+  // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
+  // predates ORT v28 (see EpContextIoDispatch for the version check).
+  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(&session_options_, factory.effective_api_version_,
+                                                            &logger_);
 
   // File mapping and encryption are mutually exclusive: an App-provided read callback replaces
   // the on-disk read, so file mapping must be off when a read callback is registered.
