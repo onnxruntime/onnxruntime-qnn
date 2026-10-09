@@ -26,6 +26,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <array>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -65,7 +66,8 @@ struct LogRecord {
 // installs the initializer-query stubs) with the extra function pointers that
 // QnnEpFactory and QnnEp need. session_config maps session-option keys to
 // values; HasSessionConfigEntry returns 1 for keys present in the map, 0
-// otherwise; GetSessionConfigEntry returns the stored value + NUL.
+// otherwise; GetSessionConfigEntry returns the stored value + NUL. run_config
+// provides values returned by GetRunConfigEntry.
 //
 // Logger_GetLoggingSeverityLevel reports current_->log_severity, which the
 // Ort::Logger(OrtLogger*) constructor (used in QnnEp's member-initialiser list)
@@ -79,6 +81,7 @@ struct LogRecord {
 class EpStubContext : public OrtApiStubContext {
  public:
   std::unordered_map<std::string, std::string> session_config;
+  std::unordered_map<std::string, std::string> run_config;
 
   // Captures the most recent call to DeviceEpIncompatibilityDetails_SetDetails.
   OrtDeviceEpIncompatibilityReason last_incompatibility_reason = OrtDeviceEpIncompatibility_UNKNOWN;
@@ -147,6 +150,17 @@ class EpStubContext : public OrtApiStubContext {
       }
       *sz = 1;
       if (buf) buf[0] = '\0';
+      return nullptr;
+    };
+    stub_ort_api.GetRunConfigEntry =
+        [](const OrtRunOptions*, const char* key) noexcept -> const char* {
+      auto* self = EpStubContext::current_;
+      if (self) {
+        auto it = self->run_config.find(key);
+        if (it != self->run_config.end()) {
+          return it->second.c_str();
+        }
+      }
       return nullptr;
     };
 
@@ -268,6 +282,32 @@ static void ExpectLogged(const EpStubContext& ctx, OrtLoggingLevel severity,
   ADD_FAILURE() << "No log at severity " << severity << " containing \"" << substr
                 << "\". Captured records:" << dump;
 }
+
+namespace {
+
+// Exposes one private method for focused component coverage without changing
+// QnnEp's production interface. Access checking does not apply to the member
+// named by an explicit-instantiation template argument (C++17 [temp.spec]/6).
+template <typename Tag, typename Tag::type Member>
+struct QnnEpPrivateMember {
+  friend typename Tag::type GetQnnEpPrivateMember(Tag) { return Member; }
+};
+
+struct GetPerThreadHtpPowerConfigsTag {
+  using type = void (QnnEp::*)(qnn::PerThreadHtpPowerConfigs_t&, const OrtRunOptions*);
+  friend type GetQnnEpPrivateMember(GetPerThreadHtpPowerConfigsTag);
+};
+
+template struct QnnEpPrivateMember<GetPerThreadHtpPowerConfigsTag,
+                                   &QnnEp::GetPerThreadHtpPowerConfigs>;
+
+void GetPerThreadHtpPowerConfigsForTest(
+    QnnEp& ep, qnn::PerThreadHtpPowerConfigs_t& configs,
+    const OrtRunOptions* run_options) {
+  (ep.*GetQnnEpPrivateMember(GetPerThreadHtpPowerConfigsTag{}))(configs, run_options);
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Test fixture
@@ -595,7 +635,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_VtcmNegative_LogsWarning) {
   ctx.session_config[EPKey("vtcm_mb")] = "-5";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid vtcm_mb: -5 will be skipped");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid vtcm_mb: '-5'. Ignoring.");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_VtcmPositive_Succeeds) {
@@ -629,13 +669,14 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableVtcmBackupBufferSharing_Succeed
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DeviceIdNegative_LogsWarning) {
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DeviceIdNegative_LogsError) {
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("device_id")] = "-1";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid device ID '-1', only >= 0 allowed.");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+               "Ignoring malformed ep.qnnexecutionprovider.device_id: -1");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SocModelNegative_LogsWarning) {
@@ -644,7 +685,124 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SocModelNegative_LogsWarning) {
   ctx.session_config[EPKey("soc_model")] = "-1";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid soc_model: -1");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Unrecognized soc_model '-1'.");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_Uint32OptionsRejectMalformedValues) {
+  constexpr std::array<const char*, 6> invalid_values = {
+      "abc", "12abc", " 10", "+10", "-1", "4294967296"};
+  constexpr std::array<const char*, 2> option_names = {"device_id", "rpc_control_latency"};
+
+  for (const char* option_name : option_names) {
+    for (const char* invalid_value : invalid_values) {
+      SCOPED_TRACE(std::string(option_name) + "=" + invalid_value);
+      EpStubContext ctx;
+      ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+      ctx.session_config[EPKey(option_name)] = invalid_value;
+      auto factory = MakeFactory(ctx);
+
+      EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+      ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+                   "Ignoring malformed " + EPKey(option_name) + ": " + invalid_value);
+    }
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_VtcmRejectsMalformedAndInt32OverflowValues) {
+  constexpr std::array<const char*, 6> invalid_values = {
+      "abc", "12abc", " 10", "+10", "-1", "2147483648"};
+
+  for (const char* invalid_value : invalid_values) {
+    SCOPED_TRACE(invalid_value);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("vtcm_mb")] = invalid_value;
+    auto factory = MakeFactory(ctx);
+
+    EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+                 std::string("Invalid vtcm_mb: '") + invalid_value + "'. Ignoring.");
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SocModelRejectsMalformedAndUint32OverflowValues) {
+  constexpr std::array<const char*, 6> invalid_values = {
+      "abc", "12abc", " 10", "+10", "-1", "4294967296"};
+
+  for (const char* invalid_value : invalid_values) {
+    SCOPED_TRACE(invalid_value);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("soc_model")] = invalid_value;
+    auto factory = MakeFactory(ctx);
+
+    EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+                 std::string("Unrecognized soc_model '") + invalid_value + "'.");
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IntegerOptionsAcceptTargetTypeMaximum) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("device_id")] = "4294967295";
+  ctx.session_config[EPKey("rpc_control_latency")] = "4294967295";
+  ctx.session_config[EPKey("soc_model")] = "4294967295";
+  ctx.session_config[EPKey("vtcm_mb")] = "2147483647";
+  auto factory = MakeFactory(ctx);
+
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  for (const auto& rec : ctx.log_records) {
+    EXPECT_EQ(rec.message.find("Ignoring malformed"), std::string::npos) << rec.message;
+    EXPECT_EQ(rec.message.find("Invalid vtcm_mb"), std::string::npos) << rec.message;
+    EXPECT_EQ(rec.message.find("Unrecognized soc_model"), std::string::npos) << rec.message;
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, RunOptions_RpcLatencyRejectsMalformedValuesAndUsesSessionDefault) {
+  constexpr std::array<const char*, 6> invalid_values = {
+      "abc", "12abc", " 10", "+10", "-1", "4294967296"};
+
+  for (const char* invalid_value : invalid_values) {
+    SCOPED_TRACE(invalid_value);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("rpc_control_latency")] = "123";
+    ctx.run_config["qnn.rpc_control_latency"] = invalid_value;
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    qnn::PerThreadHtpPowerConfigs_t configs;
+    auto* fake_run_options = reinterpret_cast<OrtRunOptions*>(kFakeToken);
+
+    {
+      UseGlobalEpStubs use(ctx);
+      GetPerThreadHtpPowerConfigsForTest(*ep, configs, fake_run_options);
+    }
+
+    ASSERT_TRUE(configs.rpc_control_latency.has_value());
+    EXPECT_EQ(configs.rpc_control_latency.value(), 123u);
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+                 std::string("Invalid rpc_control_latency: '") + invalid_value + "'. Ignoring.");
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, RunOptions_RpcLatencyAcceptsUint32Maximum) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("rpc_control_latency")] = "123";
+  ctx.run_config["qnn.rpc_control_latency"] = "4294967295";
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+  qnn::PerThreadHtpPowerConfigs_t configs;
+  auto* fake_run_options = reinterpret_cast<OrtRunOptions*>(kFakeToken);
+
+  {
+    UseGlobalEpStubs use(ctx);
+    GetPerThreadHtpPowerConfigsForTest(*ep, configs, fake_run_options);
+  }
+
+  ASSERT_TRUE(configs.rpc_control_latency.has_value());
+  EXPECT_EQ(configs.rpc_control_latency.value(), 4294967295u);
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpFP16PrecisionInvalid_LogsVerbose) {
@@ -1301,6 +1459,29 @@ TEST_F(QnnUnit_ExecutionProviderTest, SetDynamicOptions_KvcacheNoGenieManager_Re
   const auto* rec = reinterpret_cast<const StatusRecord*>(s);
   EXPECT_EQ(rec->code, ORT_INVALID_ARGUMENT);
   ctx.stub_ort_api.ReleaseStatus(s);
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, SetDynamicOptions_KvcacheRejectsMalformedValues) {
+  constexpr std::array<const char*, 6> invalid_values = {
+      "abc", "12abc", " 10", "+10", "-1", "18446744073709551616"};
+
+  EpStubContext ctx;
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+  auto* ep_ptr = static_cast<OrtEp*>(ep.get());
+  const char* keys[] = {"kvcache_rewind"};
+
+  for (const char* invalid_value : invalid_values) {
+    SCOPED_TRACE(invalid_value);
+    const char* values[] = {invalid_value};
+    OrtStatus* status = ep_ptr->SetDynamicOptions(ep_ptr, keys, values, 1);
+
+    ASSERT_NE(status, nullptr);
+    const auto* record = reinterpret_cast<const StatusRecord*>(status);
+    EXPECT_EQ(record->code, ORT_INVALID_ARGUMENT);
+    EXPECT_EQ(record->msg, "Invalid kvcache_rewind value.");
+    ctx.stub_ort_api.ReleaseStatus(status);
+  }
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, SetDynamicOptions_HtpPerfModeOnCpuBackend_NoOp) {
