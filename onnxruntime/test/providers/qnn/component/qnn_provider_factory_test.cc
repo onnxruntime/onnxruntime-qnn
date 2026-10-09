@@ -36,6 +36,7 @@
 #include "gtest/gtest.h"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "onnxruntime_config.h"
 
@@ -119,6 +120,15 @@ class FactoryStubContext {
   // instead of a fake pointer; the counter is decremented for each call.
   int fail_next_create_ep_device = 0;
 
+  // Count of EpDevice_AddAllocatorInfo invocations.
+  int add_allocator_info_calls = 0;
+
+  // If non-zero, the next EpDevice_AddAllocatorInfo call returns an error.
+  int fail_next_add_allocator_info = 0;
+
+  // Count of ReleaseEpDevice invocations.
+  int release_ep_device_calls = 0;
+
   // Version string reported by MakeFakeApiBase()'s GetVersionString. An empty
   // string is reported back as a nullptr (exercises the "(null)" branch of the
   // parse-error message); a non-empty string is passed through verbatim.
@@ -199,6 +209,10 @@ class FactoryStubContext {
       return nullptr;
     };
     stub_ort_api.ReleaseMemoryInfo = [](OrtMemoryInfo*) noexcept {};
+    stub_ort_api.MemoryInfoGetDeviceMemType =
+        [](const OrtMemoryInfo*) noexcept -> OrtDeviceMemoryType {
+      return OrtDeviceMemoryType_HOST_ACCESSIBLE;
+    };
 
     stub_ort_api.CreateKeyValuePairs = [](OrtKeyValuePairs** out) noexcept {
       *out = reinterpret_cast<OrtKeyValuePairs*>(kFakeToken);
@@ -315,7 +329,9 @@ class FactoryStubContext {
       *ep_device = reinterpret_cast<OrtEpDevice*>(kFakeToken);
       return nullptr;
     };
-    stub_ep_api.ReleaseEpDevice = [](OrtEpDevice*) noexcept {};
+    stub_ep_api.ReleaseEpDevice = [](OrtEpDevice*) noexcept {
+      if (auto* self = current_) ++self->release_ep_device_calls;
+    };
     stub_ep_api.CreateHardwareDevice =
         [](OrtHardwareDeviceType, uint32_t, uint32_t, const char*,
            const OrtKeyValuePairs*, OrtHardwareDevice** out) noexcept -> OrtStatus* {
@@ -326,7 +342,16 @@ class FactoryStubContext {
     };
     stub_ep_api.ReleaseHardwareDevice = [](OrtHardwareDevice*) noexcept {};
     stub_ep_api.EpDevice_AddAllocatorInfo =
-        [](OrtEpDevice*, const OrtMemoryInfo*) noexcept -> OrtStatus* { return nullptr; };
+        [](OrtEpDevice*, const OrtMemoryInfo*) noexcept -> OrtStatus* {
+      if (auto* self = current_) {
+        ++self->add_allocator_info_calls;
+        if (self->fail_next_add_allocator_info > 0) {
+          --self->fail_next_add_allocator_info;
+          return reinterpret_cast<OrtStatus*>(new StatusRecord{ORT_FAIL, "stub AddAllocatorInfo failure"});
+        }
+      }
+      return nullptr;
+    };
     stub_ep_api.DeviceEpIncompatibilityDetails_SetDetails =
         [](OrtDeviceEpIncompatibilityDetails*, uint32_t, int32_t, const char*) noexcept -> OrtStatus* {
       if (auto* self = current_) ++self->set_details_calls;
@@ -463,6 +488,24 @@ TEST_F(QnnUnit_ProviderFactoryTest, CreateDataTransfer_SetsNullAndReturnsOk) {
   OrtDataTransferImpl* transfer = reinterpret_cast<OrtDataTransferImpl*>(0xDEAD);
   EXPECT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
   EXPECT_EQ(transfer, nullptr);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, CreateAllocator_HostAccessible_DoesNotLoadRpcMem) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  // ORT calls the factory allocator callback while registering every
+  // advertised allocator. Creating that allocator must not load RPCMEM, which
+  // is intentionally unavailable in this host-only unit test.
+  OrtAllocator* allocator = nullptr;
+  OrtStatus* status = factory.CreateAllocator(
+      &factory, reinterpret_cast<const OrtMemoryInfo*>(kFakeToken), nullptr, &allocator);
+
+  EXPECT_EQ(status, nullptr);
+  ASSERT_NE(allocator, nullptr);
+  EXPECT_EQ(allocator->Alloc, qnn::HtpSharedMemoryAllocator::AllocImpl);
+  factory.ReleaseAllocator(&factory, allocator);
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, ReleaseEp_NullPointer_NoCrash) {
@@ -718,14 +761,37 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CreateEpDeviceFails_Prop
   size_t num = 0;
   // The supported NPU passes the filter, so CreateEpDevice is invoked and its
   // error status must propagate out of GetSupportedDevices.
-  // Note: the create_ep_device lambda increments num_ep_devices before it
-  // returns, so the caller sees num == 1 with ep_devices[0] == nullptr.
   OrtStatus* status = factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num);
   ASSERT_NE(status, nullptr);
   EXPECT_EQ(StubStatusCode(ctx, status), ORT_FAIL);
-  EXPECT_EQ(num, 1u);
+  EXPECT_EQ(num, 0u);
   EXPECT_EQ(ep_devices[0], nullptr);
   EXPECT_TRUE(ctx.created_ep_devices.empty());
+  EXPECT_EQ(ctx.add_allocator_info_calls, 0);
+  ctx.stub_ort_api.ReleaseStatus(status);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_AddAllocatorInfoFails_DoesNotPublishDevice) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  OrtHardwareDevice* npu = MakeFakeHwDevice(18);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+  ctx.fail_next_add_allocator_info = 1;
+
+  const OrtHardwareDevice* devices[] = {npu};
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  OrtStatus* status = factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num);
+
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(StubStatusCode(ctx, status), ORT_FAIL);
+  EXPECT_EQ(num, 0u);
+  EXPECT_EQ(ep_devices[0], nullptr);
+  EXPECT_EQ(ctx.add_allocator_info_calls, 1);
+  EXPECT_EQ(ctx.release_ep_device_calls, 1);
   ctx.stub_ort_api.ReleaseStatus(status);
 }
 
@@ -985,10 +1051,10 @@ TEST_F(QnnUnit_ProviderFactoryTest, ReleaseAllocator_UnknownType_NoCrash) {
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
-  // Default qnn_allocator_type_ is NONE → neither HTP-shared nor DX12 → the
-  // "unknown type" warning branch runs. Must not crash.
-  auto* allocator = reinterpret_cast<OrtAllocator*>(kFakeToken);
-  factory.ReleaseAllocator(&factory, allocator);
+  // An allocator with no recognized callback takes the warning branch and is
+  // not deleted. Use a valid object because release dispatch reads Alloc.
+  OrtAllocator allocator{};
+  factory.ReleaseAllocator(&factory, &allocator);
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, ReleaseEpFactory_NullPointer_ReturnsNull) {

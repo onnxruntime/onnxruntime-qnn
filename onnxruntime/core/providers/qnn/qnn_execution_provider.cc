@@ -638,13 +638,13 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() const
   return nullptr;
 }
 
-QnnEp::QnnEp(QnnEpFactory& factory,
+QnnEp::QnnEp(const QnnEpFactory& factory,
              const std::string& name,
              const OrtSessionOptions& session_options,
              const OrtLogger* logger)
     : OrtEp{},
       ApiPtrs{static_cast<const ApiPtrs&>(factory)},
-      // factory_{factory},
+      factory_{factory},
       name_{name},
       logger_{Ort::Logger(logger)},
       session_options_{session_options} {
@@ -658,6 +658,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   OnRunStart = OnRunStartImpl;
   OnRunEnd = OnRunEndImpl;
   CreateAllocator = CreateAllocatorImpl;
+  GetDefaultMemoryDevice = GetDefaultMemoryDeviceImpl;
   SetDynamicOptions = SetDynamicOptionsImpl;
   GetCompiledModelCompatibilityInfo = GetCompiledModelCompatibilityInfoImpl;
 #if QNN_ORT_EP_PROFILING_API_ENABLED
@@ -1331,11 +1332,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   if (enable_file_mapped_weights_ && !rpcmem_library_) {
     // Attempt to init rpcmem_library_ if needed. If this fails, then
     // disable file mapped weights and proceed with normal operation
-    try {
-      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-    } catch (const std::exception& e) {
+    std::string rpcmem_error;
+    rpcmem_library_ = qnn::RpcMemLibraryManager::GetOrCreate(rpcmem_error);
+    if (rpcmem_library_ == nullptr) {
       ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_WARNING, ("Unable to load RPCMem library: " + std::string(e.what()) + " - Disabling file mapped weights.").c_str());
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Unable to load RPCMem library: " + rpcmem_error + " - Disabling file mapped weights.").c_str());
       enable_file_mapped_weights_ = false;
     }
   }
@@ -1558,11 +1560,12 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   // So that all graphs from later sessions will be compiled into the same QNN context
   const bool use_shared_backend_mgr =
       ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1);
-  if (use_shared_backend_mgr && SharedContext::GetInstance().GetSharedQnnBackendManager()) {
-    qnn_backend_manager_ = SharedContext::GetInstance().GetSharedQnnBackendManager();
-    // Reset QnnBackendManager's logger to the one in current session as original one could be deleted along with the
-    // previous session.
-    qnn_backend_manager_->ResetLogger(logger_);
+  const auto shared_qnn_backend_manager = use_shared_backend_mgr
+                                              ? SharedContext::GetInstance().GetSharedQnnBackendManager()
+                                              : nullptr;
+  const bool reusing_shared_backend_manager = shared_qnn_backend_manager != nullptr;
+  if (reusing_shared_backend_manager) {
+    qnn_backend_manager_ = shared_qnn_backend_manager;
   } else {
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
         qnn::QnnBackendManagerConfig{backend_path,
@@ -1582,13 +1585,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      reused_io_limit_mb,
                                      enable_htp_cross_device_prepare},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
-    // Publish for later sessions. Always publish when htp_share_resource_optimization_==1,
-    // even for a terminator session, because ContextCreateAsyncCallback retrieves the backend
-    // manager from the singleton during SetupBackend (GetCapability). The terminator reset for
-    // all sharing paths is deferred to after SetupBackend completes (in GetCapabilityImpl).
-    if (htp_share_resource_optimization_ == 1) {
-      SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
-    }
   }
   // Terminator reset is deferred to GetCapabilityImpl (after SetupBackend) for both
   // htp_share_resource_optimization and share_ep_contexts paths, so no reset here.
@@ -1603,20 +1599,27 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                       FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
                       false,
                       logger_)) {
-    // Initialize rpcmem_library_.
-    // This library is only necessary for the inference (for the shared memory allocator), if we are in context
-    // generation stage, there is no need to load it as no allocations will be made.
+    model_settings_.htp_shared_memory = true;
+
+    // RPCMEM is only needed by an inference session using the shared memory allocator.
+    // A context-generation session only needs to preserve the MEMHANDLE graph I/O contract.
     if (!context_cache_enabled_) {
-      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-      qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
+      std::string rpcmem_error;
+      rpcmem_library_ = qnn::RpcMemLibraryManager::GetOrCreate(rpcmem_error);
+      if (rpcmem_library_ == nullptr) {
+        const std::string message =
+            "Unable to load RPCMEM for HTP shared memory allocator: " + rpcmem_error;
+        LOG_AND_THROW_ERROR(logger_, message.c_str());
+      } else {
+        qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
+      }
     } else {
       ORT_CXX_LOGF(logger_,
                    ORT_LOGGING_LEVEL_INFO,
-                   "Context cache is enabled in this session (via %s); the HTP shared memory allocator will be disabled"
-                   " as no allocations are expected to be made.",
+                   "Context cache is enabled in this session (via %s); the HTP shared memory allocator will be "
+                   "disabled as no allocations are expected to be made.",
                    kOrtSessionOptionEpContextEnable);
     }
-    model_settings_.htp_shared_memory = true;
   }
 
   static const std::string QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_dx12_shared_memory_allocator";
@@ -1642,7 +1645,34 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
-  qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
+  if (reusing_shared_backend_manager) {
+    const auto shared_allocator_type = qnn_backend_manager_->GetQnnAllocatorType();
+    if (shared_allocator_type != qnn_allocator_type_) {
+      const std::string message =
+          "Cannot share QNN backend manager with a different shared-memory allocator mode. "
+          "The existing shared manager uses '" +
+          std::string{qnn::QnnAllocatorTypeToString(shared_allocator_type)} +
+          "', but this session requested '" +
+          std::string{qnn::QnnAllocatorTypeToString(qnn_allocator_type_)} + "'.";
+      LOG_AND_THROW_ERROR(logger_, message.c_str());
+    }
+
+    // Update the shared manager only after all compatibility checks pass. If
+    // construction fails, it must keep the logger owned by the existing session.
+    qnn_backend_manager_->ResetLogger(logger_);
+  } else {
+    // An allocator mode belongs to the QNN context. A manager that is later
+    // shared must retain this first session's mode instead of allowing a
+    // subsequent session to overwrite it.
+    qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
+
+    // Publish only after fixing the allocator mode. ContextCreateAsyncCallback
+    // retrieves this manager during SetupBackend (GetCapability), so it is
+    // still available before any context work starts.
+    if (htp_share_resource_optimization_ == 1) {
+      SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
+    }
+  }
   if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
     ORT_CXX_LOGF(logger_,
                  ORT_LOGGING_LEVEL_VERBOSE,
@@ -3553,33 +3583,8 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
-  auto allocator_type = ep->qnn_allocator_type_;
-
-  // If previous EP session with same device was initialized with shared memory allocator,
-  // then create and return an allocator of the same type. Returning nullptr in this
-  // situation will result in a seg fault.
-  // registered_memory_info_ and registered_allocator_type_ are set by the QNN EP factory
-  // All allocators are destroyed/freed by the QNN EP factory
-  if (allocator_type == qnn::QnnAllocatorType::NONE && memory_info != nullptr &&
-      memory_info == ep->registered_memory_info_) {
-    allocator_type = ep->registered_allocator_type_;
-  }
-
-  if (qnn::IsHtpSharedMemoryAllocator(allocator_type)) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
-    if (ep->rpcmem_library_ == nullptr) {
-      try {  // RpcMemLibrary throws; this function is noexcept
-        ep->rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-      } catch (const std::exception& e) {
-        return ep->ort_api.CreateStatus(ORT_FAIL, e.what());
-      }
-    }
-
-    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
-    *allocator = htp_allocator.release();
-  }
 #ifdef _WIN32
-  else if (qnn::IsDx12SharedMemoryAllocator(allocator_type)) {
+  const auto create_dx12_allocator = [&]() -> OrtStatus* {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
 
     OrtStatus* status = nullptr;
@@ -3590,8 +3595,42 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
     }
 
     *allocator = dx12_allocator.release();
+    return nullptr;
+  };
+#endif
+
+  if (qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
+    return ep->factory_.CreateHtpSharedMemoryAllocator(memory_info, ep->rpcmem_library_, allocator);
+  }
+#ifdef _WIN32
+  else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
+    return create_dx12_allocator();
   }
 #endif  // _WIN32
+  else if (ep->ort_api.MemoryInfoGetDeviceMemType(memory_info) == OrtDeviceMemoryType_HOST_ACCESSIBLE) {
+#ifdef _WIN32
+    // Allocator metadata remains on an OrtEpDevice after the first opted-in
+    // session. Keep later GPU sessions backend-correct without enabling binding.
+    if (ep->qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::GPU) {
+      return create_dx12_allocator();
+    }
+#endif
+    // The factory advertises QnnHtpShared so OrtEnv can create it before a
+    // session exists. A session that did not opt into zero-copy may still ask
+    // for that allocator explicitly; create it without changing this session's
+    // default memory device or QNN memhandle binding policy.
+    return ep->factory_.CreateHtpSharedMemoryAllocator(memory_info, nullptr, allocator);
+  }
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEp::GetDefaultMemoryDeviceImpl(
+    _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept {
+  const auto* ep = static_cast<const QnnEp*>(this_ptr);
+  *device = qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)
+                ? ep->ep_api.MemoryInfo_GetMemoryDevice(ep->factory_.GetHostAccessibleMemoryInfo())
+                : nullptr;
   return nullptr;
 }
 

@@ -86,6 +86,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   GetSupportedDevices = GetSupportedDevicesImpl;
   CreateEp = CreateEpImpl;
   ReleaseEp = ReleaseEpImpl;
+  CreateAllocator = CreateAllocatorImpl;
   ReleaseAllocator = ReleaseAllocatorImpl;
   CreateDataTransfer = CreateDataTransferImpl;
   IsStreamAware = IsStreamAwareImpl;
@@ -138,6 +139,32 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
 }
 
+OrtStatus* QnnEpFactory::CreateHtpSharedMemoryAllocator(
+    const OrtMemoryInfo* memory_info,
+    std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
+    OrtAllocator** allocator) const noexcept {
+  *allocator = nullptr;
+
+  try {
+    std::unique_ptr<qnn::HtpSharedMemoryAllocator> htp_allocator;
+    if (rpcmem_library != nullptr) {
+      htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, std::move(rpcmem_library));
+    } else {
+      htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(
+          memory_info,
+          [](std::string& error_message) {
+            return qnn::RpcMemLibraryManager::GetOrCreate(error_message);
+          });
+    }
+
+    *allocator = htp_allocator.release();
+  } catch (const std::exception& e) {
+    return ort_api.CreateStatus(ORT_FAIL, e.what());
+  }
+
+  return nullptr;
+}
+
 // Returns the name for the EP. Each unique factory configuration must have a unique name.
 // Ex: a factory that supports NPU should have a different than a factory that supports GPU.
 const char* ORT_API_CALL QnnEpFactory::GetNameImpl(const OrtEpFactory* this_ptr) noexcept {
@@ -172,13 +199,28 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   size_t& num_ep_devices = *p_num_ep_devices;
   num_ep_devices = 0;
 
-  auto create_ep_device = [&factory, &ep_devices, &num_ep_devices](const OrtHardwareDevice* device) {
+  auto create_ep_device = [&factory, &ep_devices, &num_ep_devices](const OrtHardwareDevice* device) -> OrtStatus* {
     OrtEpDevice* ep_device = nullptr;
-    OrtStatus* status = factory->ep_api.CreateEpDevice(factory, device, nullptr, nullptr, &ep_device);
+    RETURN_IF_NOT_NULL(factory->ep_api.CreateEpDevice(factory, device, nullptr, nullptr, &ep_device));
+
+    // Advertise HOST_ACCESSIBLE memory for NPU devices so OrtEnv can create a
+    // QnnHtpShared allocator before a QNN session exists. Loading RPCMEM is deferred
+    // until that allocator (or an opted-in session) actually needs it.
+    const auto device_type = factory->ort_api.HardwareDevice_Type(device);
+    if (device_type == OrtHardwareDeviceType_NPU &&
+        factory->host_accessible_memory_info_ != nullptr) {
+      OrtStatus* status = factory->ep_api.EpDevice_AddAllocatorInfo(
+          ep_device, factory->host_accessible_memory_info_.get());
+      if (status != nullptr) {
+        factory->ep_api.ReleaseEpDevice(ep_device);
+        return status;
+      }
+    }
+
     ep_devices[num_ep_devices++] = ep_device;
     factory->ep_devices_.push_back(ep_device);
 
-    return status;
+    return nullptr;
   };
 
   auto create_hw_device = [&factory](const OrtHardwareDeviceType device_type,
@@ -356,19 +398,18 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
   }
 
-  if (qnn_ep->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+  // Preserve the existing session-level DX12 allocator path. Unlike HTP, GPU
+  // does not advertise this memory info before session creation because the
+  // factory cannot distinguish the two allocators while they share it.
+  if (qnn::IsDx12SharedMemoryAllocator(qnn_ep->qnn_allocator_type_) &&
+      factory->host_accessible_memory_info_ != nullptr) {
     for (OrtEpDevice* ep_device : factory->ep_devices_) {
-      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
+      const OrtHardwareDevice* device = factory->ort_api.EpDevice_Device(ep_device);
+      if (factory->ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_GPU) {
+        RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(
+            ep_device, factory->host_accessible_memory_info_.get()));
+      }
     }
-    factory->registered_allocator_type_ = qnn_ep->qnn_allocator_type_;
-  }
-
-  if (factory->registered_allocator_type_ != qnn::QnnAllocatorType::NONE) {
-    // Inform EP if a previous EP session has already enabled shared memory of some kind
-    // Note: if the factory's registered allocator type is not None, a new allocator of
-    // the registered type will be created
-    qnn_ep->registered_allocator_type_ = factory->registered_allocator_type_;
-    qnn_ep->registered_memory_info_ = factory->host_accessible_memory_info_.get();
   }
 
   factory->qnn_ep_ = qnn_ep.get();
@@ -386,28 +427,40 @@ void ORT_API_CALL QnnEpFactory::ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp*
   delete dummy_ep;
 }
 
-void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {
+OrtStatus* ORT_API_CALL QnnEpFactory::CreateAllocatorImpl(_In_ OrtEpFactory* this_ptr,
+                                                          _In_ const OrtMemoryInfo* memory_info,
+                                                          _In_opt_ const OrtKeyValuePairs* /*allocator_options*/,
+                                                          _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept {
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+  *allocator = nullptr;
 
+  OrtDeviceMemoryType mem_type = factory->ort_api.MemoryInfoGetDeviceMemType(memory_info);
+  if (mem_type != OrtDeviceMemoryType_HOST_ACCESSIBLE) {
+    return nullptr;
+  }
+
+  return factory->CreateHtpSharedMemoryAllocator(memory_info, nullptr, allocator);
+}
+
+void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, OrtAllocator* allocator) noexcept {
   if (allocator == nullptr) {
     return;
   }
 
-  // Use registered_allocator_type_ to deallocate any shared allocators created as a result of
-  // previous sessions successfully enabling shared allocator
-  if (qnn::IsHtpSharedMemoryAllocator(factory->registered_allocator_type_)) {
+  // ORT Core releases allocators through the factory even when its preferred
+  // allocator was created by QnnEp. Dispatch by the concrete allocator callback,
+  // not factory/session state, because HTP and DX12 sessions may coexist.
+  if (allocator->Alloc == qnn::HtpSharedMemoryAllocator::AllocImpl) {
     delete static_cast<qnn::HtpSharedMemoryAllocator*>(allocator);
 #ifdef _WIN32
-  } else if (qnn::IsDx12SharedMemoryAllocator(factory->registered_allocator_type_)) {
+  } else if (allocator->Alloc == qnn::Dx12SharedMemoryAllocator::AllocImpl) {
     delete static_cast<qnn::Dx12SharedMemoryAllocator*>(allocator);
 #endif
   } else {
-    std::ignore = factory->ort_api.Logger_LogMessage(OrtLoggingManager::GetDefaultLoggerPtr(),
-                                                     OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
-                                                     "Cannot release allocator of unknown type!",
-                                                     ORT_FILE,
-                                                     __LINE__,
-                                                     __FUNCTION__);
+    auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+    std::ignore = factory->ort_api.Logger_LogMessage(
+        OrtLoggingManager::GetDefaultLoggerPtr(), OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+        "Cannot release allocator of unknown type!", ORT_FILE, __LINE__, __FUNCTION__);
   }
 }
 
