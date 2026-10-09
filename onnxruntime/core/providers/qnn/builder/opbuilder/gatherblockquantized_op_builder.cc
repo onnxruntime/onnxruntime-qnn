@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/normalize_indices_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -119,9 +120,8 @@ Ort::Status GatherBlockQuantizedOpBuilder::IsOpSupported(
                   "GatherBlockQuantized: only rank-2 weights supported");
   }
 
-  // Indices datatype is constrained by the ONNX OpDef (int32/int64), so it is
-  // not re-validated here. int64 indices are converted to int32 in ProcessInputs
-  // (static cast for initializers, Cast node for dynamic inputs).
+  // The ONNX OpDef constrains the indices datatype, but static values still need
+  // normalization and bounds validation before QNN consumes them.
 
   // Validate scales datatype (float32 or float16).
   {
@@ -175,6 +175,9 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(weight_tensor, weight_info));
   Qnn_DataType_t weight_type = weight_info.qnn_data_type;
   std::vector<uint32_t> weight_shape = weight_info.shape;
+  int32_t gather_axis = 0;
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "gather_axis", 0, gather_axis));
+  const int64_t gather_axis_dim = static_cast<int64_t>(weight_shape[gather_axis]);
 
   // Get scale info
   const auto& scales_tensor = inputs[2];
@@ -278,65 +281,41 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
   // 2. Indices
   // ------------------------------------------------------------
   // QNN Gather only supports int32 / uint32 indices.
-  //  - Static int64 indices: statically reinterpret int64 -> int32.
+  //  - Static int32/int64 indices: normalize negatives, validate bounds, and store as int32.
   //  - Dynamic int64 indices: add an explicit QNN Cast node int64 -> int32.
   const OrtNodeUnitIODef& indices_tensor = inputs[1];
-  const std::string& indices_name = indices_tensor.name;
+  std::string indices_name = indices_tensor.name;
 
   TensorInfo indices_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(indices_tensor, indices_info));
 
-  const bool indices_is_int64 = (indices_info.qnn_data_type == QNN_DATATYPE_INT_64);
+  std::vector<uint8_t> qnn_indices_bytes;
+  bool has_negative_indices = false;
+  if (indices_info.is_initializer) {
+    std::vector<uint8_t> onnx_indices_bytes;
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor, onnx_indices_bytes));
 
-  if (qnn_model_wrapper.IsQnnTensorWrapperExist(indices_name)) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + indices_name).c_str());
-  } else {
-    if (indices_info.is_initializer && indices_is_int64) {
-      // Statically convert int64 indices to int32.
-      std::vector<uint8_t> onnx_indices_bytes;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor, onnx_indices_bytes));
+    bool indices_are_valid = false;
+    if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
+      indices_are_valid = utils::NormalizeIndicesBytes<int64_t>(
+          onnx_indices_bytes, [gather_axis_dim](size_t) { return gather_axis_dim; },
+          qnn_indices_bytes, has_negative_indices);
+      indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
+    } else if (indices_info.qnn_data_type == QNN_DATATYPE_INT_32) {
+      indices_are_valid = utils::NormalizeIndicesBytes<int32_t>(
+          onnx_indices_bytes, [gather_axis_dim](size_t) { return gather_axis_dim; },
+          qnn_indices_bytes, has_negative_indices);
+    }
+    RETURN_IF_NOT(indices_are_valid, "GatherBlockQuantized: indices are out of range");
 
-      const size_t num_elems = onnx_indices_bytes.size() / sizeof(int64_t);
-      gsl::span<const int64_t> onnx_indices{reinterpret_cast<const int64_t*>(onnx_indices_bytes.data()), num_elems};
-
-      std::vector<uint8_t> qnn_indices_bytes(num_elems * sizeof(int32_t));
-      gsl::span<int32_t> qnn_indices{reinterpret_cast<int32_t*>(qnn_indices_bytes.data()), num_elems};
-      for (size_t i = 0; i < num_elems; ++i) {
-        qnn_indices[i] = static_cast<int32_t>(onnx_indices[i]);
-      }
-
-      QnnTensorWrapper indices_tensor_wrapper(indices_name,
-                                              QNN_TENSOR_TYPE_STATIC,
-                                              QNN_DATATYPE_INT_32,
-                                              QnnQuantParamsWrapper(),
-                                              std::vector<uint32_t>(indices_info.shape),
-                                              std::move(qnn_indices_bytes));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(indices_tensor_wrapper)),
-                    "Failed to add indices tensor");
-    } else {
-      QnnTensorWrapper indices_tensor_wrapper;
-      RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(indices_info, indices_name, indices_tensor_wrapper));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(indices_tensor_wrapper)),
-                    "Failed to add indices tensor");
+    if (has_negative_indices) {
+      indices_name += "_neg2pos_axis" + std::to_string(gather_axis_dim) + "_" + weight_tensor.name;
     }
   }
 
-  // Add an explicit Cast node for dynamic int64 indices.
-  std::string indices_input_name = indices_name;
-  if (indices_is_int64 && !indices_info.is_initializer) {
-    const std::string indices_casted_name = indices_name + "_int32";
-    RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(utils::UniqueNameGenerator().New(indices_name, QNN_OP_CAST),
-                                                  indices_name,
-                                                  indices_casted_name,
-                                                  QNN_TENSOR_TYPE_NATIVE,
-                                                  QNN_DATATYPE_INT_32,
-                                                  QnnQuantParamsWrapper(),
-                                                  std::vector<uint32_t>(indices_info.shape),
-                                                  do_op_validation));
-    indices_input_name = indices_casted_name;
-  }
-  input_names.push_back(indices_input_name);
-  return Ort::Status();
+  return utils::AddNormalizedIndicesTensor(qnn_model_wrapper, std::move(indices_info), indices_name,
+                                           std::move(qnn_indices_bytes), logger, input_names,
+                                           do_op_validation);
 }
 
 // ================================================================
