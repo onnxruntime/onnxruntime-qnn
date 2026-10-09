@@ -30,11 +30,17 @@ constexpr char kAttrTransposePerm[] = "perm";
 constexpr char kOpReshape[] = "Reshape";
 constexpr char kOpTranspose[] = "Transpose";
 constexpr size_t kRank4 = 4;
+constexpr size_t kRank5 = 5;
 constexpr size_t kRank6 = 6;
 constexpr std::array<int64_t, 4> kPermNchwToNhwc = {0, 2, 3, 1};
 constexpr std::array<int64_t, 4> kPermNhwcToNchw = {0, 3, 1, 2};
+// NCHW decomposition {N,C,H/b0,b0,W/b1,b1}: standard DCR and CRD perms.
 constexpr std::array<int64_t, 6> kPermS2dDcr = {0, 3, 5, 1, 2, 4};
 constexpr std::array<int64_t, 6> kPermS2dCrd = {0, 1, 3, 5, 2, 4};
+// NHWC decomposition {N,H/b0,b0,W/b1,b1,C}: DCR and CRD perms when ORT's TransposeOptimizer
+// has absorbed the NHWC→NCHW layout conversion into the core transpose.
+constexpr std::array<int64_t, 6> kPermS2dNhwcDcr = {0, 2, 4, 5, 1, 3};
+constexpr std::array<int64_t, 6> kPermS2dNhwcCrd = {0, 5, 2, 4, 1, 3};
 
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
@@ -42,6 +48,11 @@ using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNode
 struct SpaceToDepthPattern {
   std::array<const OrtNodeUnit*, 5> node_units{};
   size_t node_count = 0;
+  uint32_t block_height = 0;
+  uint32_t block_width = 0;
+  uint32_t mode = 0;
+  bool is_nhwc_decomp = false;
+  bool output_is_nhwc = false;
 };
 
 struct PatternIndices {
@@ -156,8 +167,57 @@ bool IsNhwcToNchwPerm(gsl::span<const int64_t> perm) {
          std::equal(perm.begin(), perm.end(), kPermNhwcToNchw.begin());
 }
 
+// Normalize a potentially collapsed rank-5 intermediate shape and transpose permutation back to rank-6.
+// ORT's TransposeOptimizer may collapse a leading unit batch dimension (N=1) in
+// post-Layout-Transform passes, converting [1,C,H/b,b,W/b,b] to [C,H/b,b,W/b,b].
+// The corresponding rank-5 permutation also drops fixed axis 0, shifting every remaining axis down by 1.
+// Normalize the pair together so a full-rank shape cannot be combined with a collapsed permutation or vice versa.
+bool NormalizeIntermediateShapeAndPermToRank6(const std::vector<uint32_t>& raw_shape,
+                                              int64_t n,
+                                              const std::vector<int64_t>& raw_perm,
+                                              std::vector<uint32_t>& shape_6d,
+                                              std::vector<int64_t>& perm_6d) {
+  if (raw_shape.size() == kRank6 && raw_perm.size() == kRank6) {
+    shape_6d = raw_shape;
+    perm_6d = raw_perm;
+    return true;
+  }
+  if (raw_shape.size() == kRank5 && raw_perm.size() == kRank5 && n == 1) {
+    shape_6d.clear();
+    shape_6d.reserve(kRank6);
+    shape_6d.push_back(1);
+    shape_6d.insert(shape_6d.end(), raw_shape.begin(), raw_shape.end());
+    perm_6d.clear();
+    perm_6d.reserve(kRank6);
+    perm_6d.push_back(0);
+    for (int64_t p : raw_perm) {
+      perm_6d.push_back(p + 1);
+    }
+    return true;
+  }
+  return false;
+}
+
+bool IsNchwSpaceToDepthPerm(gsl::span<const int64_t> perm) {
+  return std::equal(perm.begin(), perm.end(), kPermS2dDcr.begin()) ||
+         std::equal(perm.begin(), perm.end(), kPermS2dCrd.begin());
+}
+
+bool IsNhwcSpaceToDepthPerm(gsl::span<const int64_t> perm) {
+  return std::equal(perm.begin(), perm.end(), kPermS2dNhwcDcr.begin()) ||
+         std::equal(perm.begin(), perm.end(), kPermS2dNhwcCrd.begin());
+}
+
 // Fast structural gate to distinguish SpaceToDepth-like RTR from generic RTR.
-bool HasSpaceToDepthCoreSignature(
+struct SpaceToDepthCoreInfo {
+  uint32_t block_height = 0;
+  uint32_t block_width = 0;
+  uint32_t mode = 0;
+  bool is_nhwc_decomp = false;
+  bool output_is_nhwc = false;
+};
+
+std::optional<SpaceToDepthCoreInfo> GetSpaceToDepthCoreInfo(
     const QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& reshape1,
     const OrtNodeUnit& transpose,
@@ -167,62 +227,104 @@ bool HasSpaceToDepthCoreSignature(
   // reshape(1, -1, H, b, W, b) are accepted without special-casing -1 per position.
   std::vector<uint32_t> input_shape;
   std::vector<uint32_t> output_shape;
-  std::vector<uint32_t> shape_6d;
+  std::vector<uint32_t> raw_intermediate_shape;
   if (!qnn_model_wrapper.GetOnnxShape(reshape1.Inputs()[0].shape, input_shape) || input_shape.size() != kRank4 ||
       !qnn_model_wrapper.GetOnnxShape(reshape2.Outputs()[0].shape, output_shape) || output_shape.size() != kRank4 ||
-      !qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, shape_6d) || shape_6d.size() != kRank6) {
-    return false;
-  }
-  // GetOnnxShape permits 0-size dims; reject them here (a prior positivity check did) rather
-  // than deferring a degenerate zero to downstream QNN validation.
-  if (std::any_of(input_shape.begin(), input_shape.end(), [](uint32_t d) { return d == 0; }) ||
-      std::any_of(output_shape.begin(), output_shape.end(), [](uint32_t d) { return d == 0; })) {
-    return false;
+      !qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, raw_intermediate_shape)) {
+    return std::nullopt;
   }
 
   // [N, C, H, W]
   const int64_t n = static_cast<int64_t>(input_shape[0]);
-  const int64_t c = static_cast<int64_t>(input_shape[1]);
-  const int64_t h = static_cast<int64_t>(input_shape[2]);
-  const int64_t w = static_cast<int64_t>(input_shape[3]);
 
-  // [N, C, H / b0, b0, W / b1, b1]
+  std::optional<std::vector<int64_t>> raw_perm = GetTransposePerm(transpose);
+  if (!raw_perm.has_value()) {
+    return std::nullopt;
+  }
+  // Normalize the intermediate shape and its transpose permutation as a pair. ORT 1.29's
+  // TransposeOptimizer may collapse the leading unit batch dimension in both values.
+  std::vector<uint32_t> shape_6d;
+  std::vector<int64_t> perm_6d;
+  if (!NormalizeIntermediateShapeAndPermToRank6(raw_intermediate_shape, n, *raw_perm, shape_6d, perm_6d)) {
+    return std::nullopt;
+  }
+  const bool is_nchw_decomp = IsNchwSpaceToDepthPerm(perm_6d);
+  const bool is_nhwc_decomp = IsNhwcSpaceToDepthPerm(perm_6d);
+  if (!is_nchw_decomp && !is_nhwc_decomp) {
+    return std::nullopt;
+  }
+
+  // GetOnnxShape permits 0-size dims; reject them here (a prior positivity check did) rather
+  // than deferring a degenerate zero to downstream QNN validation.
+  if (std::any_of(input_shape.begin(), input_shape.end(), [](uint32_t d) { return d == 0; }) ||
+      std::any_of(output_shape.begin(), output_shape.end(), [](uint32_t d) { return d == 0; })) {
+    return std::nullopt;
+  }
+
+  // The 6D intermediate is either:
+  //   NCHW decomp: {N, C, H/b0, b0, W/b1, b1}  — for NCHW input or post-LT with head transpose
+  //   NHWC decomp: {N, H/b0, b0, W/b1, b1, C}  — for NHWC input, ORT absorbed layout conversion
+  // Determine which decomposition by checking where C is relative to the 4D input layout.
+  //   NCHW input {N,C,H,W}: C at input[1], shape_6d[1]=C, block dims at [2],[3],[4],[5]
+  //   NHWC input {N,H,W,C}: C at input[3], shape_6d[5]=C, block dims at [1],[2],[3],[4]
   const int64_t r_n = static_cast<int64_t>(shape_6d[0]);
-  const int64_t r_c = static_cast<int64_t>(shape_6d[1]);
-  const int64_t h_div = static_cast<int64_t>(shape_6d[2]);
-  const int64_t b0 = static_cast<int64_t>(shape_6d[3]);
-  const int64_t w_div = static_cast<int64_t>(shape_6d[4]);
-  const int64_t b1 = static_cast<int64_t>(shape_6d[5]);
-
-  // r_ are expected to match input [N,C].
-  if (r_n != n || r_c != c || b0 < 1 || b1 < 1) {
-    return false;
+  int64_t c = 0, h = 0, w = 0, h_div = 0, b0 = 0, w_div = 0, b1 = 0;
+  if (is_nchw_decomp) {
+    // NCHW decomposition: {N, C, H/b0, b0, W/b1, b1}
+    c = static_cast<int64_t>(shape_6d[1]);
+    h_div = static_cast<int64_t>(shape_6d[2]);
+    b0 = static_cast<int64_t>(shape_6d[3]);
+    w_div = static_cast<int64_t>(shape_6d[4]);
+    b1 = static_cast<int64_t>(shape_6d[5]);
+    h = static_cast<int64_t>(input_shape[2]);
+    w = static_cast<int64_t>(input_shape[3]);
+  } else {
+    // NHWC decomposition: {N, H/b0, b0, W/b1, b1, C}
+    // (ORT's TransposeOptimizer absorbed NHWC->NCHW into the Reshape shape and core perm)
+    h_div = static_cast<int64_t>(shape_6d[1]);
+    b0 = static_cast<int64_t>(shape_6d[2]);
+    w_div = static_cast<int64_t>(shape_6d[3]);
+    b1 = static_cast<int64_t>(shape_6d[4]);
+    c = static_cast<int64_t>(shape_6d[5]);
+    h = static_cast<int64_t>(input_shape[1]);
+    w = static_cast<int64_t>(input_shape[2]);
+  }
+  // Batch and channel dimensions must match the layout selected by the core permutation.
+  const bool channel_matches = is_nchw_decomp
+                                   ? input_shape[1] == shape_6d[1]
+                                   : input_shape[3] == shape_6d[5];
+  if (r_n != n || !channel_matches || b0 < 1 || b1 < 1) {
+    return std::nullopt;
   }
 
   // b0,b1 are expected block sizes that divide H and W respectively.
   if (h % b0 != 0 || w % b1 != 0) {
-    return false;
+    return std::nullopt;
   }
   if (h_div != h / b0 || w_div != w / b1) {
-    return false;
+    return std::nullopt;
   }
 
-  // [N, C * b0 * b1, H / b0, W / b1]
+  // Layout optimization can absorb the head and tail layout transposes independently.
+  // Therefore, an NHWC-decomposed intermediate may still reshape to the original NCHW
+  // SpaceToDepth output, or directly to NHWC when the tail transpose is also absorbed.
   const int64_t expected_c = c * b0 * b1;
-  const std::array<int64_t, 4> expected_output_shape = {n, expected_c, h / b0, w / b1};
-  for (size_t i = 0; i < 4; ++i) {
-    if (static_cast<int64_t>(output_shape[i]) != expected_output_shape[i]) {
-      return false;
-    }
+  const std::array<int64_t, 4> expected_nchw_output = {n, expected_c, h / b0, w / b1};
+  const std::array<int64_t, 4> expected_nhwc_output = {n, h / b0, w / b1, expected_c};
+  const auto output_matches = [&output_shape](const std::array<int64_t, 4>& expected_shape) {
+    return std::equal(output_shape.begin(), output_shape.end(), expected_shape.begin());
+  };
+  const bool output_is_nhwc = is_nhwc_decomp && output_matches(expected_nhwc_output);
+  if (!output_matches(expected_nchw_output) && !output_is_nhwc) {
+    return std::nullopt;
   }
 
-  // check transpose perm to be either {0,3,5,1,2,4} or {0,1,3,5,2,4}.
-  OrtNodeAttrHelper transpose_attrs(transpose);
-  std::vector<int64_t> perm = transpose_attrs.Get(kAttrTransposePerm, std::vector<int64_t>{});
-
-  return perm.size() == kRank6 &&
-         (std::equal(perm.begin(), perm.end(), kPermS2dDcr.begin()) ||
-          std::equal(perm.begin(), perm.end(), kPermS2dCrd.begin()));
+  const uint32_t mode = (std::equal(perm_6d.begin(), perm_6d.end(), kPermS2dDcr.begin()) ||
+                         std::equal(perm_6d.begin(), perm_6d.end(), kPermS2dNhwcDcr.begin()))
+                            ? QNN_OP_SPACE_TO_DEPTH_MODE_DCR
+                            : QNN_OP_SPACE_TO_DEPTH_MODE_CRD;
+  return SpaceToDepthCoreInfo{gsl::narrow_cast<uint32_t>(b0), gsl::narrow_cast<uint32_t>(b1), mode,
+                              is_nhwc_decomp, output_is_nhwc};
 }
 
 std::optional<SpaceToDepthPattern> MatchPattern(
@@ -249,8 +351,14 @@ std::optional<SpaceToDepthPattern> MatchPattern(
     return std::nullopt;
   }
 
-  // 3.1 Fast signature check for SpaceToDepth core RTR decomposition.
-  if (!HasSpaceToDepthCoreSignature(qnn_model_wrapper, reshape1, *transpose, *reshape2)) {
+  // 3.1 Validate the SpaceToDepth core RTR decomposition and retain its parameters.
+  const auto core_info = GetSpaceToDepthCoreInfo(qnn_model_wrapper, reshape1, *transpose, *reshape2);
+  if (!core_info.has_value()) {
+    return std::nullopt;
+  }
+  // TODO(AISW-175353): Remove this backend-specific guard once the CPU kernel supports unequal blocks.
+  if (IsCpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      core_info->block_height != core_info->block_width) {
     return std::nullopt;
   }
 
@@ -319,6 +427,11 @@ std::optional<SpaceToDepthPattern> MatchPattern(
 
   SpaceToDepthPattern core = BuildPattern(reshape1, *transpose, *reshape2,
                                           matched_head_transpose, matched_tail_transpose);
+  core.block_height = core_info->block_height;
+  core.block_width = core_info->block_width;
+  core.mode = core_info->mode;
+  core.is_nhwc_decomp = core_info->is_nhwc_decomp;
+  core.output_is_nhwc = core_info->output_is_nhwc;
 
   // Bare RTR (no wrapping Transposes): fuse only after Layout Transformer runs.
   // Pass-1 fusion would hide the R/T/R from ORT's TransposeOptimizer, which then
@@ -334,78 +447,24 @@ std::optional<SpaceToDepthPattern> MatchPattern(
   return core;
 }
 
-bool ValidateAndComputeParams(
-    const OrtNodeUnit& reshape1,
-    const OrtNodeUnit& transpose,
-    const OrtNodeUnit& reshape2,
-    const QnnModelWrapper& qnn_model_wrapper,
-    uint32_t& block_height,
-    uint32_t& block_width,
-    uint32_t& mode,
-    const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(reshape2);
-
-  // Core structural validation is already done in HasSpaceToDepthCoreSignature from MatchPattern.
-  // Here we only extract params needed for QNN op creation and backend-specific guards.
-
-  // 1. Read shape_6d to obtain block sizes. GetOnnxShape yields concrete non-negative dims,
-  //    so no separate overflow/negativity guard is needed.
-  std::vector<uint32_t> shape_6d;
-  if (!qnn_model_wrapper.GetOnnxShape(reshape1.Outputs()[0].shape, shape_6d) || shape_6d.size() != kRank6) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: reshape1 output shape unresolved/invalid.");
-    return false;
-  }
-
-  // [N, C, H / b0, b0, W / b1, b1]
-  const uint32_t b0 = shape_6d[3];
-  const uint32_t b1 = shape_6d[5];
-
-  // 2. Validate transpose permutation and resolve mode (DCR / CRD).
-  OrtNodeAttrHelper transpose_attrs(transpose);
-  std::vector<int64_t> perm = transpose_attrs.Get(kAttrTransposePerm, std::vector<int64_t>{});
-
-  if (std::equal(perm.begin(), perm.end(), kPermS2dDcr.begin())) {
-    mode = QNN_OP_SPACE_TO_DEPTH_MODE_DCR;
-  } else if (std::equal(perm.begin(), perm.end(), kPermS2dCrd.begin())) {
-    mode = QNN_OP_SPACE_TO_DEPTH_MODE_CRD;
-  } else {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: perm is not DCR/CRD.");
-    return false;
-  }
-
-  /*
-   * TODO(AISW-175353): Remove these backend-specific fusion guards once the
-   * SpaceToDepth kernel limitations are fixed.
-   * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
-   */
-  // 3. Backend-specific constraints for known kernel limitations.
-  const QnnBackendType backend_type = qnn_model_wrapper.GetQnnBackendType();
-
-  if (IsCpuBackend(backend_type) && b0 != b1) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                "SpaceToDepthFusion: skip fusion on CPU for unequal block sizes.");
-    return false;
-  }
-  // ============ Backend-specific constraints end =============.
-
-  block_height = b0;
-  block_width = b1;
-  return true;
-}
-
 Ort::Status CreateOrValidateOnQnn(
     QnnModelWrapper& qnn_model_wrapper,
     gsl::span<const OrtNodeUnit* const> node_units,
     uint32_t block_height,
     uint32_t block_width,
     uint32_t mode,
+    bool is_nhwc_decomp,
+    bool output_is_nhwc,
     const Ort::Logger& logger,
     bool validate) {
   const PatternIndices pattern_indices = GetPatternIndices(node_units);
-  // RTR + T(NCHW->NHWC) ==> NHWC->NCHW + S2D
-  const bool need_pre_transpose = !pattern_indices.has_head_transpose;
+
+  // The validated core signature determines whether layout transposes were absorbed.
+  const bool input_already_nhwc = !pattern_indices.has_head_transpose && is_nhwc_decomp;
+  // RTR + T(NCHW->NHWC) ==> NHWC->NCHW + S2D (only when input is not already NHWC)
+  const bool need_pre_transpose = !pattern_indices.has_head_transpose && !input_already_nhwc;
   // NHWC->NCHW + RTR ==> S2D + NHWC->NCHW
-  const bool need_post_transpose = !pattern_indices.has_tail_transpose;
+  const bool need_post_transpose = !pattern_indices.has_tail_transpose && !output_is_nhwc;
 
   // 1) Common setup: pattern boundary IO tensors and base S2D params (mode).
   const OrtNodeUnit& reshape2 = GetReshape2Node(node_units);
@@ -734,23 +793,11 @@ std::unique_ptr<IQnnNodeGroup> SpaceToDepthFusion::TryFusion(
 
   // 3. Get pattern node units.
   gsl::span<const OrtNodeUnit* const> pattern_span(pattern->node_units.data(), pattern->node_count);
-  const PatternIndices indices = GetPatternIndices(pattern_span);
-  const OrtNodeUnit* reshape1 = pattern->node_units[indices.reshape1_index];
-  const OrtNodeUnit* transpose = pattern->node_units[indices.transpose_index];
-  const OrtNodeUnit* reshape2 = pattern->node_units[indices.reshape2_index];
 
-  // 4. Compute block h,w and mode params.
-  uint32_t block_height = 0;
-  uint32_t block_width = 0;
-  uint32_t mode = 0;
-  if (!ValidateAndComputeParams(*reshape1, *transpose, *reshape2, qnn_model_wrapper,
-                                block_height, block_width, mode, logger)) {
-    return nullptr;
-  }
-
-  // 5. Validate on QNN.
+  // 4. Validate on QNN using parameters retained by MatchPattern.
   Ort::Status validate_status = CreateOrValidateOnQnn(qnn_model_wrapper, pattern_span,
-                                                      block_height, block_width, mode,
+                                                      pattern->block_height, pattern->block_width, pattern->mode,
+                                                      pattern->is_nhwc_decomp, pattern->output_is_nhwc,
                                                       logger, true);
   if (!validate_status.IsOK()) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
@@ -758,9 +805,10 @@ std::unique_ptr<IQnnNodeGroup> SpaceToDepthFusion::TryFusion(
     return nullptr;
   }
 
-  // 6. Create and return the fusion group.
+  // 5. Create and return the fusion group.
   return std::make_unique<SpaceToDepthFusion>(pattern_span,
-                                              block_height, block_width, mode);
+                                              pattern->block_height, pattern->block_width, pattern->mode,
+                                              pattern->is_nhwc_decomp, pattern->output_is_nhwc);
 }
 
 gsl::span<const OrtNodeUnit* const> SpaceToDepthFusion::GetNodeUnits() const {
@@ -769,12 +817,14 @@ gsl::span<const OrtNodeUnit* const> SpaceToDepthFusion::GetNodeUnits() const {
 
 Ort::Status SpaceToDepthFusion::IsSupported(
     QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), block_height_, block_width_, mode_, logger, true);
+  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), block_height_, block_width_, mode_,
+                               is_nhwc_decomp_, output_is_nhwc_, logger, true);
 }
 
 Ort::Status SpaceToDepthFusion::AddToModelBuilder(
     QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), block_height_, block_width_, mode_, logger, false);
+  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), block_height_, block_width_, mode_,
+                               is_nhwc_decomp_, output_is_nhwc_, logger, false);
 }
 
 }  // namespace qnn
