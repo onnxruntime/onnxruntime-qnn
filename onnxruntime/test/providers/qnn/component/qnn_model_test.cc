@@ -56,7 +56,7 @@ struct QnnModelMinimalTestContext {
     ApiPtrs api_ptrs{stub_ort_api, stub_ep_api, stub_editor_api};
     manager = qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
     if (!manager) return;
-    model = std::make_unique<qnn::QnnModel>(manager.get(), api_ptrs);
+    model = std::make_unique<qnn::QnnModel>(manager, api_ptrs);
   }
 
   bool IsValid() const { return model != nullptr; }
@@ -106,12 +106,26 @@ struct QnnModelHtpTestContext {
     auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map);
     if (!status.IsOK()) return;
 
-    model = std::make_unique<qnn::QnnModel>(manager.get(), api_ptrs);
+    model = std::make_unique<qnn::QnnModel>(manager, api_ptrs);
     valid = true;
   }
 
   bool IsValid() const { return valid; }
 };
+
+TEST(QnnUnit_ModelTest, KeepsBackendManagerAlive) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  std::weak_ptr<qnn::QnnBackendManager> weak_manager = ctx.manager;
+
+  // A model parked in SharedContext can outlive the QnnEp that created it.
+  ctx.manager.reset();
+  EXPECT_FALSE(weak_manager.expired());
+
+  ctx.model.reset();
+  EXPECT_TRUE(weak_manager.expired());
+}
 
 // ---------------------------------------------------------------------------
 // DeserializeGraphInfoFromBinaryInfo tests

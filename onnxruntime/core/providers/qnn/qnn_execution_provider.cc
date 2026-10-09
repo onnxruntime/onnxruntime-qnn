@@ -1714,6 +1714,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 }
 
 QnnEp::~QnnEp() {
+  SharedContext::GetInstance().RemoveSharedQnnModels(qnn_backend_manager_);
+
   if (qnn_backend_manager_) {
     auto thread_id = std::this_thread::get_id();
     qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
@@ -1971,7 +1973,11 @@ OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
   return nullptr;
 }
 
-static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& ort_api, const Ort::Logger& logger) {
+static bool EpSharedContextsHasAllGraphs(
+    const OrtGraph* graph,
+    const OrtApi& ort_api,
+    const Ort::Logger& logger,
+    const std::shared_ptr<qnn::QnnBackendManager>& producer) {
   size_t num_nodes = 0;
   if (ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
     return false;
@@ -1997,7 +2003,7 @@ static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& or
         return false;
       }
 
-      if (!SharedContext::GetInstance().HasQnnModel(node_name)) {
+      if (!SharedContext::GetInstance().HasQnnModel(node_name, producer)) {
         ORT_CXX_LOG(logger,
                     ORT_LOGGING_LEVEL_VERBOSE,
                     ("Graph: " +
@@ -2234,8 +2240,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph, ep->ort_api);
 
-  if (is_qnn_ctx_model && ep->share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
-    if (EpSharedContextsHasAllGraphs(graph, ep->ort_api, ep->logger_)) {
+  if (is_qnn_ctx_model && ep->share_ep_contexts_ &&
+      SharedContext::GetInstance().HasSharedQnnModels(ep->qnn_backend_manager_)) {
+    if (EpSharedContextsHasAllGraphs(graph, ep->ort_api, ep->logger_, ep->qnn_backend_manager_)) {
       ep->PartitionCtxModel(graph, graph_support_info);
       return nullptr;
     }
@@ -2524,7 +2531,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     const std::string fused_node_name = Ort::ConstNode(fused_node).GetName();
 
     std::unique_ptr<qnn::QnnModel> qnn_model = std::make_unique<qnn::QnnModel>(
-        qnn_backend_manager_.get(), ApiPtrs{ort_api, ep_api, model_editor_api});
+        qnn_backend_manager_, ApiPtrs{ort_api, ep_api, model_editor_api});
 
     qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
         QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
@@ -2790,10 +2797,10 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
   }
 
   // Get QnnModel from EP shared contexts
-  if (share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
+  if (share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels(qnn_backend_manager_)) {
     bool has_all_graphs = true;
     for (const auto& name_pair : names) {
-      if (!SharedContext::GetInstance().HasQnnModel(name_pair.second)) {
+      if (!SharedContext::GetInstance().HasQnnModel(name_pair.second, qnn_backend_manager_)) {
         has_all_graphs = false;
         ORT_CXX_LOG(logger_,
                     ORT_LOGGING_LEVEL_VERBOSE,
@@ -2804,7 +2811,8 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
 
     if (has_all_graphs) {
       for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
-        auto qnn_model_shared = SharedContext::GetInstance().GetSharedQnnModel(names[graph_idx].second);
+        auto qnn_model_shared =
+            SharedContext::GetInstance().GetSharedQnnModel(names[graph_idx].second, qnn_backend_manager_);
         if (qnn_model_shared == nullptr) {
           return ort_api.CreateStatus(ORT_EP_FAIL,
                                       ("Graph: " + names[graph_idx].second +
@@ -2948,6 +2956,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
     }
     std::string duplicate_graph_names;
     bool has_duplicate_graph = SharedContext::GetInstance().SetSharedQnnModel(std::move(shared_qnn_models),
+                                                                              qnn_backend_manager_,
                                                                               duplicate_graph_names);
     if (has_duplicate_graph) {
       return ort_api.CreateStatus(ORT_EP_FAIL,
