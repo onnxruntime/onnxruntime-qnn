@@ -83,8 +83,11 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   std::vector<OrtEpDevice*> ep_devices_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
-  // This is an actual NPU hardware but unable to be detected by ORT Core (e.g., Makena).
-  HardwareDeviceUniquePtr undetected_npu_hw_device_;
+  // Synthesized NPU hardware device when ORT Core doesn't enumerate one.
+  // Real-but-undetected (WoS Makena, Linux/Android arm64) or virtual (x86 cross-compile).
+  HardwareDeviceUniquePtr synthesized_npu_hw_device_;
+  // Virtual NPU for lockdown AOT when a real NPU already exists (ARM64).
+  HardwareDeviceUniquePtr synthesized_virtual_npu_hw_device_;
 
   // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
   qnn::QnnAllocatorType registered_allocator_type_ = qnn::QnnAllocatorType::NONE;
