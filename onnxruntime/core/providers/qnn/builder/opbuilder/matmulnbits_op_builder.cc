@@ -541,7 +541,10 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
             per_block_int32_offset.assign(total_blocks, 0);
           } else {
             mapping = QNN_QUANTIZATION_ENCODING_MAPPING_ASYMMETRIC_PLUS_ONE;
-            per_block_int32_offset.assign(per_block_float_zp.begin(), per_block_float_zp.end());
+            per_block_int32_offset.reserve(per_block_float_zp.size());
+            for (float zp : per_block_float_zp) {
+              per_block_int32_offset.push_back(static_cast<int32_t>(zp));
+            }
           }
 
           quantize_param = QnnQuantParamsWrapper::BwBlockMapped(per_block_float_scale,
