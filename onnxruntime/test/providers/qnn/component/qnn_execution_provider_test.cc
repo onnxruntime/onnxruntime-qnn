@@ -619,7 +619,17 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpShareResourceOptInvalid_LogsError)
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
-               "Invalid value entered for htp_share_resource_optimization: 2, only 1 is allowed.");
+               "Invalid value entered for htp_share_resource_optimization: 2, only 0 or 1 are allowed.");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpShareResourceOptWithVa_OverridesLegacyOption) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("htp_share_resource_optimization")] = "0";
+  ctx.session_config[EPKey("enable_vtcm_backup_buffer_sharing")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE, "htp_share_resource_optimization: 0");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableVtcmBackupBufferSharing_Succeeds) {
