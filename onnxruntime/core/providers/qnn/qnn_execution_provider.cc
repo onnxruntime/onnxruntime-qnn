@@ -2279,11 +2279,11 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
         char context_buffer[512] = {0};
         size_t context_len = 0;
         if (ep->ort_api.ReadOpAttr(ep_cache_context_attr, ORT_OP_ATTR_STRING, context_buffer, sizeof(context_buffer) - 1, &context_len) == nullptr) {
-          std::string context_bin_filepath(parent_path.string());
-          if (context_bin_filepath.empty()) {
-            context_bin_filepath.append(".");
-          }
-          context_bin_filepath.append("/").append(std::string(context_buffer, context_len));
+          std::filesystem::path resolved_context_path;
+          RETURN_IF_NOT_OK(qnn::ResolveEpContextBinaryPath(parent_path,
+                                                           std::string(context_buffer, context_len),
+                                                           resolved_context_path));
+          const std::string context_bin_filepath = resolved_context_path.string();
 
           if (context_bin_map.find(context_bin_filepath) == context_bin_map.end()) {
             context_bin_map.emplace(context_bin_filepath, std::make_unique<std::vector<std::string>>());
@@ -3086,7 +3086,8 @@ OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
   // Extract the DLC information
   std::string dlc_path;
   RETURN_IF_NOT_OK(qnn::GetEpContextDlcPath(graphs, count, ep->ort_api, dlc_path));
-  std::filesystem::path dlc_extracted_path(parent_path / dlc_path);
+  std::filesystem::path dlc_extracted_path;
+  RETURN_IF_NOT_OK(qnn::ResolveEpContextDlcPath(parent_path, dlc_path, dlc_extracted_path));
 
   // Populate the Genie APIs
   const GenieApi& genie_api_ = ep->genie_api_loader_->Get();
