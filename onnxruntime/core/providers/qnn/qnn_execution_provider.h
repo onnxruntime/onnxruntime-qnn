@@ -53,9 +53,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   OrtStatus* ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice* const* devices,
                                                     size_t num_devices,
                                                     const char* compatibility_info,
-                                                    OrtCompiledModelCompatibility* model_compatibility) noexcept;
+                                                    OrtCompiledModelCompatibility* model_compatibility);
   OrtStatus* GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* hw,
-                                                     OrtDeviceEpIncompatibilityDetails* details) noexcept;
+                                                     OrtDeviceEpIncompatibilityDetails* details);
 
   friend struct GenieNodeComputeInfo;
   friend class QnnEpFactory;
@@ -65,9 +65,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
   static OrtStatus* ORT_API_CALL GetCapabilityImpl(OrtEp* this_ptr,
                                                    const OrtGraph* graph,
                                                    OrtEpGraphSupportInfo* graph_support_info) noexcept;
-  static OrtStatus* ORT_API_CALL GetGenieCapability(OrtEp* this_ptr,
-                                                    const OrtGraph* graph,
-                                                    OrtEpGraphSupportInfo* graph_support_info);
   static OrtStatus* ORT_API_CALL CompileImpl(_In_ OrtEp* this_ptr,
                                              _In_ const OrtGraph** graphs,
                                              _In_ const OrtNode** fused_nodes,
@@ -101,6 +98,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   static OrtStatus* ORT_API_CALL CreateProfilerImpl(_In_ OrtEp* this_ptr,
                                                     _Outptr_result_maybenull_ OrtEpProfilerImpl** profiler) noexcept;
 #endif
+
+  OrtStatus* GetGenieCapability(const OrtGraph* graph,
+                                OrtEpGraphSupportInfo* graph_support_info);
 
   OrtStatus* ReloadCompiledContext(const OrtGraph** graphs,
                                    const OrtNode** fused_nodes,
