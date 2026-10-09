@@ -1255,7 +1255,7 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   // native BQ (BLOCK)             : Conv outputs INT16 → standard quantized output path.
   // non-native BQ (BW_FLOAT_BLOCK): Conv outputs FP16 → need FP16 intermediate + Quantize(FP16→INT16).
   // LPBQ (BLOCKWISE_EXPANSION)    : Conv outputs INT16 → standard quantized output path.
-  // NOTE: IsBlockQuantized() is true for both BLOCK and BW_FLOAT_BLOCK, so match the encoding directly.
+  // NOTE: IsBlockQuantized() is true for several block-type quant params, so match the encoding directly.
   // input_names[1] is the weight — IsOpSupported guarantees Conv has >= 2 inputs.
   bool is_bw_float_block = false;
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1])) {

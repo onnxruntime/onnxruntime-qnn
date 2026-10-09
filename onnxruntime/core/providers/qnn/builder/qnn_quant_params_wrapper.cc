@@ -258,6 +258,48 @@ QnnQuantParamsWrapper QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>
   return qp;
 }
 
+// Block-encoded quantization with explicit bitwidth and QNN encoding mapping (BW_BLOCK_MAPPED).
+QnnQuantParamsWrapper QnnQuantParamsWrapper::BwBlockMapped(gsl::span<const float> scales,
+                                                           gsl::span<const int32_t> offsets,
+                                                           uint32_t bitwidth,
+                                                           gsl::span<const uint32_t> block_sizes,
+                                                           Qnn_QuantizationEncodingMapping_t mapping) {
+  assert(scales.size() > 0);
+  assert(scales.size() == offsets.size());
+  assert(bitwidth > 0);
+  assert(block_sizes.size() > 0);
+
+  QnnQuantParamsWrapper qp;
+  qp.params_.encodingDefinition = QNN_DEFINITION_DEFINED;
+  qp.params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BW_BLOCK_MAPPED;
+
+  qp.block_encoding_tensor_rank_ = static_cast<uint32_t>(block_sizes.size());
+  qp.block_encoding_axis_data_ = std::make_unique<uint32_t[]>(qp.block_encoding_tensor_rank_);
+  std::memcpy(qp.block_encoding_axis_data_.get(),
+              block_sizes.data(),
+              static_cast<size_t>(qp.block_encoding_tensor_rank_) * sizeof(uint32_t));
+
+  qp.num_blocks_ = static_cast<uint32_t>(scales.size());
+  qp.block_encoding_scale_offsets_data_ = std::make_unique<Qnn_ScaleOffset_t[]>(qp.num_blocks_);
+  for (size_t i = 0; i < qp.num_blocks_; ++i) {
+    qp.block_encoding_scale_offsets_data_[i].scale = scales[i];
+    qp.block_encoding_scale_offsets_data_[i].offset = offsets[i];
+  }
+
+  // Allocate the Qnn_BwBlockMapped_t struct itself (the union member is a pointer to it).
+  const size_t bbm_num_bytes = sizeof(Qnn_BwBlockMapped_t);
+  constexpr std::uintptr_t bbm_align = alignof(Qnn_BwBlockMapped_t);
+  qp.bw_block_mapped_data_ = std::make_unique<char[]>(bbm_num_bytes + bbm_align);
+  Qnn_BwBlockMapped_t* bbm_ptr = ALIGN_PTR_UP(qp.bw_block_mapped_data_.get(), bbm_align, Qnn_BwBlockMapped_t*);
+  bbm_ptr->bitwidth = bitwidth;
+  bbm_ptr->mapping = mapping;
+  bbm_ptr->blockSize = qp.block_encoding_axis_data_.get();
+  bbm_ptr->scaleOffset = qp.block_encoding_scale_offsets_data_.get();
+
+  qp.params_.bwBlockMappedEncoding = bbm_ptr;
+  return qp;
+}
+
 // Get a copy of scales. Works for both per-tensor and per-channel.
 Ort::Status QnnQuantParamsWrapper::GetScales(/*out*/ std::vector<float>& scales) const {
   RETURN_IF_NOT(params_.encodingDefinition == QNN_DEFINITION_DEFINED, "Unquantized qparams does not have scales");
@@ -469,6 +511,37 @@ Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, cons
         bw_float_block_encoding_scale_offsets_data_[i].offset = params.bwFloatBlockEncoding.floatScaleOffset[i].offset;
       }
       params_.bwFloatBlockEncoding.floatScaleOffset = bw_float_block_encoding_scale_offsets_data_.get();
+
+      break;
+    }
+    case QNN_QUANTIZATION_ENCODING_BW_BLOCK_MAPPED: {
+      assert(num_scaleoffsets && "Can't create BwBlockMapped encoding object with zero ScaleOffsets");
+      params_.encodingDefinition = params.encodingDefinition;
+      params_.quantizationEncoding = params.quantizationEncoding;
+
+      num_blocks_ = static_cast<uint32_t>(num_scaleoffsets);
+      block_encoding_tensor_rank_ = static_cast<uint32_t>(tensor_rank);
+      block_encoding_axis_data_ = std::make_unique<uint32_t[]>(block_encoding_tensor_rank_);
+      std::memcpy(block_encoding_axis_data_.get(),
+                  params.bwBlockMappedEncoding->blockSize,
+                  static_cast<size_t>(block_encoding_tensor_rank_) * sizeof(uint32_t));
+
+      block_encoding_scale_offsets_data_ = std::make_unique<Qnn_ScaleOffset_t[]>(num_scaleoffsets);
+      for (size_t i = 0; i < num_scaleoffsets; ++i) {
+        block_encoding_scale_offsets_data_[i].scale = params.bwBlockMappedEncoding->scaleOffset[i].scale;
+        block_encoding_scale_offsets_data_[i].offset = params.bwBlockMappedEncoding->scaleOffset[i].offset;
+      }
+
+      // Deep copy the Qnn_BwBlockMapped_t struct itself (union member is a pointer to it).
+      const size_t bbm_num_bytes = sizeof(Qnn_BwBlockMapped_t);
+      constexpr std::uintptr_t bbm_align = alignof(Qnn_BwBlockMapped_t);
+      bw_block_mapped_data_ = std::make_unique<char[]>(bbm_num_bytes + bbm_align);
+      Qnn_BwBlockMapped_t* bbm_aligned_dst = ALIGN_PTR_UP(bw_block_mapped_data_.get(), bbm_align, Qnn_BwBlockMapped_t*);
+      bbm_aligned_dst->bitwidth = params.bwBlockMappedEncoding->bitwidth;
+      bbm_aligned_dst->mapping = params.bwBlockMappedEncoding->mapping;
+      bbm_aligned_dst->blockSize = block_encoding_axis_data_.get();
+      bbm_aligned_dst->scaleOffset = block_encoding_scale_offsets_data_.get();
+      params_.bwBlockMappedEncoding = bbm_aligned_dst;
 
       break;
     }

@@ -526,10 +526,44 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
           }
         }
 
-        if (!used_lpbq) {
-          // Non-LPBQ block-quant path: native BQ (BLOCK) or BW_FLOAT_BLOCK, decided below.
+        bool used_bw_block_mapped = false;
+#ifdef QNN_W2A16_BW_BLOCK_MAPPED_AVAILABLE
+        // 2-bit BW_BLOCK_MAPPED: keeps int16 activations natively (no DQ needed).
+        // Gated to SDK >= 2.51: the native W2A16 HTP kernel is not available until 2.51.
+        // Symmetric → STANDARD_SYMMETRIC (offsets=0), Asymmetric → ASYMMETRIC_PLUS_ONE (offsets from ZP tensor).
+        if (bits == 2 && is_act_16bitquant) {
+          const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
+
+          Qnn_QuantizationEncodingMapping_t mapping;
+          std::vector<int32_t> per_block_int32_offset;
+          if (zp_is_symmetric) {
+            mapping = QNN_QUANTIZATION_ENCODING_MAPPING_STANDARD_SYMMETRIC;
+            per_block_int32_offset.assign(total_blocks, 0);
+          } else {
+            mapping = QNN_QUANTIZATION_ENCODING_MAPPING_ASYMMETRIC_PLUS_ONE;
+            per_block_int32_offset.reserve(per_block_float_zp.size());
+            for (float zp : per_block_float_zp) {
+              per_block_int32_offset.push_back(static_cast<int32_t>(zp));
+            }
+          }
+
+          quantize_param = QnnQuantParamsWrapper::BwBlockMapped(per_block_float_scale,
+                                                                per_block_int32_offset,
+                                                                gsl::narrow_cast<uint32_t>(bits),
+                                                                block_sizes,
+                                                                mapping);
+          used_bw_block_mapped = true;
+          const char* mapping_str = zp_is_symmetric ? "STANDARD_SYMMETRIC" : "ASYMMETRIC_PLUS_ONE";
+          ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                      ("MatMulNBits weight encoding: BW_BLOCK_MAPPED (" + std::string(mapping_str) + ") for " + weight_tensor_name).c_str());
+        }
+#endif  // QNN_W2A16_BW_BLOCK_MAPPED_AVAILABLE
+
+        if (!used_lpbq && !used_bw_block_mapped) {
+          // Non-LPBQ, non-BW_BLOCK_MAPPED path: native BQ (BLOCK) or BW_FLOAT_BLOCK, decided below.
           const char* reason = !is_act_16bitquant ? "activation not 16-bit quantized"
-                               : bits != 4        ? "bits != 4 (LPBQ only supports INT4)"
+                               : bits == 2        ? "BW_BLOCK_MAPPED unavailable (SDK < 2.51)"
+                               : bits != 4        ? "unsupported bit-width for LPBQ"
                                : !zp_is_symmetric ? "zero-points not symmetric"
                                                   : "LPBQ conversion failed (enable_block_quant_weight_optimization=0)";
           ORT_CXX_LOG(logger,
@@ -707,9 +741,9 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
     std::vector<uint32_t> conv2d_output_shape = {output_info.shape[0], 1, output_info.shape[1], output_info.shape[2]};
 
     // Determine the Conv2D output data type from the registered weight tensor's quant encoding.
-    // Only BW_FLOAT_BLOCK forces the kernel to compute in FP16; LPBQ (BLOCKWISE_EXPANSION) and native BQ
-    // (BLOCK) both produce the actual output data type (e.g. uint16/int16 for QDQ models) directly.
-    // NOTE: IsBlockQuantized() is true for both BLOCK and BW_FLOAT_BLOCK, so match the encoding directly.
+    // Only BW_FLOAT_BLOCK forces the kernel to compute in FP16; LPBQ (BLOCKWISE_EXPANSION), native BQ
+    // (BLOCK), and BW_BLOCK_MAPPED all produce the actual output data type (e.g. uint16/int16) directly.
+    // NOTE: IsBlockQuantized() is true for several block-type quant params, so match the encoding directly.
     bool is_bw_float_block = false;
     if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1])) {
       const auto& weight_quant_params = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().Get();
