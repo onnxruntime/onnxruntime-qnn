@@ -1,11 +1,14 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
+import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import cast, get_args
 
 import pytest
+from graph_gate import check_gate
 from model_test import BackendT, ModelTestCase, ModelTestDef, ModelTestSuite
 
 MODEL_ZOO_ROOTS = [Path(p) for p in os.getenv("ORT_MODEL_ZOO_TEST_ROOTS", "").split(os.pathsep) if len(p) > 0]
@@ -13,6 +16,13 @@ MODEL_ZOO_BACKEND = cast(BackendT, os.getenv("ORT_MODEL_ZOO_BACKEND", "htp"))
 assert MODEL_ZOO_BACKEND in get_args(BackendT)
 MODEL_ZOO_ENABLE_CONTEXT = os.getenv("ORT_MODEL_ZOO_ENABLE_CONTEXT", "1") == "1"
 MODEL_ZOO_ENABLE_CPU_FALLBACK = os.getenv("ORT_MODEL_ZOO_ENABLE_CPU_FALLBACK", "0") == "1"
+
+# Graph-diff gating: if golden graphs exist in model_root/goldens/, skip accuracy when graph is unchanged.
+ENABLE_GRAPH_GATE = os.getenv("ORT_MODEL_ZOO_DISABLE_GRAPH_GATE", "0") != "1"
+
+# Optional: persist dumped graphs as CI artifacts for inspection.
+_artifact_dir = os.getenv("ORT_JSON_DUMP_ARTIFACT_DIR", "")
+JSON_DUMP_ARTIFACT_DIR = Path(_artifact_dir) if _artifact_dir else None
 
 
 def get_xfails(env_var: str) -> dict[str, str]:
@@ -41,4 +51,27 @@ for model_zoo_root in MODEL_ZOO_ROOTS:
         xfails = get_xfails("ORT_MODEL_ZOO_TEST_XFAILS")
         if test_def.model_root.name in xfails:
             pytest.xfail(xfails[test_def.model_root.name])
+
+        # Dump graph JSON to artifact dir if configured (for CI inspection).
+        if JSON_DUMP_ARTIFACT_DIR is not None:
+            artifact_model_dir = JSON_DUMP_ARTIFACT_DIR / test_def.model_root.name
+            artifact_model_dir.mkdir(parents=True, exist_ok=True)
+            ModelTestCase(test_def, json_dump_dir=artifact_model_dir).dump_graph_only()
+
+        # Graph-diff gate: dump graph and compare with golden to decide
+        # whether full accuracy verification is needed.
+        if ENABLE_GRAPH_GATE and (test_def.model_root / "goldens").is_dir():
+            with tempfile.TemporaryDirectory(prefix="graph-gate-") as tmpdir:
+                dump_dir = Path(tmpdir)
+                ModelTestCase(test_def, json_dump_dir=dump_dir).dump_graph_only()
+
+                gate_result = check_gate(
+                    model_root=test_def.model_root,
+                    dumped_dir=dump_dir,
+                )
+                if gate_result.skip_accuracy:
+                    pytest.skip(f"Graph gate: {gate_result.reason}")
+                else:
+                    logging.info(f"Graph gate: {gate_result.reason} - running accuracy check")
+
         ModelTestCase(test_def).run()
