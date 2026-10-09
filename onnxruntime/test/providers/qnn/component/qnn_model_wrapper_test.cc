@@ -1883,6 +1883,9 @@ static int g_initializer_value_sentinel = 0;
 static ONNXTensorElementDataType g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
 static std::vector<int64_t> g_tensor_dims;
 static const void* g_tensor_raw_data = nullptr;
+static int g_external_initializer_info_sentinel = 0;
+static size_t g_external_initializer_byte_size = 0;
+static bool g_external_initializer_released = false;
 
 OrtStatus* StubGraphGetModelPathEmpty(const OrtGraph*,
                                       const ORTCHAR_T** model_path) noexcept {
@@ -1895,6 +1898,18 @@ OrtStatus* StubValueInfoGetExternalNull(const OrtValueInfo*,
   *info = nullptr;
   return nullptr;
 }
+OrtStatus* StubValueInfoGetExternal(const OrtValueInfo*,
+                                    OrtExternalInitializerInfo** info) noexcept {
+  *info = reinterpret_cast<OrtExternalInitializerInfo*>(&g_external_initializer_info_sentinel);
+  return nullptr;
+}
+size_t StubExternalInitializerGetByteSize(const OrtExternalInitializerInfo*) noexcept {
+  return g_external_initializer_byte_size;
+}
+void StubReleaseExternalInitializerInfo(OrtExternalInitializerInfo*) noexcept {
+  g_external_initializer_released = true;
+}
+
 OrtStatus* StubGetValueInfoTypeInfo(const OrtValueInfo*,
                                     const OrtTypeInfo** type_info) noexcept {
   *type_info = reinterpret_cast<const OrtTypeInfo*>(&g_type_info_sentinel);
@@ -1985,6 +2000,31 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_INT8_ReturnsRawBytes) {
   ASSERT_TRUE(s.IsOK());
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(static_cast<int8_t>(result[0]), -5);
+}
+
+// External data must describe exactly the bytes required by the initializer's shape and type.
+TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalSizeMismatchReturnsError) {
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  g_tensor_dims = {2, 2};
+  g_external_initializer_byte_size = sizeof(float);
+  g_external_initializer_released = false;
+
+  QnnModelWrapperTestContext ctx;
+  SetupUnpackStubs(ctx);
+  ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo = StubValueInfoGetExternal;
+  ctx.stub_ort_api.ExternalInitializerInfo_GetByteSize = StubExternalInitializerGetByteSize;
+  ctx.stub_ort_api.ReleaseExternalInitializerInfo = StubReleaseExternalInitializerInfo;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
+  std::vector<uint8_t> result;
+  Ort::Status status = wrapper->UnpackInitializerData(fake_vi, result, /*unpack_4bit=*/false);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("does not match"), std::string::npos);
+  EXPECT_TRUE(g_external_initializer_released);
+  EXPECT_TRUE(result.empty());
 }
 
 // UnpackZeroPoints: null input pointer → RETURN_IF fires → error.
