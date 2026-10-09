@@ -178,6 +178,49 @@ Ort::Status ProcessModeAttribute(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
+// DepthToSpace and SpaceToDepth only permute elements, so a per-tensor input scale
+// and zero-point applies unchanged to the output. Pre-register it instead of emitting
+// plain uint8, which QNN backend validation rejects (fatal: pass 1 skips validation
+// for these ops). Per-channel quant is excluded: the channel axis and count both change.
+Ort::Status PropagatePerTensorInputQuantToOutput(QnnModelWrapper& qnn_model_wrapper,
+                                                 const OrtNodeUnit& node_unit,
+                                                 const std::vector<std::string>& input_names) {
+  const auto& outputs = node_unit.Outputs();
+  if (outputs.empty() || input_names.empty()) {
+    return Ort::Status();
+  }
+  const std::string& output_name = outputs[0].name;
+  if (qnn_model_wrapper.IsQnnTensorWrapperExist(output_name)) {
+    return Ort::Status();
+  }
+  const std::string& input_name = input_names[0];
+  if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
+    return Ort::Status();
+  }
+  const QnnTensorWrapper& input_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_name);
+  const QnnQuantParamsWrapper& input_quant_param = input_wrapper.GetQnnQuantParams();
+  if (!input_quant_param.IsPerTensor()) {
+    return Ort::Status();
+  }
+  TensorInfo output_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
+  if (output_info.quant_param.IsQuantized()) {
+    return Ort::Status();
+  }
+  Qnn_TensorType_t tensor_type = QNN_TENSOR_TYPE_NATIVE;
+  if (qnn_model_wrapper.IsGraphOutput(output_name)) {
+    tensor_type = QNN_TENSOR_TYPE_APP_READ;
+  }
+  QnnTensorWrapper output_wrapper(output_name,
+                                  tensor_type,
+                                  input_wrapper.GetTensorDataType(),
+                                  input_quant_param.Copy(),
+                                  std::move(output_info.shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)),
+                  "Failed to add tensor.");
+  return Ort::Status();
+}
+
 // Process alpha attribute as input for Qnn LeakyRelu
 Ort::Status ProcessAlphaAttributeAsInput(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
@@ -468,6 +511,7 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   if (op_type == "DepthToSpace") {
     RETURN_IF_ERROR(ProcessBlockSizeAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
     RETURN_IF_ERROR(ProcessModeAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
+    RETURN_IF_ERROR(PropagatePerTensorInputQuantToOutput(qnn_model_wrapper, node_unit, input_names));
   }
 
   if (op_type == "SpaceToDepth") {
@@ -475,6 +519,7 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                            static_cast<uint32_t>(QNN_OP_SPACE_TO_DEPTH_MODE_DCR),
                                            QNN_OP_SPACE_TO_DEPTH_PARAM_MODE, param_tensor_names));
+    RETURN_IF_ERROR(PropagatePerTensorInputQuantToOutput(qnn_model_wrapper, node_unit, input_names));
   }
 
   if (op_type == "GridSample") {
