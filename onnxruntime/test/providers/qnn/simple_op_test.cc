@@ -1102,7 +1102,7 @@ TEST_F(QnnHTPBackendTests, DepthToSpaceOp_QuantizedInput_CRD) {
     builder.AddQuantizeLinearNode<uint8_t>("shuffle_in_q", "C", qp.scale, qp.zero_point, "Cq");
     builder.AddNode("Shuffle", "DepthToSpace", {"Cq"}, {"Sq"}, kOnnxDomain, shuffle_attrs);
     builder.AddDequantizeLinearNode<uint8_t>("shuffle_out_dq", "Sq",
-                                               output_qparams[0].scale, output_qparams[0].zero_point, "Y");
+                                             output_qparams[0].scale, output_qparams[0].zero_point, "Y");
     builder.MakeOutput("Y");
   };
 

@@ -217,7 +217,7 @@ Ort::Status PropagatePerTensorInputQuantToOutput(QnnModelWrapper& qnn_model_wrap
                                   input_quant_param.Copy(),
                                   std::move(output_info.shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)),
-                  "Failed to add tensor.");
+                "Failed to add tensor.");
   return Ort::Status();
 }
 
