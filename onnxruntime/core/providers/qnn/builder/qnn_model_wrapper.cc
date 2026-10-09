@@ -1157,6 +1157,20 @@ Ort::Status QnnModelWrapper::AddNoopReshapeNode(const std::string& node_name,
   return Ort::Status();
 }
 
+Ort::Status QnnModelWrapper::AddStaticBiasTensor(const std::string& bias_name,
+                                                 const std::vector<uint32_t>& bias_shape,
+                                                 Qnn_DataType_t data_type,
+                                                 QnnQuantParamsWrapper quant_params,
+                                                 std::vector<uint8_t> bias_data,
+                                                 std::vector<std::string>& input_names) {
+  QnnTensorWrapper bias_wrapper(bias_name, QNN_TENSOR_TYPE_STATIC, data_type,
+                                std::move(quant_params), std::vector<uint32_t>(bias_shape),
+                                std::move(bias_data));
+  RETURN_IF_NOT(AddTensorWrapper(std::move(bias_wrapper)), "Failed to add bias tensor.");
+  input_names.push_back(bias_name);
+  return Ort::Status();
+}
+
 void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::string>& tensor_name_list,
                                                        std::vector<QnnTensorWrapper>& wrappers_list) {
   for (const auto& tensor_name : tensor_name_list) {

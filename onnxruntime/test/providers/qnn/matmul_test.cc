@@ -308,11 +308,27 @@ static void RunQDQBlockQuantMatMulOpTest(
     QDQTolerance tolerance = QDQTolerance(),
     ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
     int opset = 21,
-    bool use_contrib_qdq = false) {
+    bool use_contrib_qdq = false,
+    const char* graph_test_name = nullptr) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["enable_block_quant_weight_optimization"] = "1";
+
+  std::filesystem::path graph_dir;
+  auto cleanup = gsl::finally([&graph_dir]() {
+    if (!graph_dir.empty()) {
+      std::filesystem::remove_all(graph_dir);
+    }
+  });
+  if (graph_test_name != nullptr) {
+    graph_dir = std::filesystem::temp_directory_path() /
+                (std::string("MatMulOp_QDQ_BlockQuant_") + graph_test_name);
+    std::filesystem::remove_all(graph_dir);
+    ASSERT_TRUE(std::filesystem::create_directories(graph_dir));
+    provider_options["dump_json_qnn_graph"] = "1";
+    provider_options["json_qnn_graph_dir"] = graph_dir.string();
+  }
 
   const size_t num_input_elems = static_cast<size_t>(
       std::accumulate(shape_input.begin(), shape_input.end(), static_cast<int64_t>(1), std::multiplies<int64_t>()));
@@ -327,6 +343,13 @@ static void RunQDQBlockQuantMatMulOpTest(
       BuildQDQBlockQuantMatMulTestCase<InputQType, WeightQType, OutputQType>(
           input_def, weight_def, block_size, weight_quant_axis, use_contrib_qdq),
       provider_options, opset, expected_ep_assignment, tolerance);
+
+  if (!graph_dir.empty() && !::testing::Test::IsSkipped()) {
+    AssertOpInQnnGraph(graph_dir, "Convert", 1);
+    AssertConvertOutputDataType(graph_dir,
+                                std::is_same_v<OutputQType, uint8_t> ? QNN_DATATYPE_UFIXED_POINT_8
+                                                                     : QNN_DATATYPE_SFIXED_POINT_8);
+  }
 }
 
 //
@@ -958,12 +981,8 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_static_weight) {
         provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
   }
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-
-#if defined(__linux__)
 
 // Tests MatMul with ONNX block-quantized (BQ) weight using the BQ -> QNN LPBQ conversion path.
-// Currently BQ -> LPBQ conversion is only supported on Linux. It will be later enabled for windows as well.
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant) {
   RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
   RunQDQBlockQuantMatMulOpTest<int16_t, Int4x2, int16_t>({4, 128}, {128, 64}, 32, 0, QDQTolerance(0.05f));
@@ -972,7 +991,13 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant) {
   RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({2, 3, 4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
 }
 
-#endif  // defined(__linux__)
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant_U16ActivationU8Output) {
+  RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint8_t>(
+      {4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f), ExpectedEPNodeAssignment::All, 21, false,
+      "u16_u8");
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_M_ARM64)
 //
