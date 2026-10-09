@@ -800,6 +800,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `ReduceMean → Sub → Pow(2) → ReduceMean → Add(ε) → Sqrt → Div → Mul(γ) → Add(β)` | `QNN_OP_LAYER_NORM` | Matches the manual LayerNorm decomposition. Gamma and beta must be constants. |
 | `Mul(scalar constant) → Softmax` | `QNN_OP_SOFTMAX` | The scalar multiplier is folded into the beta parameter of QNN's Softmax. |
 | `ReduceL2 → Add(ε) → Div(x, .)` | `QNN_OP_L2_NORM` | Avoids fp16 overflow in the ReduceL2→Sqrt decomposition by using HTP's native L2Norm kernel. Epsilon must be a constant scalar. |
+| `SequenceConstruct(t₀..tₙ₋₁) → SequenceAt(seq, pos)` | `QNN_OP_RESHAPE × N + QNN_OP_CONCAT + QNN_OP_GATHER` | Requires homogeneous element shapes. String/complex element types fall back to CPU EP. Negative `position` values are normalized at compile time (static) or via `QNN_OP_ELEMENT_WISE_ADD + QNN_OP_ELEMENT_WISE_SELECT` (dynamic). |
 | `Reshape(ND→2D) → Gemm` | `QNN_OP_FULLY_CONNECTED` | Input Reshape must not be shared; Gemm: transA=0, transB=0, alpha=1, beta=1; weight must be a constant; input rank ≤ 4. CPU and HTP backends only. |
 | `Reshape(ND→2D) → Gemm → Reshape(2D→MD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 3-node variant; quantized weights supported. |
 | `Reshape(ND→2D) → Gemm → Reshape(2D→MD) → Reshape(MD→PD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 4-node variant; two consecutive output Reshapes. |
