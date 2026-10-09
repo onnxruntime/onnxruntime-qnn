@@ -185,6 +185,8 @@ jobs:
       build_test_same_runner: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       nightly_build: ${{ inputs.nightly_build }}
+      test_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
+      wheel_backward_compat_ort_version: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && '1.24.2' || '' }}
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
