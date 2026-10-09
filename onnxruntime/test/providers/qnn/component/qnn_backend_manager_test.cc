@@ -83,6 +83,25 @@ TEST(QnnUnit_BackendManagerTest, IsBackendHostMode_ConfigureHostModeTrue_Returns
 }
 
 // ---------------------------------------------------------------------------
+// Context handle lease -- pure C++, no QNN lib needed
+// ---------------------------------------------------------------------------
+
+TEST(QnnUnit_BackendManagerTest, ContextHandleLease_KeepsRemovedRecordAlive) {
+  StubApiEnv env;
+  auto manager = MakeManager("libQnnHtp.so", env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+
+  ASSERT_TRUE(manager->AddQnnContextHandle(nullptr).IsOK());
+  auto lease = manager->GetContextHandleLease(nullptr);
+  ASSERT_TRUE(lease);
+
+  manager->ReleaseSpecificContextHandle(nullptr);
+
+  EXPECT_FALSE(manager->HasContextHandle(nullptr));
+  EXPECT_TRUE(lease);
+}
+
+// ---------------------------------------------------------------------------
 // Group 1: QnnSerializerConfig — pure C++, no QNN lib needed
 // ---------------------------------------------------------------------------
 

@@ -152,8 +152,22 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
  private:
   // private tag to pass to constructor to ensure that constructor cannot be directly called externally
   struct PrivateConstructorTag {};
+  struct QnnContextHandleRecord;
 
  public:
+  class ContextHandleLease {
+   public:
+    ContextHandleLease() = default;
+    explicit operator bool() const noexcept { return context_handle_record_ != nullptr; }
+
+   private:
+    explicit ContextHandleLease(std::shared_ptr<QnnContextHandleRecord> context_handle_record)
+        : context_handle_record_(std::move(context_handle_record)) {}
+
+    std::shared_ptr<QnnContextHandleRecord> context_handle_record_;
+    friend class QnnBackendManager;
+  };
+
   static std::shared_ptr<QnnBackendManager> Create(const QnnBackendManagerConfig& config,
                                                    const ApiPtrs& api_ptrs,
                                                    const Ort::Logger& logger) {
@@ -249,9 +263,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                             Qnn_ProfileHandle_t profile_handle,
                                             Qnn_ContextHandle_t& context);
 
-  // Returns true if the given context handle is still tracked (not yet freed).
+  // Returns an owning lease for a tracked context handle, or an empty lease if it is stale.
+  ContextHandleLease GetContextHandleLease(Qnn_ContextHandle_t context_handle) const;
+
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
-    return context_map_.find(context_handle) != context_map_.end();
+    return static_cast<bool>(GetContextHandleLease(context_handle));
   }
 
   // Returns the mutex that serializes SSR context recovery across models sharing this backend.
@@ -376,7 +392,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Gets an existing QNN mem handle or registers a new one.
   // `mem_handle` is set to the QNN mem handle.
-  Ort::Status GetOrRegisterContextMemHandle(Qnn_ContextHandle_t context, void* shared_memory_address,
+  Ort::Status GetOrRegisterContextMemHandle(const ContextHandleLease& context_handle_lease, void* shared_memory_address,
                                             const Qnn_Tensor_t& qnn_tensor,
                                             Qnn_MemHandle_t& mem_handle);
 
@@ -739,6 +755,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Qnn_DeviceHandle_t validator_device_handle_ = nullptr;
 
   // Map of Qnn_ContextHandle_t to QnnContextHandleRecord.
+  mutable std::mutex context_map_mutex_;
   // The QnnContextHandleRecord has ownership of the Qnn_ContextHandle_t.
   // Note: Using shared_ptr<QnnContextHandleRecord> so that we can refer to it with a weak_ptr from a
   // HtpSharedMemoryAllocator allocation cleanup callback.
