@@ -3393,8 +3393,15 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
   }
 
   if (std::string(domain) == kOnnxDomain && std::string(op_type) == "GroupNormalization") {
-    // GroupNormalization is translated to QNN's GroupNorm, which requires the NHWC layout for processing.
-    *should_convert = 1;
+    // GroupNormalization is translated to QNN's GroupNorm, which requires the NHWC layout for
+    // processing. ORT's layout transformer can duplicate a GroupNormalization node when its NCHW
+    // input feeds multiple consumers (e.g. one layout-sensitive, one not); the duplicated node's
+    // output tensor does not always inherit a resolved shape, which later fails QNN EP's shape
+    // lookup ("Cannot get shape") and strands the node with no EP able to run it. To avoid
+    // depending on that duplication/shape-propagation path, suppress ORT's layout transform here
+    // and perform the NCHW<->NHWC transpose internally in GroupNormalizationOpBuilder (same
+    // strategy QLinearConvOpBuilder and DQConvIntegerFusion use for QLinearConv/ConvInteger).
+    *should_convert = 0;
   }
 
   if (std::string(domain) == kOnnxDomain && std::string(op_type) == "RoiAlign") {
