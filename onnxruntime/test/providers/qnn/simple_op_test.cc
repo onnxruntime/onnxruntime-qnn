@@ -992,68 +992,6 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Floor) {
                         ExpectedEPNodeAssignment::All);
 }
 
-// Builds X -> Conv1x1 -> <shuffle-op> -> Y, plus a QDQ variant that inserts Q/DQ pairs
-// (Conv -> Q -> shuffle -> DQ), matching quantized models where the shuffle consumes a
-// quantized tensor produced by another unit.
-static GetTestModelFn BuildF32ConvShuffleTestCase(
-    const TestInputDef<float>& input_def,
-    const std::vector<int64_t>& weight_shape,
-    const std::string& shuffle_op_type,
-    const std::vector<ONNX_NAMESPACE::AttributeProto>& shuffle_attrs) {
-  return [input_def, weight_shape, shuffle_op_type, shuffle_attrs](ModelTestBuilder& builder) {
-    MakeTestInput<float>(builder, "X", input_def);
-    const int64_t channels = weight_shape[0];
-    std::vector<float> weights(channels * channels, 0.0f);
-    for (int64_t i = 0; i < channels; ++i) {
-      weights[i * channels + i] = 1.0f;
-    }
-    builder.MakeInitializer<float>("W", weight_shape, weights);
-    builder.MakeInitializer<float>("B", {channels}, std::vector<float>(channels, 0.0f));
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
-    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
-    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
-    builder.AddNode("Conv", "Conv", {"X", "W", "B"}, {"C"}, kOnnxDomain, conv_attrs);
-    builder.AddNode("Shuffle", shuffle_op_type, {"C"}, {"Y"}, kOnnxDomain, shuffle_attrs);
-    builder.MakeOutput("Y");
-  };
-}
-
-template <typename QuantType>
-static GetTestQDQModelFn<QuantType> BuildConvShuffleQDQTestCase(
-    const TestInputDef<float>& input_def,
-    const std::vector<int64_t>& weight_shape,
-    const std::string& shuffle_op_type,
-    const std::vector<ONNX_NAMESPACE::AttributeProto>& shuffle_attrs) {
-  return [input_def, weight_shape, shuffle_op_type, shuffle_attrs](
-             ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
-    MakeTestInput<float>(builder, "X", input_def);
-    const QuantParams<QuantType> qp = GetTestInputQuantParams<QuantType>(input_def);
-    const std::string x_dq = AddQDQNodePair<QuantType>(builder, "qdq_in", "X", qp.scale, qp.zero_point);
-    const int64_t channels = weight_shape[0];
-    std::vector<float> weights(channels * channels, 0.0f);
-    for (int64_t i = 0; i < channels; ++i) {
-      weights[i * channels + i] = 1.0f;
-    }
-    builder.MakeInitializer<float>("W", weight_shape, weights);
-    builder.MakeInitializer<float>("B", {channels}, std::vector<float>(channels, 0.0f));
-
-    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
-    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
-    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
-    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
-    builder.AddNode("Conv", "Conv", {x_dq, "W", "B"}, {"C"}, kOnnxDomain, conv_attrs);
-    builder.AddQuantizeLinearNode<QuantType>("shuffle_in_q", "C", qp.scale, qp.zero_point, "Cq");
-    builder.AddNode("Shuffle", shuffle_op_type, {"Cq"}, {"Sq"}, kOnnxDomain, shuffle_attrs);
-    builder.AddDequantizeLinearNode<QuantType>("shuffle_out_dq", "Sq",
-                                               output_qparams[0].scale, output_qparams[0].zero_point, "Y");
-    builder.MakeOutput("Y");
-  };
-}
-
 // Test QDQ DepthToSpace.
 TEST_F(QnnHTPBackendTests, DepthToSpaceOp_CRD) {
   const std::vector<float> X = {0., 1., 2.,
@@ -1110,7 +1048,9 @@ TEST_F(QnnHTPBackendTests, DepthToSpaceOp_DCR) {
                         ExpectedEPNodeAssignment::All);
 }
 
-// Test QDQ DepthToSpace with quantized tensor input (Conv -> Q -> DepthToSpace -> DQ).
+// Test QDQ DepthToSpace with quantized tensor input (Conv -> Q -> DepthToSpace -> DQ,
+// as in quantized super-resolution models). The standalone node must carry the input
+// quantization to its output.
 TEST_F(QnnHTPBackendTests, DepthToSpaceOp_QuantizedInput_CRD) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -1128,11 +1068,45 @@ TEST_F(QnnHTPBackendTests, DepthToSpaceOp_QuantizedInput_CRD) {
   const std::vector<ONNX_NAMESPACE::AttributeProto> shuffle_attrs =
       {test::MakeAttribute("blocksize", static_cast<int64_t>(2)),
        test::MakeAttribute("mode", "CRD")};
-  TestQDQModelAccuracy(BuildF32ConvShuffleTestCase(input_def, {4, 4, 1, 1}, "DepthToSpace", shuffle_attrs),
-                       BuildConvShuffleQDQTestCase<uint8_t>(input_def, {4, 4, 1, 1}, "DepthToSpace", shuffle_attrs),
-                       provider_options,
-                       /*opset*/ 13,
-                       ExpectedEPNodeAssignment::All);
+
+  // 1x1 identity Conv preserves values while giving the shuffle a quantized producer.
+  auto add_identity_conv = [](ModelTestBuilder& builder, const std::string& input, const std::string& output) {
+    std::vector<float> weights(16, 0.0f);
+    for (int64_t i = 0; i < 4; ++i) {
+      weights[i * 4 + i] = 1.0f;
+    }
+    builder.MakeInitializer<float>("W", {4, 4, 1, 1}, weights);
+    builder.MakeInitializer<float>("B", {4}, std::vector<float>(4, 0.0f));
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
+    builder.AddNode("Conv", "Conv", {input, "W", "B"}, {output}, kOnnxDomain, conv_attrs);
+  };
+
+  GetTestModelFn f32_fn = [&](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "X", input_def);
+    add_identity_conv(builder, "X", "C");
+    builder.AddNode("Shuffle", "DepthToSpace", {"C"}, {"Y"}, kOnnxDomain, shuffle_attrs);
+    builder.MakeOutput("Y");
+  };
+
+  GetTestQDQModelFn<uint8_t> qdq_fn = [&](ModelTestBuilder& builder,
+                                          std::vector<QuantParams<uint8_t>>& output_qparams) {
+    MakeTestInput<float>(builder, "X", input_def);
+    const QuantParams<uint8_t> qp = GetTestInputQuantParams<uint8_t>(input_def);
+    const std::string x_dq = AddQDQNodePair<uint8_t>(builder, "qdq_in", "X", qp.scale, qp.zero_point);
+    add_identity_conv(builder, x_dq, "C");
+    builder.AddQuantizeLinearNode<uint8_t>("shuffle_in_q", "C", qp.scale, qp.zero_point, "Cq");
+    builder.AddNode("Shuffle", "DepthToSpace", {"Cq"}, {"Sq"}, kOnnxDomain, shuffle_attrs);
+    builder.AddDequantizeLinearNode<uint8_t>("shuffle_out_dq", "Sq",
+                                               output_qparams[0].scale, output_qparams[0].zero_point, "Y");
+    builder.MakeOutput("Y");
+  };
+
+  TestQDQModelAccuracy(f32_fn, qdq_fn, provider_options, /*opset*/ 13, ExpectedEPNodeAssignment::All);
 }
 
 // Test float32 SpaceToDepth on HTP.
@@ -1179,27 +1153,6 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthOp_U16) {
                          ExpectedEPNodeAssignment::All,
                          kOnnxDomain,  // Op's domain
                          true);        // Use com.microsoft domain for Q/DQ ops
-}
-
-// Test QDQ SpaceToDepth with quantized tensor input (Conv -> Q -> SpaceToDepth -> DQ).
-TEST_F(QnnHTPBackendTests, SpaceToDepthOp_QuantizedInput) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  const std::vector<float> X = {0.0f, 0.1f, 0.2f, 0.3f,
-                                1.0f, 1.1f, 1.2f, 1.3f,
-
-                                2.0f, 2.1f, 2.2f, 2.3f,
-                                3.0f, 3.1f, 3.2f, 3.3f};
-  const TestInputDef<float> input_def({1, 2, 2, 4}, false, X);
-  const std::vector<ONNX_NAMESPACE::AttributeProto> shuffle_attrs =
-      {test::MakeAttribute("blocksize", static_cast<int64_t>(2))};
-  TestQDQModelAccuracy(BuildF32ConvShuffleTestCase(input_def, {2, 2, 1, 1}, "SpaceToDepth", shuffle_attrs),
-                       BuildConvShuffleQDQTestCase<uint8_t>(input_def, {2, 2, 1, 1}, "SpaceToDepth", shuffle_attrs),
-                       provider_options,
-                       /*opset*/ 11,
-                       ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, QuantAccuracyTest) {
