@@ -390,6 +390,21 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_SingleContext_NoSwap
   EXPECT_EQ(pos_list[0], 0);  // no swap needed
 }
 
+TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_NegativeValueReturnsError) {
+  CtxHelperTestContext ctx;
+  FakeOpAttr max_size_attr = FakeOpAttr::MakeInt64(MAX_SIZE, -1);
+  FakeNode ep_ctx{"e", "EPContext", "", 1, {}, {}};
+  ep_ctx.attrs[MAX_SIZE] = &max_size_attr;
+  FakeGraph g{{ep_ctx}, {}, {}, {}};
+  const OrtGraph* graphs[] = {g.AsGraph()};
+  std::vector<int> pos_list = {0};
+  int64_t max_size = 0;
+
+  auto status = TryGetMaxSpillFillSize(graphs, ctx.api, 1, max_size, pos_list);
+
+  EXPECT_FALSE(status.IsOK());
+}
+
 TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_SecondContextLarger_SwapsToFront) {
   CtxHelperTestContext ctx;
   // g0: MAX_SIZE=50, g1: MAX_SIZE=200. pos_list=[0,1] → after swap: [1,0].

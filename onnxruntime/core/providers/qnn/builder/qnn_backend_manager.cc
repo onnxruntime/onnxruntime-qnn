@@ -30,6 +30,7 @@
 #include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_model.h"
+#include "core/providers/qnn/builder/qnn_spill_fill_utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_ep_profiler.h"
@@ -1886,8 +1887,7 @@ Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
   }
 
   max_spill_fill_buffer_size = 0;
-  // spill fill starts from 2.28
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+#ifdef QNN_HTP_SPILL_FILL_BUFFER_AVAILABLE
   auto sys_ctx_handle = GetSystemContextHandle();
   RETURN_IF(sys_ctx_handle == nullptr, "System context handle is null.");
 
@@ -1900,25 +1900,7 @@ Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
                                             blob_version,
                                             graph_count,
                                             &graphs_info));
-
-  for (uint32_t i = 0; i < graph_count; ++i) {
-    if (graphs_info[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
-      auto htp_graph_info = reinterpret_cast<QnnHtpSystemContext_GraphBlobInfo_t*>(graphs_info[i].graphInfoV3.graphBlobInfo);
-      if (htp_graph_info->version == QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_VERSION_V1) {
-        auto spill_fill_buffer_size = htp_graph_info->contextBinaryGraphBlobInfoV1.spillFillBufferSize;
-        max_spill_fill_buffer_size = spill_fill_buffer_size > max_spill_fill_buffer_size ? spill_fill_buffer_size : max_spill_fill_buffer_size;
-      } else {
-        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Unknown context binary graph info blob version.");
-      }
-    } else if (graphs_info[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_2 ||
-               graphs_info[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_VERBOSE,
-                      "Skip retrieve spill file buffer size, it is not supported with graph info v1 & v2.");
-    } else {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Unknown context binary graph info version.");
-    }
-  }
+  max_spill_fill_buffer_size = GetMaxSpillFillBufferSizeFromGraphInfo(graphs_info, graph_count);
 #else
   ORT_UNUSED_PARAMETER(buffer);
   ORT_UNUSED_PARAMETER(buffer_length);
@@ -1934,7 +1916,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     const std::string& context_bin_filepath,
     std::string node_name,
     std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
-    int64_t max_spill_fill_size,
+    int64_t group_max_spill_fill_size,
+    int64_t declared_max_spill_fill_size,
     const qnn::EpContextIoDispatch& io_dispatch,
     bool is_multi_soc_buffer) {
   bool result = nullptr == qnn_sys_interface_.systemContextCreate ||
@@ -1974,6 +1957,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   Qnn_Version_t blob_version = {0, 0, 0};
   uint32_t graph_count = 0;
   QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
+  uint64_t derived_max_spill_fill_size = 0;
   if (!is_multi_soc_buffer) {
     RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
                                               bin_buffer,
@@ -1981,10 +1965,14 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
                                               blob_version,
                                               graph_count,
                                               &graphs_info));
+    derived_max_spill_fill_size = GetMaxSpillFillBufferSizeFromGraphInfo(graphs_info, graph_count);
   } else {
     auto system_dlc_plugin = std::make_unique<QnnBackendSystemDlcPlugin>(this);
     RETURN_IF_ERROR(system_dlc_plugin->SetupDlcFromBinary(static_cast<const uint8_t*>(bin_buffer), buffer_length));
     RETURN_IF_ERROR(system_dlc_plugin->GetDlcBinaryInfo(sys_ctx_handle.get(), blob_version, graph_count, &graphs_info));
+    // The serialized max_size is generated across every DLC record. Match that scope here,
+    // rather than the most-optimal record used to deserialize the current context.
+    RETURN_IF_ERROR(system_dlc_plugin->GetDlcMaxSpillFillBufferSize(derived_max_spill_fill_size));
     RETURN_IF_ERROR(system_dlc_plugin->Release());
   }
 
@@ -2001,6 +1989,11 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
   RETURN_IF(graph_count < 1 || graphs_info == nullptr, "Failed to get graph info from Qnn cached context.");
 
+  // Validate each node's declaration against the binary it carries before the value
+  // is used for group registration or copied into SSR recovery state.
+  RETURN_IF_ERROR(ValidateSpillFillBufferSize(declared_max_spill_fill_size, derived_max_spill_fill_size));
+  const size_t current_contexts_size = GetQnnContextSize();
+
   ORT_CXX_LOG_PTR(logger_ptr_,
                   ORT_LOGGING_LEVEL_VERBOSE,
                   ("Graph count from QNN context: " + std::to_string(graph_count)).c_str());
@@ -2016,15 +2009,14 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   } else {
 #endif
     // Join the existing spill-fill group if one exists; otherwise start a new one.
-    size_t current_contexts_size = GetQnnContextSize();
     Qnn_ContextHandle_t first_group_handle =
-        (max_spill_fill_size > 0 && current_contexts_size > 0) ? GetQnnContext(0) : 0x0;
+        (group_max_spill_fill_size > 0 && current_contexts_size > 0) ? GetQnnContext(0) : 0x0;
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
-                    ("Max spill fill buffer size: " + std::to_string(max_spill_fill_size)).c_str());
+                    ("Max spill fill buffer size: " + std::to_string(group_max_spill_fill_size)).c_str());
 
     QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> configs_builder(
         QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
-    RETURN_IF_ERROR(BuildContextBinaryConfigs(max_spill_fill_size, first_group_handle, configs_builder));
+    RETURN_IF_ERROR(BuildContextBinaryConfigs(group_max_spill_fill_size, first_group_handle, configs_builder));
 
     qnn::profile::ProfilingInfo profiling_info;
     qnn::QnnProfilingScope profiling_scope;
@@ -2068,7 +2060,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   // Seed recovery info for embed_mode=0 so ExecuteGraph can reload after SSR.
   if (!context_bin_filepath.empty()) {
     for (auto& [name, model] : qnn_models) {
-      model->SetContextRecoveryInfo(context_bin_filepath, max_spill_fill_size, context_priority_);
+      model->SetContextRecoveryInfo(context_bin_filepath, group_max_spill_fill_size, context_priority_);
     }
   }
 

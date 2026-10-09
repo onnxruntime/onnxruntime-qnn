@@ -26,6 +26,13 @@ namespace qnn {
 #define QNN_SYSTEM_PROFILE_API_ENABLED
 #endif
 
+// HTP spill-fill metadata and multi-context group registration are available from QNN API 2.21
+// (QAIRT 2.28). Keep this forward-compatible with future major API versions.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 21)
+#define QNN_HTP_SPILL_FILL_BUFFER_AVAILABLE
+#endif
+
 #if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
 #define QNN_SYSTEM_DLC_API_ENABLED
 #endif  // QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
