@@ -162,16 +162,19 @@ TEST(QnnUnit_EpUtilsTest, Unary_AcceptsUint8) {
 
 TEST(QnnUnit_EpUtilsTest, Unary_RejectsTypeMismatch) {
   EpUtilsTestContext ctx;
-  // DQ input = UINT8, Q output = INT8 — types differ, so the check fails
+  // DQ input = UINT8, Q output = INT8 — types differ. Softmax isn't Convert-compatible
+  // (see IsConvertCompatibleUnaryOp), so the mismatch is rejected rather than bridged.
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
-  FakeNode main_node{"relu", "Relu", "", 13, {}, {&main_out}};
+  FakeNode main_node{"softmax", "Softmax", "", 13, {}, {&main_out}};
 
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
 
+  // The dtype-mismatch branch calls Ort::ConstNode(node).GetOperatorType(), which needs the global API.
+  OrtGlobalApiOverride global_guard(&ctx.api);
   OrtUnaryNodeGroupSelector sel;
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
                          {dq.AsNode()}, {q.AsNode()}));
@@ -235,7 +238,34 @@ TEST(QnnUnit_EpUtilsTest, Binary_AcceptsTwoUint8Dqs) {
 
 TEST(QnnUnit_EpUtilsTest, Binary_RejectsMixedTypes) {
   EpUtilsTestContext ctx;
-  // dq1 = UINT8, dq2 = INT8 — types mismatch
+  // dq1 = UINT8, dq2 = INT8 — types mismatch. Equal isn't Convert-compatible (see
+  // IsConvertCompatibleBinaryOp), so the mismatch is rejected rather than bridged.
+  FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
+  FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
+  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in2}, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeNode main_node{"equal", "Equal", "", 13, {}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  // The dtype-mismatch branch calls Ort::ConstNode(node).GetOperatorType(), which needs the global API.
+  OrtGlobalApiOverride global_guard(&ctx.api);
+  OrtBinaryNodeGroupSelector sel;
+  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+}
+
+// dq1 = UINT8, dq2 = INT8 — same bitwidth, differing signedness. Unlike Binary_RejectsMixedTypes,
+// Add IS Convert-compatible (see IsConvertCompatibleBinaryOp) and both types are convertible
+// fixed-point types, so the selector accepts the group; AlignBinaryInputPrecision (op-builder side)
+// leaves the inputs untouched since same-width signedness mismatches aren't Converted (see
+// mixed_precision_convert_utils.cc), and QNN op validation is the arbiter of whether Add accepts
+// the mismatched-signedness pair natively.
+TEST(QnnUnit_EpUtilsTest, Binary_AcceptsSameWidthSignednessMismatch) {
+  EpUtilsTestContext ctx;
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
   FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
@@ -247,9 +277,10 @@ TEST(QnnUnit_EpUtilsTest, Binary_RejectsMixedTypes) {
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
 
+  OrtGlobalApiOverride global_guard(&ctx.api);
   OrtBinaryNodeGroupSelector sel;
-  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
-                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+  EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                        {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
 // =============================================================================
