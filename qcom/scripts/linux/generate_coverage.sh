@@ -43,18 +43,22 @@ skip_accuracy=false
 #     tests + any other Qnn suite. Defined by EXCLUSION so new suites land here
 #     automatically. Non-zero exit fails this script.
 #   - snapshot phase (NON-gating): re-runs the migrated ops through the builder and
-#     compares the emitted graph against goldens (the QnnSnapshot_*_OpBuilder* /
-#     QnnSnapshot_*_Session* suites). It re-exercises the full builder path so
-#     it contributes builder coverage. A golden byte-mismatch, missing golden,
-#     skipped testcase, or snapshot setup/assert failure marks that op group as
-#     unverified, but does NOT directly fail this script when matching accuracy
-#     tests are present. The snapshot JSON report is consumed after coverage
-#     capture to identify those unverified groups.
-#   - accuracy phase (GATING): QnnAcc_* — the numerical-correctness
-#     gate. Non-zero exit fails this script. Today this runs unconditionally
-#     (safe baseline: no golden store yet, so every case runs). When snapshot is
-#     unverified, the script also checks that the affected op group has a matching
-#     accuracy suite; otherwise setup fails because correctness would not be gated.
+#     compares the emitted graph against goldens (the QnnSnapshot_* suites). It re-exercises the full builder path so
+#     it contributes builder coverage. A golden byte-mismatch (graph-structure
+#     drift) logs a warning but does NOT fail this script: structure drift is a
+#     routing signal for the accuracy tier, not a build failure. Writes a gtest
+#     JSON report that the accuracy-routing gate (accuracy_gate.py) reads
+#     per-case to decide which accuracy tests to route. It MUST run before
+#     accuracy.
+#   - accuracy phase (GATING): a subset of QnnAcc_* — the
+#     numerical-correctness gate. Non-zero exit fails this script. The run-set is
+#     computed by accuracy_gate.py from the snapshot JSON above + the golden
+#     store's version manifest ($QNN_UT_SNAPSHOT_GOLDEN_DIR/manifest.json): skip
+#     a case only when its paired snapshot passed AND the manifest version
+#     matches the current QAIRT version; run the rest. If the gate cannot decide
+#     (no snapshot JSON, no/absent manifest, or any gate error) it falls back to
+#     the safe baseline "QnnAcc_*" (run everything) so coverage is
+#     never silently dropped.
 #
 # Note on coverage attribution: accuracy runs the same session-compile builder
 # path as the snapshot phase, so it adds ~0 builder coverage (measured on
@@ -68,8 +72,9 @@ skip_accuracy=false
 # prefix each with its own '-', or they become literal, never-matching patterns).
 component_filter="*Qnn*:-QnnSnapshot_*:QnnAcc_*"
 snapshot_filter="QnnSnapshot_*"
-# Safe baseline: run every accuracy test. Once the golden-version gate exists it
-# replaces this constant with a run-set computed from the snapshot JSON report.
+# Default accuracy filter: the safe baseline (run every accuracy test). Replaced
+# at runtime by accuracy_gate.py's computed run-set when a snapshot JSON exists;
+# retained verbatim as the fallback whenever the gate cannot decide.
 accuracy_filter="QnnAcc_*"
 
 for arg in "$@"; do
@@ -112,10 +117,11 @@ Default (no --test-filter): tests run in three separately-tracked phases whose
   snapshot : ${snapshot_filter}
   accuracy : ${accuracy_filter}
 The phases are ordered by a data dependency (component -> snapshot -> accuracy):
-the snapshot JSON identifies unverified groups, and those groups must have
-matching accuracy tests. Coverage is captured once after all phases. The component and
+the accuracy-routing gate (accuracy_gate.py) reads the snapshot JSON to route
+accuracy, so snapshot must precede it. Coverage is captured once after all phases. The component and
 accuracy phases GATE (non-zero exit on failure); the snapshot phase is NON-gating
-when matching accuracy tests are present.
+(a golden mismatch only logs a warning — drift is a routing signal, not a build
+failure).
 EOF
             exit 0
             ;;
@@ -215,7 +221,7 @@ rm -f "${build_dir}/${config}/coverage_lcov.info" \
 # lcov --capture below sees all of them. Each phase's exit code is tracked
 # separately so we can report which phase failed while still emitting one merged
 # report. An optional third arg to run_test_phase requests a gtest JSON report
-# (the snapshot phase writes one so a future accuracy-routing gate can route accuracy per-case).
+# (the snapshot phase writes one so the accuracy-routing gate can route accuracy per-case).
 # ---------------------------------------------------------------------------
 run_test_phase() {
     local phase_name="$1"
@@ -226,6 +232,17 @@ run_test_phase() {
     (
         cd "${build_dir}/${config}"
         export LD_LIBRARY_PATH="${build_dir}/${config}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+        if [ "${phase_name}" = "snapshot" ]; then
+            if [ -z "${QNN_UT_SNAPSHOT_GOLDEN_DIR:-}" ]; then
+                log_warn "Snapshot tests have no golden store configured; accuracy will use the full-run fallback."
+            elif [ ! -f "${QNN_UT_SNAPSHOT_GOLDEN_DIR}/manifest.json" ]; then
+                log_warn "Snapshot golden manifest is unavailable from test working directory $(pwd): ${QNN_UT_SNAPSHOT_GOLDEN_DIR}/manifest.json"
+            else
+                log_info "Snapshot test working directory: $(pwd)"
+                log_info "Snapshot tests using golden store: ${QNN_UT_SNAPSHOT_GOLDEN_DIR}"
+                log_info "Snapshot golden manifest: ${QNN_UT_SNAPSHOT_GOLDEN_DIR}/manifest.json"
+            fi
+        fi
         if [ -n "${json_out}" ]; then
             ./onnxruntime_provider_test --gtest_filter="${filter}" --gtest_output="json:${json_out}"
         else
@@ -238,148 +255,110 @@ run_test_phase() {
     return "${rc}"
 }
 
-# Snapshot gating rule for coverage CI:
-#   - Clean snapshot pass is only used as an accuracy-skip signal.
-#   - Any unverified snapshot state (drift, missing golden, setup/assert failure,
-#     or missing snapshot JSON) falls back to accuracy instead of enforcing zero
-#     graph diff.
-#   - The only setup failure is an unverified snapshot group without a matching
-#     QnnAcc_<Op>_Accuracy* test, because then correctness is not gated.
-extract_unverified_snapshot_groups() {
-    local snapshot_json="$1"
-    python3 - "${snapshot_json}" <<'PY'
-import json
-import re
-import sys
-
-snapshot_json = sys.argv[1]
-pattern = re.compile(r"^QnnSnapshot_(.+?)_(?:OpBuilder|Session)(?:_\w+)?Test$")
-
-with open(snapshot_json, encoding="utf-8") as f:
-    data = json.load(f)
-
-
-def contains_marker(value, marker):
-    if isinstance(value, dict):
-        return any(contains_marker(v, marker) for v in value.values())
-    if isinstance(value, list):
-        return any(contains_marker(v, marker) for v in value)
-    return marker in str(value)
-
-
-def suite_has_skipped_test(suite):
-    if suite.get("skipped", 0) > 0:
-        return True
-    for testcase in suite.get("testsuite", []):
-        if str(testcase.get("result", "")).upper() == "SKIPPED":
-            return True
-        if str(testcase.get("status", "")).upper() == "SKIPPED":
-            return True
-    return False
-
-
-def suite_is_unverified(suite):
-    return (
-        suite.get("failures", 0) > 0
-        or suite.get("errors", 0) > 0
-        or contains_marker(suite, "QNN_SNAPSHOT_DRIFT")
-        or contains_marker(suite, "QNN_GOLDEN_ABSENT")
-        or suite_has_skipped_test(suite)
-    )
-
-
-ops = set()
-for suite in data.get("testsuites", []):
-    match = pattern.match(suite.get("name", ""))
-    if match and suite_is_unverified(suite):
-        ops.add(match.group(1))
-
-print(",".join(sorted(ops)))
-PY
-}
-
-extract_snapshot_groups_from_gtest_list() {
-    local list_file="$1"
-    python3 - "${list_file}" <<'PY'
-import re
-import sys
-
-list_file = sys.argv[1]
-pattern = re.compile(r"^QnnSnapshot_(.+?)_(?:OpBuilder|Session)(?:_\w+)?Test$")
-
-ops = set()
-with open(list_file, encoding="utf-8") as f:
-    for line in f:
-        name = line.strip()
-        if not name.endswith("."):
-            continue
-        match = pattern.match(name[:-1])
-        if match:
-            ops.add(match.group(1))
-
-print(",".join(sorted(ops)))
-PY
-}
-
-list_snapshot_groups_from_binary() {
-    (
-        cd "${build_dir}/${config}"
-        export LD_LIBRARY_PATH="${build_dir}/${config}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-        ./onnxruntime_provider_test --gtest_list_tests --gtest_filter="${snapshot_filter}" > "${snapshot_list}"
-    )
-    extract_snapshot_groups_from_gtest_list "${snapshot_list}"
-}
-
-assert_accuracy_exists_for_groups() {
-    local groups="$1"
-    local missing=""
-    IFS=',' read -ra group_array <<< "${groups}"
-    for group in "${group_array[@]}"; do
-        local probe
-        probe=$(
-            cd "${build_dir}/${config}" &&
-                export LD_LIBRARY_PATH="${build_dir}/${config}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" &&
-                ./onnxruntime_provider_test --gtest_list_tests --gtest_filter="QnnAcc_${group}_Accuracy*Test.*" 2>/dev/null || true
-        )
-        if [ -z "${probe}" ]; then
-            if [ -n "${missing}" ]; then
-                missing+=","
-            fi
-            missing+="${group}"
-        fi
-    done
-    if [ -n "${missing}" ]; then
-        die "No matching QnnAcc_<Op>_Accuracy* tests found for unverified snapshot groups: ${missing}. Coverage report was still generated at ${output_dir}."
-    fi
-}
-
-# Snapshot-phase JSON report path. The normal CI path below runs the three-phase
-# flow and consumes this file to identify unverified snapshot groups.
-# Holds the QnnSnapshot_*_OpBuilder* / QnnSnapshot_*_Session* per-case results.
+# Snapshot-phase JSON report path. The accuracy-routing gate reads it per-case to
+# decide which accuracy tests to run. Holds QnnSnapshot_* per-case results.
 snapshot_json="${build_dir}/${config}/snapshot_results.json"
-snapshot_list="${build_dir}/${config}/snapshot_tests.txt"
-rm -f "${snapshot_json}" "${snapshot_list}"
+
+# Accuracy-routing gate artifacts.
+gate_script="${REPO_ROOT}/qcom/scripts/linux/accuracy_gate.py"
+version_resolver="${REPO_ROOT}/qcom/scripts/linux/resolve_tool_versions.sh"
+accuracy_list_file="${build_dir}/${config}/accuracy_list.txt"
+accuracy_filter_file="${build_dir}/${config}/accuracy_filter.txt"
+gate_summary_file="${build_dir}/${config}/accuracy_gate_summary.txt"
+
+# These are routing inputs, not durable reports. Remove all prior-run data before
+# snapshot starts: if snapshot fails before producing fresh JSON, the gate must
+# see the missing file and select the full-accuracy fallback.
+rm -f "${snapshot_json}" \
+      "${accuracy_list_file}" \
+      "${accuracy_filter_file}" \
+      "${gate_summary_file}"
+
+# Compute the accuracy run-set from the snapshot JSON + golden manifest and echo
+# the resulting gtest filter to stdout. The golden store root is $QNN_UT_SNAPSHOT_GOLDEN_DIR
+# (same var the snapshot tests read); an empty/absent manifest there means
+# version-mismatch => full run. On ANY failure (no snapshot JSON, list-tests
+# error, gate error, empty filter) this echoes the safe baseline "QnnAcc_*"
+# so a gate malfunction never silently drops accuracy coverage. All diagnostics go
+# to stderr (log_* write to fd 2) so they never contaminate the captured filter.
+compute_accuracy_filter() {
+    local fallback="QnnAcc_*"
+    if [ ! -f "${snapshot_json}" ]; then
+        log_warn "Accuracy gate: snapshot JSON ${snapshot_json} absent — running all accuracy tests."
+        echo "${fallback}"
+        return 0
+    fi
+    local resolved_versions qairt_version="" ort_version=""
+    if resolved_versions="$("${version_resolver}" --bin-dir="${build_dir}/${config}" both 2>/dev/null)"; then
+        while IFS="=" read -r key value; do
+            case "${key}" in
+                qairt) qairt_version="${value}" ;;
+                ort) ort_version="${value}" ;;
+            esac
+        done <<< "${resolved_versions}"
+    fi
+    if [ -n "${qairt_version}" ] && [ -n "${ort_version}" ]; then
+        log_info "Accuracy gate: resolved current versions qairt=${qairt_version}, ort=${ort_version}."
+    else
+        log_warn "Accuracy gate: current QAIRT/ORT version could not be resolved; full accuracy fallback remains active."
+    fi
+
+    # Enumerate the accuracy universe. The gate is pure Python and never invokes the
+    # binary itself, so we hand it the --gtest_list_tests output here.
+    if ! ( cd "${build_dir}/${config}"
+           export LD_LIBRARY_PATH="${build_dir}/${config}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+           ./onnxruntime_provider_test --gtest_filter='QnnAcc_*' --gtest_list_tests
+         ) > "${accuracy_list_file}" 2>/dev/null; then
+        log_warn "Accuracy gate: --gtest_list_tests failed — running all accuracy tests."
+        echo "${fallback}"
+        return 0
+    fi
+    if ! QNN_UT_QAIRT_VERSION="${qairt_version}" QNN_UT_ORT_VERSION="${ort_version}" python3 "${gate_script}" \
+            --snapshot-json="${snapshot_json}" \
+            --golden-root="${QNN_UT_SNAPSHOT_GOLDEN_DIR:-}" \
+            --accuracy-list-file="${accuracy_list_file}" \
+            --emit-filter-file="${accuracy_filter_file}" \
+            --emit-summary-file="${gate_summary_file}" >/dev/null; then
+        log_warn "Accuracy gate: accuracy_gate.py failed — running all accuracy tests."
+        echo "${fallback}"
+        return 0
+    fi
+    local computed
+    computed="$(head -1 "${accuracy_filter_file}" 2>/dev/null || true)"
+    if [ -z "${computed}" ]; then
+        log_warn "Accuracy gate: empty filter produced — running all accuracy tests."
+        echo "${fallback}"
+        return 0
+    fi
+    echo "${computed}"
+}
 
 comp_exit=0
 snapshot_exit=0
 accuracy_exit=0
 
 if [ -n "${test_filter}" ]; then
-    # Legacy single-phase override. Reuse comp_exit as the single gating phase
-    # result because this path intentionally bypasses the three-phase split.
+    # Legacy single-phase override.
     run_test_phase "filtered" "${test_filter}" || comp_exit=$?
 else
     run_test_phase "component" "${component_filter}" || comp_exit=$?
     if [ "${skip_snapshot}" = true ]; then
         log_info "--- Skipping snapshot phase (--skip-snapshot) ---"
     else
-        # Snapshot MUST run before accuracy: its JSON decides which accuracy
-        # cases remain required when snapshot cannot be used as the skip signal.
+        # Snapshot MUST run before accuracy: the accuracy-routing gate reads
+        # this JSON to decide which accuracy cases to route.
         run_test_phase "snapshot" "${snapshot_filter}" "${snapshot_json}" || snapshot_exit=$?
     fi
     if [ "${skip_accuracy}" = true ]; then
         log_info "--- Skipping accuracy phase (--skip-accuracy) ---"
     else
+        # Route accuracy per-case from the snapshot results + golden manifest. Only
+        # when snapshot actually ran this invocation; if it was skipped the JSON may
+        # be stale/absent, so keep the safe full-run baseline.
+        if [ "${skip_snapshot}" != true ]; then
+            accuracy_filter="$(compute_accuracy_filter)"
+            log_info "--- Accuracy gate selected filter: ${accuracy_filter} ---"
+        fi
         run_test_phase "accuracy" "${accuracy_filter}" || accuracy_exit=$?
     fi
 fi
@@ -466,33 +445,37 @@ cp "${REPO_ROOT}/qcom/scripts/linux/coverage_artifact_README.md" \
 log_info "README       : ${output_dir}/README.md"
 
 # ---------------------------------------------------------------------------
+# Accuracy-routing gate summary (developer-facing). Printed after the report so
+# it is the last actionable thing in the log; also appended to
+# $GITHUB_STEP_SUMMARY on CI. Absent when the gate fell back to a full run.
+# ---------------------------------------------------------------------------
+if [ -f "${gate_summary_file}" ]; then
+    cat "${gate_summary_file}"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+        {
+            echo '```'
+            cat "${gate_summary_file}"
+            echo '```'
+        } >> "${GITHUB_STEP_SUMMARY}"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Propagate test failure after coverage report has been generated.
 #
 # The component and accuracy phases GATE (non-zero exit fails this script). The
-# snapshot phase is not a correctness gate; it is an accuracy-skip signal. Any
-# unverified snapshot result falls back to accuracy. The only setup failure is
-# when an unverified snapshot group has no matching accuracy test.
+# snapshot phase is NON-gating: a golden byte-mismatch means the graph
+# structure drifted, which is allowed to land (goldens may go stale on main; a
+# nightly job reconciles them). Drift is a routing signal for accuracy, and
+# numerical correctness is enforced by the accuracy phase above.
 # ---------------------------------------------------------------------------
 if [ "${snapshot_exit}" -ne 0 ]; then
+    log_warn "snapshot phase exited ${snapshot_exit} — graph-structure drift detected."
+    log_warn "This is NON-gating. Run run_snapshot_accuracy.sh to verify numerical correctness,"
+    log_warn "and --generate-goldens once the new structure is accepted."
     if [ "${skip_accuracy}" = true ]; then
-        die "Snapshot phase was unverified (exit ${snapshot_exit}) but accuracy was skipped. Coverage report was still generated at ${output_dir}."
+        die "Snapshot test phase failed while accuracy was skipped; no numerical correctness gate ran. Coverage report was still generated at ${output_dir}."
     fi
-
-    if [ -f "${snapshot_json}" ]; then
-        unverified_snapshot_groups=$(extract_unverified_snapshot_groups "${snapshot_json}" 2>/dev/null) || true
-    else
-        log_warn "snapshot phase exited ${snapshot_exit} and did not produce ${snapshot_json}."
-        log_warn "Treating all in-scope snapshot groups as unverified."
-        unverified_snapshot_groups=$(list_snapshot_groups_from_binary 2>/dev/null) || true
-    fi
-
-    if [ -z "${unverified_snapshot_groups}" ]; then
-        die "Snapshot phase was unverified (exit ${snapshot_exit}) but no affected groups could be identified. Coverage report was still generated at ${output_dir}."
-    fi
-
-    assert_accuracy_exists_for_groups "${unverified_snapshot_groups}"
-    log_warn "snapshot phase exited ${snapshot_exit}; treating groups (${unverified_snapshot_groups}) as unverified."
-    log_warn "This is NON-gating because matching accuracy tests ran as the numerical gate."
 fi
 
 if [ "${comp_exit}" -ne 0 ] && [ "${accuracy_exit}" -ne 0 ]; then
