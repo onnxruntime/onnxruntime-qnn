@@ -296,6 +296,17 @@ TEST_F(QnnUnit_ExecutionProviderTest, DefaultCtor_Succeeds) {
   ASSERT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, CreateAllocator_NullMemoryInfo_ReturnsNullAllocator) {
+  EpStubContext ctx;
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+  auto* ep_ptr = static_cast<OrtEp*>(ep.get());
+
+  OrtAllocator* allocator = reinterpret_cast<OrtAllocator*>(kFakeToken);
+  EXPECT_EQ(ep_ptr->CreateAllocator(ep_ptr, nullptr, &allocator), nullptr);
+  EXPECT_EQ(allocator, nullptr);
+}
+
 // ===========================================================================
 // Group 2: GetNameImpl
 // ===========================================================================

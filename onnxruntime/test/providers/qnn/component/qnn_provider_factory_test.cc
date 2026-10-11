@@ -508,6 +508,16 @@ TEST_F(QnnUnit_ProviderFactoryTest, CreateAllocator_HostAccessible_DoesNotLoadRp
   factory.ReleaseAllocator(&factory, allocator);
 }
 
+TEST_F(QnnUnit_ProviderFactoryTest, CreateAllocator_NullMemoryInfo_ReturnsNullAllocator) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  OrtAllocator* allocator = reinterpret_cast<OrtAllocator*>(kFakeToken);
+  EXPECT_EQ(factory.CreateAllocator(&factory, nullptr, nullptr, &allocator), nullptr);
+  EXPECT_EQ(allocator, nullptr);
+}
+
 TEST_F(QnnUnit_ProviderFactoryTest, ReleaseEp_NullPointer_NoCrash) {
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);

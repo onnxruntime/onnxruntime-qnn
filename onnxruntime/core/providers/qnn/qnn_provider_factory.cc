@@ -434,6 +434,10 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateAllocatorImpl(_In_ OrtEpFactory* thi
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
   *allocator = nullptr;
 
+  if (memory_info == nullptr) {
+    return nullptr;
+  }
+
   OrtDeviceMemoryType mem_type = factory->ort_api.MemoryInfoGetDeviceMemType(memory_info);
   if (mem_type != OrtDeviceMemoryType_HOST_ACCESSIBLE) {
     return nullptr;

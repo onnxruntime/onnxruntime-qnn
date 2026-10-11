@@ -3583,6 +3583,10 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
+  if (memory_info == nullptr) {
+    return nullptr;
+  }
+
 #ifdef _WIN32
   const auto create_dx12_allocator = [&]() -> OrtStatus* {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
