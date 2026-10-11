@@ -657,7 +657,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_WrongOpType_Return
   CtxHelperTestContext ctx;
   FakeNode node{"relu", "Relu", "", 13, {}, {}};
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0,
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
                                          qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
 }
@@ -669,7 +669,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedEmptyPath_
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
   node.attrs[EMBED_MODE] = &embed_mode;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0,
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
                                          qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
   // Pin the specific guard: without this the terminal is_regular_file() check
@@ -683,12 +683,16 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedAbsolutePa
   // embed_mode=0, path starts with '/' → rejected by the absolute-path guard.
   CtxHelperTestContext ctx;
   FakeOpAttr embed_mode = FakeOpAttr::MakeInt64(EMBED_MODE, 0);
+#ifdef _WIN32
+  FakeOpAttr cache_ctx = FakeOpAttr::MakeString(EP_CACHE_CONTEXT, "C:\\absolute\\path.bin");
+#else
   FakeOpAttr cache_ctx = FakeOpAttr::MakeString(EP_CACHE_CONTEXT, "/absolute/path.bin");
+#endif
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
   node.attrs[EMBED_MODE] = &embed_mode;
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0,
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
                                          qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
   // Pin the absolute-path (directory-traversal) guard: removing it lets the
@@ -707,7 +711,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedDotDotPath
   node.attrs[EMBED_MODE] = &embed_mode;
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0,
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
                                          qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
   // Pin the ".." guard by both code and message. Removing it lets the path
@@ -729,7 +733,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedFileNotFou
   node.attrs[EMBED_MODE] = &embed_mode;
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, "/model.onnx", nullptr, models, 0,
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
                                          qnn::EpContextIoDispatch(nullptr));
   EXPECT_FALSE(status.IsOK());
 }
@@ -767,12 +771,15 @@ MultiSocAttrCapture g_multi_soc_capture;
 struct CreateEpCtxNodeTestContext {
   Ort::Logger logger = MakeNullLogger();
   OrtApi ort_api{};
+  OrtGlobalApiOverride global_guard{&ort_api};
   OrtEpApi ep_api{};
   OrtModelEditorApi editor_api{};
   std::shared_ptr<qnn::QnnBackendManager> manager;
   std::unique_ptr<qnn::QnnModel> model;
 
   CreateEpCtxNodeTestContext() {
+    InstallFakeGraphApiStubs(ort_api);
+
     ort_api.Node_GetName = [](const OrtNode*, const char** name) noexcept -> OrtStatus* {
       *name = "graph_0";
       return nullptr;
@@ -798,7 +805,7 @@ struct CreateEpCtxNodeTestContext {
     };
 
     qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnHtp.so";
+    cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;

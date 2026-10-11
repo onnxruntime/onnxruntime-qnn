@@ -1817,6 +1817,18 @@ Ort::Status TransposeFromCnhwToHwcn(std::vector<int64_t>&& original_input_shape_
 
 // Inserts a QNN Convert operator to convert from one quantization type (e.g., uint16) to another (e.g., uint8).
 // (OR) Convert from Asymmetric (e.g., UINT16) to Symmetric (e.g., INT16) quantization type
+Ort::Status DeriveScaleOffsetForDtype(Qnn_DataType_t from_dtype, int32_t from_offset, float from_scale,
+                                      Qnn_DataType_t to_dtype, bool to_symmetric,
+                                      float& to_scale, int32_t& to_offset) {
+  float qmin = 0.0f;
+  float qmax = 255.0f;
+  RETURN_IF_ERROR(qnn::utils::GetQminQmax(from_dtype, qmin, qmax));
+  const double value_min = qnn::utils::Dequantize(from_offset, from_scale, qmin);
+  const double value_max = qnn::utils::Dequantize(from_offset, from_scale, qmax);
+  return qnn::utils::GetQuantParams(static_cast<float>(value_min), static_cast<float>(value_max),
+                                    to_dtype, to_scale, to_offset, to_symmetric);
+}
+
 Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             const std::string& convert_input_name,
                             const std::string& convert_output_name,
@@ -1828,19 +1840,10 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             bool output_symmetric,
                             bool do_op_validation) {
   // Assume input is already handled.
-  float qmin = 0.0f;
-  float qmax = 255.0f;
-  RETURN_IF_ERROR(qnn::utils::GetQminQmax(input_qnn_data_type, qmin, qmax));
-  double value_min = qnn::utils::Dequantize(input_offset, input_scale, qmin);
-  double value_max = qnn::utils::Dequantize(input_offset, input_scale, qmax);
   float scale = 0.0f;
   int32_t offset = 0;
-  RETURN_IF_ERROR(qnn::utils::GetQuantParams(static_cast<float>(value_min),
-                                             static_cast<float>(value_max),
-                                             output_qnn_data_type,
-                                             scale,
-                                             offset,
-                                             output_symmetric));
+  RETURN_IF_ERROR(DeriveScaleOffsetForDtype(input_qnn_data_type, input_offset, input_scale,
+                                            output_qnn_data_type, output_symmetric, scale, offset));
 
   std::vector<uint32_t> output_shape_copy = output_shape;
   QnnTensorWrapper convert_output_tensorwrapper(convert_output_name,
@@ -1858,11 +1861,6 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                                                 do_op_validation),
                 "Failed to add node.");
   return Ort::Status();
-}
-
-static bool IsNarrowingQuantOutput(Qnn_DataType_t activation_qnn_data_type, Qnn_DataType_t output_qnn_data_type) {
-  return IsQuant16bit(activation_qnn_data_type) &&
-         (output_qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 || output_qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8);
 }
 
 // Every output level maps onto an intermediate level, so the Convert only drops the extra precision and the

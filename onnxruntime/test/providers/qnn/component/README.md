@@ -6,14 +6,14 @@ Tests in `onnxruntime/test/providers/qnn/` have historically been integration te
 
 The `component/` subdirectory is the **component tier** in the tier-based test layout:
 function-level and component-level white-box tests that target the internal logic of the
-QNN EP. No on-device hardware is required. In this PR the tier is enabled on the Linux
-x86-64 coverage build because that is the only current build that links the test binary
-directly against the shared QNN EP and exports EP-internal symbols. Windows x86-64,
-Windows ARM64, and Linux ARM64 coverage/export-symbol enablement will be added in a
-follow-up phase; until then these test bodies compile out there through the
-`QNN_EP_INTERNAL_SYMBOL_ACCESS` guard. Tests that exercise op validation load
-`libQnnHtp.so` locally on the host (validation only, not graph execution); those tests
-are automatically skipped if the SDK is unavailable.
+QNN EP. No on-device hardware is required. The tier is enabled on builds that link the
+test binary directly against the shared QNN EP and export EP-internal symbols, such as
+the Linux x86-64 coverage build and the Windows x86-64 internal-symbol unit-test build.
+Until a build opts into that symbol access, these test bodies compile out through the
+`QNN_EP_INTERNAL_SYMBOL_ACCESS` guard. Tests that exercise op validation load the
+platform QNN HTP backend locally on the host (`libQnnHtp.so` on Linux, `QnnHtp.dll` on
+Windows; validation only, not graph execution); those tests are automatically skipped if
+the SDK is unavailable.
 
 Shared test infrastructure (mocks, stub backends, the `OpBuilderTestContext` wrapper factory, and golden helpers) lives one level up in `infra/` and is reused by sibling tiers as they are enabled. Include it via `test/providers/qnn/infra/qnn_unit_test_utils.h`.
 
@@ -21,13 +21,13 @@ Shared test infrastructure (mocks, stub backends, the `OpBuilderTestContext` wra
 
 Because the QNN EP ships as a dynamically loaded plugin (`MODULE` library), its internal symbols are not normally accessible to external test binaries. The existing integration tests work around this by testing only through the public EP interface.
 
-This unit test infrastructure solves the problem by introducing a **coverage build mode** (`ENABLE_COVERAGE=ON`) that:
+This unit test infrastructure solves the problem through an **internal-symbol test build mode** that is enabled by the Linux x86-64 coverage build or the explicit `onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS` CMake option:
 
 1. Rebuilds the EP as a `SHARED` library so the test binary can link against it directly.
-2. Exports all symbols via a permissive version script.
+2. Exports internal symbols through the platform-specific test-build linker configuration.
 3. Defines `QNN_EP_INTERNAL_SYMBOL_ACCESS=1`, which activates the test code in this directory.
 
-All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS`, so it compiles to empty translation units in normal (non-coverage) builds and has no impact on production binaries.
+All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS`, so it compiles to empty translation units unless this mode is enabled and has no impact on production binaries.
 
 ## Current test suites
 
@@ -46,7 +46,7 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | `qnn_backend_profiling_manager_test.cc` | `QnnUnit_BackendProfilingManagerTest` | `builder/qnn_backend_profiling_manager.cc` |
 | `onnx_ctx_model_helper_test.cc` | `QnnUnit_OnnxCtxModelHelperTest` | `builder/onnx_ctx_model_helper.cc` |
 | `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderTest` | `qnn_execution_provider.cc` |
-| `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderHtpTest` | `qnn_execution_provider.cc` (real-`libQnnHtp.so` paths) |
+| `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderHtpTest` | `qnn_execution_provider.cc` (real HTP backend paths) |
 
 Future op-builder migrations can add `component/builder/opbuilder/<op>_test.cc` files
 using `QnnUnit_<Op>_ComponentTest` suites. Those PRs should keep component-only
@@ -54,8 +54,8 @@ logic here and put graph-structure / accuracy coverage in the sibling tiers.
 
 ## Benefits
 
-- **No on-device hardware required** — all tests run on a Linux x86-64 host. The QNN HTP SDK library (`libQnnHtp.so`) executes locally for op validation; no Qualcomm device is needed.
-- **Fast feedback loop** — tests compile and run in seconds on any Linux x86-64 host.
+- **No on-device hardware required** — tests run on host builds. The QNN HTP SDK library (`libQnnHtp.so` on Linux, `QnnHtp.dll` on Windows) executes locally for op validation; no Qualcomm device is needed.
+- **Fast feedback loop** — tests compile and run in seconds on supported host builds.
 - **Regression protection** — uncovered paths that later break are caught before integration.
 - **Coverage-driven quality** — the infrastructure enables systematic identification and elimination of untested branches in core EP logic.
 
@@ -70,6 +70,15 @@ cd build/linux-x86_64/RelWithDebInfo
 ./onnxruntime_provider_test --gtest_filter="QnnUnit_*"
 ```
 
+```powershell
+# Windows x86-64 internal-symbol test build. The result is test-only and must
+# not be used as a production QNN EP artifact.
+python qcom/build_and_test.py build_ort_windows_x86_64_internal_symbols --config Release
+
+# Run only the unit tests after the Windows internal-symbol build.
+build\windows-x86_64-internal-symbols\Release\onnxruntime_provider_test.exe --gtest_filter="QnnUnit_*"
+```
+
 ## Adding new unit tests
 
 ### Policy
@@ -78,7 +87,7 @@ Review standards for new tests in this directory.
 
 **File structure**
 - Add to an existing `*_test.cc` or create a new file following the same pattern (one source file under test → one test file).
-- Wrap everything except `#include "gtest/gtest.h"` in `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS` ... `#endif`. (Keep the gtest include outside the guard so the file always parses; the body becomes an empty TU in non-coverage builds.) Files without this guard will be compiled in non-coverage CI and fail to link against EP-internal symbols.
+- Wrap everything except `#include "gtest/gtest.h"` in `#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS` ... `#endif`. (Keep the gtest include outside the guard so the file always parses; the body becomes an empty TU when internal-symbol access is disabled.) Files without this guard will fail to link against EP-internal symbols in normal builds.
 - Test suite name: `QnnUnit_<Component>Test`. Test name: `<Function>_<Scenario>_<ExpectedResult>` (e.g., `ValidateQnnNode_HtpBackend_Relu_Succeeds`).
 
 **Minimal example**
@@ -124,7 +133,7 @@ Pick the lowest-cost layer that lets you write the test. Cost increases top to b
 | Needs `OrtApi` but no real graph/logger object | Declare an `OrtApi stub{}` locally and stub only the function pointers your test path exercises |
 | Needs `QnnModelWrapper`, no real graph/logger | Use `OpBuilderTestContext` from `qnn_unit_test_utils.h` (bundles `OrtApi` stub + a `StubBackendManager` + passes `nullptr` graph/logger). Relies on the wrapper's test-only ctor overload |
 | Needs the QNN backend interface but no real SDK | Use `StubBackendManager` from `qnn_unit_test_utils.h` and override the function pointers your test path exercises (e.g. `ctx.qnn_interface.graphAddNode = ...`). `QnnModelWrapper` reads the interface, backend handles, backend type, and HTP arch through `QnnBackendManager`, so they must be stubbed on the manager rather than passed in |
-| Needs a real `Qnn_BackendHandle_t` (e.g., `backendValidateOpConfig`) | Use `QnnRealHtpBackendContext`: `dlopen` `libQnnHtp.so` + `backendCreate`. **Does not create a QNN context/session** — the validation path does not need one. Use `GTEST_SKIP()` when the SDK is unavailable |
+| Needs a real `Qnn_BackendHandle_t` (e.g., `backendValidateOpConfig`) | Use `QnnRealHtpBackendContext`: load the platform HTP backend (`libQnnHtp.so` on Linux, `QnnHtp.dll` on Windows) + `backendCreate`. **Does not create a QNN context/session** — the validation path does not need one. Use `GTEST_SKIP()` when the SDK is unavailable |
 | Needs a real QNN context/session, graph operations | **No helper today.** Please raise it — we need a fixture-shared session (avoid rebuilding per test) before adding such tests |
 | Needs a real `OrtGraph` or `Ort::Logger` object | **Not currently possible** — public ORT headers are insufficient and private ORT headers are forbidden. Redesign the test to remove this dependency |
 

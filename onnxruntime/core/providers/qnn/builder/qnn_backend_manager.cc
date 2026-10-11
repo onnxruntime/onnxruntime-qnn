@@ -3273,17 +3273,26 @@ Ort::Status QnnBackendManager::AddContextToDlc() {
 }
 
 void QnnBackendManager::DeallocateMappedDmaBuffers() {
-  for (auto& mem_info : mapped_fastrpc_buffers_) {
+  std::vector<std::pair<void*, uint64_t>> failed_deregisters;
+  for (const auto& mem_info : mapped_fastrpc_buffers_) {
     auto ptr = mem_info.first;
     auto size = mem_info.second;
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, ("Attemping to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, ("Attempting to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
+    // setting third input arg to -1 here indicates a deregistration request
     rpcmem_library_->Api().register_buf(ptr, size, -1,
                                         rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
     auto fd = rpcmem_library_->Api().to_fd(ptr);
     if (fd != -1) {
       ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
+      failed_deregisters.push_back(mem_info);
     }
   }
+  // Capture failed deregistrations.
+  // If the failures occur on failed context creation due to file mapping, a second
+  // deregistration attempt will occur on destruction of QnnBackendManager instance.
+  // If the failures occur on destruction, then there will be a memory leak
+  // and will indicate a more fundamental issue in EP or QNN.
+  mapped_fastrpc_buffers_ = std::move(failed_deregisters);
 }
 
 }  // namespace qnn

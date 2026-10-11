@@ -40,6 +40,8 @@ using Microsoft::WRL::ComPtr;
 namespace onnxruntime {
 namespace test {
 constexpr const char* kOnnxDomain = "";
+// ONNX domain used by the QNN block-op test models.
+constexpr const char* kQtiAiswDomain = "qti_aisw";
 constexpr const char* kQnnExecutionProvider = "QNNExecutionProvider";
 constexpr const char* kCpuExecutionProvider = "CPUExecutionProvider";
 
@@ -897,6 +899,40 @@ void InferenceModel(const std::string& model_data,
                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                     std::function<void(const Ort::Session&)>* graph_checker = nullptr,
                     Ort::CustomOpDomain* custom_op_domain = nullptr);
+
+// Creates a session with the QNN EP for the given serialized model and verifies node-to-EP
+// assignment, WITHOUT running inference. Use for the qti_aisw block ops (Buffer / StatefulLstm /
+// StatefulGru), which have no CPU kernel (so there is no meaningful reference to compare against)
+// and whose graphs compile on the QNN HTP backend but require real NPU hardware to finalize/run.
+// The QNN EP factory supplies the qti_aisw placeholder schema, so the model loads even though
+// these ops have no registered ONNX schema.
+void VerifyQnnEpModelAssignment(const std::string& model_data,
+                                const char* log_id,
+                                const ProviderOptions& provider_options,
+                                ExpectedEPNodeAssignment expected_ep_assignment,
+                                OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR);
+
+// Runs a stateful QNN model in one session. With a reset input it runs true, false, true and
+// verifies that reset restores the initial state. Without one it runs twice and verifies that the
+// BlockOp default reset=false retains state. The model must have an output sensitive to retained
+// state. Pass nullptr for reset_input_name when the model omits the optional reset input.
+void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
+                                    const char* log_id,
+                                    const ProviderOptions& provider_options,
+                                    int opset,
+                                    const char* reset_input_name);
+
+// Compares a stateful QNN RNN against an equivalent standard ONNX RNN on CPU. It runs the
+// stateful model with reset=true, then with reset=false, and feeds the first QNN state outputs
+// into the standard model for the second reference inference.
+void VerifyQnnStatefulRnnNumerics(const GetTestModelFn& build_stateful_case,
+                                  const GetTestModelFn& build_reference_case,
+                                  const char* log_id,
+                                  const ProviderOptions& provider_options,
+                                  int opset,
+                                  const char* reset_input_name,
+                                  const std::vector<std::string>& reference_state_input_names,
+                                  float abs_tolerance);
 
 /**
  * If the ORT_UNIT_TEST_ENABLE_QNN_SAVER environment variable is enabled (set to 1), this function modifies
