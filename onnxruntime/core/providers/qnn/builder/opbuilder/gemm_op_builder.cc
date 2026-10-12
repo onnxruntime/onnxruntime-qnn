@@ -549,6 +549,8 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   }
 
   // Non-BQ path: decompose Gemm into FullyConnected + Add when C cannot be an FC bias.
+  // Folded bias already reports NATIVE, and ProcessInputs reuses its [1, N] STATIC
+  // as-is (no reshape), so the FC + Add path follows without an extra check.
   const bool is_native_bias = node_unit.Inputs().size() == 3 &&
                               qnn_model_wrapper.GetTensorType(node_unit.Inputs()[2].name) == QNN_TENSOR_TYPE_NATIVE;
   const bool requires_fc_add_decomposition = RequiresFcAddDecomposition(node_unit, is_native_bias);

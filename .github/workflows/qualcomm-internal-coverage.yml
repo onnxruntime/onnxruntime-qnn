@@ -34,6 +34,7 @@ jobs:
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     env:
       COVERAGE_DIR: build/linux-x86_64/RelWithDebInfo/coverage
+      SNAPSHOT_GOLDEN_DIR: build/linux-x86_64/snapshot-goldens
       # Consumed by upload-qa-artifact's publish_qa.py (reads os.environ["BUILD_ARTIFACTORY_REPO"]).
       BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
     steps:
@@ -84,31 +85,50 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         run: git submodule update --init --recursive
 
+      - name: Build coverage test binary (Linux x86_64, RelWithDebInfo)
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          python3 qcom/build_and_test.py \
+            --target-py-version ${{ inputs.target_py_vsn }} \
+            coverage_build_linux_x86_64
+
+      - name: Set up JFrog CLI for snapshot goldens
+        if: steps.gate.outputs.run == 'true' && env.BUILD_ARTIFACTORY_REPO != ''
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Enable aligned snapshot goldens
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          rm -rf "${SNAPSHOT_GOLDEN_DIR}"
+          bash qcom/scripts/linux/prepare_snapshot_goldens.sh \
+            --build-dir=build/linux-x86_64/RelWithDebInfo \
+            --golden-dir="${SNAPSHOT_GOLDEN_DIR}"
+
       - name: Run Coverage and Diff Coverage (Linux x86_64, always RelWithDebInfo)
         if: steps.gate.outputs.run == 'true' && github.event_name == 'pull_request'
         env:
           ORT_DIFF_BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
         run: |
-          # Python version does not affect C++ code coverage results.
-          # Defaults to 3.10 to match DEFAULT_PYTHON_LINUX in qcom/ep_build/util.py.
-          # This runs generate_coverage.sh's three-phase split in one binary run:
-          # component (gating) -> snapshot (non-gating) -> accuracy (gating),
-          # then a single lcov capture. The accuracy tier is embedded here (not a
-          # separate step) so its .gcda joins the same capture and the phase order
-          # feeds the accuracy-routing gate. Reproduce locally with:
-          #   bash qcom/scripts/linux/generate_coverage.sh --build-dir=build/linux-x86_64
+          # The helper exports QNN_UT_SNAPSHOT_GOLDEN_DIR only after its manifest
+          # matches this build's QAIRT and ORT versions. Otherwise the gate runs
+          # every accuracy testcase.
           python3 qcom/build_and_test.py \
-            --target-py-version ${{ inputs.target_py_vsn }} \
             diff_coverage_linux_x86_64
 
       - name: Run Coverage (non-PR, Linux x86_64, always RelWithDebInfo)
         if: steps.gate.outputs.run == 'true' && github.event_name != 'pull_request'
         run: |
-          # A non-PR run has no exact PR base SHA. Generate full coverage only rather
-          # than producing an inaccurate diff from a shallow checkout.
+          # The build and snapshot-golden preflight already completed above. A non-PR
+          # run has no exact PR base SHA, so generate a full report without rebuilding
+          # the coverage binary or producing an inaccurate diff from a shallow checkout.
           python3 qcom/build_and_test.py \
-            --target-py-version ${{ inputs.target_py_vsn }} \
-            coverage_linux_x86_64
+            coverage_report_linux_x86_64
 
       - name: Upload Coverage Report
         uses: actions/upload-artifact@v7
