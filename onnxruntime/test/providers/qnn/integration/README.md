@@ -68,7 +68,7 @@ The standard Release test lanes execute the suite through `onnxruntime_provider_
 | Windows x86-64 | HTP emulator (`QnnHtp.dll`) is selected through the CPU-type virtual QNN EP device. |
 | Windows Arm64 | Real HTP hardware is selected through the NPU-type QNN EP device. |
 | Windows Arm64EC | The test source is compiled, but the current CI lane does not run unit tests. |
-| Android / macOS | Android matches the Linux source guard, but its validation route does not execute `onnxruntime_provider_test`. macOS is excluded by the source guard. |
+| Android | Matches the Linux source guard, but its validation route does not execute `onnxruntime_provider_test`. |
 
 On each enabled CI host the QNN SDK and matching HTP execution environment are
 required. The fixture treats a missing EP plugin or HTP device as a **hard failure**
