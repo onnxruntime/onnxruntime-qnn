@@ -95,8 +95,7 @@ ProviderOptions MakeHtpOptions(bool enable_shared_memory = true) {
 void RegisterQnnHtpSharedMemoryEp(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                   Ort::SessionOptions& session_options,
                                   const ProviderOptions& options) {
-  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options,
-                       /*simulated*/ false, OrtHardwareDeviceType_NPU);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
 }
 
 bool IsRpcMemUnavailable(const Ort::Exception& exception) {

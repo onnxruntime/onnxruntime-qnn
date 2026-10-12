@@ -1560,10 +1560,8 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   // So that all graphs from later sessions will be compiled into the same QNN context
   const bool use_shared_backend_mgr =
       ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1);
-  const auto shared_qnn_backend_manager = use_shared_backend_mgr
-                                              ? SharedContext::GetInstance().GetSharedQnnBackendManager()
-                                              : nullptr;
-  const bool reusing_shared_backend_manager = shared_qnn_backend_manager != nullptr;
+  const auto shared_qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
+  const bool reusing_shared_backend_manager = use_shared_backend_mgr && shared_qnn_backend_manager != nullptr;
   if (reusing_shared_backend_manager) {
     qnn_backend_manager_ = shared_qnn_backend_manager;
   } else {
