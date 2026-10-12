@@ -56,17 +56,19 @@ fixtures there).
 
 These tests execute models through the QNN HTP backend. Linux x86-64 and Windows
 x86-64 use the HTP emulator, while Linux AArch64 and Windows Arm64 require a real HTP
-device. The source guard enables this tier for non-minimal Linux and Windows builds.
+device. The source guard compiles this tier for non-minimal Linux (including Android)
+and Windows builds. The Android validation route does not execute
+`onnxruntime_provider_test`.
 The standard Release test lanes execute the suite through `onnxruntime_provider_test`.
 
 | Platform | Behavior |
 |---|---|
 | Linux x86-64 | HTP simulator (`libQnnHtp.so`) runs fully — compile + execute. **Primary CI platform.** |
-| Linux AArch64 | Real HTP hardware - compile + execute. |
+| Linux AArch64 | Real HTP hardware via an NPU-type QNN EP device - compile + execute. |
 | Windows x86-64 | HTP emulator (`QnnHtp.dll`) is selected through the CPU-type virtual QNN EP device. |
 | Windows Arm64 | Real HTP hardware is selected through the NPU-type QNN EP device. |
 | Windows Arm64EC | The test source is compiled, but the current CI lane does not run unit tests. |
-| Android / macOS | This C++ test tier is not enabled; their validation routes do not execute `onnxruntime_provider_test`. |
+| Android / macOS | Android matches the Linux source guard, but its validation route does not execute `onnxruntime_provider_test`. macOS is excluded by the source guard. |
 
 On each enabled CI host the QNN SDK and matching HTP execution environment are
 required. The fixture treats a missing EP plugin or HTP device as a **hard failure**

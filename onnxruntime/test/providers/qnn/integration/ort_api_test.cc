@@ -15,7 +15,8 @@
 //
 // Models are built inline via the Ort C++ model editor wrappers (Ort::Model,
 // Ort::Graph, Ort::Node, Ort::ValueInfo) — no dependency on op-builder test
-// infrastructure. Sessions use the QNN HTP backend and skip when unavailable.
+// infrastructure. A missing QNN plugin or HTP device is a CI configuration
+// failure; individual models that QNN cannot compile are skipped.
 
 #if !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))
 

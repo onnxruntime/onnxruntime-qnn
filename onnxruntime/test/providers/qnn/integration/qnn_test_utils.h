@@ -45,11 +45,12 @@ inline const char* QnnHtpBackendLibraryName() {
 }
 
 inline OrtHardwareDeviceType QnnHtpDeviceType() {
-  // x86 hosts expose the HTP emulator as a CPU-type virtual device.
-#if defined(__linux__) || (defined(_WIN32) && defined(_M_X64))
-  return OrtHardwareDeviceType_CPU;
-#else
+  // x86 hosts attach HTP to a CPU-type virtual device. ARM64 hosts use NPU.
+#if (defined(__linux__) && defined(__aarch64__)) || \
+    (defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)))
   return OrtHardwareDeviceType_NPU;
+#else
+  return OrtHardwareDeviceType_CPU;
 #endif
 }
 
@@ -80,8 +81,8 @@ struct RegisteredQnnEp {
 };
 
 // Build Ort::SessionOptions targeting the QNN HTP backend.
-// x86 hosts expose the HTP emulator as a CPU-type virtual device. Linux and
-// Windows Arm64 select a real NPU device when one is available.
+// Linux and Windows x86 attach the HTP simulator/emulator through a CPU-type
+// virtual device. Linux AArch64 and Windows ARM64 select an NPU-type device.
 // Returns false if the matching QNN EP device or HTP backend is unavailable.
 inline bool MakeQnnHtpSessionOptions(const RegisteredQnnEp& ep, Ort::SessionOptions& out_opts) {
   const OrtApi& api = Ort::GetApi();
