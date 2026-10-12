@@ -305,17 +305,15 @@ std::optional<SpaceToDepthCoreInfo> GetSpaceToDepthCoreInfo(
     return std::nullopt;
   }
 
-  // Layout optimization can absorb the head and tail layout transposes independently.
-  // Therefore, an NHWC-decomposed intermediate may still reshape to the original NCHW
-  // SpaceToDepth output, or directly to NHWC when the tail transpose is also absorbed.
+  // The NHWC-decomposition permutations above represent an absorbed input-layout
+  // transpose only. Their transposed intermediate is ordered for an NCHW result;
+  // accepting an NHWC Reshape2 output would change the channel element ordering.
   const int64_t expected_c = c * b0 * b1;
   const std::array<int64_t, 4> expected_nchw_output = {n, expected_c, h / b0, w / b1};
-  const std::array<int64_t, 4> expected_nhwc_output = {n, h / b0, w / b1, expected_c};
   const auto output_matches = [&output_shape](const std::array<int64_t, 4>& expected_shape) {
     return std::equal(output_shape.begin(), output_shape.end(), expected_shape.begin());
   };
-  const bool output_is_nhwc = is_nhwc_decomp && output_matches(expected_nhwc_output);
-  if (!output_matches(expected_nchw_output) && !output_is_nhwc) {
+  if (!output_matches(expected_nchw_output)) {
     return std::nullopt;
   }
 
@@ -324,7 +322,7 @@ std::optional<SpaceToDepthCoreInfo> GetSpaceToDepthCoreInfo(
                             ? QNN_OP_SPACE_TO_DEPTH_MODE_DCR
                             : QNN_OP_SPACE_TO_DEPTH_MODE_CRD;
   return SpaceToDepthCoreInfo{gsl::narrow_cast<uint32_t>(b0), gsl::narrow_cast<uint32_t>(b1), mode,
-                              is_nhwc_decomp, output_is_nhwc};
+                              is_nhwc_decomp, false};
 }
 
 std::optional<SpaceToDepthPattern> MatchPattern(
@@ -356,7 +354,7 @@ std::optional<SpaceToDepthPattern> MatchPattern(
   if (!core_info.has_value()) {
     return std::nullopt;
   }
-  // TODO(AISW-175353): Remove this backend-specific guard once the CPU kernel supports unequal blocks.
+  // The CPU kernel does not support unequal block dimensions.
   if (IsCpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
       core_info->block_height != core_info->block_width) {
     return std::nullopt;
@@ -393,6 +391,12 @@ std::optional<SpaceToDepthPattern> MatchPattern(
         }
       }
     }
+  }
+
+  // An explicit NHWC-to-NCHW head transpose and an NHWC-absorbed core describe
+  // mutually exclusive layout representations.
+  if (matched_head_transpose != nullptr && core_info->is_nhwc_decomp) {
+    return std::nullopt;
   }
 
   // 4.2 Check for optional tail transpose after Reshape2.

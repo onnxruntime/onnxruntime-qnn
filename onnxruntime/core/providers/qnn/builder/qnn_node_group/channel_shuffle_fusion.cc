@@ -89,6 +89,7 @@ bool NormalizeChannelShuffleIntermediateShape(const std::vector<uint32_t>& input
 
 struct ChannelShuffleCoreInfo {
   uint32_t num_groups = 0;
+  bool is_nhwc_decomp = false;
 };
 
 std::optional<ChannelShuffleCoreInfo> GetChannelShuffleCoreInfo(
@@ -151,7 +152,7 @@ std::optional<ChannelShuffleCoreInfo> GetChannelShuffleCoreInfo(
         !std::equal(input_shape.begin() + 2, input_shape.end(), intermediate_shape.begin() + 3)) {
       return std::nullopt;
     }
-    return ChannelShuffleCoreInfo{intermediate_shape[1]};
+    return ChannelShuffleCoreInfo{intermediate_shape[1], false};
   }
 
   if (perm == nhwc_to_nchw_perm) {
@@ -166,7 +167,7 @@ std::optional<ChannelShuffleCoreInfo> GetChannelShuffleCoreInfo(
         output_shape != expected_nchw_output) {
       return std::nullopt;
     }
-    return ChannelShuffleCoreInfo{intermediate_shape[split_axis]};
+    return ChannelShuffleCoreInfo{intermediate_shape[split_axis], true};
   }
 
   return std::nullopt;
@@ -331,7 +332,8 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
   const OrtNodeUnit* transpose = pattern->at(2);
   const OrtNodeUnit* reshape2 = pattern->at(3);
   const OrtNodeUnit* transpose_tail = pattern->at(4);
-  if (!GetChannelShuffleCoreInfo(qnn_model_wrapper, *reshape1, *transpose, *reshape2).has_value()) {
+  const auto core_info = GetChannelShuffleCoreInfo(qnn_model_wrapper, *reshape1, *transpose, *reshape2);
+  if (!core_info.has_value() || core_info->is_nhwc_decomp) {
     return nullptr;
   }
 
@@ -399,7 +401,8 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusionFromReshape(
   // Validate the complete ChannelShuffle core before claiming the Reshape. In particular,
   // use the middle transpose permutation to identify NCHW vs NHWC and then require the
   // corresponding channel split, spatial dimensions, and Reshape2 output shape.
-  if (!GetChannelShuffleCoreInfo(qnn_model_wrapper, reshape1_node_unit, *transpose_mid, *reshape2).has_value()) {
+  const auto core_info = GetChannelShuffleCoreInfo(qnn_model_wrapper, reshape1_node_unit, *transpose_mid, *reshape2);
+  if (!core_info.has_value() || !core_info->is_nhwc_decomp) {
     return nullptr;
   }
   const std::optional<std::vector<int64_t>> tail_perm = GetTransposePerm(*transpose_tail);

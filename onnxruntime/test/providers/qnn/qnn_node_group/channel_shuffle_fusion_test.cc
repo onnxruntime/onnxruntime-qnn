@@ -91,11 +91,62 @@ GetTestModelFn BuildTestCase(int64_t height = 8, int64_t width = 8,
   };
 }
 
+GetTestModelFn BuildExplicitChannelShufflePattern(bool collapse_unit_batch,
+                                                  std::vector<int64_t> middle_perm,
+                                                  std::vector<int64_t> tail_perm = {0, 2, 3, 1},
+                                                  std::vector<int64_t> reshape2_shape = {1, 12, 4, 5},
+                                                  bool add_head_transpose = false) {
+  return [=](ModelTestBuilder& builder) -> void {
+    const std::vector<int64_t> input_shape{1, 4, 5, 12};
+    MakeTestInput<float>(builder, "input", TestInputDef<float>(input_shape, false, -0.5f, 0.5f));
+
+    std::string reshape1_input = "input";
+    if (add_head_transpose) {
+      builder.AddNode("HeadTranspose", "Transpose", {"input"}, {"head_out"}, kOnnxDomain,
+                      {builder.MakeIntsAttribute("perm", std::vector<int64_t>{0, 3, 1, 2})});
+      reshape1_input = "head_out";
+    }
+
+    const std::vector<int64_t> intermediate_shape = collapse_unit_batch
+                                                        ? std::vector<int64_t>{4, 5, 3, 4}
+                                                        : std::vector<int64_t>{1, 4, 5, 3, 4};
+    builder.Make1DInitializer<int64_t>("shape1", intermediate_shape);
+    builder.AddNode("Reshape1", "Reshape", {reshape1_input, "shape1"}, {"reshape1_out"});
+    builder.AddNode("MiddleTranspose", "Transpose", {"reshape1_out"}, {"middle_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", middle_perm)});
+    builder.Make1DInitializer<int64_t>("shape2", reshape2_shape);
+    builder.AddNode("Reshape2", "Reshape", {"middle_out", "shape2"}, {"reshape2_out"});
+    builder.AddNode("TailTranspose", "Transpose", {"reshape2_out"}, {"output"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", tail_perm)});
+    builder.MakeOutput("output");
+
+    builder.MakeInitializer<float>("side_weight", {4, 4, 1, 1}, -1.0f, 1.0f);
+    builder.AddNode("SideConv", "Conv", {"input", "side_weight"}, {"side_output"});
+    builder.MakeOutput("side_output");
+  };
+}
+
 ProviderOptions GetProviderOptions() {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   return provider_options;
+}
+
+void RunExplicitChannelShuffleTest(const std::filesystem::path& json_qnn_graph_dir,
+                                   GetTestModelFn model_builder,
+                                   ExpectedEPNodeAssignment expected_assignment,
+                                   size_t expected_channel_shuffle_count) {
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+  RunQnnModelTest(model_builder, provider_options, 13,
+                  EPVerificationParams{expected_assignment, ElementwiseAbsoluteVerifier(1e-2f)});
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle", expected_channel_shuffle_count);
 }
 
 }  // namespace
@@ -180,6 +231,48 @@ TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_FromReshape_InvalidMiddlePerm) {
                   EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle", 0);
+}
+
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_CollapsedUnitBatch) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunExplicitChannelShuffleTest("ChannelShuffleFusion_CollapsedUnitBatch",
+                                BuildExplicitChannelShufflePattern(
+                                    /*collapse_unit_batch=*/true,
+                                    /*rank-4 middle_perm=*/{3, 2, 0, 1}),
+                                ExpectedEPNodeAssignment::All, 1);
+}
+
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_InvalidTailPerm_NotFused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunExplicitChannelShuffleTest("ChannelShuffleFusion_InvalidTailPerm_NotFused",
+                                BuildExplicitChannelShufflePattern(
+                                    /*collapse_unit_batch=*/false,
+                                    /*middle_perm=*/{0, 4, 3, 1, 2},
+                                    /*tail_perm=*/{0, 1, 2, 3}),
+                                ExpectedEPNodeAssignment::Some, 0);
+}
+
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_InconsistentBoundaryLayout_NotFused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunExplicitChannelShuffleTest("ChannelShuffleFusion_InconsistentBoundaryLayout_NotFused",
+                                BuildExplicitChannelShufflePattern(
+                                    /*collapse_unit_batch=*/false,
+                                    /*middle_perm=*/{0, 4, 3, 1, 2},
+                                    /*tail_perm=*/{0, 2, 3, 1},
+                                    /*reshape2_shape=*/{1, 12, 4, 5},
+                                    /*add_head_transpose=*/true),
+                                ExpectedEPNodeAssignment::Some, 0);
+}
+
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_BoundaryShapeMismatch_NotFused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunExplicitChannelShuffleTest("ChannelShuffleFusion_BoundaryShapeMismatch_NotFused",
+                                BuildExplicitChannelShufflePattern(
+                                    /*collapse_unit_batch=*/false,
+                                    /*middle_perm=*/{0, 4, 3, 1, 2},
+                                    /*tail_perm=*/{0, 2, 3, 1},
+                                    /*reshape2_shape=*/{1, 6, 4, 10}),
+                                ExpectedEPNodeAssignment::Some, 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
