@@ -371,6 +371,60 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_env_auto_register) {
          "QnnEpFactory::GetSupportedDevices advertises host_accessible_memory_info.";
 }
 
+// Exercises the same Env::CopyTensors path used by onnxruntime_perf_test when
+// it fills tensors allocated by the plugin EP's environment-level allocator.
+TEST_F(QnnHTPBackendTests, env_copy_tensors_between_cpu_and_qnn_shared_memory) {
+  ProviderOptions options = MakeHtpOptions(/*enable_shared_memory*/ false);
+  Ort::SessionOptions so;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
+
+  const OrtMemoryInfo* host_accessible_mem_info = Ort::GetApi().EpDevice_MemoryInfo(
+      registered_ep_device.get(), OrtDeviceMemoryType_HOST_ACCESSIBLE);
+  ASSERT_NE(host_accessible_mem_info, nullptr);
+
+  OrtAllocator* env_allocator = nullptr;
+  Ort::ThrowOnError(Ort::GetApi().GetSharedAllocator(*ort_env, host_accessible_mem_info, &env_allocator));
+  ASSERT_NE(env_allocator, nullptr);
+
+  const std::array<int64_t, 2> shape = {2, 3};
+  std::array<float, 6> input = {1.0f, -2.0f, 3.5f, 4.0f, 0.0f, 6.25f};
+  std::array<float, 6> output{};
+  Ort::MemoryInfo cpu_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
+  Ort::Value cpu_source = Ort::Value::CreateTensor<float>(
+      cpu_info, input.data(), input.size(), shape.data(), shape.size());
+  Ort::Value cpu_destination = Ort::Value::CreateTensor<float>(
+      cpu_info, output.data(), output.size(), shape.data(), shape.size());
+
+  Ort::Value shared_tensor{nullptr};
+  try {
+    shared_tensor = Ort::Value::CreateTensor<float>(env_allocator, shape.data(), shape.size());
+  } catch (const Ort::Exception& e) {
+    if (IsRpcMemUnavailable(e)) {
+      GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+    }
+    throw;
+  }
+
+  const OrtValue* cpu_to_shared_sources[] = {cpu_source};
+  OrtValue* cpu_to_shared_destinations[] = {shared_tensor};
+  Ort::ThrowOnError(Ort::GetApi().CopyTensors(*ort_env,
+                                              cpu_to_shared_sources,
+                                              cpu_to_shared_destinations,
+                                              nullptr,
+                                              1));
+
+  const OrtValue* shared_to_cpu_sources[] = {shared_tensor};
+  OrtValue* shared_to_cpu_destinations[] = {cpu_destination};
+  Ort::ThrowOnError(Ort::GetApi().CopyTensors(*ort_env,
+                                              shared_to_cpu_sources,
+                                              shared_to_cpu_destinations,
+                                              nullptr,
+                                              1));
+
+  EXPECT_EQ(output, input);
+}
+
 // The environment allocator and its RPCMEM library are factory-owned and may
 // span multiple QNN sessions. Destroying either session must not invalidate the
 // allocator or buffers still used by the other session.
