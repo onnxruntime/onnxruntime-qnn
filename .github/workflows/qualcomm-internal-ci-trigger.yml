@@ -96,7 +96,6 @@ jobs:
             }
 
             let dispatchRef;
-            let inputs;
             let message;
             let temporaryBranch;
             if (command === '/ci') {
@@ -117,7 +116,6 @@ jobs:
                 return;
               }
               dispatchRef = pr.data.head.ref;
-              inputs = {};
               message = `🔄 CI triggered on \`${pr.data.head.ref}\`${pr.data.draft ? ' (draft PR — CI was skipped on push)' : ''}`;
             } else {
               if (parts.length !== 2 || !/^[0-9a-fA-F]{40}$/.test(parts[1])) {
@@ -161,7 +159,6 @@ jobs:
                 sha: approvedSha,
               });
               dispatchRef = temporaryBranch;
-              inputs = {};
               message = `✅ Maintainer-approved full CI triggered for PR #${pr.data.number} at \`${approvedSha}\` using \`${temporaryBranch}\`. Approval covers the commit's source, workflows, actions, and scripts`;
             }
 
@@ -173,7 +170,6 @@ jobs:
                 repo: context.repo.repo,
                 workflow_id: 'qualcomm-internal-ci.yml',
                 ref: dispatchRef,
-                inputs,
               });
             } catch (error) {
               // A definite API rejection leaves no run to perform cleanup.
