@@ -24,6 +24,9 @@ namespace qnn {
 // Genie's DlcConfig_create) is read/written directly against disk and is not encrypted here.
 class EpContextIoDispatch {
  public:
+  // EPContext encryption requires the experimental APIs added at ORT API v28.
+  static constexpr uint32_t kMinApiVersion = 28;
+
   // Resolves the callbacks from `session_options`. Never throws.
   //
   // `effective_api_version` is the ORT API version actually negotiated with the runtime

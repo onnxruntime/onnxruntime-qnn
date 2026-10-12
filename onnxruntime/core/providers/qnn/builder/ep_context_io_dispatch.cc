@@ -21,9 +21,9 @@ EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* session_option
   }
 
   // effective_api_version is the version negotiated with the actual runtime, not just
-  // compile-time ORT_API_VERSION. Below v28, the experimental APIs don't exist in the
-  // runtime's OrtApi struct, so skip them here rather than crashing on an ABI mismatch.
-  if (effective_api_version < 28) {
+  // compile-time ORT_API_VERSION. Below kMinApiVersion, the experimental APIs don't exist in
+  // the runtime's OrtApi struct, so skip them here rather than crashing on an ABI mismatch.
+  if (effective_api_version < kMinApiVersion) {
     ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_WARNING,
                     "ORT runtime API version is below 28 (v1.28). EPContext encryption "
                     "callbacks are unavailable; upgrade to onnxruntime >= 1.28 to enable.");
