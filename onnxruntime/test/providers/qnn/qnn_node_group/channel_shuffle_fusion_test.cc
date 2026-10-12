@@ -95,7 +95,9 @@ GetTestModelFn BuildExplicitChannelShufflePattern(bool collapse_unit_batch,
                                                   std::vector<int64_t> middle_perm,
                                                   std::vector<int64_t> tail_perm = {0, 2, 3, 1},
                                                   std::vector<int64_t> reshape2_shape = {1, 12, 4, 5},
-                                                  bool add_head_transpose = false) {
+                                                  bool add_head_transpose = false,
+                                                  std::vector<int64_t> head_perm = {0, 3, 1, 2},
+                                                  std::vector<int64_t> reshape1_shape = {}) {
   return [=](ModelTestBuilder& builder) -> void {
     const std::vector<int64_t> input_shape{1, 4, 5, 12};
     MakeTestInput<float>(builder, "input", TestInputDef<float>(input_shape, false, -0.5f, 0.5f));
@@ -103,11 +105,13 @@ GetTestModelFn BuildExplicitChannelShufflePattern(bool collapse_unit_batch,
     std::string reshape1_input = "input";
     if (add_head_transpose) {
       builder.AddNode("HeadTranspose", "Transpose", {"input"}, {"head_out"}, kOnnxDomain,
-                      {builder.MakeIntsAttribute("perm", std::vector<int64_t>{0, 3, 1, 2})});
+                      {builder.MakeIntsAttribute("perm", head_perm)});
       reshape1_input = "head_out";
     }
 
-    const std::vector<int64_t> intermediate_shape = collapse_unit_batch
+    const std::vector<int64_t> intermediate_shape = !reshape1_shape.empty()
+                                                        ? reshape1_shape
+                                                    : collapse_unit_batch
                                                         ? std::vector<int64_t>{4, 5, 3, 4}
                                                         : std::vector<int64_t>{1, 4, 5, 3, 4};
     builder.Make1DInitializer<int64_t>("shape1", intermediate_shape);
@@ -261,6 +265,22 @@ TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_InconsistentBoundaryLayout_NotFu
                                     /*tail_perm=*/{0, 2, 3, 1},
                                     /*reshape2_shape=*/{1, 12, 4, 5},
                                     /*add_head_transpose=*/true),
+                                ExpectedEPNodeAssignment::Some, 0);
+}
+
+// A canceling boundary transpose pair is insufficient if it does not map the
+// NHWC channel axis to axis 1, which is the axis shuffled by the NCHW RTR core.
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_IdentityBoundaryTransposes_NotFused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunExplicitChannelShuffleTest("ChannelShuffleFusion_IdentityBoundaryTransposes_NotFused",
+                                BuildExplicitChannelShufflePattern(
+                                    /*collapse_unit_batch=*/false,
+                                    /*middle_perm=*/{0, 2, 1, 3, 4},
+                                    /*tail_perm=*/{0, 1, 2, 3},
+                                    /*reshape2_shape=*/{1, 4, 5, 12},
+                                    /*add_head_transpose=*/true,
+                                    /*head_perm=*/{0, 1, 2, 3},
+                                    /*reshape1_shape=*/{1, 2, 2, 5, 12}),
                                 ExpectedEPNodeAssignment::Some, 0);
 }
 

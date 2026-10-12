@@ -354,6 +354,15 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
     return nullptr;
   }
 
+  // QNN ChannelShuffle operates on the last (NHWC channel) axis at the pattern
+  // boundary. The wrapped RTR core operates on axis 1, so the head transpose
+  // must map the boundary channel axis to axis 1. A merely canceling head/tail
+  // pair (for example, two identity transposes) is not sufficient.
+  if (perm_head_span.size() < 2 ||
+      perm_head_span[1] != gsl::narrow_cast<int64_t>(perm_head_span.size() - 1)) {
+    return nullptr;
+  }
+
   if (!CreateOrValidateOnQnn(qnn_model_wrapper, pattern.value(), /*validate=*/true).IsOK()) {
     return nullptr;
   }
