@@ -47,14 +47,18 @@ jobs:
       - name: Initialize submodules
         run: git submodule update --init --recursive
 
-      - name: Build coverage-instrumented test binary
+      - name: Clean publisher work directories
         run: |
-          # Snapshot/accuracy tiers are only compiled into the binary under
-          # --enable-coverage. publish_goldens.sh regenerates goldens + verifies
-          # accuracy itself, so we build the instrumented binary only (no report).
+          rm -rf "${{ github.workspace }}/build/linux-x86_64-internal-symbols"
+          rm -rf "${{ github.workspace }}/build/linux-x86_64/golden_store"
+
+      - name: Build internal-symbol test binary
+        run: |
+          # Snapshot/accuracy tiers require QNN EP internal symbols, but golden
+          # publishing does not need coverage instrumentation or a report.
           python3 qcom/build_and_test.py \
-            --config RelWithDebInfo \
-            coverage_build_linux_x86_64
+            --config Release \
+            build_ort_linux_x86_64_internal_symbols
 
       - name: Prepare golden store
         run: mkdir -p "${QNN_UT_SNAPSHOT_GOLDEN_DIR}"
@@ -81,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          build_dir="build/linux-x86_64"
+          build_dir="build/linux-x86_64-internal-symbols"
 
           args=(--build-dir="${build_dir}")
 

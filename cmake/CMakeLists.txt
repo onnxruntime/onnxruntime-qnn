@@ -86,8 +86,7 @@ option(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS
 # This mode must keep the QNN EP export/link configuration and its direct-access
 # test bodies in lockstep. It is consumed by both provider and unit-test targets.
 set(onnxruntime_qnn_internal_ut_symbols_enabled OFF)
-if(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS OR
-   (ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+if(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS)
   set(onnxruntime_qnn_internal_ut_symbols_enabled ON)
 endif()
 
