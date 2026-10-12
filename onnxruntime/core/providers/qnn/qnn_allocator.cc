@@ -127,26 +127,28 @@ AllocationTracker<Dx12SharedMemoryAllocator>& GlobalDx12SharedMemoryAllocationTr
 
 }  // namespace
 
-std::shared_ptr<RpcMemLibrary> HtpSharedMemoryAllocator::GetOrCreateRpcMemLibrary() {
-  std::lock_guard<std::mutex> lock(rpcmem_library_mutex_);
-  if (rpcmem_lib_ != nullptr) {
-    return rpcmem_lib_;
+OrtStatus* HtpSharedMemoryAllocator::Create(const OrtApi& ort_api,
+                                            const OrtMemoryInfo* memory_info,
+                                            OrtAllocator** allocator) noexcept {
+  *allocator = nullptr;
+
+  try {
+    auto htp_allocator = std::make_unique<HtpSharedMemoryAllocator>(memory_info);
+    *allocator = htp_allocator.release();
+  } catch (const std::exception& e) {
+    return ort_api.CreateStatus(ORT_FAIL, e.what());
   }
 
-  std::string error_message;
-  rpcmem_lib_ = rpcmem_library_provider_(error_message);
-  if (rpcmem_lib_ == nullptr) {
-    ORT_CXX_API_THROW("Unable to load RPCMEM for QnnHtpShared allocator: " + error_message, ORT_EP_FAIL);
-  }
-
-  // The cached library is used for all subsequent allocations.
-  rpcmem_library_provider_ = nullptr;
-  return rpcmem_lib_;
+  return nullptr;
 }
 
 void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this_, size_t requested_size) {
   HtpSharedMemoryAllocator* allocator = static_cast<HtpSharedMemoryAllocator*>(this_);
-  auto rpcmem_library = allocator->GetOrCreateRpcMemLibrary();
+  std::string error_message;
+  auto rpcmem_library = RpcMemLibraryManager::GetOrCreate(error_message);
+  if (rpcmem_library == nullptr) {
+    ORT_CXX_API_THROW("Unable to load RPCMEM for QnnHtpShared allocator: " + error_message, ORT_EP_FAIL);
+  }
 
   const size_t shared_memory_block_size_in_bytes = requested_size;
 

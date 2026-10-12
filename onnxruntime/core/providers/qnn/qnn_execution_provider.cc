@@ -3605,7 +3605,7 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
 
   if (qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
-    return ep->factory_.CreateHtpSharedMemoryAllocator(memory_info, ep->rpcmem_library_, allocator);
+    return qnn::HtpSharedMemoryAllocator::Create(ep->ort_api, memory_info, allocator);
   }
 #ifdef _WIN32
   else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
@@ -3624,7 +3624,7 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
     // session exists. A session that did not opt into zero-copy may still ask
     // for that allocator explicitly; create it without changing this session's
     // default memory device or QNN memhandle binding policy.
-    return ep->factory_.CreateHtpSharedMemoryAllocator(memory_info, nullptr, allocator);
+    return qnn::HtpSharedMemoryAllocator::Create(ep->ort_api, memory_info, allocator);
   }
   return nullptr;
 }

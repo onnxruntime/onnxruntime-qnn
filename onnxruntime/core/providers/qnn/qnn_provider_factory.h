@@ -12,10 +12,6 @@
 #include "core/providers/qnn/qnn_execution_provider.h"
 #include "onnxruntime_config.h"
 
-namespace onnxruntime::qnn {
-class RpcMemLibrary;
-}  // namespace onnxruntime::qnn
-
 namespace onnxruntime {
 
 class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
@@ -25,13 +21,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // Effective ORT API version: min(runtime, compile-time). Set by CreateEpFactories after
   // construction. Used by QnnEp to gate features that require a minimum runtime version.
   uint32_t effective_api_version_ = ORT_API_VERSION;
-
-  // Creates the HTP allocator used by both the factory and QnnEp ABI
-  // callbacks. If rpcmem_library is null, RPCMEM loading is deferred until the
-  // first allocation.
-  OrtStatus* CreateHtpSharedMemoryAllocator(const OrtMemoryInfo* memory_info,
-                                            std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
-                                            OrtAllocator** allocator) const noexcept;
 
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
     return host_accessible_memory_info_.get();

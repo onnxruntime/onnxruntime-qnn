@@ -21,36 +21,9 @@ namespace onnxruntime::qnn {
 
 class HtpSharedMemoryAllocator : public OrtAllocator {
  public:
-  using RpcMemLibraryProvider = std::function<std::shared_ptr<RpcMemLibrary>(std::string& error_message)>;
-
-  HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info,
-                           std::shared_ptr<RpcMemLibrary> rpcmem_lib)
+  explicit HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info)
       : memory_info_(mem_info),
-        rpcmem_lib_{std::move(rpcmem_lib)},
         logger_(OrtLoggingManager::GetDefaultLogger()) {
-    if (rpcmem_lib_ == nullptr) {
-      ORT_CXX_API_THROW("rpcmem_lib should not be nullptr.", ORT_EP_FAIL);
-    }
-
-    Alloc = AllocImpl;
-    Free = FreeImpl;
-    Info = InfoImpl;
-    Reserve = AllocImpl;
-  }
-
-  // Creates an allocator without loading RPCMEM. The provider is invoked on
-  // the first allocation and the resulting library handle is cached. This is
-  // required for environment-level allocators because ORT creates advertised
-  // allocators while registering the EP library.
-  HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info,
-                           RpcMemLibraryProvider rpcmem_library_provider)
-      : memory_info_(mem_info),
-        rpcmem_library_provider_{std::move(rpcmem_library_provider)},
-        logger_(OrtLoggingManager::GetDefaultLogger()) {
-    if (rpcmem_library_provider_ == nullptr) {
-      ORT_CXX_API_THROW("rpcmem_library_provider should not be empty.", ORT_EP_FAIL);
-    }
-
     Alloc = AllocImpl;
     Free = FreeImpl;
     Info = InfoImpl;
@@ -58,6 +31,10 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   }
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(HtpSharedMemoryAllocator);
+
+  static OrtStatus* Create(const OrtApi& ort_api,
+                           const OrtMemoryInfo* memory_info,
+                           OrtAllocator** allocator) noexcept;
 
   // OrtAllocator implementations.
   static void* ORT_API_CALL AllocImpl(struct OrtAllocator* this_, size_t size);
@@ -97,8 +74,6 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   static Ort::Status AddAllocationCleanUp(void* address_within_allocation, AllocationCleanUpFn&& allocation_clean_up);
 
  private:
-  std::shared_ptr<RpcMemLibrary> GetOrCreateRpcMemLibrary();
-
   Ort::Status GetAllocationSharedMemoryInfoForThisAllocator(void* allocation_base_address,
                                                             SharedMemoryInfo& allocation_info);
 
@@ -118,9 +93,6 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   std::mutex allocations_mutex_;  // synchronize access to allocations_
 
   const OrtMemoryInfo* memory_info_;
-  std::shared_ptr<RpcMemLibrary> rpcmem_lib_;
-  RpcMemLibraryProvider rpcmem_library_provider_;
-  std::mutex rpcmem_library_mutex_;
   const Ort::Logger& logger_;
 };
 
