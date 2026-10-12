@@ -891,7 +891,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingEnabled
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
   auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map,
-                                      qnn::EpContextIoDispatch(nullptr),
+                                      qnn::EpContextIoDispatch(nullptr, qnn::EpContextIoDispatch::kMinApiVersion),
                                       false /*extended_udma*/, false /*prepare_only*/,
                                       true /*enable_htp_graph_splitting*/);
   // Success or a structured QNN error are both acceptable on headless hosts;
@@ -906,7 +906,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingAndThre
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
   auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map,
-                                      qnn::EpContextIoDispatch(nullptr),
+                                      qnn::EpContextIoDispatch(nullptr, qnn::EpContextIoDispatch::kMinApiVersion),
                                       false /*extended_udma*/, false /*prepare_only*/,
                                       true /*enable_htp_graph_splitting*/,
                                       4 /*htp_graph_splitting_num_prepare_threads*/);

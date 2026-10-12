@@ -34,12 +34,15 @@ class EpContextIoDispatch {
   // encryption APIs require ORT v28; calling them against an older runtime reads past the
   // end of that runtime's OrtApi struct instead of cleanly throwing. This constructor checks
   // effective_api_version before touching Ort::Experimental::EpContextConfig, so callers
-  // don't need to replicate the check.
+  // don't need to replicate the check. There is intentionally no default value: a caller that
+  // forgets to pass the real negotiated version must get a compile error, not a silent fallback
+  // to the compile-time ORT_API_VERSION (which would reintroduce the version-skew crash this
+  // constructor exists to prevent).
   //
   // `logger` (optional) receives a WARNING if resolution genuinely fails rather than the app
   // simply not registering anything.
   explicit EpContextIoDispatch(const OrtSessionOptions* session_options,
-                               uint32_t effective_api_version = ORT_API_VERSION,
+                               uint32_t effective_api_version,
                                const Ort::Logger* logger = nullptr) noexcept;
   ~EpContextIoDispatch() = default;
 
