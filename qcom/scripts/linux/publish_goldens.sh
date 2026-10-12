@@ -63,6 +63,7 @@ dry_run=false
 publish=false
 skip_regen=false
 mode_flag_given=false
+python_bin="${PYTHON_BIN:-python3}"
 
 for arg in "$@"; do
     case "${arg}" in
@@ -131,7 +132,7 @@ fi
 # ---------------------------------------------------------------------------
 # Early tool probes — fail before the expensive regen, not after.
 # ---------------------------------------------------------------------------
-for tool in python3 git zip; do
+for tool in "${python_bin}" git; do
     command -v "${tool}" &>/dev/null || die "Required tool not found in PATH: ${tool}"
 done
 
@@ -196,13 +197,20 @@ fi
 build_dir_abs="$(realpath "${build_dir}")"
 bin_dir=""
 for cfg in RelWithDebInfo Release Debug; do
-    if [ -x "${build_dir_abs}/${cfg}/onnxruntime_provider_test" ]; then
-        bin_dir="${build_dir_abs}/${cfg}"
-        break
-    fi
+    for name in onnxruntime_provider_test onnxruntime_provider_test.exe; do
+        if [ -x "${build_dir_abs}/${cfg}/${name}" ]; then
+            bin_dir="${build_dir_abs}/${cfg}"
+            break 2
+        fi
+    done
 done
-if [ -z "${bin_dir}" ] && [ -x "${build_dir_abs}/onnxruntime_provider_test" ]; then
-    bin_dir="${build_dir_abs}"
+if [ -z "${bin_dir}" ]; then
+    for name in onnxruntime_provider_test onnxruntime_provider_test.exe; do
+        if [ -x "${build_dir_abs}/${name}" ]; then
+            bin_dir="${build_dir_abs}"
+            break
+        fi
+    done
 fi
 [ -n "${bin_dir}" ] || die "onnxruntime_provider_test not found under ${build_dir_abs}."
 
@@ -219,7 +227,7 @@ log_info "Accuracy report: ${accuracy_json}"
 # ---------------------------------------------------------------------------
 filter_script="${REPO_ROOT}/qcom/scripts/linux/filter_accuracy_pass_groups.py"
 filter_output=""
-if filter_output="$(python3 "${filter_script}" "${accuracy_json}")"; then
+if filter_output="$("${python_bin}" "${filter_script}" "${accuracy_json}")"; then
     :
 else
     filter_exit=$?
@@ -329,7 +337,7 @@ MANIFEST_ARCHIVE_ID="${archive_id}" \
 MANIFEST_COUNT="${golden_count}" \
 MANIFEST_GROUPS="$(IFS=,; printf '%s' "${pass_groups[*]}")" \
 MANIFEST_PROFILE="${golden_profile}" \
-python3 - "${staging}/manifest.json" <<'PYEOF'
+"${python_bin}" - "${staging}/manifest.json" <<'PYEOF'
 import json, os, sys
 
 groups = [g for g in os.environ["MANIFEST_GROUPS"].split(",") if g]
@@ -355,11 +363,18 @@ log_info "manifest.json: profile=${golden_profile} qairt=${qairt_version} ort=${
 # Zip the staging tree. Archive root = manifest.json + tier subdirs.
 # ---------------------------------------------------------------------------
 zip_path="${staging}/goldens.zip"
-(
-    cd "${staging}"
-    # Exclude the zip itself in case of re-runs; -x is a no-op on first pass.
-    zip -r -q goldens.zip . -x goldens.zip
-)
+"${python_bin}" - "${staging}" "${zip_path}" <<PYEOF
+import sys
+import zipfile
+from pathlib import Path
+
+root = Path(sys.argv[1])
+archive_path = Path(sys.argv[2])
+files = sorted(path for path in root.rglob("*") if path.is_file() and path != archive_path)
+with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    for path in files:
+        archive.write(path, path.relative_to(root).as_posix())
+PYEOF
 log_info "Packaged: goldens.zip ($(du -h "${zip_path}" | cut -f1))"
 
 # ---------------------------------------------------------------------------
