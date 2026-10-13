@@ -51,6 +51,12 @@ bool IsFloat32Or16(Qnn_DataType_t dtype) {
   return dtype == QNN_DATATYPE_FLOAT_32 || dtype == QNN_DATATYPE_FLOAT_16;
 }
 
+bool NeedsArithmeticDecomposition(const QnnModelWrapper& qnn_model_wrapper,
+                                  size_t input_rank, size_t axes_rank) {
+  return input_rank > 4 ||
+         (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) && axes_rank != 1);
+}
+
 BroadcastScaleDecomposition PlanBroadcastScaleDecomposition(const std::vector<uint32_t>& x_shape,
                                                             const TensorInfo& x_info,
                                                             const TensorInfo& scale_info,
@@ -114,6 +120,12 @@ class RMSNormalizationOpBuilder : public BaseOpBuilder {
   Ort::Status GetBroadcastScaleDecomposition(const QnnModelWrapper& qnn_model_wrapper,
                                              const OrtNodeUnit& node_unit,
                                              BroadcastScaleDecomposition& decomposition) const ORT_MUST_USE_RESULT;
+  Ort::Status AddArithmeticDecomposition(QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& node_unit,
+                                         const std::vector<std::string>& input_names,
+                                         size_t axes_rank,
+                                         const Ort::Logger& logger,
+                                         bool do_op_validation) const ORT_MUST_USE_RESULT;
 };
 
 Ort::Status RMSNormalizationOpBuilder::GetAxesRank(const QnnModelWrapper& qnn_model_wrapper,
@@ -162,27 +174,6 @@ Ort::Status RMSNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_
   const bool has_scale_input = inputs.size() > SCALE_IDX && inputs[SCALE_IDX].Exists();
   RETURN_IF_NOT(has_scale_input, "QNN EP requires scale input for RMSNorm operator");
 
-  // Validate input and output rank constraints
-  std::vector<uint32_t> input_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape of input 0");
-  const size_t input_rank = input_shape.size();
-  RETURN_IF(input_rank > 4, "QNN RMSNorm only supports input rank <= 4");
-
-  std::vector<uint32_t> output_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(outputs[0].shape, output_shape), "Cannot get shape of output 0");
-  const size_t output_rank = output_shape.size();
-  RETURN_IF(output_rank > 4, "QNN RMSNorm only supports output rank <= 4");
-
-  size_t axes_rank = 0;
-  RETURN_IF_ERROR(GetAxesRank(qnn_model_wrapper, node_unit, axes_rank));
-
-  // Additional constraints for NPU backend
-  bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  if (is_npu_backend) {
-    RETURN_IF(axes_rank != 1,
-              "QNN RMSNorm for NPU backend only supports axis with last input dimension");
-  }
-
   // A scale rank that ProcessInputs cannot reconcile is rejected there, which propagates out of this
   // call and leaves the node unclaimed.
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
@@ -199,13 +190,27 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
 
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[X_IDX], logger, input_names));
 
+  size_t axes_rank = 0;
+  RETURN_IF_ERROR(GetAxesRank(qnn_model_wrapper, node_unit, axes_rank));
+
+  if (NeedsArithmeticDecomposition(qnn_model_wrapper, inputs[X_IDX].shape->size(), axes_rank)) {
+    // Intermediate quantization ranges are unavailable; preserve float32 stash arithmetic.
+    for (const auto* value : {&inputs[X_IDX], &inputs[SCALE_IDX], &node_unit.Outputs()[0]}) {
+      TensorInfo info = {};
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(*value, info));
+      RETURN_IF(info.quant_param.IsQuantized() || info.qnn_data_type != QNN_DATATYPE_FLOAT_32,
+                "RMSNorm arithmetic decomposition requires unquantized float32 tensors");
+    }
+    RETURN_IF(OrtNodeAttrHelper(node_unit).Get("stash_type", int64_t{ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT}) !=
+                  ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+              "RMSNorm arithmetic decomposition requires float32 stash_type");
+    return ProcessInput(qnn_model_wrapper, inputs[SCALE_IDX], logger, input_names);
+  }
+
   TensorInfo scale_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[SCALE_IDX], scale_info));
 
   // Squeeze the scale's leading 1-dims so it satisfies QNN's rank(gamma) == size(axes).
-  size_t axes_rank = 0;
-  RETURN_IF_ERROR(GetAxesRank(qnn_model_wrapper, node_unit, axes_rank));
-
   const std::optional<std::vector<uint32_t>> squeezed_shape =
       TrySqueezeLeadingOnesTo(scale_info.shape, axes_rank);
 
@@ -417,6 +422,68 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
   return Ort::Status();
 }
 
+Ort::Status RMSNormalizationOpBuilder::AddArithmeticDecomposition(
+    QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
+    const std::vector<std::string>& input_names, size_t axes_rank,
+    const Ort::Logger& logger, bool do_op_validation) const {
+  std::vector<uint32_t> input_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape),
+                "Cannot get RMSNorm input shape");
+  // Flatten to keep Sqrt within HTP's rank limit.
+  SafeInt<uint32_t> outer_size = 1;
+  SafeInt<uint32_t> normalized_size = 1;
+  const size_t first_axis = input_shape.size() - axes_rank;
+  for (size_t i = 0; i < input_shape.size(); ++i) {
+    (i < first_axis ? outer_size : normalized_size) *= input_shape[i];
+  }
+  const std::vector<uint32_t> flat_shape{outer_size, normalized_size};
+  const std::vector<uint32_t> reduced_shape{outer_size, 1};
+  QnnParamWrapper axes_param(node_unit.Index(), node_unit.Name(), QNN_OP_REDUCE_MEAN_PARAM_AXES,
+                             {1}, std::vector<uint32_t>{1});
+  std::vector<std::string> reduce_params{axes_param.GetParamTensorName()};
+  qnn_model_wrapper.AddParamWrapper(std::move(axes_param));
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), true,
+                                     QNN_OP_REDUCE_MEAN_PARAM_KEEP_DIMS, reduce_params));
+
+  const float epsilon = OrtNodeAttrHelper(node_unit).Get("epsilon", 1e-5f);
+  std::vector<uint8_t> epsilon_data(sizeof(epsilon));
+  std::memcpy(epsilon_data.data(), &epsilon, sizeof(epsilon));
+  const std::string epsilon_name = utils::UniqueNameGenerator().New(node_unit, "_epsilon");
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(
+                    QnnTensorWrapper(epsilon_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_32,
+                                     QnnQuantParamsWrapper(), {1}, std::move(epsilon_data))),
+                "Failed to add RMSNorm epsilon");
+
+  const auto mem_type = qnn_model_wrapper.GetModelSettings().htp_shared_memory
+                            ? QNN_TENSORMEMTYPE_MEMHANDLE
+                            : QNN_TENSORMEMTYPE_RAW;
+  auto add_intermediate = [&](const char* op_type, std::vector<std::string> inputs,
+                              const std::vector<uint32_t>& shape,
+                              std::vector<std::string> params, std::string& output) -> Ort::Status {
+    output = utils::UniqueNameGenerator().New(node_unit, op_type);
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(
+                      QnnTensorWrapper(output, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                                       QnnQuantParamsWrapper(), std::vector<uint32_t>(shape), {}, mem_type)),
+                  "Failed to add RMSNorm intermediate tensor");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(output, "_node"), QNN_OP_PACKAGE_NAME_QTI_AISW,
+                      op_type, std::move(inputs), {output}, std::move(params), do_op_validation),
+                  "Failed to add RMSNorm arithmetic node");
+    return Ort::Status();
+  };
+
+  std::string x, square, mean, variance, rms, normalized, restored;
+  RETURN_IF_ERROR(add_intermediate(QNN_OP_RESHAPE, {input_names[0]}, flat_shape, {}, x));
+  RETURN_IF_ERROR(add_intermediate(QNN_OP_ELEMENT_WISE_MULTIPLY, {x, x}, flat_shape, {}, square));
+  RETURN_IF_ERROR(add_intermediate(QNN_OP_REDUCE_MEAN, {square}, reduced_shape, std::move(reduce_params), mean));
+  RETURN_IF_ERROR(add_intermediate(QNN_OP_ELEMENT_WISE_ADD, {mean, epsilon_name}, reduced_shape, {}, variance));
+  RETURN_IF_ERROR(add_intermediate(QNN_OP_ELEMENT_WISE_SQUARE_ROOT, {variance}, reduced_shape, {}, rms));
+  RETURN_IF_ERROR(add_intermediate(QNN_OP_ELEMENT_WISE_DIVIDE, {x, rms}, flat_shape, {}, normalized));
+  RETURN_IF_ERROR(add_intermediate(QNN_OP_RESHAPE, {normalized}, input_shape, {}, restored));
+  return ProcessOutputs(qnn_model_wrapper, node_unit, {restored, input_names[1]}, {},
+                        logger, do_op_validation, QNN_OP_ELEMENT_WISE_MULTIPLY);
+}
+
 Ort::Status RMSNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                                    const OrtNodeUnit& node_unit,
                                                                    std::vector<std::string>&& input_names,
@@ -424,6 +491,13 @@ Ort::Status RMSNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
                                                                    bool do_op_validation) const {
   OrtNodeAttrHelper node_helper(node_unit);
   std::vector<std::string> param_tensor_names;
+
+  size_t axes_rank = 0;
+  RETURN_IF_ERROR(GetAxesRank(qnn_model_wrapper, node_unit, axes_rank));
+  if (NeedsArithmeticDecomposition(qnn_model_wrapper, node_unit.Inputs()[0].shape->size(), axes_rank)) {
+    return AddArithmeticDecomposition(qnn_model_wrapper, node_unit, input_names,
+                                      axes_rank, logger, do_op_validation);
+  }
 
   // Process epsilon attribute
   const float epsilon = node_helper.Get("epsilon", 1e-05f);
@@ -433,8 +507,6 @@ Ort::Status RMSNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
   // Process axis attribute and create axes parameter
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape of Input 0");
-  size_t axes_rank = 0;
-  RETURN_IF_ERROR(GetAxesRank(qnn_model_wrapper, node_unit, axes_rank));
   std::vector<uint32_t> axes(axes_rank, 0);
   std::vector<uint32_t> axes_shape{SafeInt<uint32_t>(axes_rank)};
   axes[0] = static_cast<uint32_t>(input_shape.size() - axes_rank);
