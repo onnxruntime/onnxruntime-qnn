@@ -48,7 +48,7 @@ warnings_as_errors=1
 build_java=
 build_archive=
 enable_coverage=
-enable_qnn_internal_ut_symbols=
+enable_qnn_internal_test_symbols=
 enable_asan=
 build_dir_suffix=
 for i in "$@"; do
@@ -85,8 +85,8 @@ for i in "$@"; do
       enable_coverage=1
       shift
       ;;
-    --enable-qnn-internal-ut-symbols)
-      enable_qnn_internal_ut_symbols=1
+    --enable-qnn-internal-test-symbols)
+      enable_qnn_internal_test_symbols=1
       shift
       ;;
     --build-dir-suffix=*)
@@ -136,7 +136,7 @@ fi
 internal_symbols_cmake_value=OFF
 # Preserve the existing coverage-build contract: coverage includes the QNN EP
 # component, snapshot, and accuracy tiers that require internal-symbol access.
-if [ -n "${enable_coverage}" ] || [ -n "${enable_qnn_internal_ut_symbols}" ]; then
+if [ -n "${enable_coverage}" ] || [ -n "${enable_qnn_internal_test_symbols}" ]; then
   internal_symbols_cmake_value=ON
 fi
 qnn_build_mode="coverage=${coverage_cmake_value};internal_symbols=${internal_symbols_cmake_value}"
@@ -378,7 +378,7 @@ else
     # retain a previous coverage or internal-symbol configuration from CMakeCache.
     common_args+=(--cmake_extra_defines
                   "ENABLE_COVERAGE:BOOL=${coverage_cmake_value}"
-                  "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS:BOOL=${internal_symbols_cmake_value}")
+                  "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS:BOOL=${internal_symbols_cmake_value}")
 
     if [ -n "${enable_asan}" ]; then
       common_args+=(--enable_address_sanitizer)

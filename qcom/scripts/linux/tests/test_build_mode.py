@@ -21,7 +21,7 @@ from ep_build.plan import Plan  # noqa: E402
 SCRIPT = Path(__file__).resolve().parent.parent / "build.sh"
 MODE_FLAGS = {
     "normal": [],
-    "internal": ["--enable-qnn-internal-ut-symbols"],
+    "internal": ["--enable-qnn-internal-test-symbols"],
     "coverage": ["--enable-coverage"],
 }
 
@@ -75,7 +75,7 @@ if args.update:
     definitions = dict(
         arg.split("=", 1)
         for arg in sys.argv[1:]
-        if arg.startswith(("ENABLE_COVERAGE:BOOL=", "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS:BOOL="))
+        if arg.startswith(("ENABLE_COVERAGE:BOOL=", "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS:BOOL="))
     )
     configured.write_text(json.dumps(definitions))
     (config_dir / "build.ninja").touch()
@@ -130,7 +130,7 @@ def assert_built_mode(repo: Path, mode: str) -> None:
     symbols = "OFF" if mode == "normal" else "ON"
     expected = {
         "ENABLE_COVERAGE:BOOL": coverage,
-        "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS:BOOL": symbols,
+        "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS:BOOL": symbols,
     }
     for name in ("configured-mode.json", "built-mode.json"):
         assert json.loads((root / "RelWithDebInfo" / name).read_text()) == expected
@@ -178,7 +178,7 @@ def test_failed_switch_forces_reconfigure_on_retry(
     marker_after_failure = (root / "qnn-build-mode-RelWithDebInfo.txt").exists()
     assert json.loads((root / "RelWithDebInfo/configured-mode.json").read_text()) == {
         "ENABLE_COVERAGE:BOOL": "OFF",
-        "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS:BOOL": "ON",
+        "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS:BOOL": "ON",
     }
 
     retry_mode = initial_mode if retry_original_mode else "internal"
@@ -213,7 +213,7 @@ def test_internal_symbol_public_task_passes_required_build_flags(tmp_path: Path)
     step_id, task = planned_tasks[0]
     assert step_id == "build_ort_linux_x86_64_internal_symbols"
     command = task.executables_and_args[0]
-    assert "--enable-qnn-internal-ut-symbols" in command
+    assert "--enable-qnn-internal-test-symbols" in command
     assert "--build-dir-suffix=internal-symbols" in command
 
 
