@@ -31,7 +31,10 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+// Helpers shared by context-binary tests. Guard must match the GPU-test gate
+// (defined(_WIN32) && QNN_ARCH_ARM64): QNN_ARCH_ARM64 includes _M_ARM64EC,
+// which the old __aarch64__/_M_ARM64 spelling misses, breaking arm64ec builds.
+#if QNN_ARCH_ARM64 || defined(__linux__)
 static void LoadOnnxModelFromFile(const std::string& path, onnx::ModelProto& out_model) {
   std::ifstream fin(path, std::ios::in | std::ios::binary);
   if (!fin) {
@@ -2155,12 +2158,10 @@ static void DumpModelWithSharedCtx(ProviderOptions provider_options,
   // enable ep.share_ep_contexts so that QNNEP share the QnnBackendManager across sessions
   so.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
 
-#ifndef __aarch64__
-#ifndef _M_ARM64
+#if !QNN_ARCH_ARM64
   // weight sharing only available for v73 and higher
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SC8380XP);
-#endif  // !_M_ARM64
-#endif  // !__aarch64__
+#endif  // !QNN_ARCH_ARM64
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
@@ -3703,7 +3704,7 @@ TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
 }
 #endif  // QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // QNN_ARCH_ARM64 || defined(__linux__)
 
 #if defined(_WIN32) && QNN_ARCH_ARM64
 
