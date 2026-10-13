@@ -27,7 +27,7 @@ namespace {
 enum class IndexElementType { kInt64,
                               kInt32 };
 
-// [1,3,8,8] tiled strided-slice + concat stem (any NCHW input with even H/W
+// [1,3,8,6] tiled strided-slice + concat stem (any NCHW input with even H/W
 // shares the pattern); concat_order selects the Concat input sequence.
 // multiaxis_slices emits the parallel form (4 dual-axis Slices off the input,
 // as in production exports); otherwise the cascaded form (2 H-slices feeding
@@ -46,7 +46,7 @@ GetTestModelFn BuildTiledSliceConcatTestCase(bool use_qdq, bool use_contrib_qdq,
                                              bool omit_slice_axes = false) {
   return [=](ModelTestBuilder& builder) -> void {
     builder.graph_->set_name("tiled_slice_concat_graph");
-    const std::vector<int64_t> input_shape{1, 3, 8, 8};
+    const std::vector<int64_t> input_shape{1, 3, 8, 6};
     const auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
     MakeTestInput<float>(builder, "image", input_def);
 
@@ -156,6 +156,10 @@ ProviderOptions HtpOptions() {
   ProviderOptions options;
   options["backend_type"] = "htp";
   options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  // The simulator defaults to V68, where float SpaceToDepth is wrong.
+  options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
   return options;
 }
 
@@ -179,10 +183,10 @@ void RunTiledSliceConcatFusionTest(const std::filesystem::path& dir, GetTestMode
 
 }  // namespace
 
-// Non-canonical phase order: S2D(DCR) + channel Gather restoring exact order.
+// The default Concat order (h0w0, h1w0, h0w1, h1w1) is YOLO Focus: two chained S2D ops, no Gather.
 TEST_F(QnnHTPBackendTests, TiledSliceConcat_QDQ_U16_Fused) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunTiledSliceConcatFusionTest("TiledSliceConcatQDQU16_HTP", BuildTiledSliceConcatTestCase(true, true), 1, 1, 3e-2f);
+  RunTiledSliceConcatFusionTest("TiledSliceConcatQDQU16_HTP", BuildTiledSliceConcatTestCase(true, true), 2, 0, 3e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, TiledSliceConcat_QDQ_U16_Int32Indices_Fused) {
@@ -190,7 +194,7 @@ TEST_F(QnnHTPBackendTests, TiledSliceConcat_QDQ_U16_Int32Indices_Fused) {
   RunTiledSliceConcatFusionTest("TiledSliceConcatQDQU16Int32_HTP",
                                 BuildTiledSliceConcatTestCase(true, true, {"h0w0", "h1w0", "h0w1", "h1w1"},
                                                               IndexElementType::kInt32),
-                                1, 1, 3e-2f);
+                                2, 0, 3e-2f);
 }
 
 // Canonical DCR order needs no reorder: bare S2D, no Gather.
@@ -207,7 +211,7 @@ TEST_F(QnnHTPBackendTests, TiledSliceConcat_Parallel_QDQ_U16_Fused) {
   RunTiledSliceConcatFusionTest("TiledSliceConcatParallelQDQU16_HTP",
                                 BuildTiledSliceConcatTestCase(true, true, {"h0w0", "h1w0", "h0w1", "h1w1"},
                                                               IndexElementType::kInt64, false, true),
-                                1, 1, 3e-2f);
+                                2, 0, 3e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, TiledSliceConcat_Parallel_QDQ_CanonicalOrder_FusedWithoutGather) {
@@ -224,10 +228,17 @@ TEST_F(QnnHTPBackendTests, TiledSliceConcat_QDQ_U8_Fused) {
   RunTiledSliceConcatFusionTest("TiledSliceConcatQDQU8_HTP",
                                 BuildTiledSliceConcatTestCase<uint8_t>(
                                     true, false, {"h0w0", "h1w0", "h0w1", "h1w1"}),
-                                1, 1, 3.9e-2f);
+                                2, 0, 3.9e-2f);
 }
 
-// Second non-canonical order exercises a different Gather permutation.
+// Other orders use a channel Gather. A 4-cycle, unlike the involutions below, tells a permutation from its inverse.
+TEST_F(QnnHTPBackendTests, TiledSliceConcat_QDQ_CyclicOrder_Fused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunTiledSliceConcatFusionTest("TiledSliceConcatQDQCyclic_HTP",
+                                BuildTiledSliceConcatTestCase(true, true, {"h0w1", "h1w0", "h1w1", "h0w0"}), 1, 1,
+                                3e-2f);
+}
+
 TEST_F(QnnHTPBackendTests, TiledSliceConcat_QDQ_ReversedOrder_Fused) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunTiledSliceConcatFusionTest("TiledSliceConcatQDQReversed_HTP",
@@ -235,10 +246,9 @@ TEST_F(QnnHTPBackendTests, TiledSliceConcat_QDQ_ReversedOrder_Fused) {
                                 3e-2f);
 }
 
-// Float S2D-DCR is inaccurate on HTP (upstream float-DCR tests remain disabled): fail closed.
-TEST_F(QnnHTPBackendTests, TiledSliceConcat_Float_NotFused) {
+TEST_F(QnnHTPBackendTests, TiledSliceConcat_Float_Fused) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  RunTiledSliceConcatFusionTest("TiledSliceConcatFloat_HTP", BuildTiledSliceConcatTestCase(false, false), 0, 0);
+  RunTiledSliceConcatFusionTest("TiledSliceConcatFloat_HTP", BuildTiledSliceConcatTestCase(false, false), 2, 0);
 }
 
 // Duplicated phase must fail closed (S2D would drop a block).
@@ -264,7 +274,7 @@ TEST_F(QnnHTPBackendTests, TiledSliceConcat_QDQ_NegativeAxis_Fused) {
                                 BuildTiledSliceConcatTestCase(true, true, {"h0w0", "h1w0", "h0w1", "h1w1"},
                                                               IndexElementType::kInt64, false, false,
                                                               /*concat_axis=*/-3),
-                                1, 1, 3e-2f);
+                                2, 0, 3e-2f);
 }
 
 // Extra consumer on a tile must fail closed; lowering to S2D would drop that edge.
