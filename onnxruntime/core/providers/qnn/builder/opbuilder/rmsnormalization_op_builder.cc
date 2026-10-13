@@ -19,27 +19,22 @@ namespace qnn {
 
 namespace {
 
-// QNN's RmsNorm OpDef requires gamma (and beta) to be rank size(axes), whereas ONNX
-// RMSNormalization lets `scale` be any shape unidirectionally broadcastable to X, e.g. scale
-// [1, 1, C] against X [1, S, C]. Returns `shape` with leading 1-dims dropped to reach
-// `target_rank`, or std::nullopt if a non-1 dim would have to be dropped. A shape already at or
-// below `target_rank` is returned unchanged, leaving QNN to validate it as before.
+// QNN gamma must match the normalized dimensions, not just their rank.
 std::optional<std::vector<uint32_t>> TrySqueezeLeadingOnesTo(const std::vector<uint32_t>& shape,
-                                                             size_t target_rank) {
-  if (shape.size() <= target_rank) {
-    return shape;
-  }
-
-  const size_t num_leading_dims = shape.size() - target_rank;
-  if (std::any_of(shape.begin(), shape.begin() + num_leading_dims, [](uint32_t dim) { return dim != 1; })) {
+                                                             const std::vector<uint32_t>& target_shape) {
+  if (shape.size() < target_shape.size()) {
     return std::nullopt;
   }
-  return std::vector<uint32_t>(shape.begin() + num_leading_dims, shape.end());
+
+  const size_t num_leading_dims = shape.size() - target_shape.size();
+  if (std::any_of(shape.begin(), shape.begin() + num_leading_dims, [](uint32_t dim) { return dim != 1; }) ||
+      !std::equal(shape.begin() + num_leading_dims, shape.end(), target_shape.begin())) {
+    return std::nullopt;
+  }
+  return target_shape;
 }
 
-// Broadcast-scale decomposition: QNN RmsNorm needs rank(gamma) == size(axes),
-// which no squeeze can satisfy for scales like adaptive [B, 1, C]. Serve those as
-// RmsNorm(ones) * scale instead of rejecting the node.
+// Serve broadcast scales as RmsNorm(ones) * scale.
 struct BroadcastScaleDecomposition {
   bool enabled = false;
   Qnn_DataType_t data_type = QNN_DATATYPE_UNDEFINED;
@@ -62,10 +57,11 @@ BroadcastScaleDecomposition PlanBroadcastScaleDecomposition(const std::vector<ui
                                                             const TensorInfo& scale_info,
                                                             size_t axes_rank) {
   BroadcastScaleDecomposition decomposition;
-  if (TrySqueezeLeadingOnesTo(scale_info.shape, axes_rank).has_value()) {
+  if (axes_rank == 0 || x_shape.size() < axes_rank) {
     return decomposition;
   }
-  if (axes_rank == 0 || x_shape.size() < axes_rank) {
+  decomposition.ones_shape = std::vector<uint32_t>(x_shape.end() - axes_rank, x_shape.end());
+  if (TrySqueezeLeadingOnesTo(scale_info.shape, decomposition.ones_shape).has_value()) {
     return decomposition;
   }
   if (scale_info.quant_param.IsQuantized() || x_info.quant_param.IsQuantized()) {
@@ -77,7 +73,6 @@ BroadcastScaleDecomposition PlanBroadcastScaleDecomposition(const std::vector<ui
   if (scale_info.qnn_data_type != x_info.qnn_data_type) {
     return decomposition;
   }
-  decomposition.ones_shape = std::vector<uint32_t>(x_shape.end() - axes_rank, x_shape.end());
   if (std::any_of(decomposition.ones_shape.begin(), decomposition.ones_shape.end(),
                   [](uint32_t dim) { return dim == 0; })) {
     return decomposition;
@@ -174,8 +169,6 @@ Ort::Status RMSNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_
   const bool has_scale_input = inputs.size() > SCALE_IDX && inputs[SCALE_IDX].Exists();
   RETURN_IF_NOT(has_scale_input, "QNN EP requires scale input for RMSNorm operator");
 
-  // A scale rank that ProcessInputs cannot reconcile is rejected there, which propagates out of this
-  // call and leaves the node unclaimed.
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
 
@@ -210,15 +203,12 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
   TensorInfo scale_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[SCALE_IDX], scale_info));
 
-  // Squeeze the scale's leading 1-dims so it satisfies QNN's rank(gamma) == size(axes).
-  const std::optional<std::vector<uint32_t>> squeezed_shape =
-      TrySqueezeLeadingOnesTo(scale_info.shape, axes_rank);
-
   BroadcastScaleDecomposition decomposition;
   RETURN_IF_ERROR(GetBroadcastScaleDecomposition(qnn_model_wrapper, node_unit, decomposition));
+  const std::optional<std::vector<uint32_t>> squeezed_shape =
+      TrySqueezeLeadingOnesTo(scale_info.shape, decomposition.ones_shape);
   RETURN_IF_NOT(squeezed_shape.has_value() || decomposition.enabled,
-                "QNN RMSNorm requires the scale rank to equal the number of normalized axes; this scale has "
-                "non-1 leading dimensions and cannot be squeezed to match.");
+                "QNN RMSNorm requires scale to match the normalized dimensions after squeezing leading ones");
 
   const std::vector<uint32_t>& gamma_shape =
       squeezed_shape.has_value() ? *squeezed_shape : decomposition.ones_shape;
@@ -239,8 +229,7 @@ Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
   if (decomposition.enabled) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
                 ("RMSNorm node " + node_unit.Name() + ": scale `" + scale_name +
-                 "` is not squeezable to rank " + std::to_string(axes_rank) +
-                 "; decomposing as RmsNorm(ones) * scale.")
+                 "` does not match the normalized dimensions; decomposing as RmsNorm(ones) * scale.")
                     .c_str());
 
     size_t num_gamma_elems = 1;
