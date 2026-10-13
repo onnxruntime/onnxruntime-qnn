@@ -623,7 +623,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_VtcmNegative_LogsWarning) {
   ctx.session_config[EPKey("vtcm_mb")] = "-5";
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid vtcm_mb: '-5'. Ignoring.");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Invalid vtcm_mb: -5 will be skipped");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_VtcmPositive_Succeeds) {
@@ -709,7 +709,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_VtcmRejectsMalformedAndInt32OverflowV
 
     EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
     ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
-                 std::string("Invalid vtcm_mb: '") + invalid_value + "'. Ignoring.");
+                 std::string("Invalid vtcm_mb: ") + invalid_value + " will be skipped");
   }
 }
 
