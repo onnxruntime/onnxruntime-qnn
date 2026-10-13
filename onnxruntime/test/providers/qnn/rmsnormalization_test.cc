@@ -269,17 +269,21 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank4Scale_LeadingOnes) {
 
 // FP32 model at FP16 precision: covers the FLOAT_32 ones-gamma that the FP16-model test does not.
 TEST_F(QnnHTPBackendTests, RMSNormBroadcastScale_FP32_StaticScale) {
-  RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
-                     TestInputDef<float>({2, 1, 8}, true, GetFloatDataInRange(0.9f, 1.1f, 16)),
-                     {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
-                     ExpectedEPNodeAssignment::All);
+  for (const auto& scale_shape : {std::vector<int64_t>{2, 1, 8}, std::vector<int64_t>{1}}) {
+    RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
+                       TestInputDef<float>(scale_shape, true, GetFloatDataInRange(0.9f, 1.1f, SizeOfShape(scale_shape))),
+                       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                       ExpectedEPNodeAssignment::All);
+  }
 }
 
 TEST_F(QnnHTPBackendTests, RMSNormBroadcastScale_FP32_DynamicScale) {
-  RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
-                     TestInputDef<float>({2, 1, 8}, false, GetFloatDataInRange(0.9f, 1.1f, 16)),
-                     {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
-                     ExpectedEPNodeAssignment::All);
+  for (const auto& scale_shape : {std::vector<int64_t>{2, 1, 8}, std::vector<int64_t>{1}}) {
+    RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
+                       TestInputDef<float>(scale_shape, false, GetFloatDataInRange(0.9f, 1.1f, SizeOfShape(scale_shape))),
+                       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                       ExpectedEPNodeAssignment::All);
+  }
 }
 
 TEST_F(QnnHTPBackendTests, RMSNorm_MultipleAxes) {
@@ -298,11 +302,13 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank5) {
                      ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnHTPBackendTests, RMSNorm_MultipleAxes_QuantizedNotSupported) {
-  RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({2, 3, 4}, false, 0.0f, 4.0f),
-                                      TestInputDef<float>({4}, true, 0.5f, 1.5f),
-                                      {test::MakeAttribute("axis", int64_t{1})},
-                                      ExpectedEPNodeAssignment::None);
+TEST_F(QnnHTPBackendTests, RMSNorm_Decomposition_QuantizedNotSupported) {
+  for (int64_t axis : {1, -1}) {
+    RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({2, 3, 4}, false, 0.0f, 4.0f),
+                                        TestInputDef<float>({axis == 1 ? 4 : 1}, true, 0.5f, 1.5f),
+                                        {test::MakeAttribute("axis", axis)},
+                                        ExpectedEPNodeAssignment::None);
+  }
 }
 
 // Quantized squeeze: exercises the scale's quant params being carried onto the squeezed tensor and
