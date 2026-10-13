@@ -80,15 +80,28 @@ option(onnxruntime_DONT_VECTORIZE "Do not vectorize operations in Eigen" OFF)
 # Coverage builds are only supported on Linux with GCC.
 # Pass -DENABLE_COVERAGE=ON to cmake to enable (e.g. via build.sh --enable-coverage).
 option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
-option(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS
-       "Build QNN EP with internal symbols exported for unit tests. Do not use for production binaries." OFF)
+set(_qnn_internal_test_symbols_default OFF)
+# Preserve the old cache option as a compatibility alias. Only use it to seed the
+# new option when the new value was not supplied or persisted already, so a stale
+# old ON value cannot override an explicit new OFF value.
+if(NOT DEFINED onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS AND
+   DEFINED onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS)
+  set(_qnn_internal_test_symbols_default "${onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS}")
+  message(WARNING
+          "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS is deprecated; use "
+          "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS instead.")
+endif()
+option(onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS
+       "Build QNN EP with internal symbols exported for tests. Do not use for production binaries."
+       "${_qnn_internal_test_symbols_default}")
+unset(_qnn_internal_test_symbols_default)
 
 # This mode must keep the QNN EP export/link configuration and its direct-access
 # test bodies in lockstep. It is consumed by both provider and unit-test targets.
-set(onnxruntime_qnn_internal_ut_symbols_enabled OFF)
-if(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS OR
+set(onnxruntime_qnn_internal_test_symbols_enabled OFF)
+if(onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS OR
    (ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
-  set(onnxruntime_qnn_internal_ut_symbols_enabled ON)
+  set(onnxruntime_qnn_internal_test_symbols_enabled ON)
 endif()
 
 option(onnxruntime_USE_FULL_PROTOBUF "Link to libprotobuf instead of libprotobuf-lite when this option is ON" OFF)

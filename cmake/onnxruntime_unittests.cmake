@@ -395,7 +395,7 @@ block()
 
   # Internal-symbol test build: link against the SHARED QNN EP library so tests
   # can call EP-internal functions directly.
-  if(onnxruntime_qnn_internal_ut_symbols_enabled)
+  if(onnxruntime_qnn_internal_test_symbols_enabled)
     target_link_libraries(onnxruntime_provider_test PRIVATE onnxruntime_providers_qnn)
     # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
     # It tracks whether the test binary is link-time bound to the SHARED EP library
@@ -409,7 +409,7 @@ block()
     # accuracy/builder/opbuilder/clip_test.cc). Shares the
     # INTERNAL_SYMBOL_ACCESS prereqs (Linux x86_64 + shared QNN EP), so it
     # is enabled together with coverage rather than as a separate opt-in.
-    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ACCURACY_UT=1)
+    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ENABLE_ACCURACY_TESTS=1)
   endif()
 
   if(WIN32)

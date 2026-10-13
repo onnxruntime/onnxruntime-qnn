@@ -21,7 +21,7 @@ Shared test infrastructure (mocks, stub backends, the `OpBuilderTestContext` wra
 
 Because the QNN EP ships as a dynamically loaded plugin (`MODULE` library), its internal symbols are not normally accessible to external test binaries. The existing integration tests work around this by testing only through the public EP interface.
 
-This unit test infrastructure solves the problem through an **internal-symbol test build mode** that is enabled by the Linux x86-64 coverage build or the explicit `onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS` CMake option:
+This unit test infrastructure solves the problem through an **internal-symbol test build mode** that is enabled by the Linux x86-64 coverage build or the explicit `onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS` CMake option:
 
 1. Rebuilds the EP as a `SHARED` library so the test binary can link against it directly.
 2. Exports internal symbols through the platform-specific test-build linker configuration.

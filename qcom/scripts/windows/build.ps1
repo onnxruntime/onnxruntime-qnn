@@ -47,8 +47,8 @@ param (
     [string]$TargetPyVersion = "",
 
     [Parameter(Mandatory = $false,
-               HelpMessage = "Build QNN EP with internal symbols exported for unit tests. Not for production.")]
-    [bool]$QnnInternalUtSymbols = $false,
+               HelpMessage = "Build QNN EP with internal symbols exported for tests. Not for production.")]
+    [bool]$QnnInternalTestSymbols = $false,
 
     [Parameter(Mandatory = $true,
                HelpMessage = "Python virtual environment to activate.")]
@@ -77,7 +77,7 @@ else {
     $BuildDir = (Join-Path $BuildRoot "windows-$BuildDirArch")
 }
 
-if ($QnnInternalUtSymbols) {
+if ($QnnInternalTestSymbols) {
     $BuildDir = "$BuildDir-internal-symbols"
 }
 
@@ -216,8 +216,8 @@ if ($CMakeGenerator -eq "Ninja") {
     $PlatformArgs += "--cmake_extra_defines", "CMAKE_OBJECT_PATH_MAX=240"
 }
 
-if ($QnnInternalUtSymbols) {
-    $PlatformArgs += "--cmake_extra_defines", "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS=ON"
+if ($QnnInternalTestSymbols) {
+    $PlatformArgs += "--cmake_extra_defines", "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS=ON"
 }
 
 $VersionSuffixArg = @()
