@@ -841,7 +841,7 @@ int64_t RunCreateEpCtxAndCaptureMultiSoc(bool enable_multi_soc_ep_context) {
   unsigned char buffer[] = {0x1, 0x2, 0x3, 0x4};
   std::basic_string<ORTCHAR_T> context_model_path;  // unused in embed mode
   std::unordered_map<std::string, std::string> no_overrides;
-  qnn::EpContextIoDispatch dummy_io_dispatch(nullptr);
+  qnn::EpContextIoDispatch dummy_io_dispatch(nullptr, qnn::EpContextIoDispatch::kMinApiVersion);
 
   auto status = CreateEPContextNodes(&fused_node, 1, &ep_context_node,
                                      ctx.ort_api, ctx.editor_api,
