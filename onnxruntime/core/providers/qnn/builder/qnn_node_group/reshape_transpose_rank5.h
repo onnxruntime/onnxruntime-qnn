@@ -20,18 +20,21 @@ class QnnModelWrapper;
 /// <summary>
 /// Represents a fusion of pattern: Reshape -> Transpose -> Reshape where intermediate tensors are rank-6.
 /// QNN doesn't support rank-6 Reshape and Transpose operators, so this fusion converts them to rank-5
-/// by removing a unit dimension (value of 1) from intermediate tensors.
+/// by dropping one dimension: a unit dimension the transpose leaves in place, or - when no such
+/// dimension exists - by merging input dims 0 and 1, which must travel together
+/// (perm[0] == 0 && perm[1] == 1). SpaceToDepth permutations are not excluded:
+/// SpaceToDepthFusion runs first (see the fusions table in qnn_node_group.cc),
+/// so only shape-mismatched SpaceToDepth patterns reach this fallback.
 /// Pattern: Tensor(t0) -> Reshape(R1) -> Tensor(t1) -> Transpose(T1) -> Tensor(t2) -> Reshape(R2) -> Tensor(t3)
-/// Conditions:
-/// - Rank(t0) == Rank(t3) AND Last dimension of t0 equals last dimension of t3
-/// - Rank(t1) == Rank(t2) == 6
-/// - There exists a dimension index where both t1 and t2 have value 1
-/// - Transpose must leave that unit dimension in place (perm[unit_dim_index] == unit_dim_index)
+/// Conditions: Rank(t1) == Rank(t2) == 6 with constant Reshape shapes, and either
+/// a fixed unit dim (t1[i] == t2[i] == 1, perm[i] == i) or perm[0] == 0 && perm[1] == 1.
 /// </summary>
 class Rank6ToRank5Fusion : public IQnnNodeGroup {
  public:
-  explicit Rank6ToRank5Fusion(gsl::span<const OrtNodeUnit* const> node_units, size_t unit_dim_index)
-      : unit_dim_index_(unit_dim_index) {
+  explicit Rank6ToRank5Fusion(gsl::span<const OrtNodeUnit* const> node_units,
+                              size_t unit_dim_index,
+                              bool merge_first_two_dims)
+      : unit_dim_index_(unit_dim_index), merge_first_two_dims_(merge_first_two_dims) {
     if (node_units.size() != 3) {
       ORT_CXX_API_THROW("Pattern expects exactly 3 NodeUnits.", ORT_EP_FAIL);
     }
@@ -60,7 +63,8 @@ class Rank6ToRank5Fusion : public IQnnNodeGroup {
 
  private:
   std::array<const OrtNodeUnit*, 3> node_units_;  // Reshape1, Transpose, Reshape2
-  size_t unit_dim_index_;                         // Index of the unit dimension (value 1) to remove
+  size_t unit_dim_index_;                         // Unit dim to drop, or 0 when merging dims 0 and 1
+  bool merge_first_two_dims_;                     // Merge input dims 0 and 1 instead of squeezing
 };
 
 }  // namespace qnn
