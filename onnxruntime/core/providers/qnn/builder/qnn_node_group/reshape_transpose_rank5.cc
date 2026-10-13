@@ -35,11 +35,10 @@ constexpr const char* kAttrTransposePerm = "perm";
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
 
-// Validated rank reduction for a matched triple: drop the unit dim at index,
-// or merge input dims 0 and 1 (index is then 0).
+// Validated rank reduction for a matched triple.
 struct Reduction {
-  bool merge_first_two_dims;
-  size_t index;
+  RankReduction kind;
+  size_t index;  // Squeeze only; always 0 for MergeLeading.
 };
 
 /// @brief Match the pattern: Reshape -> Transpose -> Reshape with rank-6 intermediate tensors
@@ -73,9 +72,15 @@ std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank6ToRank5Pattern(
 
 /// @brief Validate the pattern conditions and compute the rank reduction.
 /// Squeeze is preferred: the first fixed unit dim wins, mirroring tetracode's
-/// DropBatch-before-MergeDims order. SpaceToDepth permutations are not excluded:
-/// SpaceToDepthFusion is registered before this fusion (see the fusions table in
-/// qnn_node_group.cc), so valid SpaceToDepth patterns are claimed first.
+/// DropBatch-before-MergeDims order.
+///
+/// Both reductions are pure view operations, so validity depends only on which axes
+/// survive and never on the permutation's semantics; the perm is read purely to build
+/// the rank-5 equivalent. SpaceToDepth permutations are deliberately not excluded here.
+/// Priority comes from fusions-table order -- SpaceToDepthFusion is tried first -- so it
+/// claims the patterns it can represent, and this fusion picks up the ones it declines.
+/// It declines bare RTR before Layout Transform runs (spacetodepth_fusion.cc), which is
+/// exactly the case that previously fell back to the CPU.
 std::optional<Reduction> ValidatePatternConditions(
     const OrtNodeUnit* reshape1,
     const OrtNodeUnit* transpose,
@@ -149,14 +154,14 @@ std::optional<Reduction> ValidatePatternConditions(
   // Squeeze the first unit dimension left in place by the transpose.
   for (size_t i = 0; i < kRank6; ++i) {
     if (t1_dims[i] == 1 && t2_dims[i] == 1 && perm[i] == static_cast<int64_t>(i)) {
-      return Reduction{false, i};
+      return Reduction{RankReduction::Squeeze, i};
     }
   }
 
   // Otherwise merge the first two input dims when they travel together. With
   // perm[0] == 0, t1_dims[0] != 1 here (a unit dim 0 would have matched above).
   if (perm[0] == 0 && perm[1] == 1) {
-    return Reduction{true, 0};
+    return Reduction{RankReduction::MergeLeading, 0};
   }
 
   return std::nullopt;
@@ -206,7 +211,7 @@ Ort::Status CreateOrValidateOnQnn(
     return Ort::Status("Expected rank-6 permutation", OrtErrorCode::ORT_FAIL);
   }
 
-  if (reduction.merge_first_two_dims) {
+  if (reduction.kind == RankReduction::MergeLeading) {
     // Dims 0 and 1 travel together (perm[0] == 0 && perm[1] == 1, validated), so
     // output position 1 disappears into position 0.
     const uint64_t merged_t1 = static_cast<uint64_t>(t1_dims[0]) * t1_dims[1];
@@ -374,8 +379,8 @@ std::unique_ptr<IQnnNodeGroup> Rank6ToRank5Fusion::TryFusion(
     return nullptr;
   }
 
-  return std::make_unique<Rank6ToRank5Fusion>(pattern.value(), reduction->index,
-                                              reduction->merge_first_two_dims);
+  return std::make_unique<Rank6ToRank5Fusion>(pattern.value(), reduction->kind,
+                                              reduction->index);
 }
 
 gsl::span<const OrtNodeUnit* const> Rank6ToRank5Fusion::GetNodeUnits() const {
@@ -384,13 +389,13 @@ gsl::span<const OrtNodeUnit* const> Rank6ToRank5Fusion::GetNodeUnits() const {
 
 Ort::Status Rank6ToRank5Fusion::IsSupported(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
-  const Reduction reduction{merge_first_two_dims_, unit_dim_index_};
+  const Reduction reduction{kind_, index_};
   return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), reduction, /*validate=*/true, logger);
 }
 
 Ort::Status Rank6ToRank5Fusion::AddToModelBuilder(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
-  const Reduction reduction{merge_first_two_dims_, unit_dim_index_};
+  const Reduction reduction{kind_, index_};
   return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), reduction, /*validate=*/false, logger);
 }
 
