@@ -282,6 +282,29 @@ TEST_F(QnnHTPBackendTests, RMSNormBroadcastScale_FP32_DynamicScale) {
                      ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnHTPBackendTests, RMSNorm_MultipleAxes) {
+  for (int64_t axis : {1, -2}) {
+    RunRMSNormFp32Test(TestInputDef<float>({2, 3, 4}, false, GetFloatDataInRange(-2.0f, 2.0f, 24)),
+                       TestInputDef<float>({2, 1, 4}, false, GetFloatDataInRange(0.5f, 1.5f, 8)),
+                       {test::MakeAttribute("axis", axis), test::MakeAttribute("epsilon", 0.1f)},
+                       ExpectedEPNodeAssignment::All);
+  }
+}
+
+TEST_F(QnnHTPBackendTests, RMSNorm_Rank5) {
+  RunRMSNormFp32Test(TestInputDef<float>({1, 2, 3, 4, 8}, false, GetFloatDataInRange(-2.0f, 2.0f, 192)),
+                     TestInputDef<float>({8}, true, GetFloatDataInRange(0.5f, 1.5f, 8)),
+                     {},
+                     ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, RMSNorm_MultipleAxes_QuantizedNotSupported) {
+  RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({2, 3, 4}, false, 0.0f, 4.0f),
+                                      TestInputDef<float>({4}, true, 0.5f, 1.5f),
+                                      {test::MakeAttribute("axis", int64_t{1})},
+                                      ExpectedEPNodeAssignment::None);
+}
+
 // Quantized squeeze: exercises the scale's quant params being carried onto the squeezed tensor and
 // the dummy beta (SDK < 2.49) inheriting the post-squeeze rank.
 TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_LeadingOnes_QDQ_StaticScale) {
@@ -299,7 +322,7 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_LeadingOnes_QDQ_DynamicScale) {
 }
 
 // axis=1 over X {2, 3, 4} normalizes 2 axes, so the scale squeezes to rank 2 rather than rank 1.
-// Uses the CPU backend because the HTP path requires the last axis only.
+// CPU uses the native multi-axis RMSNorm kernel.
 TEST_F(QnnCPUBackendTests, RMSNorm_Rank3Scale_LeadingOne_MultipleAxes) {
   RunRMSNormCpuTest(TestInputDef<float>({2, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 24)),
                     TestInputDef<float>({1, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 12)),
