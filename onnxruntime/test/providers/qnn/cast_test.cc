@@ -25,6 +25,19 @@ namespace test {
  * \return A function that builds the graph with the provided builder.
  */
 template <typename InputType>
+static GetTestModelFn BuildCastTestCaseWithData(const std::vector<int64_t>& shape,
+                                                ONNX_NAMESPACE::TensorProto_DataType dst_type,
+                                                const std::vector<InputType>& input_data) {
+  return [shape, dst_type, input_data](ModelTestBuilder& builder) {
+    builder.MakeInput<InputType>("X", shape, input_data);
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("to", static_cast<int64_t>(dst_type)));
+    builder.AddNode("cast", "Cast", {"X"}, {"Y"}, "", attributes);
+    builder.MakeOutput("Y");
+  };
+}
+
+template <typename InputType>
 static GetTestModelFn BuildCastTestCase(const std::vector<int64_t>& shape,
                                         ONNX_NAMESPACE::TensorProto_DataType dst_type) {
   return [shape, dst_type](ModelTestBuilder& builder) {
@@ -190,12 +203,9 @@ static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
 #if defined(_WIN32)
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
-  ProviderOptions provider_options;
-#if defined(_WIN32)
-  provider_options["backend_path"] = "QnnHtp.dll";
-#else
-  provider_options["backend_path"] = "libQnnHtp.so";
-#endif
+  // enable_fp16_precision=true pins to SM8850 on the x86 sim so fp16 ops aren't rejected
+  // by the v68-default validator, and sets enable_htp_fp16_precision on all platforms.
+  ProviderOptions provider_options = GetProviderOption("htp", /* enable_fp16_precision */ true);
 
   auto testcase = [shape, dst_type](ModelTestBuilder& builder) {
     auto input_def_fp = TestInputDef(shape, false, static_cast<float>(0), static_cast<float>(20));
@@ -300,11 +310,56 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP) {
                        "htp");
 }
 
-// Cast float16 to bool on HTP.
+// Cast(fp32 -> bool) on HTP over a mix of signs, magnitudes, and sub-1 values.
+// Guards the Sign -> Abs -> Cast lowering in cast_op_builder.cc.
+TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP_GenericFpValues) {
+  RunQnnModelTest(BuildCastTestCaseWithData<float>(
+                      {8},
+                      ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
+                      {-5.0f, -0.5f, 0.0f, 0.5f, 0.9f, 1.0f, 5.0f, 100.0f}),
+                  GetProviderOption("htp", false),
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+}
+
+// Cast float16 to bool on HTP. (Windows ARM64 CI v73 rejects).
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
+#if defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "x86 HTP sim validator rejects Cast(fp16 -> BOOL); requires real device.";
+#endif
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
   RunCastFP16HTPTest({3, 3},
                      ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
                      ExpectedEPNodeAssignment::All);
+}
+
+// Cast(fp16 -> bool) on HTP over a mix of signs, magnitudes, and sub-1 values.
+// Guards the Sign -> Abs -> Cast lowering for fp16 in cast_op_builder.cc.
+TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP_GenericFpValues) {
+#if defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "x86 HTP sim validator rejects Cast(fp16 -> BOOL); requires real device.";
+#endif
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+  const std::vector<float> fp32_data = {-5.0f, -0.5f, 0.0f, 0.5f, 0.9f, 1.0f, 5.0f, 100.0f};
+  std::vector<Ort::Float16_t> fp16_data;
+  fp16_data.reserve(fp32_data.size());
+  for (float v : fp32_data) {
+    fp16_data.push_back(Ort::Float16_t(v));
+  }
+
+  auto testcase = [fp16_data](ModelTestBuilder& builder) {
+    builder.MakeInput<Ort::Float16_t>("X", {8}, fp16_data);
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute(
+        "to", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL)));
+    builder.AddNode("cast", "Cast", {"X"}, {"Y"}, "", attributes);
+    builder.MakeOutput("Y");
+  };
+
+  RunQnnModelTest(testcase,
+                  GetProviderOption("htp", /* enable_fp16_precision */ true),
+                  13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Cast float to double on HTP.

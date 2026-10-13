@@ -2,11 +2,23 @@
 # SPDX-License-Identifier: MIT
 
 import subprocess
+import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
 from device import DeviceBase, device_from_url
 from ort_test_config import OrtTestConfig, default_test_config
+
+# QDC appends this test package below /qdc/appium. The complete test archive
+# also contains the canonical utility at /qdc/appium/qcom/scripts/all. Local
+# device testing runs directly from the checkout, where that utility is three
+# parents above this file instead.
+_appium_root = Path(__file__).resolve().parents[1]
+_qdc_filter_dir = _appium_root / "qcom" / "scripts" / "all"
+_local_filter_dir = Path(__file__).resolve().parents[3] / "all"
+sys.path.insert(0, str(_qdc_filter_dir if _qdc_filter_dir.is_dir() else _local_filter_dir))
+
+from model_test_filter import filter_model_test_suite  # noqa: E402
 
 
 class TestBase:
@@ -36,10 +48,21 @@ class TestBase:
         for item in Path(self.config().qdc_host_path).iterdir():
             self.device.push(item, Path(self.config().device_runtime_path))
 
-        # Push ONNX test models
+        # Push ONNX test models. The upstream plugin runner has no per-case
+        # skip argument, so apply QNN-owned case exclusions before uploading.
         self.device.shell(["mkdir", "-p", f"{self.config().device_onnx_model_test_path}"])
-        for item in Path(self.config().host_onnx_model_test_path).iterdir():
-            self.device.push(item.resolve(), Path(self.config().device_onnx_model_test_path))
+        with tempfile.TemporaryDirectory(prefix="QnnFilteredModelTests-") as tmpdir:
+            filtered_root = Path(tmpdir)
+            for item in Path(self.config().host_onnx_model_test_path).iterdir():
+                source = item.resolve()
+                if item.name == "node":
+                    destination = filtered_root / item.name
+                    skipped = filter_model_test_suite(source, destination, "node", "cpu")
+                    for name, reason in skipped.items():
+                        print(f"QNN model-test exclusion: {name}: {reason}")
+                    self.device.push(destination, Path(self.config().device_onnx_model_test_path))
+                else:
+                    self.device.push(source, Path(self.config().device_onnx_model_test_path))
 
         # Builds sometimes come from Windows, where executable bits are not set.
         if (Path(self.config().host_build_root) / "lib").exists():

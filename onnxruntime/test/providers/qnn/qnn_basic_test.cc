@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <string>
 #include <thread>
+#include <memory>
 
 #include "nlohmann/json.hpp"
 
@@ -13,8 +14,8 @@
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_session_options_config_keys.h"
 
-#include "core/providers/qnn/builder/op_package/op_package_parser.h"
 #include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
+
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/api_asserts.h"
 
@@ -24,6 +25,8 @@
 using namespace ONNX_NAMESPACE;
 
 #define ORT_MODEL_FOLDER ORT_TSTR("testdata/")
+// interface macro defined in combaseapi.h conflicts with its use in this file.
+#undef interface
 
 constexpr std::string_view kDlcOutputDir("dlc_output");
 
@@ -218,118 +221,6 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
     ASSERT_EQ(e.GetOrtErrorCode(), ORT_FAIL);
     ASSERT_THAT(e.what(), testing::HasSubstr("Only one of 'backend_type' and 'backend_path' should be set."));
   }
-}
-
-// Verifies that ParseOpPackages handles a Windows drive-letter path correctly.
-// On Windows, the colon-delimited entry contains an extra ':' from the drive letter
-// (e.g., "MyOp:C:\\path\\foo.dll:Symbol"). The parser must merge the drive letter and
-// the rest of the path into a single token without producing a dangling string_view.
-// On other platforms, the same code path is exercised with a POSIX-style path so that
-// a regression in the cross-platform parsing logic is caught everywhere.
-TEST(QnnEP, ParseOpPackages_AbsolutePath) {
-  Ort::Logger logger;
-  std::vector<onnxruntime::qnn::OpPackage> op_packages;
-
-#if defined(_WIN32)
-  // Create a real placeholder file at a Windows-style absolute path so std::filesystem::exists
-  // returns true and the drive-letter merge branch is exercised.
-  std::filesystem::path tmp_dir = std::filesystem::temp_directory_path();
-  std::filesystem::path tmp_dll = tmp_dir / "ort_qnn_parse_oppkg_test.dll";
-  std::ofstream(tmp_dll).put('\0');  // create empty placeholder
-  ASSERT_TRUE(std::filesystem::exists(tmp_dll));
-
-  const std::string entry = "MyOp:" + tmp_dll.string() + ":MyAddOpPackageInterfaceProvider";
-  onnxruntime::ParseOpPackages(entry, op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].op_type, "MyOp");
-  EXPECT_EQ(op_packages[0].path, tmp_dll.string());
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
-  EXPECT_TRUE(op_packages[0].target.empty());
-
-  // Variant with explicit ":CPU" target.
-  op_packages.clear();
-  const std::string entry_with_target = entry + ":CPU";
-  onnxruntime::ParseOpPackages(entry_with_target, op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].path, tmp_dll.string());
-  EXPECT_EQ(op_packages[0].target, "CPU");
-
-  std::filesystem::remove(tmp_dll);
-#else
-  // POSIX path — exercises the same parsing pipeline (without the Windows merge branch).
-  const std::string entry = "MyOp:/tmp/foo.so:MyAddOpPackageInterfaceProvider";
-  onnxruntime::ParseOpPackages(entry, op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].op_type, "MyOp");
-  EXPECT_EQ(op_packages[0].path, "/tmp/foo.so");
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
-  EXPECT_TRUE(op_packages[0].target.empty());
-
-  op_packages.clear();
-  onnxruntime::ParseOpPackages(entry + ":CPU", op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].target, "CPU");
-#endif
-}
-
-#if defined(_WIN32)
-// Regression test for the Windows drive-letter merge: parsing of the config string must be
-// deterministic in the input — same string → same parse, regardless of filesystem state.
-// If the merge were gated on std::filesystem::exists(), a missing DLL would silently mis-parse
-// `MyOp:C:\path\foo.dll:Symbol` as 4 tokens with "C" landing in the path slot.
-TEST(QnnEP, ParseOpPackages_AbsolutePath_NotYetOnDisk) {
-  Ort::Logger logger;
-  std::vector<onnxruntime::qnn::OpPackage> op_packages;
-
-  // Path that does NOT exist on disk — only the token shape (single-letter drive prefix) drives the merge.
-  const std::string non_existent_path = "C:\\does\\not\\exist\\ort_qnn_parse_oppkg_not_on_disk.dll";
-  ASSERT_FALSE(std::filesystem::exists(non_existent_path));
-
-  const std::string entry = "MyOp:" + non_existent_path + ":MyAddOpPackageInterfaceProvider";
-  onnxruntime::ParseOpPackages(entry, op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].op_type, "MyOp");
-  EXPECT_EQ(op_packages[0].path, non_existent_path);
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
-  EXPECT_TRUE(op_packages[0].target.empty());
-
-  // Variant with explicit ":CPU" target — the merge must leave room for the trailing target token.
-  op_packages.clear();
-  onnxruntime::ParseOpPackages(entry + ":CPU", op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].path, non_existent_path);
-  EXPECT_EQ(op_packages[0].target, "CPU");
-}
-#endif
-
-// Verifies that ParseOpPackages preserves a relative path as-is. Relative paths must NOT
-// trigger the Windows drive-letter merge branch (which is gated on splitStrings[1] being a
-// single ASCII letter), so the parser should pass the path through to op_packages unchanged.
-TEST(QnnEP, ParseOpPackages_RelativePath) {
-  Ort::Logger logger;
-  std::vector<onnxruntime::qnn::OpPackage> op_packages;
-
-#if defined(_WIN32)
-  // No drive letter → no extra ':' → no merge needed. Path passes through verbatim.
-  const std::string entry = "MyOp:foo.dll:MyAddOpPackageInterfaceProvider";
-#else
-  const std::string entry = "MyOp:foo.so:MyAddOpPackageInterfaceProvider";
-#endif
-  onnxruntime::ParseOpPackages(entry, op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].op_type, "MyOp");
-#if defined(_WIN32)
-  EXPECT_EQ(op_packages[0].path, "foo.dll");
-#else
-  EXPECT_EQ(op_packages[0].path, "foo.so");
-#endif
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
-  EXPECT_TRUE(op_packages[0].target.empty());
-
-  op_packages.clear();
-  onnxruntime::ParseOpPackages(entry + ":CPU", op_packages, logger);
-  ASSERT_EQ(op_packages.size(), 1u);
-  EXPECT_EQ(op_packages[0].target, "CPU");
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -3286,6 +3177,362 @@ TEST_F(QnnGPUBackendTests, DISABLED_io_binding_qnn_gpu_shared_offset) {
   binding.ClearBoundOutputs();
 }
 
+/*
+ * Import external memory.
+ */
+TEST_F(QnnGPUBackendTests, import_memory_basic) {
+  ComPtr<ID3D12Device> d3d12device;
+  HRESULT hr = D3D12CreateDevice(
+      nullptr,
+      D3D_FEATURE_LEVEL_12_0,
+      IID_PPV_ARGS(&d3d12device));
+  ASSERT_FALSE(FAILED(hr) || d3d12device == nullptr);
+
+  ComPtr<ID3D12Resource> input_buffer;
+  UINT64 input_size = 16;
+  hr = CreateD3D12Buffer(
+      d3d12device.Get(),
+      input_size,
+      D3D12_HEAP_FLAG_SHARED,
+      D3D12_HEAP_TYPE_DEFAULT,
+      input_buffer.GetAddressOf());
+  ASSERT_FALSE(FAILED(hr) || input_buffer == nullptr);
+
+  HANDLE input_handle = nullptr;
+  hr = d3d12device->CreateSharedHandle(
+      input_buffer.Get(),
+      nullptr,
+      GENERIC_ALL,
+      nullptr,
+      &input_handle);
+  ASSERT_FALSE(FAILED(hr) || input_handle == nullptr);
+
+  Ort::SessionOptions session_options;
+  ProviderOptions options;
+  options["backend_path"] = "QnnGpu.dll";
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
+  ASSERT_FALSE(registered_ep_device == nullptr);
+  OrtExternalResourceImporter* importer = nullptr;
+  ASSERT_ORTSTATUS_OK(Ort::GetInteropApi().CreateExternalResourceImporterForDevice(registered_ep_device.get(), &importer));
+  ASSERT_FALSE(importer == nullptr);
+
+  bool capability = false;
+  Ort::GetInteropApi().CanImportMemory(importer, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE, &capability);
+  ASSERT_TRUE(capability);
+  Ort::GetInteropApi().CanImportMemory(importer, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP, &capability);
+  ASSERT_FALSE(capability);
+  Ort::GetInteropApi().CanImportSemaphore(importer, ORT_EXTERNAL_SEMAPHORE_D3D12_FENCE, &capability);
+  ASSERT_FALSE(capability);
+
+  OrtExternalMemoryDescriptor input_desc;
+  input_desc.version = ORT_API_VERSION;
+  input_desc.handle_type = ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE;
+  input_desc.native_handle = input_handle;
+  input_desc.size_bytes = input_size;
+  input_desc.offset_bytes = 0;
+  OrtExternalMemoryHandle* input_mem = nullptr;
+  Ort::GetInteropApi().ImportMemory(importer, &input_desc, &input_mem);
+  ASSERT_FALSE(input_mem == nullptr);
+
+  // cleanup
+  Ort::GetInteropApi().ReleaseExternalMemoryHandle(input_mem);
+  Ort::GetInteropApi().ReleaseExternalResourceImporter(importer);
+  CloseHandle(input_handle);
+}
+
+/*
+ * Use imported external memory for inferencing input.
+ */
+TEST_F(QnnGPUBackendTests, import_memory_inference_input) {
+  // input
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  std::array<float, 3 * 2> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+
+  ComPtr<ID3D12Device> d3d12device;
+  HRESULT hr = D3D12CreateDevice(
+      nullptr,
+      D3D_FEATURE_LEVEL_12_0,
+      IID_PPV_ARGS(&d3d12device));
+  ASSERT_FALSE(FAILED(hr) || d3d12device == nullptr);
+
+  ComPtr<ID3D12Resource> input_buffer;
+  UINT64 input_size = sizeof(x_values);
+  hr = CreateD3D12Buffer(
+      d3d12device.Get(),
+      input_size,
+      D3D12_HEAP_FLAG_SHARED,
+      D3D12_HEAP_TYPE_DEFAULT,
+      input_buffer.GetAddressOf());
+  ASSERT_FALSE(FAILED(hr) || input_buffer == nullptr);
+
+  HANDLE input_handle = nullptr;
+  hr = d3d12device->CreateSharedHandle(
+      input_buffer.Get(),
+      nullptr,
+      GENERIC_ALL,
+      nullptr,
+      &input_handle);
+  ASSERT_FALSE(FAILED(hr) || input_handle == nullptr);
+
+  Ort::SessionOptions session_options;
+  ProviderOptions options;
+  options["backend_path"] = "QnnGpu.dll";
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
+  ASSERT_FALSE(registered_ep_device == nullptr);
+  OrtExternalResourceImporter* importer = nullptr;
+  ASSERT_ORTSTATUS_OK(Ort::GetInteropApi().CreateExternalResourceImporterForDevice(registered_ep_device.get(), &importer));
+  ASSERT_FALSE(importer == nullptr);
+
+  bool capability = false;
+  Ort::GetInteropApi().CanImportMemory(importer, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE, &capability);
+  ASSERT_TRUE(capability);
+
+  OrtExternalMemoryDescriptor input_desc;
+  input_desc.version = ORT_API_VERSION;
+  input_desc.handle_type = ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE;
+  input_desc.native_handle = input_handle;
+  input_desc.size_bytes = input_size;
+  input_desc.offset_bytes = 0;
+  OrtExternalMemoryHandle* input_mem_handle = nullptr;
+  Ort::GetInteropApi().ImportMemory(importer, &input_desc, &input_mem_handle);
+  ASSERT_FALSE(input_mem_handle == nullptr);
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
+  Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
+
+  OrtExternalTensorDescriptor input_tensor_desc;
+  input_tensor_desc.version = ORT_API_VERSION;
+  input_tensor_desc.element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  input_tensor_desc.shape = x_shape.data();
+  input_tensor_desc.rank = x_shape.size();
+  input_tensor_desc.offset_bytes = 0;
+  OrtValue* x_tensor = nullptr;
+  Ort::GetInteropApi().CreateTensorFromMemory(importer, input_mem_handle, &input_tensor_desc, &x_tensor);
+  ASSERT_FALSE(x_tensor == nullptr);
+
+  // Real use case imported memory would already contain input data from the gpu.
+  // Since ours doesn't we need to copy input data to it from the cpu.
+  // However it seems D3D12_HEAP_FLAG_SHARED & D3D12_HEAP_TYPE_UPLOAD does not seem to work.
+  // This means we cannot map the d3d buffer to CPU address space to copy input.
+  /*
+  {
+    void* cpu_mapped_ptr = nullptr;
+    hr = input_buffer->Map(0, nullptr, &cpu_mapped_ptr);
+    ASSERT_FALSE(FAILED(hr) || cpu_mapped_ptr == nullptr);
+    memcpy(cpu_mapped_ptr, x_values.data(), sizeof(x_values));
+  }
+  */
+
+  // Set up RunOptions
+  OrtRunOptions* run_options = nullptr;
+  Ort::GetApi().CreateRunOptions(&run_options);
+  // Run inference using simple Run() API (no IOBinding required)
+  const char* input_names[] = {"X"};
+  const char* output_names[] = {"Y"};
+  const OrtValue* inputs[] = {x_tensor};
+  OrtValue* outputs[] = {nullptr};
+  auto status = Ort::GetApi().Run(session, run_options, input_names, inputs, 1, output_names, 1, outputs);
+  ASSERT_TRUE(status == nullptr);
+
+  // check the output attributes
+  ASSERT_FALSE(outputs[0] == nullptr);
+  const auto* y_tensor = outputs[0];
+  OrtTensorTypeAndShapeInfo* y_info;
+  Ort::GetApi().GetTensorTypeAndShape(y_tensor, &y_info);
+  ASSERT_FALSE(y_info == nullptr);
+  size_t count = 0;
+  Ort::GetApi().GetTensorShapeElementCount(y_info, &count);
+  ASSERT_FALSE(count == 0);
+  const float* y = nullptr;
+  Ort::GetApi().GetTensorData(y_tensor, &(const void*)y);
+  ASSERT_FALSE(y == nullptr);
+
+  // Compare the actual output values to the expected output values.
+  // However since input values could not be provided (see above Map), we cannot compare output values.
+  /*
+  {
+    const std::array<int64_t, 2> expected_y_shape = {3, 2};
+    const std::array<float, 3 * 2> expected_y = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
+
+    ASSERT_EQ(expected_y.size(), count);
+    constexpr float y_max_abs_err = 1e-5f;
+    EXPECT_THAT(expected_y, ::testing::Pointwise(::testing::FloatNear(y_max_abs_err), gsl::span(y, count)));
+  }
+  */
+
+  // cleanup
+  Ort::GetApi().ReleaseValue(x_tensor);
+  Ort::GetInteropApi().ReleaseExternalMemoryHandle(input_mem_handle);
+  Ort::GetInteropApi().ReleaseExternalResourceImporter(importer);
+  CloseHandle(input_handle);
+}
+
+/*
+ * Use imported external memory for first inferencing output.
+ * Then use imported external memory for second inferencing input.
+ * Then compare the output values of second inferencing.
+ * Two inference need to be run this way because we cannot copy input to
+ * the imported external memory from the cpu.
+ */
+TEST_F(QnnGPUBackendTests, import_memory_inference_output_input) {
+  // ---------------------- create gpu session
+  Ort::SessionOptions session_options;
+  ProviderOptions options;
+  options["backend_path"] = "QnnGpu.dll";
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
+  ASSERT_FALSE(registered_ep_device == nullptr);
+  OrtExternalResourceImporter* importer = nullptr;
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
+  Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
+
+  // ---------------------- prepare tensor for input stage 1
+  const std::array<int64_t, 2> x_shape = {3, 2};
+  std::array<float, 3 * 2> x_values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  OrtValue* x_tensor = nullptr;
+  OrtMemoryInfo* meminfo = nullptr;
+  Ort::GetApi().CreateMemoryInfo("Cpu", OrtArenaAllocator, 0, OrtMemTypeCPU, &meminfo);
+  ASSERT_FALSE(meminfo == nullptr);
+  Ort::GetApi().CreateTensorWithDataAsOrtValue(
+      meminfo, x_values.data(), sizeof(x_values), x_shape.data(), x_shape.size(),
+      ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &x_tensor);
+
+  // ---------------------- prepare tensor for output stage 1
+  const std::array<int64_t, 2> expected_y_shape = {3, 2};
+  const std::array<float, 3 * 2> expected_y_values = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
+
+  ComPtr<ID3D12Device> d3d12device;
+  HRESULT hr = D3D12CreateDevice(
+      nullptr,
+      D3D_FEATURE_LEVEL_12_0,
+      IID_PPV_ARGS(&d3d12device));
+  ASSERT_FALSE(FAILED(hr) || d3d12device == nullptr);
+
+  ComPtr<ID3D12Resource> d3d12buffer;
+  UINT64 d3d12buffer_size = sizeof(expected_y_values);
+  hr = CreateD3D12Buffer(
+      d3d12device.Get(),
+      d3d12buffer_size,
+      D3D12_HEAP_FLAG_SHARED,
+      D3D12_HEAP_TYPE_DEFAULT,
+      d3d12buffer.GetAddressOf());
+  ASSERT_FALSE(FAILED(hr) || d3d12buffer == nullptr);
+
+  HANDLE d3d12buffer_shared_handle = nullptr;
+  hr = d3d12device->CreateSharedHandle(
+      d3d12buffer.Get(),
+      nullptr,
+      GENERIC_ALL,
+      nullptr,
+      &d3d12buffer_shared_handle);
+  ASSERT_FALSE(FAILED(hr) || d3d12buffer_shared_handle == nullptr);
+
+  ASSERT_ORTSTATUS_OK(Ort::GetInteropApi().CreateExternalResourceImporterForDevice(registered_ep_device.get(), &importer));
+  ASSERT_FALSE(importer == nullptr);
+
+  bool capability = false;
+  Ort::GetInteropApi().CanImportMemory(importer, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE, &capability);
+  ASSERT_TRUE(capability);
+
+  OrtExternalMemoryDescriptor import_mem_desc;
+  import_mem_desc.version = ORT_API_VERSION;
+  import_mem_desc.handle_type = ORT_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE;
+  import_mem_desc.native_handle = d3d12buffer_shared_handle;
+  import_mem_desc.size_bytes = d3d12buffer_size;
+  import_mem_desc.offset_bytes = 0;
+  OrtExternalMemoryHandle* import_mem_handle = nullptr;
+  Ort::GetInteropApi().ImportMemory(importer, &import_mem_desc, &import_mem_handle);
+  ASSERT_FALSE(import_mem_handle == nullptr);
+
+  OrtExternalTensorDescriptor import_mem_tensor_desc;
+  import_mem_tensor_desc.version = ORT_API_VERSION;
+  import_mem_tensor_desc.element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  import_mem_tensor_desc.shape = x_shape.data();
+  import_mem_tensor_desc.rank = x_shape.size();
+  import_mem_tensor_desc.offset_bytes = 0;
+  OrtValue* y_tensor = nullptr;
+  Ort::GetInteropApi().CreateTensorFromMemory(importer, import_mem_handle, &import_mem_tensor_desc, &y_tensor);
+  ASSERT_FALSE(y_tensor == nullptr);
+
+  // ---------------------- run inference stage 1
+  OrtRunOptions* run_options = nullptr;
+  Ort::GetApi().CreateRunOptions(&run_options);
+  // Run inference using simple Run() API (no IOBinding required)
+  const char* input_names[] = {"X"};
+  const char* output_names[] = {"Y"};
+  const OrtValue* inputs[] = {x_tensor};
+  OrtValue* outputs[] = {y_tensor};
+  auto status = Ort::GetApi().Run(session, run_options, input_names, inputs, 1, output_names, 1, outputs);
+  ASSERT_TRUE(status == nullptr);
+
+  // ---------------------- check the stage 1 run output attributes
+  ASSERT_TRUE(outputs[0] == y_tensor);
+  OrtTensorTypeAndShapeInfo* y_info;
+  Ort::GetApi().GetTensorTypeAndShape(y_tensor, &y_info);
+  ASSERT_FALSE(y_info == nullptr);
+  size_t count = 0;
+  Ort::GetApi().GetTensorShapeElementCount(y_info, &count);
+  ASSERT_FALSE(count == 0);
+  // The following cannot work because there is no cpu map of d3d12buffer.
+  /*
+  const float* y = nullptr;
+  Ort::GetApi().GetTensorData(y_tensor, &(const void*)y);
+  ASSERT_FALSE(y == nullptr);
+  */
+
+  // ---------------------- run inference stage 2
+  inputs[0] = y_tensor;
+  outputs[0] = nullptr;
+  status = Ort::GetApi().Run(session, run_options, input_names, inputs, 1, output_names, 1, outputs);
+  ASSERT_TRUE(status == nullptr);
+
+  // ---------------------- check the stage 2 run output attributes
+  ASSERT_FALSE(outputs[0] == nullptr);
+  const auto* z_tensor = outputs[0];
+  OrtTensorTypeAndShapeInfo* z_info;
+  Ort::GetApi().GetTensorTypeAndShape(z_tensor, &z_info);
+  ASSERT_FALSE(z_info == nullptr);
+  count = 0;
+  Ort::GetApi().GetTensorShapeElementCount(z_info, &count);
+  ASSERT_FALSE(count == 0);
+  const float* z = nullptr;
+  Ort::GetApi().GetTensorData(z_tensor, &(const void*)z);
+  ASSERT_FALSE(z == nullptr);
+
+  // ---------------------- Compare the actual output values to the expected output values.
+  const std::array<int64_t, 2> expected_z_shape = {3, 2};
+  const std::array<float, 3 * 2> expected_z = {1.0f, 8.0f, 27.0f, 64.0f, 125.0f, 216.0f};
+
+  ASSERT_EQ(expected_z.size(), count);
+  constexpr float z_max_abs_err = 1e-5f;
+  EXPECT_THAT(expected_z, ::testing::Pointwise(::testing::FloatNear(z_max_abs_err), gsl::span(z, count)));
+
+  // cleanup
+  Ort::GetApi().ReleaseValue(y_tensor);
+  Ort::GetInteropApi().ReleaseExternalMemoryHandle(import_mem_handle);
+  Ort::GetInteropApi().ReleaseExternalResourceImporter(importer);
+  CloseHandle(d3d12buffer_shared_handle);
+}
+
+// Test that the QNN EP can execute a graph with no runtime inputs if using the GPU backend.
+TEST_F(QnnGPUBackendTests, ConstantOnlyGraph) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+
+  // Float16 Abs with a constant tensor is not folded by ORT Core because it has no CPU kernel.
+  RunQnnModelTest(
+      BuildOpTestCase<Ort::Float16_t>(
+          "abs_node", "Abs",
+          {TestInputDef<Ort::Float16_t>({6}, true,
+                                        {Ort::Float16_t(-3.0f), Ort::Float16_t(-2.0f), Ort::Float16_t(-1.0f),
+                                         Ort::Float16_t(0.0f), Ort::Float16_t(1.0f), Ort::Float16_t(2.0f)})},
+          {}, {}),
+      provider_options,
+      13,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.001f)});
+}
 #endif  // defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
 
 // ============================ QNN EP input graph dump ============================

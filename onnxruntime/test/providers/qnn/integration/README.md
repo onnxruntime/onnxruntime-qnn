@@ -10,16 +10,21 @@ operator pipelines rather than targeting specific internal code paths.
 The `integration/` subdirectory introduces a separate tier: **targeted pipeline
 integration tests** that exercise specific internal EP code paths (e.g. `ort_api.cc`,
 `qnn_model_wrapper.cc`) by building minimal models inline via the ORT model editor API
-and running them through a real backend. Tests skip automatically when the required
-backend is unavailable.
+and running them through a real backend. The tests support Linux and Windows
+non-minimal builds. The QNN SDK and matching HTP execution environment must be
+available; a missing plugin or HTP device is treated as a configuration error
+(hard failure) rather than a skip.
 
 ## How this differs from the other test tiers
 
 | Tier | Directory | Backend required | What it targets |
 |---|---|---|---|
-| Unit | `unit/` | Optional (`libQnnHtp.so` for op validation only, no session) | Pure function logic; no graph execution |
+| Component | `component/` | Optional (`libQnnHtp.so` for op validation only, no session) | Pure function / op-builder logic; no graph execution |
+| Op-builder snapshot | `snapshot/` | Real backend + QNN graph creation, no ORT session execution | QNN JSON graph structure produced by the op builder |
+| Session snapshot | `session_snapshot/` | Real backend + full session (compile only) | QNN JSON graph structure after ORT optimizer + partition transforms |
+| Accuracy | `accuracy/` | Real backend + full session (compile + execute) | Per-op inference accuracy, spec-shared with the `snapshot/` tier — the **new home** for accuracy tests |
 | **Pipeline integration** | **`integration/`** | Real backend + full session (compile + execute) | Specific EP internal code paths triggered during EP compilation |
-| Op-level accuracy | `qnn/` (root) | Real backend + full session | Op correctness, inference accuracy vs CPU EP |
+| Op-level accuracy | `qnn/` (root) | Real backend + full session | Same accuracy check as the `accuracy/` tier, but **legacy** and not spec-shared — being migrated into `accuracy/` (see below) |
 
 ## Migration plan
 
@@ -37,26 +42,39 @@ expected.
 |---|---|
 | Targets a specific EP internal code path (e.g. a function in `ort_api.cc`, `qnn_model_wrapper.cc`) — builds a minimal model to trigger the path | **`integration/`** ← here |
 | Tests op-level correctness or inference accuracy (compares QNN EP output vs CPU EP) | `qnn/` (root) until that migration is complete |
-| Pure function logic or op validation only (no session/inference) | `unit/` |
+| Pure function / op-builder logic, no session (white-box) | `component/` |
+| QNN graph structure (JSON golden), op-builder or post-session | `snapshot/` or `session_snapshot/` |
 
 When in doubt: the dividing line is the **ORT session**, not whether a real
 backend is loaded. If your test creates a full ORT session (compile + execute a
 model through the EP), it belongs in `integration/`. A test that constructs EP
 components directly and calls their methods — even if that loads a real
-`libQnnHtp.so` — is a component test and belongs in `unit/` (see the `*HtpTest`
+`libQnnHtp.so` — is a component test and belongs in `component/` (see the `*HtpTest`
 fixtures there).
 
 ## Platform availability
 
+These tests execute models through the QNN HTP backend. Linux x86-64 and Windows
+x86-64 use the HTP emulator, while Linux AArch64 and Windows Arm64 require a real HTP
+device. The source guard compiles this tier for non-minimal Linux (including Android)
+and Windows builds. The Android validation route does not execute
+`onnxruntime_provider_test`.
+The standard Release test lanes execute the suite through `onnxruntime_provider_test`.
+
 | Platform | Behavior |
 |---|---|
 | Linux x86-64 | HTP simulator (`libQnnHtp.so`) runs fully — compile + execute. **Primary CI platform.** |
-| Linux AArch64 | Real HTP hardware — compile + execute. |
-| Windows x86-64 | HTP cannot execute graphs. Tests using `MakeQnnHtpSessionOptions` return `false` → `GTEST_SKIP()`. |
-| Windows ARM64 | Real HTP hardware — compile + execute. |
+| Linux AArch64 | Real HTP hardware via an NPU-type QNN EP device - compile + execute. |
+| Windows x86-64 | HTP emulator (`QnnHtp.dll`) is selected through the CPU-type virtual QNN EP device. |
+| Windows Arm64 | Real HTP hardware is selected through the NPU-type QNN EP device. |
+| Windows Arm64EC | The test source is compiled, but the current CI lane does not run unit tests. |
+| Android | Matches the Linux source guard, but its validation route does not execute `onnxruntime_provider_test`. |
 
-Tests skip automatically via `GTEST_SKIP()` when the required backend is unavailable —
-no platform-specific `#ifdef` guards are needed inside test bodies.
+On each enabled CI host the QNN SDK and matching HTP execution environment are
+required. The fixture treats a missing EP plugin or HTP device as a **hard failure**
+(CI configuration error), not a skip. The only automatic skips are a minimal build
+with no `OrtModelEditorApi`, and a per-test failure of the QNN EP to compile its inline
+model - no platform-specific `#ifdef` guards are needed inside test bodies.
 
 ## Adding new tests
 
@@ -68,16 +86,15 @@ to reuse them instead of re-defining locally:
 | Symbol | Purpose |
 |---|---|
 | `RegisteredQnnEp` | RAII helper that registers / unregisters the QNN EP plugin. |
-| `MakeQnnHtpSessionOptions(ep, opts)` | Build `Ort::SessionOptions` targeting the QNN HTP backend; returns `false` when the device is unavailable so the fixture can `GTEST_SKIP()`. |
+| `MakeQnnHtpSessionOptions(ep, opts)` | Build `Ort::SessionOptions` targeting the QNN HTP backend; returns `false` when the device is unavailable. The fixture treats that as a hard failure (CI config error). |
 | `MakeValueInfo1D / 2D / 3D / 4D` | Build `Ort::ValueInfo` for a tensor of the given rank, element type, and dimensions. |
 
 ### File structure
 
 Add to an existing `*_test.cc` or create a new file following the same pattern. The
-required guard is `#if !defined(ORT_MINIMAL_BUILD) && defined(__linux__)` — unlike `unit/`,
-these files do **not** need `QNN_EP_INTERNAL_SYMBOL_ACCESS` because they only use the
-public ORT C++ API, not EP-internal symbols. The `defined(__linux__)` half excludes
-Windows x86-64, where the HTP backend cannot execute graphs.
+required guard is `#if !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))`.
+Unlike `component/`, these files do **not** need `QNN_EP_INTERNAL_SYMBOL_ACCESS` because
+they only use the public ORT C++ API, not EP-internal symbols.
 
 Minimal template:
 
@@ -85,7 +102,7 @@ Minimal template:
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-#if !defined(ORT_MINIMAL_BUILD) && defined(__linux__)
+#if !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))
 
 #include <cstdint>
 #include <string>
@@ -101,14 +118,15 @@ namespace test {
 
 TEST_F(QnnInteg_OrtApiTest, MyFunction_MyScenario_ExpectedResult) {
   // Build a minimal inline model, create a session, run it.
-  // The fixture (QnnInteg_OrtApiTest) already sets up the HTP backend and
-  // calls GTEST_SKIP() if it is unavailable.
+  // The fixture (QnnInteg_OrtApiTest) already sets up the HTP backend; a missing
+  // SDK on the test host is a hard failure (CI config error). Have the test body
+  // GTEST_SKIP() only if the QNN EP cannot compile the model.
 }
 
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && defined(__linux__)
+#endif  // !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))
 ```
 
 ### Verification checklist before review
@@ -129,18 +147,27 @@ Example: `QnnInteg_OrtApiTest.QDQGroup_CoversGetQDQIODefs`
 ## Running the tests
 
 ```bash
-# Run only pipeline integration tests
+# Linux: run only pipeline integration tests.
 ./onnxruntime_provider_test --gtest_filter="QnnInteg_*"
 
-# Run all QNN tests (unit + integration + op-level)
-./onnxruntime_provider_test --gtest_filter="Qnn*"
+# Linux: run all tests in the provider test binary.
+./onnxruntime_provider_test
 ```
 
-Tests that require a backend that is unavailable on the current platform are
-automatically skipped via `GTEST_SKIP()` — no manual filtering needed.
+```powershell
+# Windows x86_64: the HTP emulator is exposed as a CPU-type virtual device.
+# The standard Windows test runner already sets this environment variable.
+$env:ORT_QNN_ENABLE_CPU_BACKEND = "1"
+.\onnxruntime_provider_test.exe --gtest_filter="QnnInteg_*"
+```
+
+The standard Linux and Windows Release test lanes run the full `ctest` suite, so
+registered `QnnInteg_*` tests run without a separate filter-only CI job. A missing
+required QNN SDK, plugin, or HTP device is a hard CI configuration failure; individual
+tests use `GTEST_SKIP()` only when the QNN EP cannot compile their inline model.
 
 ## Current test suites
 
 | File | Suite | EP internal code path covered |
 |---|---|---|
-| `ort_api_test.cc` | `QnnInteg_OrtApiTest` | `ort_api.cc`: `GetQDQIODefs`, `OrtNodeUnit` QDQ ctor, `OrtNodeAttrHelper` found-paths |
+| `ort_api_test.cc` | `QnnInteg_OrtApiTest` | `ort_api.cc`: `GetQDQIODefs` + QDQ `OrtNodeUnit` ctor, standalone DequantizeLinear / QuantizeLinear branches, and `OrtNodeAttrHelper` found-paths (int64/int64s/float/int32/int32-vec across several opsets) |

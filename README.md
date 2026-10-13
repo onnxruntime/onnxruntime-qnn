@@ -10,7 +10,10 @@ This repository is maintained by Qualcomm. For the general ONNX Runtime project,
 
 ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)**. The QNN EP is a *plugin* EP — a separately distributed shared library that plugs into a standard ONNX Runtime installation at runtime, without requiring a custom ORT build.
 
-> **QNN EP 2.5.0 is the Plugin QNN EP.** Starting with version 2.0.0, the QNN EP ships as a standalone plugin package (`onnxruntime-qnn>=2.0.0`) that works with any standard ORT installation — no custom build required. [Learn more about Plugin EPs →](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/)
+> **QNN EP 2.7.0 is the Plugin QNN EP.** Starting with version 2.0.0, the QNN EP ships as a standalone plugin package (`onnxruntime-qnn>=2.0.0`) that works with any standard ORT installation — no custom build required. [Learn more about Plugin EPs →](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/)
+
+> **Note**: ONNX Runtime QNN EP 2.7.40 was built for WinML with QAIRT 2.51.40 and is available only through WinL channels. 
+> **Note**: For mainline release of ORT QNN EP please use 2.7.0 which was built with QAIRT 2.51.0.
 
 <br/>
 <p align="center"><img width="80%" src="docs/images/PluginEP-final.png" /></p>
@@ -89,8 +92,8 @@ ort.unregister_execution_provider_library(lib_registration_name)
 ## Install
 
 ```bash
-pip install onnxruntime==1.26.0
-pip install onnxruntime-qnn==2.5.0
+pip install onnxruntime==1.29.0
+pip install onnxruntime-qnn==2.7.0
 ```
 
 **Requirements:**

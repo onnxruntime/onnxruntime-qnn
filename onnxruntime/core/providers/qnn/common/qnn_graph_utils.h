@@ -21,6 +21,7 @@ template <class U, class T>
 inline constexpr const char* kOnnxDomain = "";
 inline constexpr const char* kMSDomain = "com.microsoft";
 inline constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
+inline constexpr const char* kMLOnnxDomain = "ai.onnx.ml";
 
 }  // namespace onnxruntime
 // QNN-EP COPY END

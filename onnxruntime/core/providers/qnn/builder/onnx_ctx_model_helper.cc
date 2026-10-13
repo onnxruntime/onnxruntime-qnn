@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 
+#include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
@@ -153,7 +154,9 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      const std::basic_string<ORTCHAR_T>& ctx_onnx_model_path,
                                      QnnBackendManager* qnn_backend_manager,
                                      QnnModelLookupTable& qnn_models,
-                                     int64_t max_spill_fill_size) {
+                                     int64_t max_spill_fill_size,
+                                     const qnn::EpContextIoDispatch& io_dispatch,
+                                     const Ort::Logger* logger) {
   const char* op_type = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOperatorType(main_context_node, &op_type));
   RETURN_IF(op_type != EPCONTEXT_OP, "EPContext node should be EPContext type.");
@@ -172,6 +175,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                main_context_node_name,
                                                                qnn_models,
                                                                max_spill_fill_size,
+                                                               io_dispatch,
                                                                is_multi_soc_ep_context);
   }
 
@@ -205,11 +209,29 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   std::filesystem::path context_binary_path = folder_path.append(external_qnn_ctx_binary_file_name);
   std::string file_full_path = context_binary_path.string();
 #endif
+  std::string context_binary_path_str = context_binary_path.string();
+
+  // Read callback takes priority over file mapping: if it produces data, we return
+  // the decrypted buffer immediately so QNN is never handed the on-disk ciphertext
+  // via the file-mapping path below.
+  if (io_dispatch.HasReadCallback()) {
+    std::vector<char> decrypted;
+    RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted));
+    // QNN's contextCreateFromBinary copies the buffer internally; `decrypted` is scope-owned.
+    return qnn_backend_manager->LoadCachedQnnContextFromBuffer(decrypted.data(),
+                                                               static_cast<uint64_t>(decrypted.size()),
+                                                               context_binary_path_str,
+                                                               main_context_node_name,
+                                                               qnn_models,
+                                                               max_spill_fill_size,
+                                                               io_dispatch,
+                                                               is_multi_soc_ep_context);
+  }
+
   if (!std::filesystem::is_regular_file(context_binary_path)) {
     return Ort::Status("The file path in ep_cache_context does not exist or is not accessible.", ORT_INVALID_GRAPH);
   }
 
-  std::string context_binary_path_str = context_binary_path.string();
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   if (qnn_backend_manager->FileMappingIsEnabled()) {
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(nullptr,
@@ -218,6 +240,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                main_context_node_name,
                                                                qnn_models,
                                                                max_spill_fill_size,
+                                                               io_dispatch,
                                                                is_multi_soc_ep_context);
   }
 #endif
@@ -237,12 +260,19 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   const auto& read_result = cache_file.read(buffer.get(), buffer_size);
   RETURN_IF(!read_result, "Failed to read contents from cached context file.");
   cache_file.close();
+  // If this file was actually written by an encrypting write callback, a missing read callback
+  // here means QNN is about to parse ciphertext and fail with an opaque error.
+  ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("No EPContext read callback registered; reading '" + context_binary_path_str +
+                   "' directly from disk.")
+                      .c_str());
   return qnn_backend_manager->LoadCachedQnnContextFromBuffer(buffer.get(),
                                                              static_cast<uint64_t>(buffer_size),
                                                              context_binary_path_str,
                                                              main_context_node_name,
                                                              qnn_models,
                                                              max_spill_fill_size,
+                                                             io_dispatch,
                                                              is_multi_soc_ep_context);
 }
 
@@ -291,7 +321,8 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                     QnnBackendManager* qnn_backend_manager,
                                     QnnModelLookupTable& qnn_models,
                                     const Ort::Logger& logger,
-                                    int64_t max_spill_fill_size) {
+                                    int64_t max_spill_fill_size,
+                                    const qnn::EpContextIoDispatch& io_dispatch) {
   size_t num_nodes = 0;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graph, &num_nodes));
   RETURN_IF(num_nodes != 1, "OrtGraph should have only one EPContext node.");
@@ -305,7 +336,9 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                                      ctx_onnx_model_path,
                                                      qnn_backend_manager,
                                                      qnn_models,
-                                                     max_spill_fill_size);
+                                                     max_spill_fill_size,
+                                                     io_dispatch,
+                                                     &logger);
 
   // This is the protocol with customer that status with INVALID_GRAPH will be generated if failed to load context model
   if (!load_status.IsOK()) {
@@ -334,7 +367,8 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                  bool stop_share_ep_contexts,
                                  const std::string& ep_name,
                                  const std::unordered_map<std::string, std::string>& tensor_name_overrides,
-                                 bool enable_multi_soc_ep_context) {
+                                 bool enable_multi_soc_ep_context,
+                                 const qnn::EpContextIoDispatch& io_dispatch) {
   // Still need more work to support multiple partition, it's out of EP's scope.
   // Already have code to make sure it's single partition before this method get invoked.
   for (size_t idx = 0; idx < count; ++idx) {
@@ -405,13 +439,25 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
         // Write the ctx.bin file for the case: 1. no share_ep_context enabled, write for every session
         // 2. share_ep_context enabled, only write for the last session which has stop_share_ep_contexts enabled
         if (!share_ep_contexts || (share_ep_contexts && stop_share_ep_contexts)) {
-          std::ofstream of_stream(context_bin_path.c_str(), std::ofstream::binary);
-          if (!of_stream) {
-            const std::string message = "Failed to open context cache file.";
-            ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, message.c_str());
-            return MAKE_EP_FAIL(message.c_str());
+          if (io_dispatch.HasWriteCallback()) {
+            RETURN_IF_ERROR(io_dispatch.Write(context_cache_name,
+                                              reinterpret_cast<const void*>(buffer),
+                                              buffer_size,
+                                              logger));
+          } else {
+            std::ofstream of_stream(context_bin_path.c_str(), std::ofstream::binary);
+            if (!of_stream) {
+              const std::string message = "Failed to open context cache file.";
+              ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+              return MAKE_EP_FAIL(message.c_str());
+            }
+            of_stream.write(reinterpret_cast<char*>(buffer), buffer_size);
+            if (!of_stream) {
+              const std::string message = "Failed to write context cache file.";
+              ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+              return MAKE_EP_FAIL(message.c_str());
+            }
           }
-          of_stream.write(reinterpret_cast<char*>(buffer), buffer_size);
         }
 
         attr = nullptr;

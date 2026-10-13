@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <algorithm>
+
 #include <gsl/gsl>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -198,6 +200,30 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
         }  // end is_block_quant
       }  // end else (weight shape obtainable)
     }  // end quant_param check
+
+    // HTP requires activation bitwidth >= weight bitwidth (a16w16, a16w8, a16w4, a8w8, a8w4). Checked
+    // here, not in ProcessInputs, so an unsatisfiable combo is rejected before layout transform runs.
+    // Conv's actual compute bitwidth is always the wider of the activation's and the output's: when
+    // the activation is wider, it's Converted down only after Conv (AddOpWithQuantizedOutput);
+    // otherwise the activation is Converted up to the output's precision before Conv runs.
+    // See ProcessConv2D3DInputs's is_narrowing_output.
+    Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(node_unit.Outputs()[0].quant_param.has_value(),
+                                          node_unit.Outputs()[0].type, declared_output_dtype));
+    Qnn_DataType_t act_dtype_check = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(input_0.quant_param.has_value(), input_0.type, act_dtype_check));
+    Qnn_DataType_t weight_dtype = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(inputs[1].quant_param.has_value(), inputs[1].type, weight_dtype));
+    const int weight_bitwidth = utils::FixedPointBitWidth(weight_dtype);
+    const int compute_bitwidth = std::max(utils::FixedPointBitWidth(act_dtype_check),
+                                          utils::FixedPointBitWidth(declared_output_dtype));
+    // compute_bitwidth == 0 means both activation and output are float, so there's
+    // no fixed-point constraint to enforce.
+    RETURN_IF_NOT(compute_bitwidth == 0 || weight_bitwidth <= compute_bitwidth,
+                  ("Conv's weight bitwidth (" + std::to_string(weight_bitwidth) +
+                   ") exceeds its compute bitwidth (" + std::to_string(compute_bitwidth) + ")")
+                      .c_str());
+
     // checking for per-channel quantization
     const auto& input_1 = inputs[1];  // weight
     bool is_per_axis_quant = false;
@@ -282,7 +308,7 @@ static Ort::Status ProcessRequantizeBias(QnnModelWrapper& qnn_model_wrapper,
   for (size_t i = 0; i < num_channels && !needs_requantization; ++i) {
     const float w = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
     if (current_offsets[i] != 0 ||
-        !utils::CheckBiasScaleMatch(current_scales[i], w, activation_scale, 1e-5f)) {
+        !utils::CheckBiasScaleMatch(current_scales[i], w, activation_scale)) {
       needs_requantization = true;
     }
   }
@@ -360,15 +386,19 @@ Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(bias_def, bias_info));
 
   if (bias_info.is_initializer) {
-    TensorInfo input0_info = {}, input1_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input0_info));
+    // Read the activation's quant params from the tensor actually bound to input_names[0], not
+    // inputs[0]: a mixed-precision Conv rebinds input_names[0] to a Converted activation with a
+    // rescaled quant encoding (see ProcessConv2D3DInputs), and the bias scale must match that.
+    const auto& activation_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
+    const QnnQuantParamsWrapper& input0_quant_param = activation_wrapper.GetQnnQuantParams();
+    TensorInfo input1_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input1_info));
 
-    if (input0_info.quant_param.IsQuantized() && input1_info.quant_param.IsQuantized()) {
+    if (input0_quant_param.IsQuantized() && input1_info.quant_param.IsQuantized()) {
       // Get activation scale (must be per-tensor for Conv)
-      RETURN_IF_NOT(input0_info.quant_param.IsPerTensor(/*include_bw*/ true),
+      RETURN_IF_NOT(input0_quant_param.IsPerTensor(/*include_bw*/ true),
                     "Activation must be per-tensor quantized for Conv 2D");
-      const float activation_scale = GetActivationScale(input0_info.quant_param);
+      const float activation_scale = GetActivationScale(input0_quant_param);
       std::vector<float> weights_scales;
       RETURN_IF_ERROR(utils::GetWeightQuantScales(input1_info.quant_param, weights_scales));
       RETURN_IF(weights_scales.empty(), "No weight scales found for bias quantization");
@@ -401,7 +431,7 @@ Ort::Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          std::vector<std::string>& input_names,
                                          bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
-  assert(inputs.size() >= 2);
+  RETURN_IF_NOT(inputs.size() >= 2, "Expecting at least two inputs.");
 
   std::vector<uint32_t> input0_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input0_shape),
@@ -426,7 +456,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   OnnxConvType conv_type = {};
   RETURN_IF_ERROR(GetOnnxConvType(node_unit.OpType(), conv_type));
 
-  assert(num_inputs >= 2);  // Checked by IsOpSupported.
+  RETURN_IF_NOT(num_inputs >= 2, "Expecting at least two inputs.");  // Checked by IsOpSupported.
 
   //
   // Input 0
@@ -434,7 +464,36 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
   const std::string act_name = input_names[0];  // activation (input 0)
   const auto& act_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(act_name);
-  const Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
+  Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
+
+  // Convert a mixed-precision activation/output pair before Conv runs.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    // 1. Read the Conv's own declared (Q-node) output precision.
+    const auto& conv_output = node_unit.Outputs()[0];
+    Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(conv_output.quant_param.has_value(), conv_output.type,
+                                          declared_output_dtype));
+    // 2. A 16-bit activation feeding an 8-bit output is already handled by
+    // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output. Convert
+    // only the other mismatched fixed-point pairs here; same-precision Conv is untouched.
+    const bool is_narrowing_output = utils::IsNarrowingQuantOutput(act_dtype, declared_output_dtype);
+    if (!is_narrowing_output && utils::NeedsPrecisionConvert(act_dtype, declared_output_dtype)) {
+      RETURN_IF_NOT(act_wrapper.GetQnnQuantParams().IsPerTensor(),
+                    "Conv's mixed-precision activation Convert only supports per-tensor quantization");
+      // 3. Convert the activation to the output's precision before Conv consumes it.
+      const Qnn_QuantizeParams_t& act_quant_param = act_wrapper.GetQnnQuantParams().Get();
+      const std::string converted_act_name = utils::UniqueNameGenerator().New(act_name, "_convert");
+      RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper, act_name, converted_act_name,
+                                             act_dtype, declared_output_dtype,
+                                             act_quant_param.scaleOffsetEncoding.offset,
+                                             act_quant_param.scaleOffsetEncoding.scale,
+                                             act_wrapper.GetTensorDims(),
+                                             /*output_symmetric*/ false, do_op_validation));
+      // 4. Conv now computes/emits natively at declared_output_dtype; no further bridging needed.
+      input_names[0] = converted_act_name;
+      act_dtype = declared_output_dtype;
+    }
+  }
 
   // Detect block-quantized weight. Per ONNX opset 21, the scale rank equals the weight rank
   // with scale_shape[1] < weight_shape[1] (the blocked IC axis). Weight is always NCHW
@@ -486,8 +545,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
                                ? "weight quant params not LPBQ (enable_block_quant_weight_optimization=0, non-INT4, or asymmetric ZP)"
                                : "unknown";
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Conv weight encoding: BW_FLOAT_BLOCK for " + input1_name +
-                   " [LPBQ skipped: " + reason + "]")
+                  ("Conv weight encoding: non-LPBQ block-quant path for " + input1_name +
+                   " [LPBQ skipped: " + reason + "] — native BQ (BLOCK) vs BW_FLOAT_BLOCK is decided below")
                       .c_str());
     }
   }
@@ -495,15 +554,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   if (is_bq_weight && !use_lpbq_path) {
     RETURN_IF_NOT(input_info.is_initializer, "QNN EP: BQ Conv weight must be a constant initializer");
 
-    // Activation handling: BQ kernel (BW_FLOAT_BLOCK) requires FP16, so INT16 → FP16 via Dequantize.
-    if (utils::IsQuant16bit(act_dtype)) {
-      // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
-      // stays aligned with the ONNX graph naming.
-      const std::string fp16_act_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
-      RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper, act_name,
-                                                             fp16_act_name, do_op_validation, "Conv"));
-      input_names[0] = fp16_act_name;
-    }
+    // Activation handling: the non-native BQ kernel (BW_FLOAT_BLOCK) requires FP16, so INT16 → FP16 via
+    // Dequantize. The native BQ kernel (ENCODING_BLOCK) consumes INT16 directly and needs no Dequantize.
+    // The insertion is deferred until the offsets are known, since offset symmetry is one of the
+    // native-BQ preconditions checked by bq::IsHTPSupportedNativeBQ below.
 
     // Common: transpose weight data from OIHW→HWIO (or IOHW→HWIO for ConvTranspose).
     // TransposeFromNchwToHwcn unpacks INT4 to INT8 internally (1 byte per element).
@@ -557,10 +611,51 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     RETURN_IF_ERROR(bq::ComputeBQOffsets(qnn_model_wrapper, inputs[1].quant_param->zero_point,
                                          is_unsigned_weight, bitwidth, OC * nb, offsets_qnn));
 
-    QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
-                                                                                gsl::span<const float>(offsets_qnn),
-                                                                                bitwidth,
-                                                                                gsl::span<const uint32_t>(block_size_arr));
+    // Prefer the HTP native BQ kernel (QNN_QUANTIZATION_ENCODING_BLOCK) when the BQ parameters satisfy its
+    // constraints: it consumes the INT16 activation and produces an INT16 output directly, avoiding the
+    // INT16→FP16 activation Dequantize and FP16→INT16 output Quantize that BW_FLOAT_BLOCK requires.
+    // Restricted to the bias-less case (num_inputs < 3): with a bias present the BW_FLOAT_BLOCK path also
+    // dequantizes the INT32 bias to FP16 (see ProcessConv2D3DBias), which the native kernel does not expect.
+    const bool is_supported_native_bq = num_inputs < 3 &&
+                                        bq::IsHTPSupportedNativeBQ(qnn_model_wrapper.GetHtpArch(),
+                                                                   act_dtype,
+                                                                   bitwidth,
+                                                                   static_cast<uint32_t>(block_size),
+                                                                   static_cast<uint32_t>(OC),
+                                                                   gsl::span<const float>(offsets_qnn));
+
+    QnnQuantParamsWrapper bq_quant_params;
+    if (is_supported_native_bq) {
+      // Native BQ requires symmetric quantization; IsHTPSupportedNativeBQ has verified all offsets are zero.
+      const std::vector<int32_t> offsets_sym(offsets_qnn.size(), 0);
+      bq_quant_params = QnnQuantParamsWrapper::Block(gsl::span<const float>(scales_qnn),
+                                                     gsl::span<const int32_t>(offsets_sym),
+                                                     gsl::span<const uint32_t>(block_size_arr));
+      ORT_CXX_LOG(logger,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Conv weight encoding: native BQ (BLOCK) for " + input1_name).c_str());
+    } else {
+      bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
+                                                            gsl::span<const float>(offsets_qnn),
+                                                            bitwidth,
+                                                            gsl::span<const uint32_t>(block_size_arr));
+      ORT_CXX_LOG(logger,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Conv weight encoding: BW_FLOAT_BLOCK for " + input1_name).c_str());
+
+      // Non-native BQ kernel computes in FP16, so dequantize the INT16 activation first.
+      if (utils::IsQuant16bit(act_dtype)) {
+        // Reuse the original DequantizeLinear output name for the FP16 tensor so the QNN graph
+        // stays aligned with the ONNX graph naming.
+        const std::string fp16_act_name = Ort::ConstNode(&node_unit.GetNode()).GetInputs()[0].GetName();
+        RETURN_IF_ERROR(bq::AddInt16ToFp16DequantForActivation(qnn_model_wrapper,
+                                                               act_name,
+                                                               fp16_act_name,
+                                                               do_op_validation,
+                                                               "Conv"));
+        input_names[0] = fp16_act_name;
+      }
+    }
 
     // Always use SFIXED_POINT_8: unsigned types are pre-converted by TransformUnsignedToSignedFixedPoint.
     QnnTensorWrapper bq_weight_wrapper(input1_name, tensor_type,
@@ -720,16 +815,18 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   if (!has_bias_input && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     // Bias is implicit. QNN SDK 2.23/2.24/2.25 (QNN API version 2.16/2.17/2.18) has a validation bug for
     // implicit bias inputs, so provide an explicit bias of all 0 (quantized int32).
-    TensorInfo input0_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input0_info));
+    // Read the activation's quant params from the tensor actually bound to input_names[0] (see the
+    // matching comment in ProcessConvBias); the bias value is 0 either way, but keep the source consistent.
+    const QnnQuantParamsWrapper& input0_quant_param =
+        qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetQnnQuantParams();
 
     TensorInfo input1_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input1_info));
 
-    if (input0_info.quant_param.IsPerTensor(/*include_bw*/ true) && input1_info.quant_param.IsQuantized()) {
+    if (input0_quant_param.IsPerTensor(/*include_bw*/ true) && input1_info.quant_param.IsQuantized()) {
       const std::string bias_name = qnn::utils::UniqueNameGenerator().New(node_unit, "_implicit_bias");
       std::vector<uint32_t> bias_shape = {input1_info.shape[0]};
-      RETURN_IF_ERROR(AddZeroBiasInput(qnn_model_wrapper, input0_info.quant_param, input1_info.quant_param,
+      RETURN_IF_ERROR(AddZeroBiasInput(qnn_model_wrapper, input0_quant_param, input1_info.quant_param,
                                        std::move(bias_shape), bias_name, logger, input_names));
     }
   }
@@ -749,7 +846,7 @@ Ort::Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrappe
   OnnxConvType conv_type = {};
   RETURN_IF_ERROR(GetOnnxConvType(node_unit.OpType(), conv_type));
 
-  assert(num_inputs >= 2);  // Checked by IsOpSupported.
+  RETURN_IF_NOT(num_inputs >= 2, "Expecting at least two inputs.");  // Checked by IsOpSupported.
 
   //
   // Input 0
@@ -1212,12 +1309,20 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
   RETURN_IF_ERROR(utils::GetQnnDataType(is_quantized_tensor, output_type, qnn_data_type));
 
-  // Detect BQ Conv from the weight tensor's quant encoding.
-  // BQ  (BW_FLOAT_BLOCK):       Conv outputs FP16 → need FP16 intermediate + Convert(FP16→INT16).
+  const Qnn_DataType_t activation_qnn_data_type =
+      qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+
+  // Detect the non-native BQ Conv from the weight tensor's quant encoding.
+  // native BQ (BLOCK)             : Conv outputs INT16 → standard quantized output path.
+  // non-native BQ (BW_FLOAT_BLOCK): Conv outputs FP16 → need FP16 intermediate + Quantize(FP16→INT16).
+  // LPBQ (BLOCKWISE_EXPANSION)    : Conv outputs INT16 → standard quantized output path.
+  // NOTE: IsBlockQuantized() is true for both BLOCK and BW_FLOAT_BLOCK, so match the encoding directly.
   // input_names[1] is the weight — IsOpSupported guarantees Conv has >= 2 inputs.
-  bool is_bq_conv = false;
+  bool is_bw_float_block = false;
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1])) {
-    is_bq_conv = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().IsBlockQuantized();
+    const auto& quant_params = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().Get();
+    is_bw_float_block = quant_params.encodingDefinition == QNN_DEFINITION_DEFINED &&
+                        quant_params.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK;
   }
 
   const auto& output_name = outputs[0].name;
@@ -1230,17 +1335,13 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
         output_shape[2],  // C
     };
     const std::string conv_output_name = utils::UniqueNameGenerator().New(output_name, "_conv");
-    QnnTensorWrapper output_tensorwrapper(conv_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type,
-                                          output_quantize_param.Copy(), std::vector<uint32_t>(output_shape_2d));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  output_node_type,
-                                                  std::move(input_names),
-                                                  {conv_output_name},
-                                                  std::move(param_tensor_names),
-                                                  do_op_validation),
-                  "Failed to add node.");
+    RETURN_IF_ERROR(utils::AddOpWithQuantizedOutput(qnn_model_wrapper, utils::UniqueNameGenerator().New(node_unit),
+                                                    output_node_type, std::move(input_names),
+                                                    std::move(param_tensor_names), conv_output_name,
+                                                    QNN_TENSOR_TYPE_NATIVE, qnn_data_type,
+                                                    output_quantize_param.Copy(),
+                                                    std::vector<uint32_t>(output_shape_2d),
+                                                    activation_qnn_data_type, do_op_validation));
 
     // Add Reshape to convert QNN Conv2d/TransposeConv2d/DepthWiseConv2d output back to 1D.
     RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(conv_output_name,
@@ -1256,8 +1357,8 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
     Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-    if (is_bq_conv && is_quantized_tensor) {
-      // BQ Conv outputs FP16; downstream QDQ expects INT16.
+    if (is_bw_float_block && is_quantized_tensor) {
+      // Non-native BQ Conv outputs FP16; downstream QDQ expects INT16.
       // Emit: Conv (FP16 output) → Quantize (FP16 → INT16 quantized output).
       // Reuse the original QuantizeLinear input name for the FP16 tensor so the QNN graph
       // stays aligned with the ONNX graph naming.
@@ -1281,17 +1382,12 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                        std::move(output_quantize_param),
                                                        std::move(output_shape), do_op_validation));
     } else {
-      QnnTensorWrapper output_tensorwrapper(output_name, tensor_type, qnn_data_type,
-                                            std::move(output_quantize_param), std::move(output_shape));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    output_node_type,
-                                                    std::move(input_names),
-                                                    {output_name},
-                                                    std::move(param_tensor_names),
-                                                    do_op_validation),
-                    "Failed to add node.");
+      RETURN_IF_ERROR(utils::AddOpWithQuantizedOutput(qnn_model_wrapper, utils::UniqueNameGenerator().New(node_unit),
+                                                      output_node_type, std::move(input_names),
+                                                      std::move(param_tensor_names), output_name, tensor_type,
+                                                      qnn_data_type, std::move(output_quantize_param),
+                                                      std::move(output_shape), activation_qnn_data_type,
+                                                      do_op_validation));
     }
   }
 

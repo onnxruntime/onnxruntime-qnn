@@ -355,6 +355,107 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_Transformer) {
 }
 
 // ============================================================================
+// Flatten-headed fusion tests - Flatten -> Gemm(-Reshape) must fuse like Reshape
+// ============================================================================
+
+// Build a 2-node fusion test case: Flatten -> Gemm
+GetTestModelFn BuildFlattenGemmTestCase(const std::vector<int64_t>& input_shape,
+                                        int64_t hidden_size,
+                                        int64_t output_size) {
+  return [input_shape, hidden_size, output_size](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("flatten_gemm_graph");
+
+    auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Flatten(axis=-1): [batch, seq, hidden] -> [batch*seq, hidden]
+    builder.AddNode("flatten", "Flatten", {"input"}, {"flatten_out"}, kOnnxDomain,
+                    {MakeAttribute("axis", static_cast<int64_t>(-1))});
+
+    std::vector<int64_t> weight_shape = {hidden_size, output_size};
+    builder.MakeInitializer<float>("weight", weight_shape, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias", {output_size}, -0.1f, 0.1f);
+    builder.AddNode("gemm", "Gemm", {"flatten_out", "weight", "bias"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
+// Build a 3-node fusion test case: Flatten -> Gemm -> Reshape
+GetTestModelFn BuildFlattenGemmReshapeTestCase(const std::vector<int64_t>& input_shape,
+                                               int64_t hidden_size,
+                                               int64_t output_size) {
+  return [input_shape, hidden_size, output_size](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("flatten_gemm_reshape_graph");
+
+    auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Flatten(axis=-1): [batch, seq, hidden] -> [batch*seq, hidden]
+    builder.AddNode("flatten", "Flatten", {"input"}, {"flatten_out"}, kOnnxDomain,
+                    {MakeAttribute("axis", static_cast<int64_t>(-1))});
+
+    std::vector<int64_t> weight_shape = {hidden_size, output_size};
+    builder.MakeInitializer<float>("weight", weight_shape, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias", {output_size}, -0.1f, 0.1f);
+    builder.AddNode("gemm", "Gemm", {"flatten_out", "weight", "bias"}, {"gemm_out"}, kOnnxDomain);
+
+    std::vector<int64_t> output_shape_vec = input_shape;
+    output_shape_vec.back() = output_size;
+
+    // Reshape: [batch*seq, output] -> [batch, seq, output]
+    builder.Make1DInitializer<int64_t>("reshape_shape", output_shape_vec);
+    builder.AddNode("reshape", "Reshape", {"gemm_out", "reshape_shape"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
+// Test 2-node fusion: Flatten -> Gemm (3D input)
+TEST_F(QnnHTPBackendTests, FlattenGemmFusion_3D) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "FlattenGemmFusion_3D";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildFlattenGemmTestCase({1, 32, 64}, 64, 128),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  // Fusion must fire (no standalone Reshape left)
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 0);
+}
+
+// Test 3-node fusion: Flatten -> Gemm -> Reshape (3D input)
+TEST_F(QnnHTPBackendTests, FlattenGemmReshapeFusion_3D) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "FlattenGemmReshapeFusion_3D";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildFlattenGemmReshapeTestCase({1, 16, 64}, 64, 64),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  // Fusion must fire (trailing unflatten kept)
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
+}
+
+// ============================================================================
 // Negative Tests - Fusion should NOT happen
 // ============================================================================
 
@@ -735,6 +836,51 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_Rank5Input) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 2);
 }
 
+// Build a rank-5 Flatten test case: Flatten -> Gemm -> Reshape (fusion must NOT fire).
+GetTestModelFn BuildFlattenGemmReshapeRank5InputTestCase() {
+  return [](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("flatten_gemm_reshape_rank5_graph");
+
+    auto input_def = TestInputDef<float>({3, 3, 14, 14, 384}, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    builder.AddNode("flatten", "Flatten", {"input"}, {"flatten_out"}, kOnnxDomain,
+                    {MakeAttribute("axis", static_cast<int64_t>(-1))});
+
+    builder.MakeInitializer<float>("weight", {384, 384}, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias", {384}, -0.1f, 0.1f);
+    builder.AddNode("gemm", "Gemm", {"flatten_out", "weight", "bias"}, {"gemm_out"}, kOnnxDomain);
+
+    builder.Make1DInitializer<int64_t>("reshape_shape", {3, 3, 14, 14, 384});
+    builder.AddNode("reshape", "Reshape", {"gemm_out", "reshape_shape"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
+// Test: Fusion should NOT happen when the Flatten input has rank 5.
+TEST_F(QnnHTPBackendTests, FlattenGemmFusion_Negative_Rank5Input) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "FlattenGemmFusion_Negative_Rank5Input";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  // All nodes must run on QNN EP (Gemm handled standalone, not as fused FC)
+  RunQnnModelTest(BuildFlattenGemmReshapeRank5InputTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  // Fusion must NOT fire (standalone Gemm + Reshapes)
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 2);
+}
+
 // ============================================================================
 // QDQ Tests - Fusion should NOT happen for QDQ-wrapped Gemm
 // ============================================================================
@@ -853,6 +999,56 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_QDQ_NoFusion) {
 
   // Use ExpectedEPNodeAssignment::Some since not all nodes may be assigned to QNN EP
   RunQnnModelTest(BuildQDQReshapeGemmReshapeTestCase({1, 32, 64}, 64, 128),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(0.5f)});
+}
+
+// Build a QDQ test case: Flatten -> Q -> DQ -> Gemm -> Q -> DQ -> Reshape.
+// Fusion must NOT fire (QDQ-wrapped head and Gemm are both rejected).
+GetTestModelFn BuildQDQFlattenGemmReshapeTestCase(const std::vector<int64_t>& input_shape,
+                                                  int64_t hidden_size,
+                                                  int64_t output_size) {
+  return [input_shape, hidden_size, output_size](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("qdq_flatten_gemm_reshape_graph");
+
+    auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    builder.AddNode("flatten", "Flatten", {"input"}, {"flatten_out"}, kOnnxDomain,
+                    {MakeAttribute("axis", static_cast<int64_t>(-1))});
+
+    float scale = 0.01f;
+    uint8_t zp = 128;
+    builder.AddQuantizeLinearNode<uint8_t>("q1", "flatten_out", scale, zp, "q1_out", false);
+    builder.AddDequantizeLinearNode<uint8_t>("dq1", "q1_out", scale, zp, "dq1_out", false);
+
+    // Pre-quantized weight (uint8 initializer with DQ only - no Q node needed for initializers)
+    std::vector<int64_t> weight_shape = {hidden_size, output_size};
+    builder.MakeInitializer<uint8_t>("weight_q", weight_shape, static_cast<uint8_t>(64), static_cast<uint8_t>(192));
+    builder.AddDequantizeLinearNode<uint8_t>("dq_weight", "weight_q", 0.01f, static_cast<uint8_t>(128), "dq_weight_out", false);
+
+    builder.MakeInitializer<float>("bias", {output_size}, -0.1f, 0.1f);
+    builder.AddNode("gemm", "Gemm", {"dq1_out", "dq_weight_out", "bias"}, {"gemm_out"}, kOnnxDomain);
+
+    builder.AddQuantizeLinearNode<uint8_t>("q2", "gemm_out", scale, zp, "q2_out", false);
+    builder.AddDequantizeLinearNode<uint8_t>("dq2", "q2_out", scale, zp, "dq2_out", false);
+
+    std::vector<int64_t> output_shape_vec = input_shape;
+    output_shape_vec.back() = output_size;
+    builder.Make1DInitializer<int64_t>("reshape_shape", output_shape_vec);
+    builder.AddNode("reshape", "Reshape", {"dq2_out", "reshape_shape"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
+// Test: QDQ Flatten -> Gemm -> Reshape (fusion should NOT happen)
+TEST_F(QnnHTPBackendTests, FlattenGemmReshapeFusion_QDQ_NoFusion) {
+  ProviderOptions provider_options = GetProviderOptions();
+
+  // Use ExpectedEPNodeAssignment::Some since not all nodes may be assigned to QNN EP
+  RunQnnModelTest(BuildQDQFlattenGemmReshapeTestCase({1, 32, 64}, 64, 128),
                   provider_options,
                   /*opset_version=*/13,
                   EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(0.5f)});

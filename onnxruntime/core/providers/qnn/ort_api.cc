@@ -242,11 +242,15 @@ OrtNodeUnit::OrtNodeUnit(const OrtNode* node, const OrtApi& ort_api) : target_no
 OrtNodeUnit::OrtNodeUnit(const OrtGraph* /* graph */, const QDQ::OrtNodeGroup& node_group, const OrtApi& ort_api)
     : dq_nodes_(node_group.dq_nodes),
       target_node_(node_group.target_node),
-      redundant_clip_node_(node_group.redundant_clip_node ? node_group.redundant_clip_node : nullptr),
+      redundant_clip_node_(node_group.redundant_clip_node),
+      output_reshape_node_(node_group.output_reshape_node),
       q_nodes_(node_group.q_nodes),
       type_(Type::QDQGroup),
       inputs_(GetQDQIODefs(target_node_, node_group, true, ort_api)),
-      outputs_(GetQDQIODefs((redundant_clip_node_ ? redundant_clip_node_ : target_node_), node_group, false, ort_api)) {
+      outputs_(GetQDQIODefs(
+          (redundant_clip_node_ ? redundant_clip_node_
+                                : (output_reshape_node_ ? output_reshape_node_ : target_node_)),
+          node_group, false, ort_api)) {
 }
 
 OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
@@ -433,7 +437,11 @@ std::vector<const OrtNode*> OrtNodeUnit::GetOutputNodes(const OrtApi& ort_api) c
     return target_consumers;
   };
 
-  const OrtNode* output_producer = redundant_clip_node_ ? redundant_clip_node_ : target_node_;
+  // Anchor precedence (matches GetOrtQDQSelection): clip > absorbed reshape > target.
+  // The reshape branch is defensive today — see TryAbsorbTrailingReshape reachability note.
+  const OrtNode* output_producer = redundant_clip_node_
+                                       ? redundant_clip_node_
+                                       : (output_reshape_node_ ? output_reshape_node_ : target_node_);
   std::vector<const OrtNode*> output_nodes;
 
   for (const OrtNode* output_node : get_consumers(output_producer)) {

@@ -86,7 +86,7 @@ Ort::Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   }
 
   // Add Transpose to permute axis to the last.
-  const std::string transpose_output_name = utils::UniqueNameGenerator().New(input_names[0], "_transpose");
+  const std::string transpose_output_name = input_names[0] + "_transpose";
   std::vector<uint32_t> transpose_perm;
   RETURN_IF_ERROR(utils::GetPermToLastAxis(static_cast<uint32_t>(axis),
                                            static_cast<uint32_t>(input_rank),
@@ -166,7 +166,7 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     // Since user may not be aware of the additional Transpose, the original output name of TopK node must be used by
     // the additional Transpose node which has the same output as original TopK node.
     const std::string& output_name = output.name;
-    const std::string transpose_input_name = utils::UniqueNameGenerator().New(output_name, "_transpose");
+    const std::string transpose_input_name = output_name + "_transpose";
     transpose_input_names.push_back(std::move(transpose_input_name));
 
     // Since the input of TopK node is permuted, its output shape must be manually calculated.
@@ -220,7 +220,7 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     bool is_cast_required = output_idx == 1 && output_info.qnn_data_type == QNN_DATATYPE_INT_64 && is_graph_output;
     std::string cast_input_name = "";
     if (is_cast_required) {
-      cast_input_name = utils::UniqueNameGenerator().New(transpose_output_name, "_cast");
+      cast_input_name = output_name + "_cast";
       // For the same reason described above, the original output name is now used by this Cast.
       transpose_output_name = cast_input_name;
       // Since additional Cast is added, below Transpose is no longer graph output.

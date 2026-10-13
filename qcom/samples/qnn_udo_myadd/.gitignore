@@ -1,0 +1,9 @@
+# Artifacts generated while building or running the sample.
+/artifacts/
+/build/
+/run_udo_sample
+/test_data_set_0/
+/__pycache__/
+QNNExecutionProvider_*.json
+/*.onnx
+/*.bin

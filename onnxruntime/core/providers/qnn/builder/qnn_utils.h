@@ -36,6 +36,14 @@ class QnnModelWrapper;
 class QnnQuantParamsWrapper;
 
 namespace utils {
+
+template <typename T>
+inline bool IsCompatibleFcBiasShape(const std::vector<T>& bias_shape, T output_channels) {
+  return (bias_shape.empty() && output_channels == 1) ||
+         (bias_shape.size() == 1 && bias_shape[0] == output_channels) ||
+         (bias_shape.size() == 2 && bias_shape[0] == 1 && bias_shape[1] == output_channels);
+}
+
 /**
  * Returns a lowercase version of the input string.
  * /param str The string to lowercase.
@@ -114,6 +122,9 @@ class QnnJSONGraph {
   std::unordered_set<std::string> seen_op_types_;  // Tracks unique operator types.
 };
 
+size_t GetOnnxTensorDataSizeInBytes(size_t num_elements, ONNXTensorElementDataType element_type);
+size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorElementDataType element_type);
+
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor);
@@ -137,6 +148,37 @@ inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
          qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
 }
 
+// Returns true if the QNN data type is an 8-bit fixed-point quantized type.
+inline bool IsQuant8bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+         qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8;
+}
+
+// Returns true if the QNN data type is a 4-bit fixed-point quantized type.
+inline bool IsQuant4bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_4 ||
+         qnn_data_type == QNN_DATATYPE_SFIXED_POINT_4;
+}
+
+// Bit width (4, 8, 16) of a fixed-point QNN type, or 0 if not fixed-point.
+inline int FixedPointBitWidth(Qnn_DataType_t qnn_data_type) {
+  if (IsQuant4bit(qnn_data_type)) return 4;
+  if (IsQuant8bit(qnn_data_type)) return 8;
+  if (IsQuant16bit(qnn_data_type)) return 16;
+  return 0;
+}
+
+// True if `a` and `b` are a mismatched convertible (4/8/16-bit) fixed-point pair.
+inline bool NeedsPrecisionConvert(Qnn_DataType_t a, Qnn_DataType_t b) {
+  return a != b && FixedPointBitWidth(a) != 0 && FixedPointBitWidth(b) != 0;
+}
+
+inline bool IsNarrowingQuantOutput(Qnn_DataType_t activation_qnn_data_type, Qnn_DataType_t output_qnn_data_type) {
+  const int act_bitwidth = FixedPointBitWidth(activation_qnn_data_type);
+  const int output_bitwidth = FixedPointBitWidth(output_qnn_data_type);
+  return act_bitwidth != 0 && output_bitwidth != 0 && act_bitwidth > output_bitwidth;
+}
+
 // Name generator that produces unique QNN node names by appending a counter suffix,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
 class UniqueNameGeneratorImpl {
@@ -151,6 +193,16 @@ class UniqueNameGeneratorImpl {
 };
 
 UniqueNameGeneratorImpl& UniqueNameGenerator();
+
+// Returns a stable, non-empty base name for a node unit.
+// Uses node_unit.Name() when non-empty; falls back to OpType()+Index() for unnamed nodes,
+// matching the behaviour of UniqueNameGeneratorImpl::New(const OrtNodeUnit&, suffix).
+// Use this instead of node_unit.Name() when constructing intermediate tensor names that
+// must be deterministic and collision-free across GetCapability and Compile passes.
+inline std::string NodeUnitBaseName(const OrtNodeUnit& node_unit) {
+  const std::string& name = node_unit.Name();
+  return name.empty() ? node_unit.OpType() + std::to_string(node_unit.Index()) : name;
+}
 
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
@@ -193,6 +245,20 @@ static bool ArrayHasString(const std::array<std::string_view, N>& strings, std::
   return false;
 }
 
+// Unary ops SimpleOpBuilder can Convert to a differing declared output precision.
+inline bool IsConvertCompatibleUnaryOp(std::string_view op_type) {
+  static constexpr std::array<std::string_view, 22> kOps = {
+      "Abs", "Asin", "Atan", "Ceil", "Cos", "Elu", "Exp", "Floor", "Gelu", "HardSigmoid", "HardSwish",
+      "LeakyRelu", "Log", "Neg", "Relu", "Round", "Sigmoid", "Sign", "Sin", "Softplus", "Sqrt", "Tanh"};
+  return ArrayHasString(kOps, op_type);
+}
+
+// Binary ops SimpleOpBuilder can Convert across a mismatched input or output precision.
+inline bool IsConvertCompatibleBinaryOp(std::string_view op_type) {
+  static constexpr std::array<std::string_view, 5> kOps = {"Add", "Div", "Mul", "Pow", "Sub"};
+  return ArrayHasString(kOps, op_type);
+}
+
 std::pair<float, float> CheckMinMax(float rmin, float rmax);
 
 template <typename T>
@@ -212,6 +278,12 @@ Ort::Status GetQminQmax(const Qnn_DataType_t qnn_data_type,
   } else if (qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
     qmin = static_cast<T>(std::numeric_limits<uint16_t>::min());
     qmax = static_cast<T>(std::numeric_limits<uint16_t>::max());
+  } else if (qnn_data_type == QNN_DATATYPE_SFIXED_POINT_4) {
+    qmin = static_cast<T>(-8 + static_cast<int32_t>(symmetric));
+    qmax = static_cast<T>(7);
+  } else if (qnn_data_type == QNN_DATATYPE_UFIXED_POINT_4) {
+    qmin = static_cast<T>(0);
+    qmax = static_cast<T>(15);
   } else if (qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32) {
     qmin = static_cast<T>(std::numeric_limits<int32_t>::min() + static_cast<int32_t>(symmetric));
     qmax = static_cast<T>(std::numeric_limits<int32_t>::max());
@@ -251,6 +323,15 @@ Ort::Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span
                                  gsl::span<const float> scales, gsl::span<const int32_t> offsets,
                                  /*out*/ gsl::span<float> data, Qnn_DataType_t data_type,
                                  std::optional<int64_t> axis = std::nullopt);
+
+// Recovers the true two's-complement value of sub-byte data that UnpackInitializerData() expanded
+// to one byte per element with the unused high bits masked off (UnpackInt4ToInt8 / UnpackInt2ToInt8
+// mask to work around a QNN INT4 accuracy bug; that mask must stay). Consumers that read those
+// bytes as plain integers need this: DequantizePerChannel is told SFIXED_POINT_8, since
+// CreateMapQuantize collapses INT4 into it on non-GPU backends, so a negative 4-bit value would
+// read back as q + 16. UINT4/UINT2 are never masked and are left alone.
+void SignExtendUnpackedSubByteData(ONNXTensorElementDataType onnx_data_type,
+                                   /*in,out*/ gsl::span<uint8_t> bytes);
 
 Ort::Status Quantize(const double double_value,
                      const float scale,
@@ -503,6 +584,31 @@ Ort::Status PermuteShape(gsl::span<const T> input_shape, gsl::span<const P> perm
   return Ort::Status();
 }
 
+// Computes the broadcasted shape of two shapes following NumPy/ONNX broadcasting rules
+// (right-aligned dimensions; a dim of 1 broadcasts against any dim).
+template <typename T>
+Ort::Status BroadcastShape(const std::vector<T>& a, const std::vector<T>& b,
+                           /*out*/ std::vector<T>& out) {
+  const size_t rank = std::max(a.size(), b.size());
+  out.assign(rank, 1);
+  for (size_t i = 0; i < rank; ++i) {
+    const T da = (i < a.size()) ? a[a.size() - 1 - i] : 1;
+    const T db = (i < b.size()) ? b[b.size() - 1 - i] : 1;
+    T dim = 0;
+    if (da == db) {
+      dim = da;
+    } else if (da == 1) {
+      dim = db;
+    } else if (db == 1) {
+      dim = da;
+    } else {
+      return MAKE_EP_FAIL("BroadcastShape: incompatible dimensions, cannot broadcast.");
+    }
+    out[rank - 1 - i] = dim;
+  }
+  return Ort::Status();
+}
+
 // Gets error message associated with QNN error handle value.
 std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                Qnn_ErrorHandle_t qnn_error_handle);
@@ -524,6 +630,40 @@ Ort::Status NchwShapeToNhwc(gsl::span<const T> nchw_shape, gsl::span<T> nhwc_sha
   nhwc_shape[3] = nchw_shape[1];
 
   return Ort::Status();
+}
+
+// Returns the channel-first (NCHW/NCDHW) -> channel-last (NHWC/NDHWC) permutation for the
+// given tensor rank. Works for any rank >= 2: e.g. rank 4 -> {0,2,3,1}, rank 5 -> {0,2,3,4,1}.
+inline std::vector<uint32_t> ChannelFirstToLastPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i - 1] = static_cast<uint32_t>(i);
+  }
+  perm[rank - 1] = 1;
+  return perm;
+}
+
+// Returns the channel-last (NHWC/NDHWC) -> channel-first (NCHW/NCDHW) permutation for the
+// given tensor rank (inverse of ChannelFirstToLastPerm).
+inline std::vector<uint32_t> ChannelLastToFirstPerm(size_t rank) {
+  std::vector<uint32_t> perm(rank);
+  perm[0] = 0;
+  perm[1] = static_cast<uint32_t>(rank - 1);
+  for (size_t i = 2; i < rank; ++i) {
+    perm[i] = static_cast<uint32_t>(i - 1);
+  }
+  return perm;
+}
+
+// Applies a permutation to a shape vector and returns the permuted shape.
+inline std::vector<uint32_t> ApplyPermToShape(const std::vector<uint32_t>& shape,
+                                              const std::vector<uint32_t>& perm) {
+  std::vector<uint32_t> out(shape.size());
+  for (size_t i = 0; i < perm.size(); ++i) {
+    out[i] = shape[perm[i]];
+  }
+  return out;
 }
 
 // NCHW shape to HWCN shape, required for Conv weight
@@ -595,6 +735,14 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false);
 
+// Transposes a [rows, cols] buffer of `elem_byte_size`-wide elements into a [cols, rows] buffer.
+// Both buffers must hold exactly rows * cols * elem_byte_size bytes.
+Ort::Status TwoDimensionTranspose(size_t rows,
+                                  size_t cols,
+                                  size_t elem_byte_size,
+                                  gsl::span<const uint8_t> input_buffer,
+                                  gsl::span<uint8_t> output_buffer);
+
 template <typename T>
 Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
                                   const std::vector<uint32_t>& data_shape,
@@ -638,6 +786,31 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             bool output_symmetric,
                             bool do_op_validation);
 
+// Adds `output_name` and the op producing it. HTP Conv/MatMul/FullyConnected only emit their activation's
+// datatype, so a 16-bit activation with an 8-bit output is built as the op into a 16-bit intermediate
+// spanning exactly the output's range, followed by a Convert into `output_name`. HTP also lacks float32
+// kernels for a quantized weight, so a float32 activation with a quantized weight runs the op in float16
+// between Casts.
+Ort::Status AddOpWithQuantizedOutput(QnnModelWrapper& qnn_model_wrapper,
+                                     const std::string& node_name,
+                                     const std::string& op_type,
+                                     std::vector<std::string>&& input_names,
+                                     std::vector<std::string>&& param_tensor_names,
+                                     const std::string& output_name,
+                                     Qnn_TensorType_t output_tensor_type,
+                                     Qnn_DataType_t output_qnn_data_type,
+                                     QnnQuantParamsWrapper&& output_quant_param,
+                                     std::vector<uint32_t>&& output_shape,
+                                     Qnn_DataType_t activation_qnn_data_type,
+                                     bool do_op_validation);
+
+// Derives a `to_dtype` scale/offset that covers the same real-value range as `from_offset`/`from_scale`
+// (a `from_dtype` encoding), without building a Convert node. Shared by InsertConvertOp and the
+// mixed-precision bridge in mixed_precision_convert_utils.cc so the range-derivation math has one source.
+Ort::Status DeriveScaleOffsetForDtype(Qnn_DataType_t from_dtype, int32_t from_offset, float from_scale,
+                                      Qnn_DataType_t to_dtype, bool to_symmetric,
+                                      float& to_scale, int32_t& to_offset);
+
 /**
  * Get permutation to transpose given axis to the last one.
  *
@@ -655,10 +828,12 @@ Ort::Status GetPermToLastAxis(uint32_t axis, uint32_t rank, std::vector<uint32_t
  */
 uint64_t GetTimeStampInUs();
 
-// Checks if bias scale matches the expected scale (weights_scale * activation_scale)
-// Returns true if they match within a tolerance, false otherwise
-bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale,
-                         float tolerance = 1e-5f);
+// Checks that a quantized bias scale is exactly the scale a (weights_scale * activation_scale).
+// Any other value has to be requantized before emission.
+// The comparison is exact because quantizers emit exactly float(weights_scale * activation_scale).
+// It must not use an absolute epsilon: bias scales are a product of two small scales and get as
+// small as 1e-10, so an epsilon like 1e-5 is far larger than the scales being compared
+bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale);
 
 // Extracts weight scales from a QnnQuantParamsWrapper.
 // Supports per-tensor (SCALE_OFFSET, BW_SCALE_OFFSET), per-channel (AXIS_SCALE_OFFSET,
@@ -889,14 +1064,6 @@ std::string PtrToString(const void* const ptr);
 Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
                                       gsl::span<const float> scales,
                                       std::vector<uint8_t>& fp16_bytes);
-
-// Returns true if all packed zero_points in the given initializer tensor are symmetric
-// (i.e., each sub-byte element equals 2^(bits-1)).
-// MatMulNBits stores zero_points as packed sub-byte integers in uint8 bytes
-// (e.g., two 4-bit values per byte, four 2-bit values per byte).
-bool AreZeroPointsSymmetricConstant(QnnModelWrapper& qnn_model_wrapper,
-                                    const std::string& zp_tensor_name,
-                                    int64_t bits);
 
 }  // namespace utils
 }  // namespace qnn

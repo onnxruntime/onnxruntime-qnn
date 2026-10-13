@@ -7,6 +7,7 @@
 #include "onnxruntime_session_options_config_keys.h"
 #if !defined(ORT_MINIMAL_BUILD)
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -30,9 +31,17 @@
 #include "QnnLog.h"
 #include "QnnTypes.h"
 
+#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+#include <d3d12.h>
+#include <wrl/client.h>
+using Microsoft::WRL::ComPtr;
+#endif  // _WIN32 && ...
+
 namespace onnxruntime {
 namespace test {
 constexpr const char* kOnnxDomain = "";
+// ONNX domain used by the QNN block-op test models.
+constexpr const char* kQtiAiswDomain = "qti_aisw";
 constexpr const char* kQnnExecutionProvider = "QNNExecutionProvider";
 constexpr const char* kCpuExecutionProvider = "CPUExecutionProvider";
 
@@ -891,6 +900,40 @@ void InferenceModel(const std::string& model_data,
                     std::function<void(const Ort::Session&)>* graph_checker = nullptr,
                     Ort::CustomOpDomain* custom_op_domain = nullptr);
 
+// Creates a session with the QNN EP for the given serialized model and verifies node-to-EP
+// assignment, WITHOUT running inference. Use for the qti_aisw block ops (Buffer / StatefulLstm /
+// StatefulGru), which have no CPU kernel (so there is no meaningful reference to compare against)
+// and whose graphs compile on the QNN HTP backend but require real NPU hardware to finalize/run.
+// The QNN EP factory supplies the qti_aisw placeholder schema, so the model loads even though
+// these ops have no registered ONNX schema.
+void VerifyQnnEpModelAssignment(const std::string& model_data,
+                                const char* log_id,
+                                const ProviderOptions& provider_options,
+                                ExpectedEPNodeAssignment expected_ep_assignment,
+                                OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR);
+
+// Runs a stateful QNN model in one session. With a reset input it runs true, false, true and
+// verifies that reset restores the initial state. Without one it runs twice and verifies that the
+// BlockOp default reset=false retains state. The model must have an output sensitive to retained
+// state. Pass nullptr for reset_input_name when the model omits the optional reset input.
+void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
+                                    const char* log_id,
+                                    const ProviderOptions& provider_options,
+                                    int opset,
+                                    const char* reset_input_name);
+
+// Compares a stateful QNN RNN against an equivalent standard ONNX RNN on CPU. It runs the
+// stateful model with reset=true, then with reset=false, and feeds the first QNN state outputs
+// into the standard model for the second reference inference.
+void VerifyQnnStatefulRnnNumerics(const GetTestModelFn& build_stateful_case,
+                                  const GetTestModelFn& build_reference_case,
+                                  const char* log_id,
+                                  const ProviderOptions& provider_options,
+                                  int opset,
+                                  const char* reset_input_name,
+                                  const std::vector<std::string>& reference_state_input_names,
+                                  float abs_tolerance);
+
 /**
  * If the ORT_UNIT_TEST_ENABLE_QNN_SAVER environment variable is enabled (set to 1), this function modifies
  * the QNN EP provider options to enable the QNN Saver backend, which dumps QNN API calls (and weights) to disk.
@@ -1719,6 +1762,41 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
   };
 }
 
+// QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38 (QAIRT 2.49).
+// Defined here (duplicated from core/providers/qnn/builder/qnn_def.h) so test files that must
+// not include EP-private headers can gate on it without breaking the public-API-only boundary.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
+#define QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+#endif
+
+// Returns a function that builds a single fp16 Conv model with overflow-triggering
+// inputs and weights (300.0f). Each output element = 8 * (300 * 300) = 720000,
+// which overflows fp16 max (~65504): without fp16_clamp_overflow the output is NaN;
+// with it it saturates to fp16-max (finite), making an isfinite assertion a real fence.
+// Used by EPContext and SSR tests for enable_htp_fp16_clamp_overflow validation.
+inline GetTestModelFn BuildFp16ClampOverflowConvTestCase() {
+  return [](ModelTestBuilder& builder) {
+    auto input_def = TestInputDef<float>({1, 2, 4, 4}, false, std::vector<float>(32, 300.0f));
+    auto weights_def = TestInputDef<float>({2, 2, 2, 2}, true, std::vector<float>(16, 300.0f));
+    auto bias_def = TestInputDef<float>({2}, true, {0.0f, 0.0f});
+
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weights_def);
+    MakeTestInput<float>(builder, "bias", bias_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", {0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", {1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", {1, 1}));
+
+    builder.MakeOutput("output");
+    builder.AddNode("Conv", "Conv", {"input", "weights", "bias"}, {"output"}, kOnnxDomain, conv_attrs);
+  };
+}
+
 /**
  * Returns a function that builds a model with a single QDQ operator with N float (quantizeable) inputs
  * and M inputs of a potentially different type.
@@ -1925,6 +2003,21 @@ class QnnHTPBackendTests : public ::testing::Test {
   static BackendSupport cached_ir_support_;
 };
 
+// V79+ HTP devices can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels in each
+// fixed test vector. Pre-V79 targets retain the default tolerance.
+inline QDQTolerance GetV79OrLaterTieRoundingTolerance(unsigned int max_output_quantization_levels) {
+  if (!QnnHTPBackendTests::HasPlatformAttributes() ||
+      QnnHTPBackendTests::GetPlatformAttributes().htp_arch < QNN_HTP_DEVICE_ARCH_V79) {
+    return QDQTolerance{};
+  }
+
+  constexpr float kU8QuantizationRange = 255.0f;
+  constexpr float kFloatingPointComparisonSlack = 1.0e-5f;
+  return QDQTolerance(static_cast<float>(max_output_quantization_levels) / kU8QuantizationRange +
+                      kFloatingPointComparisonSlack);
+}
+
 // Testing fixture class for tests that require the QNN GPU backend. Checks if QNN GPU is available before the test
 // begins. The test is skipped if the GPU backend is unavailable (may occur on Windows ARM64).
 class QnnGPUBackendTests : public ::testing::Test {
@@ -2103,6 +2196,49 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
     } else                                                                                             \
       static_assert(true, "");                                                                         \
   }
+
+#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+
+inline HRESULT CreateD3D12Buffer(
+    ID3D12Device* device,
+    UINT64 size,
+    D3D12_HEAP_FLAGS heap_flags,
+    D3D12_HEAP_TYPE heap_type,
+    ID3D12Resource** resource) {
+  D3D12_HEAP_PROPERTIES heap_props = {};
+  heap_props.Type = heap_type;
+
+  D3D12_RESOURCE_DESC desc = {};
+  desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  desc.Width = size;
+  desc.Height = 1;
+  desc.DepthOrArraySize = 1;
+  desc.MipLevels = 1;
+  desc.SampleDesc.Count = 1;
+  desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+  return device->CreateCommittedResource(
+      &heap_props,
+      heap_flags,
+      &desc,
+      D3D12_RESOURCE_STATE_COMMON,
+      nullptr,
+      IID_PPV_ARGS(resource));
+}
+
+#endif  // _WIN32 && ...
+
+// HTP native BQ support starts from QAIRT 2.51 (QNN API 2.40).
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#define QNN_HTP_NATIVE_BQ_AVAILABLE
+#endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+
+// Cross device prepare is available on WoS starting from QAIRT 2.51 (QNN API 2.40).
+#if defined(_WIN32) && defined(_M_ARM64)
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#define QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+#endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#endif  // defined(_WIN32) && defined(_M_ARM64)
 
 }  // namespace test
 }  // namespace onnxruntime
