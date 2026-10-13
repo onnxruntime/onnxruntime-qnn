@@ -75,6 +75,12 @@ size_t CountAssignedNodes(const Ort::Session& current_session, const std::string
 void VerifyEPNodeAssignment(const Ort::Session& current_session, const std::string& provider_type,
                             ExpectedEPNodeAssignment assignment);
 
+// Creates an EPVerificationParams::graph_verifier that checks the complete set of node names
+// assigned to provider_type, ignoring order. Missing and unexpected nodes both fail verification.
+// The returned callback owns its arguments. Keep it alive while EPVerificationParams points to it.
+std::function<void(const Ort::Session&)> CreateEPNodeAssignmentVerifier(std::string provider_type,
+                                                                        std::vector<std::string> expected_node_names);
+
 using ModelPathOrBytes = std::variant<std::basic_string_view<ORTCHAR_T>,
                                       gsl::span<const std::byte>>;
 
