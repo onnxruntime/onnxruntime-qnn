@@ -372,11 +372,19 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
   }
 
+  // HOST_ACCESSIBLE memory info is optional for regular QNN sessions, but is
+  // required when a shared-memory allocator has been explicitly enabled.
+  if (qnn_ep->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE &&
+      factory->host_accessible_memory_info_ == nullptr) {
+    return factory->ort_api.CreateStatus(
+        ORT_FAIL,
+        "QNN shared-memory allocator was enabled, but its HOST_ACCESSIBLE memory info could not be created.");
+  }
+
   // Preserve the existing session-level DX12 allocator path. Unlike HTP, GPU
   // does not advertise this memory info before session creation because the
   // factory cannot distinguish the two allocators while they share it.
-  if (qnn::IsDx12SharedMemoryAllocator(qnn_ep->qnn_allocator_type_) &&
-      factory->host_accessible_memory_info_ != nullptr) {
+  if (qnn::IsDx12SharedMemoryAllocator(qnn_ep->qnn_allocator_type_)) {
     for (OrtEpDevice* ep_device : factory->ep_devices_) {
       const OrtHardwareDevice* device = factory->ort_api.EpDevice_Device(ep_device);
       if (factory->ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_GPU) {
