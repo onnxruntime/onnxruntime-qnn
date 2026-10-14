@@ -220,6 +220,14 @@ case "${target_platform}" in
           platform_args+=(--cmake_extra_defines
                           CMAKE_TOOLCHAIN_FILE:FILEPATH="${toolchain_cmake}"
                           ARM64:BOOL=TRUE)
+        elif [ -n "${ORT_BUILD_LINUX_TOOLCHAIN_ROOT:-}" ]; then
+          if [ ! -d "${ORT_BUILD_LINUX_TOOLCHAIN_ROOT}" ]; then
+            export ORT_BUILD_LINUX_TOOLCHAIN_ROOT="$(get_linux_oe_gcc112_toolchain_root)"
+          fi
+          toolchain_cmake="${REPO_ROOT}/qcom/scripts/linux/linux-aarch64-gcc11.toolchain.cmake"
+          platform_args+=(--cmake_extra_defines
+                          CMAKE_TOOLCHAIN_FILE:FILEPATH="${toolchain_cmake}"
+                          ARM64:BOOL=TRUE)
         fi
         ;;
       test)
