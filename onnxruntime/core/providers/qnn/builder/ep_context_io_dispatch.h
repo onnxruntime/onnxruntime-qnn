@@ -41,7 +41,7 @@ class EpContextIoDispatch {
   //
   // `logger` (optional) receives a WARNING if resolution genuinely fails rather than the app
   // simply not registering anything.
-  explicit EpContextIoDispatch(const OrtSessionOptions* session_options,
+  explicit EpContextIoDispatch(const OrtSessionOptions& session_options,
                                const QnnRuntimeCapabilities& runtime_capabilities,
                                const Ort::Logger* logger = nullptr) noexcept;
   ~EpContextIoDispatch() = default;

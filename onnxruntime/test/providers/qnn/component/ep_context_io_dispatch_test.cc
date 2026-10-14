@@ -54,23 +54,8 @@ TEST(QnnUnit_EpContextIoDispatchTest, EpContextEncryptionUnsupported_NeverTouche
       qnn::QnnRuntimeCapabilities::kEpContextEncryptionMinApiVersion - 1};
 
   qnn::EpContextIoDispatch dispatch(
-      reinterpret_cast<const OrtSessionOptions*>(kFakeSessionOptionsToken),
+      *reinterpret_cast<const OrtSessionOptions*>(kFakeSessionOptionsToken),
       runtime_capabilities);
-
-  EXPECT_EQ(env.get_experimental_function_calls, 0);
-  EXPECT_FALSE(dispatch.HasReadCallback());
-  EXPECT_FALSE(dispatch.HasWriteCallback());
-}
-
-// A null session_options always short-circuits regardless of effective_api_version
-// (no application session to resolve callbacks from).
-TEST(QnnUnit_EpContextIoDispatchTest, NullSessionOptions_NeverTouchesExperimentalApi) {
-  ExperimentalFnStubEnv env;
-  OrtGlobalApiOverride api_override(&env.stub_ort_api);
-  const qnn::QnnRuntimeCapabilities runtime_capabilities{
-      qnn::QnnRuntimeCapabilities::kEpContextEncryptionMinApiVersion};
-
-  qnn::EpContextIoDispatch dispatch(nullptr, runtime_capabilities);
 
   EXPECT_EQ(env.get_experimental_function_calls, 0);
   EXPECT_FALSE(dispatch.HasReadCallback());
@@ -87,6 +72,15 @@ TEST(QnnUnit_EpContextIoDispatchTest, DefaultConstructor_IsDisabled) {
   EXPECT_FALSE(dispatch.HasWriteCallback());
 }
 
+TEST(QnnUnit_EpContextIoDispatchTest, DisabledDispatch_ReadAndWrite_ReturnFailures) {
+  qnn::EpContextIoDispatch dispatch;
+  std::vector<char> bytes;
+  Ort::Logger logger;
+
+  EXPECT_FALSE(dispatch.Read("context.bin", bytes).IsOK());
+  EXPECT_FALSE(dispatch.Write("context.bin", nullptr, 0, logger).IsOK());
+}
+
 // The named EPContext-encryption capability proceeds to resolve callbacks
 // (and, with no experimental API registered by this stub, fails via the
 // existing try/catch rather than the version guard).
@@ -97,7 +91,7 @@ TEST(QnnUnit_EpContextIoDispatchTest, EpContextEncryptionSupported_AttemptsExper
       qnn::QnnRuntimeCapabilities::kEpContextEncryptionMinApiVersion};
 
   qnn::EpContextIoDispatch dispatch(
-      reinterpret_cast<const OrtSessionOptions*>(kFakeSessionOptionsToken),
+      *reinterpret_cast<const OrtSessionOptions*>(kFakeSessionOptionsToken),
       runtime_capabilities);
 
   EXPECT_GT(env.get_experimental_function_calls, 0);

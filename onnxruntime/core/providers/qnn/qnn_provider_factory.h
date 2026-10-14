@@ -10,7 +10,6 @@
 #include "core/providers/qnn/custom_op/qnn_custom_op.h"
 #include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
-#include "core/providers/qnn/qnn_runtime_capabilities.h"
 #include "onnxruntime_config.h"
 
 namespace onnxruntime {
@@ -19,13 +18,9 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
 
-  // Runtime feature capabilities negotiated by CreateEpFactories.
-  const qnn::QnnRuntimeCapabilities& GetRuntimeCapabilities() const noexcept {
-    return runtime_capabilities_;
-  }
-
-  void SetRuntimeCapabilities(qnn::QnnRuntimeCapabilities runtime_capabilities) noexcept {
-    runtime_capabilities_ = runtime_capabilities;
+  void SetRuntimeCapabilities(qnn::QnnRuntimeCapabilities capabilities) noexcept {
+    runtime_capabilities_ = capabilities;
+    ApiPtrs::runtime_capabilities = &runtime_capabilities_;
   }
 
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {

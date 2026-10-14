@@ -10,18 +10,10 @@ namespace qnn {
 
 EpContextIoDispatch::EpContextIoDispatch() noexcept : config_{nullptr} {}
 
-EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* session_options,
+EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& session_options,
                                          const QnnRuntimeCapabilities& runtime_capabilities,
                                          const Ort::Logger* logger) noexcept
     : config_{nullptr} {
-  // A null session options pointer is used by code paths that do not have an
-  // application session (including the context-model helper unit tests). There
-  // cannot be application callbacks in that case, and wrapping nullptr in
-  // ConstSessionOptions would still try to resolve the experimental v28 API.
-  if (session_options == nullptr) {
-    return;
-  }
-
   // The named capability is negotiated with the actual runtime, not inferred from the
   // compile-time ORT_API_VERSION. Skip APIs absent from an older runtime's OrtApi struct.
   if (!runtime_capabilities.SupportsEpContextEncryption()) {
@@ -32,7 +24,7 @@ EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* session_option
   }
 
   try {
-    config_ = Ort::Experimental::EpContextConfig(Ort::ConstSessionOptions(session_options));
+    config_ = Ort::Experimental::EpContextConfig(Ort::ConstSessionOptions(&session_options));
   } catch (const Ort::Exception& e) {
     // Can't distinguish "app didn't ask" from "runtime/build API skew" here, so only warn.
     ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_WARNING,
@@ -72,6 +64,10 @@ bool EpContextIoDispatch::HasWriteCallback() const noexcept {
 }
 
 Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<char>& out) const {
+  if (!HasReadCallback()) {
+    return MAKE_EP_FAIL("EPContext read callback is unavailable.");
+  }
+
   Ort::AllocatorWithDefaultOptions allocator;
   void* data = nullptr;
   size_t data_size = 0;
@@ -95,6 +91,10 @@ Ort::Status EpContextIoDispatch::Write(const std::string& name,
                                        const void* buffer,
                                        size_t buffer_size,
                                        const Ort::Logger& logger) const {
+  if (!HasWriteCallback()) {
+    return MAKE_EP_FAIL("EPContext write callback is unavailable.");
+  }
+
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
               ("EPContext data forwarded to App write callback: " + name).c_str());
   if (auto* s = write_fn_(write_state_, name.c_str(), buffer, buffer_size)) {
@@ -111,7 +111,7 @@ Ort::Status EpContextIoDispatch::Write(const std::string& name,
 
 EpContextIoDispatch::EpContextIoDispatch() noexcept {}
 
-EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* /*session_options*/,
+EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& /*session_options*/,
                                          const QnnRuntimeCapabilities& /*runtime_capabilities*/,
                                          const Ort::Logger* /*logger*/) noexcept {}
 
