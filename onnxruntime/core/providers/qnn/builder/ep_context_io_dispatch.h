@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_runtime_capabilities.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -24,9 +25,6 @@ namespace qnn {
 // Genie's DlcConfig_create) is read/written directly against disk and is not encrypted here.
 class EpContextIoDispatch {
  public:
-  // EPContext encryption requires the experimental APIs added at ORT API v28.
-  static constexpr uint32_t kMinApiVersion = 28;
-
   // Creates a permanently disabled dispatch for paths without an application session.
   // Session-bound callers must use the constructor below and supply the runtime-negotiated
   // API version explicitly.
@@ -34,20 +32,17 @@ class EpContextIoDispatch {
 
   // Resolves the callbacks from `session_options`. Never throws.
   //
-  // `effective_api_version` is the ORT API version actually negotiated with the runtime
-  // (min(runtime, compile-time); see QnnEpFactory::effective_api_version_). The EPContext
-  // encryption APIs require ORT v28; calling them against an older runtime reads past the
-  // end of that runtime's OrtApi struct instead of cleanly throwing. This constructor checks
-  // effective_api_version before touching Ort::Experimental::EpContextConfig, so callers
-  // don't need to replicate the check. There is intentionally no default value: a caller that
-  // forgets to pass the real negotiated version must get a compile error, not a silent fallback
-  // to the compile-time ORT_API_VERSION (which would reintroduce the version-skew crash this
-  // constructor exists to prevent).
+  // `runtime_capabilities` is negotiated with the loaded runtime by QnnEpFactory. The EPContext
+  // encryption APIs require ORT API v28; calling them against an older runtime reads past the
+  // end of that runtime's OrtApi struct instead of cleanly throwing. This constructor asks the
+  // shared named capability before touching Ort::Experimental::EpContextConfig, so feature code
+  // does not duplicate a raw API-version guard. There is intentionally no default value: a
+  // session-bound caller must supply the factory's negotiated capabilities.
   //
   // `logger` (optional) receives a WARNING if resolution genuinely fails rather than the app
   // simply not registering anything.
   explicit EpContextIoDispatch(const OrtSessionOptions* session_options,
-                               uint32_t effective_api_version,
+                               const QnnRuntimeCapabilities& runtime_capabilities,
                                const Ort::Logger* logger = nullptr) noexcept;
   ~EpContextIoDispatch() = default;
 

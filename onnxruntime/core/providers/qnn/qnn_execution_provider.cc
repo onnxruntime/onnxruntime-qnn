@@ -1716,9 +1716,9 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
 #endif
 
   // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
-  // predates ORT v28 (see EpContextIoDispatch for the version check).
+  // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
   io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(&session_options_,
-                                                            factory.effective_api_version_,
+                                                            factory.GetRuntimeCapabilities(),
                                                             &logger_);
 
   // File mapping and encryption are mutually exclusive: an App-provided read callback replaces

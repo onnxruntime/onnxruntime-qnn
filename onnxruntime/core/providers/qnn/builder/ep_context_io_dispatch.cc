@@ -11,7 +11,7 @@ namespace qnn {
 EpContextIoDispatch::EpContextIoDispatch() noexcept : config_{nullptr} {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* session_options,
-                                         uint32_t effective_api_version,
+                                         const QnnRuntimeCapabilities& runtime_capabilities,
                                          const Ort::Logger* logger) noexcept
     : config_{nullptr} {
   // A null session options pointer is used by code paths that do not have an
@@ -22,10 +22,9 @@ EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* session_option
     return;
   }
 
-  // effective_api_version is the version negotiated with the actual runtime, not just
-  // compile-time ORT_API_VERSION. Below kMinApiVersion, the experimental APIs don't exist in
-  // the runtime's OrtApi struct, so skip them here rather than crashing on an ABI mismatch.
-  if (effective_api_version < kMinApiVersion) {
+  // The named capability is negotiated with the actual runtime, not inferred from the
+  // compile-time ORT_API_VERSION. Skip APIs absent from an older runtime's OrtApi struct.
+  if (!runtime_capabilities.SupportsEpContextEncryption()) {
     ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_WARNING,
                     "ORT runtime API version is below 28 (v1.28). EPContext encryption "
                     "callbacks are unavailable; upgrade to onnxruntime >= 1.28 to enable.");
@@ -113,7 +112,7 @@ Ort::Status EpContextIoDispatch::Write(const std::string& name,
 EpContextIoDispatch::EpContextIoDispatch() noexcept {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* /*session_options*/,
-                                         uint32_t /*effective_api_version*/,
+                                         const QnnRuntimeCapabilities& /*runtime_capabilities*/,
                                          const Ort::Logger* /*logger*/) noexcept {}
 
 bool EpContextIoDispatch::HasReadCallback() const noexcept { return false; }

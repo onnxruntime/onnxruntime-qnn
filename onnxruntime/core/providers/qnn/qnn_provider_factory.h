@@ -10,6 +10,7 @@
 #include "core/providers/qnn/custom_op/qnn_custom_op.h"
 #include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
+#include "core/providers/qnn/qnn_runtime_capabilities.h"
 #include "onnxruntime_config.h"
 
 namespace onnxruntime {
@@ -18,9 +19,14 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
 
-  // Effective ORT API version: min(runtime, compile-time). Set by CreateEpFactories after
-  // construction. Used by QnnEp to gate features that require a minimum runtime version.
-  uint32_t effective_api_version_ = ORT_API_VERSION;
+  // Runtime feature capabilities negotiated by CreateEpFactories.
+  const qnn::QnnRuntimeCapabilities& GetRuntimeCapabilities() const noexcept {
+    return runtime_capabilities_;
+  }
+
+  void SetRuntimeCapabilities(qnn::QnnRuntimeCapabilities runtime_capabilities) noexcept {
+    runtime_capabilities_ = runtime_capabilities;
+  }
 
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
     return host_accessible_memory_info_.get();
@@ -78,6 +84,7 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   const std::string ep_name_;                         // EP name
   const std::string vendor_{"Qualcomm"};              // EP vendor name
   const std::string ep_version_{ORT_QNN_EP_VERSION};  // EP version
+  qnn::QnnRuntimeCapabilities runtime_capabilities_{ORT_API_VERSION};
 
   // Qualcomm vendor ID. Refer to the ACPI ID registry (search Qualcomm): https://uefi.org/ACPI_ID_List
   const uint32_t vendor_id_{'Q' | ('C' << 8) | ('O' << 16) | ('M' << 24)};
