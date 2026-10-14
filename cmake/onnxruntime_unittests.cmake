@@ -347,11 +347,19 @@ block()
 
   set(onnxruntime_provider_test_deps ${onnxruntime_test_providers_dependencies})
 
+  set(onnxruntime_provider_test_args)
+  if(WIN32 AND onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS)
+    # The internal-symbol Windows validation owns snapshot and accuracy tiers
+    # through its dedicated two-pass runner.
+    list(APPEND onnxruntime_provider_test_args "--gtest_filter=-QnnSnapshot_*:QnnAcc_*")
+  endif()
+
   AddTest(
     TARGET onnxruntime_provider_test
     SOURCES ${onnxruntime_provider_test_srcs}
     LIBS ${onnxruntime_provider_test_libs}
     DEPENDS ${onnxruntime_provider_test_deps}
+    TEST_ARGS ${onnxruntime_provider_test_args}
   )
 
   # Expose QNN SDK headers to unit tests via an interface target
