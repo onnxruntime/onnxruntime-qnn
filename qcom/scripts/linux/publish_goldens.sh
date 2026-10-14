@@ -34,6 +34,8 @@
 #   --filter=<g1,g2,...>  Scope regen to these op groups (passed through).
 #   --repo-subpath=<p>    Artifactory path prefix. Default:
 #                         "ci/qnn-ep-test-store/snapshot-goldens".
+#   --golden-profile=<p>  Required execution profile. Published below the
+#                         repo subpath (for example, linux-x86_64-htp-simulator).
 #   --dry-run             Do everything except the jf upload; print the exact
 #                         jf commands. (Default when neither flag is given.)
 #   --publish             Actually upload. Requires JF_URL / JF_ACCESS_TOKEN /
@@ -56,6 +58,7 @@ build_dir=""
 golden_dir=""
 filter_groups=""
 repo_subpath="ci/qnn-ep-test-store/snapshot-goldens"
+golden_profile=""
 dry_run=false
 publish=false
 skip_regen=false
@@ -67,6 +70,7 @@ for arg in "$@"; do
         --golden-dir=*)   golden_dir="${arg#--golden-dir=}" ;;
         --filter=*)       filter_groups="${arg#--filter=}" ;;
         --repo-subpath=*) repo_subpath="${arg#--repo-subpath=}" ;;
+        --golden-profile=*) golden_profile="${arg#--golden-profile=}" ;;
         --dry-run)        dry_run=true;  mode_flag_given=true ;;
         --publish)        publish=true;  mode_flag_given=true ;;
         --skip-regen)     skip_regen=true ;;
@@ -81,6 +85,7 @@ publish them (+ a version-stamped manifest.json) to Artifactory.
   --golden-dir=<path>   Golden store root. Default: \$QNN_UT_SNAPSHOT_GOLDEN_DIR.
   --filter=<g1,g2,...>  Scope regen to these op groups (passthrough).
   --repo-subpath=<p>    Artifactory path prefix. Default: ci/qnn-ep-test-store/snapshot-goldens.
+  --golden-profile=<p>  Required execution profile under the repo subpath.
   --dry-run             Do everything except upload; print the jf commands.
   --publish             Actually upload. Requires JF_URL / JF_ACCESS_TOKEN /
                         BUILD_ARTIFACTORY_REPO.
@@ -99,6 +104,10 @@ done
 # ---------------------------------------------------------------------------
 if [ -z "${build_dir}" ]; then
     die "--build-dir is required. Run with --help for usage."
+fi
+
+if [[ ! "${golden_profile}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    die "--golden-profile is required and may contain only letters, digits, '.', '_', and '-'."
 fi
 
 if [ "${publish}" = true ] && [ "${dry_run}" = true ]; then
@@ -137,6 +146,7 @@ log_info "=== QNN EP Golden Publisher ==="
 log_info "build_dir    : ${build_dir}"
 log_info "golden_dir   : ${golden_dir}"
 log_info "repo_subpath : ${repo_subpath}"
+log_info "profile      : ${golden_profile}"
 if [ -n "${filter_groups}" ]; then
     log_info "filter       : ${filter_groups}"
 fi
@@ -318,11 +328,13 @@ MANIFEST_UTC="${generated_utc}" \
 MANIFEST_ARCHIVE_ID="${archive_id}" \
 MANIFEST_COUNT="${golden_count}" \
 MANIFEST_GROUPS="$(IFS=,; printf '%s' "${pass_groups[*]}")" \
+MANIFEST_PROFILE="${golden_profile}" \
 python3 - "${staging}/manifest.json" <<'PYEOF'
 import json, os, sys
 
 groups = [g for g in os.environ["MANIFEST_GROUPS"].split(",") if g]
 manifest = {
+    "golden_profile": os.environ["MANIFEST_PROFILE"],
     "qairt_version": os.environ["MANIFEST_QAIRT"],
     "ort_version": os.environ["MANIFEST_ORT"],
     "git_sha": os.environ["MANIFEST_SHA"],
@@ -337,7 +349,7 @@ with open(sys.argv[1], "w") as f:
     f.write("\n")
 PYEOF
 
-log_info "manifest.json: qairt=${qairt_version} ort=${ort_version} sha=${git_sha} archive=${archive_id} groups=[${pass_groups[*]}] count=${golden_count}"
+log_info "manifest.json: profile=${golden_profile} qairt=${qairt_version} ort=${ort_version} sha=${git_sha} archive=${archive_id} groups=[${pass_groups[*]}] count=${golden_count}"
 
 # ---------------------------------------------------------------------------
 # Zip the staging tree. Archive root = manifest.json + tier subdirs.
@@ -354,9 +366,9 @@ log_info "Packaged: goldens.zip ($(du -h "${zip_path}" | cut -f1))"
 # Upload: uniquely keyed archive first, then the mutable latest/ pointers.
 # ---------------------------------------------------------------------------
 if [ "${publish}" = true ]; then
-    dest_base="${BUILD_ARTIFACTORY_REPO}/${repo_subpath}"
+    dest_base="${BUILD_ARTIFACTORY_REPO}/${repo_subpath}/${golden_profile}"
 else
-    dest_base="<BUILD_ARTIFACTORY_REPO>/${repo_subpath}"
+    dest_base="<BUILD_ARTIFACTORY_REPO>/${repo_subpath}/${golden_profile}"
 fi
 archive_dir="${dest_base}/archive/${archive_id}"
 archive_manifest_dest="${archive_dir}/manifest.json"
