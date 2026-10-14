@@ -185,8 +185,9 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
                                      OrtHardwareDevice*& device,
                                      const bool is_virtual = true) {
     OrtKeyValuePairs* hw_metadata = nullptr;
+    factory->ort_api.CreateKeyValuePairs(&hw_metadata);
+    factory->ort_api.AddKeyValuePair(hw_metadata, "Description", "Qualcomm NPU");
     if (is_virtual) {
-      factory->ort_api.CreateKeyValuePairs(&hw_metadata);
       factory->ort_api.AddKeyValuePair(hw_metadata, kOrtHardwareDevice_MetadataKey_IsVirtual, "1");
     }
 
@@ -222,21 +223,28 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   }
 
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
-    bool synthesize_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
+    const bool has_real_undetected_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
+
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+    constexpr bool is_cross_compile_host = true;
+#else
+    constexpr bool is_cross_compile_host = false;
+#endif
+
+    const bool synthesize_npu = has_real_undetected_npu || is_cross_compile_host;
 
     if (synthesize_npu) {
       // ORT Core didn't enumerate an NPU OrtHardwareDevice; synthesize one.
-      // Triggers: WoS without DXCore enumeration (Makena), Qualcomm Linux arm64 (/dev/fastrpc-cdsp*),
-      // or Qualcomm Android arm64 (ro.soc.manufacturer == QTI).
-      OrtHardwareDevice* undetected_npu_hw_device = nullptr;
-      RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, undetected_npu_hw_device, false));
-      factory->undetected_npu_hw_device_ = HardwareDeviceUniquePtr(
-          undetected_npu_hw_device,
+      // Real-but-undetected NPU (WoS Makena, Linux/Android arm64): not virtual — can execute.
+      // Cross-compile host (x86/x64): virtual — compile-only, no local NPU hardware.
+      const bool is_virtual = !has_real_undetected_npu;
+      OrtHardwareDevice* synthesized_npu_hw_device = nullptr;
+      RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, synthesized_npu_hw_device, is_virtual));
+      factory->synthesized_npu_hw_device_ = HardwareDeviceUniquePtr(
+          synthesized_npu_hw_device,
           FuncDeleter<OrtHardwareDevice>{factory->ep_api.ReleaseHardwareDevice});
 
-      RETURN_IF_NOT_NULL(create_ep_device(factory->undetected_npu_hw_device_.get()));
-    } else {
-      // Enable originally expected usage of virtual hardware device for cross-platform compilation if necessary.
+      RETURN_IF_NOT_NULL(create_ep_device(factory->synthesized_npu_hw_device_.get()));
     }
   }
 
