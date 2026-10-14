@@ -19,13 +19,13 @@ Subject: [PATCH 1/4] cpp model test runner uses plugin EP
  onnxruntime/test/onnx/utils/utils.cc          |  93 ++
  onnxruntime/test/onnx/utils/utils.h           |  24 +
  .../test/perftest/command_args_parser.cc      |  15 +-
- onnxruntime/test/perftest/common_utils.cc     |   6 +-
+ onnxruntime/test/perftest/common_utils.cc     |   8 +-
  onnxruntime/test/perftest/main.cc             |   9 +-
  onnxruntime/test/perftest/ort_test_session.cc |  16 +-
  .../internal_api}/compare_ortvalue.cc         |   0
  .../values/public_api/compare_ortvalue.cc     | 849 ++++++++++++++++++
  .../util/values/public_api/compare_ortvalue.h |  35 +
- 21 files changed, 2637 insertions(+), 40 deletions(-)
+ 21 files changed, 2638 insertions(+), 41 deletions(-)
  create mode 100644 onnxruntime/test/onnx/plugin_ep/command_args_parser.cc
  create mode 100644 onnxruntime/test/onnx/plugin_ep/command_args_parser.h
  create mode 100644 onnxruntime/test/onnx/plugin_ep/main.cc
@@ -2099,7 +2099,7 @@ index b4997d3..953072d 100644
        ORT_CATCH(const std::exception& ex) {
          ORT_HANDLE_EXCEPTION([&]() {
 diff --git a/onnxruntime/test/perftest/common_utils.cc b/onnxruntime/test/perftest/common_utils.cc
-index d09e872..0e53ff4 100644
+index d09e872..e3e8202 100644
 --- a/onnxruntime/test/perftest/common_utils.cc
 +++ b/onnxruntime/test/perftest/common_utils.cc
 @@ -2,7 +2,7 @@
@@ -2111,6 +2111,15 @@ index d09e872..0e53ff4 100644
  #include <core/platform/path_lib.h>
  
  #include <cstdint>
+@@ -39,7 +39,7 @@ void ListEpDevices(const Ort::Env& env) {
+ void RegisterExecutionProviderLibrary(Ort::Env& env, PerformanceTestConfig& test_config) {
+   if (!test_config.plugin_ep_names_and_libs.empty()) {
+     std::unordered_map<std::string, std::string> ep_names_to_libs;
+-    ParseSessionConfigs(ToUTF8String(test_config.plugin_ep_names_and_libs), ep_names_to_libs);
++    test::utils::ParseSessionConfigs(ToUTF8String(test_config.plugin_ep_names_and_libs), ep_names_to_libs);
+     if (ep_names_to_libs.size() > 0) {
+       for (auto& pair : ep_names_to_libs) {
+         const std::filesystem::path library_path = pair.second;
 @@ -109,7 +109,7 @@ std::vector<Ort::ConstEpDevice> AppendPluginExecutionProviders(Ort::Env& env,
    if (!test_config.selected_ep_device_indices.empty()) {
      std::vector<int> device_list;
