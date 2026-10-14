@@ -253,10 +253,10 @@ struct ApiPtrs {
   const OrtApi& ort_api;
   const OrtEpApi& ep_api;
   const OrtModelEditorApi& model_editor_api;
-  const qnn::QnnRuntimeCapabilities* runtime_capabilities = nullptr;
+  qnn::QnnRuntimeCapabilities runtime_capabilities{0};
 
   const qnn::QnnRuntimeCapabilities& GetRuntimeCapabilities() const noexcept {
-    return runtime_capabilities ? *runtime_capabilities : qnn::QnnRuntimeCapabilities::Unavailable();
+    return runtime_capabilities;
   }
 };
 

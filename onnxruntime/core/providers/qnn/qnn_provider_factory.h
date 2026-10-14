@@ -19,8 +19,7 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
 
   void SetRuntimeCapabilities(qnn::QnnRuntimeCapabilities capabilities) noexcept {
-    runtime_capabilities_ = capabilities;
-    ApiPtrs::runtime_capabilities = &runtime_capabilities_;
+    ApiPtrs::runtime_capabilities = capabilities;
   }
 
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
@@ -79,8 +78,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   const std::string ep_name_;                         // EP name
   const std::string vendor_{"Qualcomm"};              // EP vendor name
   const std::string ep_version_{ORT_QNN_EP_VERSION};  // EP version
-  qnn::QnnRuntimeCapabilities runtime_capabilities_{ORT_API_VERSION};
-
   // Qualcomm vendor ID. Refer to the ACPI ID registry (search Qualcomm): https://uefi.org/ACPI_ID_List
   const uint32_t vendor_id_{'Q' | ('C' << 8) | ('O' << 16) | ('M' << 24)};
 

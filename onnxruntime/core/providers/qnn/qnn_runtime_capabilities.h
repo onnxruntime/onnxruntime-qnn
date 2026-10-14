@@ -22,11 +22,6 @@ class QnnRuntimeCapabilities {
     return effective_api_version_ >= kEpContextEncryptionMinApiVersion;
   }
 
-  static const QnnRuntimeCapabilities& Unavailable() noexcept {
-    static const QnnRuntimeCapabilities unavailable{0};
-    return unavailable;
-  }
-
  private:
   uint32_t effective_api_version_;
 };
