@@ -248,6 +248,59 @@ class OrtLoggingManager {
   }
 };
 
+// Best-effort logging of an exception caught at the C API boundary by a function that has no
+// OrtStatus* to return it through.
+inline void LogApiBoundaryException(const char* message,
+                                    const ORTCHAR_T* file,
+                                    int line,
+                                    const char* func) noexcept {
+  const OrtLogger* logger = OrtLoggingManager::GetDefaultLoggerPtr();
+  if (logger == nullptr) {
+    // No logger. Give up.
+    return;
+  }
+
+  if (OrtStatus* status = Ort::GetApi().Logger_LogMessage(logger, ORT_LOGGING_LEVEL_ERROR,
+                                                          message, file, line, func)) {
+    Ort::GetApi().ReleaseStatus(status);
+  }
+}
+
+#define QNN_EP_API_IMPL_BEGIN try {
+#define QNN_EP_API_IMPL_END                                             \
+  }                                                                     \
+  catch (const Ort::Exception& ex) {                                    \
+    return Ort::GetApi().CreateStatus(ex.GetOrtErrorCode(), ex.what()); \
+  }                                                                     \
+  catch (const std::exception& ex) {                                    \
+    return Ort::GetApi().CreateStatus(ORT_FAIL, ex.what());             \
+  }                                                                     \
+  catch (...) {                                                         \
+    return Ort::GetApi().CreateStatus(ORT_FAIL, "Unknown exception");   \
+  }
+
+#define QNN_EP_API_IMPL_END_RETURN(fallback)                                             \
+  }                                                                                      \
+  catch (const std::exception& ex) {                                                     \
+    ::onnxruntime::LogApiBoundaryException(ex.what(), ORT_FILE, __LINE__, __FUNCTION__); \
+    return (fallback);                                                                   \
+  }                                                                                      \
+  catch (...) {                                                                          \
+    ::onnxruntime::LogApiBoundaryException("Unknown exception", ORT_FILE, __LINE__,      \
+                                           __FUNCTION__);                                \
+    return (fallback);                                                                   \
+  }
+
+#define QNN_EP_API_IMPL_END_VOID                                                         \
+  }                                                                                      \
+  catch (const std::exception& ex) {                                                     \
+    ::onnxruntime::LogApiBoundaryException(ex.what(), ORT_FILE, __LINE__, __FUNCTION__); \
+  }                                                                                      \
+  catch (...) {                                                                          \
+    ::onnxruntime::LogApiBoundaryException("Unknown exception", ORT_FILE, __LINE__,      \
+                                           __FUNCTION__);                                \
+  }
+
 struct ApiPtrs {
   const OrtApi& ort_api;
   const OrtEpApi& ep_api;
@@ -338,9 +391,9 @@ class OrtNodeUnit {
   const std::vector<OrtNodeUnitIODef>& Inputs() const noexcept { return inputs_; }
   const std::vector<OrtNodeUnitIODef>& Outputs() const noexcept { return outputs_; }
 
-  std::string Domain() const noexcept { return Ort::ConstNode(target_node_).GetDomain(); }
-  std::string OpType() const noexcept { return Ort::ConstNode(target_node_).GetOperatorType(); }
-  std::string Name() const noexcept { return Ort::ConstNode(target_node_).GetName(); }
+  std::string Domain() const { return Ort::ConstNode(target_node_).GetDomain(); }
+  std::string OpType() const { return Ort::ConstNode(target_node_).GetOperatorType(); }
+  std::string Name() const { return Ort::ConstNode(target_node_).GetName(); }
   int SinceVersion() const noexcept { return Ort::ConstNode(target_node_).GetSinceVersion(); }
   // Align NodeUnit to name as Index although returning Id since index is inaccessible.
   size_t Index() const noexcept { return Ort::ConstNode(target_node_).GetId(); }
@@ -350,7 +403,7 @@ class OrtNodeUnit {
   const OrtNode* GetOutputReshapeNode() const noexcept { return output_reshape_node_; }
   const std::vector<const OrtNode*>& GetDQNodes() const noexcept { return dq_nodes_; }
   const std::vector<const OrtNode*>& GetQNodes() const noexcept { return q_nodes_; }
-  std::vector<const OrtNode*> GetAllNodesInGroup() const noexcept {
+  std::vector<const OrtNode*> GetAllNodesInGroup() const {
     std::vector<const OrtNode*> all_nodes = dq_nodes_;
     all_nodes.push_back(target_node_);
     if (output_reshape_node_) {

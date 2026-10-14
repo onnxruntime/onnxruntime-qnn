@@ -16,6 +16,7 @@
 #include "core/providers/qnn/builder/qnn_backend_profiling_manager.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/ort_api.h"
 
 #if QNN_ORT_EP_PROFILING_API_ENABLED
 
@@ -233,8 +234,10 @@ void QnnEpProfiler::DiscardPendingExecuteProfilingExtractionsSince(size_t mark) 
 
 /*static*/
 void ORT_API_CALL QnnEpProfiler::ReleaseImpl(OrtEpProfilerImpl* this_ptr) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   auto* self = static_cast<QnnEpProfiler*>(this_ptr);
   delete self;
+  QNN_EP_API_IMPL_END_VOID
 }
 
 /*static*/
