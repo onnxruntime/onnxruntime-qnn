@@ -592,6 +592,9 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnConv2D(QnnModelWrapper& qnn_mode
                                                           std::move(unpacked_tensor), input_names));
   }
 
+  // Note: The explicit zero-bias workaround has been removed as part of cleanup
+  // since it targeted obsolete QNN SDK 2.23/2.24/2.25 (QNN API version 2.16/2.17/2.18)
+
   return Ort::Status();
 }
 
