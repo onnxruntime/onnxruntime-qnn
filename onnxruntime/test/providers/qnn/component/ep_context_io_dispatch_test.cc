@@ -47,7 +47,7 @@ struct ExperimentalFnStubEnv {
 
 // effective_api_version below EpContextIoDispatch::kMinApiVersion must short-circuit
 // before ever touching the experimental API, even with a non-null session_options.
-TEST(EpContextIoDispatchTest, EffectiveApiVersionBelowMin_NeverTouchesExperimentalApi) {
+TEST(QnnUnit_EpContextIoDispatchTest, EffectiveApiVersionBelowMin_NeverTouchesExperimentalApi) {
   ExperimentalFnStubEnv env;
   OrtGlobalApiOverride api_override(&env.stub_ort_api);
 
@@ -62,7 +62,7 @@ TEST(EpContextIoDispatchTest, EffectiveApiVersionBelowMin_NeverTouchesExperiment
 
 // A null session_options always short-circuits regardless of effective_api_version
 // (no application session to resolve callbacks from).
-TEST(EpContextIoDispatchTest, NullSessionOptions_NeverTouchesExperimentalApi) {
+TEST(QnnUnit_EpContextIoDispatchTest, NullSessionOptions_NeverTouchesExperimentalApi) {
   ExperimentalFnStubEnv env;
   OrtGlobalApiOverride api_override(&env.stub_ort_api);
 
@@ -73,10 +73,20 @@ TEST(EpContextIoDispatchTest, NullSessionOptions_NeverTouchesExperimentalApi) {
   EXPECT_FALSE(dispatch.HasWriteCallback());
 }
 
+// The default constructor represents a disabled/no-session dispatch. It must not require a
+// fabricated runtime version, or callers could accidentally depend on the session constructor's
+// short-circuit order.
+TEST(QnnUnit_EpContextIoDispatchTest, DefaultConstructor_IsDisabled) {
+  qnn::EpContextIoDispatch dispatch;
+
+  EXPECT_FALSE(dispatch.HasReadCallback());
+  EXPECT_FALSE(dispatch.HasWriteCallback());
+}
+
 // effective_api_version at/above kMinApiVersion proceeds to resolve callbacks
 // (and, with no experimental API registered by this stub, fails via the
 // existing try/catch rather than the version guard).
-TEST(EpContextIoDispatchTest, EffectiveApiVersionAtMin_AttemptsExperimentalApi) {
+TEST(QnnUnit_EpContextIoDispatchTest, EffectiveApiVersionAtMin_AttemptsExperimentalApi) {
   ExperimentalFnStubEnv env;
   OrtGlobalApiOverride api_override(&env.stub_ort_api);
 

@@ -8,6 +8,8 @@ namespace qnn {
 
 #if ORT_API_HAS_EPCONTEXT_ENCRYPTION
 
+EpContextIoDispatch::EpContextIoDispatch() noexcept : config_{nullptr} {}
+
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* session_options,
                                          uint32_t effective_api_version,
                                          const Ort::Logger* logger) noexcept
@@ -107,6 +109,8 @@ Ort::Status EpContextIoDispatch::Write(const std::string& name,
 }
 
 #else  // ORT_API_HAS_EPCONTEXT_ENCRYPTION — stub for pre-v28 ORT
+
+EpContextIoDispatch::EpContextIoDispatch() noexcept {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* /*session_options*/,
                                          uint32_t /*effective_api_version*/,

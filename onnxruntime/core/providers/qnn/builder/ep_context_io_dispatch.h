@@ -27,6 +27,11 @@ class EpContextIoDispatch {
   // EPContext encryption requires the experimental APIs added at ORT API v28.
   static constexpr uint32_t kMinApiVersion = 28;
 
+  // Creates a permanently disabled dispatch for paths without an application session.
+  // Session-bound callers must use the constructor below and supply the runtime-negotiated
+  // API version explicitly.
+  EpContextIoDispatch() noexcept;
+
   // Resolves the callbacks from `session_options`. Never throws.
   //
   // `effective_api_version` is the ORT API version actually negotiated with the runtime
