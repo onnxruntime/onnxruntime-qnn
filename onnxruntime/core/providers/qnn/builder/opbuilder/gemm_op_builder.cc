@@ -98,13 +98,13 @@ class GemmOpBuilder : public BaseOpBuilder {
                                      bool do_op_validation) const ORT_MUST_USE_RESULT;
   // LPBQ (BLOCKWISE_EXPANSION) weight path for Gemm→QNN Conv2D with 1×1 filters.
   Ort::Status ProcessInputsForLPBQGemm(QnnModelWrapper& qnn_model_wrapper,
-                                        const OrtNodeUnit& node_unit,
-                                        int64_t trans_a,
-                                        int64_t trans_b,
-                                        float beta,
-                                        const Ort::Logger& logger,
-                                        std::vector<std::string>& input_names,
-                                        bool do_op_validation) const ORT_MUST_USE_RESULT;
+                                       const OrtNodeUnit& node_unit,
+                                       int64_t trans_a,
+                                       int64_t trans_b,
+                                       float beta,
+                                       const Ort::Logger& logger,
+                                       std::vector<std::string>& input_names,
+                                       bool do_op_validation) const ORT_MUST_USE_RESULT;
 };
 
 Ort::Status GemmOpBuilder::ExplictOpCheck(const OrtNodeUnit& node_unit, bool is_bq_gemm) const {
@@ -252,13 +252,13 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Ort::Status GemmOpBuilder::ProcessInputsForLPBQGemm(QnnModelWrapper& qnn_model_wrapper,
-                                                     const OrtNodeUnit& node_unit,
-                                                     int64_t trans_a,
-                                                     int64_t trans_b,
-                                                     float beta,
-                                                     const Ort::Logger& logger,
-                                                     std::vector<std::string>& input_names,
-                                                     bool do_op_validation) const {
+                                                    const OrtNodeUnit& node_unit,
+                                                    int64_t trans_a,
+                                                    int64_t trans_b,
+                                                    float beta,
+                                                    const Ort::Logger& logger,
+                                                    std::vector<std::string>& input_names,
+                                                    bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
 
   //
@@ -316,7 +316,7 @@ Ort::Status GemmOpBuilder::ProcessInputsForLPBQGemm(QnnModelWrapper& qnn_model_w
 
   //
   // Input B (weight): LPBQ, shape [K, N] (transB=0) or [N, K] (transB=1).
-  // RegisterWeightAsConv1x1Filter expects [K, N].
+  // RegisterLPBQWeightAsConv1x1Filter expects [K, N].
   //
   TensorInfo weight_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], weight_info));
@@ -339,8 +339,8 @@ Ort::Status GemmOpBuilder::ProcessInputsForLPBQGemm(QnnModelWrapper& qnn_model_w
   }
 
   // Register as [1, 1, K, N] (HWCN 1×1 filter).
-  RETURN_IF_ERROR(bq::RegisterWeightAsConv1x1Filter(qnn_model_wrapper, inputs[1].name, weight_info_kn,
-                                                     std::move(unpacked_weight), input_names));
+  RETURN_IF_ERROR(bq::RegisterLPBQWeightAsConv1x1Filter(qnn_model_wrapper, inputs[1].name, weight_info_kn,
+                                                        std::move(unpacked_weight), input_names));
 
   //
   // Input C (bias, optional): use ProcessBiasForQuantizedOp.
@@ -350,7 +350,7 @@ Ort::Status GemmOpBuilder::ProcessInputsForLPBQGemm(QnnModelWrapper& qnn_model_w
     const std::string& weight_4d_name = input_names.back();
     const auto& weight_4d_quant = qnn_model_wrapper.GetQnnTensorWrapper(weight_4d_name).GetQnnQuantParams();
     bool was_handled = false;
-    RETURN_IF_ERROR(utils::ProcessBiasForQuantizedOp(qnn_model_wrapper, logger, inputs[2],
+    RETURN_IF_ERROR(utils::ProcessBiasForQuantizedOp(qnn_model_wrapper, logger, node_unit, inputs[2],
                                                      act_info.quant_param, weight_4d_quant,
                                                      input_names, was_handled));
     RETURN_IF_NOT(was_handled, "Failed to add bias tensor for LPBQ Gemm");
@@ -358,7 +358,6 @@ Ort::Status GemmOpBuilder::ProcessInputsForLPBQGemm(QnnModelWrapper& qnn_model_w
 
   return Ort::Status();
 }
-
 
 Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wrapper,
                                                   const OrtNodeUnit& node_unit,
@@ -604,13 +603,13 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
     const std::string conv2d_out_name = org_output_name + "_conv2d";
     RETURN_IF_ERROR(bq::AddConv2DNodeforBQLowering(qnn_model_wrapper, node_unit,
-                                                    std::move(input_names),
-                                                    conv2d_out_name,
-                                                    conv2d_output_shape,
-                                                    output_info.qnn_data_type,
-                                                    conv2d_out_quant,
-                                                    /*is_graph_output=*/false,
-                                                    do_op_validation));
+                                                   std::move(input_names),
+                                                   conv2d_out_name,
+                                                   conv2d_output_shape,
+                                                   output_info.qnn_data_type,
+                                                   conv2d_out_quant,
+                                                   /*is_graph_output=*/false,
+                                                   do_op_validation));
 
     // Reshape [1, 1, M, N] → [M, N].
     const Qnn_TensorType_t out_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
