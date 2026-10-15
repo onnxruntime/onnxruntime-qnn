@@ -324,10 +324,16 @@ QnnQuantParamsWrapper QnnQuantParamsWrapper::Copy() const {
 
 // Initializes by copying from a Qnn_QuantizeParams_t.
 Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, const size_t num_scaleoffsets, const size_t tensor_rank) {
-  if (per_channel_data_) {
-    per_channel_data_.reset(nullptr);
-    params_ = QNN_QUANTIZE_PARAMS_INIT;
-  }
+  per_channel_data_.reset();
+  block_scales_data_.reset();
+  blockwise_expansion_data_.reset();
+  block_encoding_axis_data_.reset();
+  block_encoding_scale_offsets_data_.reset();
+  bw_float_block_encoding_scale_offsets_data_.reset();
+  per_channel_scales_size_ = 0;
+  block_encoding_tensor_rank_ = 0;
+  num_blocks_ = 0;
+  params_ = QNN_QUANTIZE_PARAMS_INIT;
 
   if (params.encodingDefinition != QNN_DEFINITION_DEFINED) {
     params_ = params;
@@ -393,7 +399,12 @@ Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, cons
       break;
     }
     case QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION: {
-      assert(num_scaleoffsets && "Can't create BlockwiseExpansion encoding object with zero ScaleOffsets");
+      RETURN_IF_NOT(num_scaleoffsets > 0, "BlockwiseExpansion encoding requires scale offsets");
+      RETURN_IF(params.blockwiseExpansion == nullptr, "BlockwiseExpansion encoding data is null");
+      RETURN_IF(params.blockwiseExpansion->scaleOffsets == nullptr,
+                "BlockwiseExpansion scale offsets are null");
+      RETURN_IF(params.blockwiseExpansion->blocksScale8 == nullptr,
+                "BlockwiseExpansion block scales are null");
       params_.encodingDefinition = params.encodingDefinition;
       params_.quantizationEncoding = params.quantizationEncoding;
 
@@ -428,7 +439,10 @@ Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, cons
       break;
     }
     case QNN_QUANTIZATION_ENCODING_BLOCK: {
-      assert(num_scaleoffsets && "Can't create Block encoding object with zero ScaleOffsets");
+      RETURN_IF_NOT(num_scaleoffsets > 0, "Block encoding requires scale offsets");
+      RETURN_IF_NOT(tensor_rank > 0, "Block encoding requires a tensor rank");
+      RETURN_IF(params.blockEncoding.blockSize == nullptr, "Block encoding block sizes are null");
+      RETURN_IF(params.blockEncoding.scaleOffset == nullptr, "Block encoding scale offsets are null");
       params_.encodingDefinition = params.encodingDefinition;
       params_.quantizationEncoding = params.quantizationEncoding;
 
@@ -451,11 +465,17 @@ Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, cons
       break;
     }
     case QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK: {
-      assert(num_scaleoffsets && "Can't create Block encoding object with zero ScaleOffsets");
+      RETURN_IF_NOT(num_scaleoffsets > 0, "BwFloatBlock encoding requires scale offsets");
+      RETURN_IF_NOT(tensor_rank > 0, "BwFloatBlock encoding requires a tensor rank");
+      RETURN_IF(params.bwFloatBlockEncoding.blockSize == nullptr,
+                "BwFloatBlock encoding block sizes are null");
+      RETURN_IF(params.bwFloatBlockEncoding.floatScaleOffset == nullptr,
+                "BwFloatBlock encoding scale offsets are null");
       params_.encodingDefinition = params.encodingDefinition;
       params_.quantizationEncoding = params.quantizationEncoding;
       params_.bwFloatBlockEncoding.bitwidth = params.bwFloatBlockEncoding.bitwidth;
 
+      num_blocks_ = static_cast<uint32_t>(num_scaleoffsets);
       block_encoding_tensor_rank_ = static_cast<uint32_t>(tensor_rank);
       block_encoding_axis_data_ = std::make_unique<uint32_t[]>(block_encoding_tensor_rank_);
       std::memcpy(block_encoding_axis_data_.get(),

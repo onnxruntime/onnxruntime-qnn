@@ -110,6 +110,24 @@ void SetQnnTensorDim(Qnn_Tensor_t& qnn_tensor, const std::vector<uint32_t>& dime
                     ORT_EP_FAIL);
 }
 
+void SetQnnTensorIsDynamicDimensions(Qnn_Tensor_t& qnn_tensor,
+                                     const std::vector<uint8_t>& is_dynamic_dimensions) {
+  if (QNN_TENSOR_VERSION_1 == qnn_tensor.version) {
+    return;  // not present in v1
+  }
+
+#ifdef QNN_TENSOR_V2_INIT
+  if (QNN_TENSOR_VERSION_2 == qnn_tensor.version) {
+    qnn_tensor.v2.isDynamicDimensions =
+        is_dynamic_dimensions.empty() ? nullptr : const_cast<uint8_t*>(is_dynamic_dimensions.data());
+    return;
+  }
+#endif  // QNN_TENSOR_V2_INIT
+
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
+}
+
 void SetQnnTensorMemType(Qnn_Tensor_t& qnn_tensor, Qnn_TensorMemType_t mem_type) {
   if (QNN_TENSOR_VERSION_1 == qnn_tensor.version) {
     qnn_tensor.v1.memType = mem_type;

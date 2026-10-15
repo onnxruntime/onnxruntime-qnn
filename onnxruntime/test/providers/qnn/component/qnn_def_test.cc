@@ -12,7 +12,9 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <cstring>
+#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "QnnTypes.h"
@@ -68,6 +70,25 @@ TEST(QnnUnit_DefTest, Memscpy_ZeroCopySizeReturnsZero) {
   const char src[] = "hello";
   size_t copied = qnn::memscpy(dst, sizeof(dst), src, 0);
   EXPECT_EQ(copied, 0u);
+}
+
+// =============================================================================
+// QnnParamWrapper string ownership
+// =============================================================================
+
+TEST(QnnUnit_DefTest, QnnParamWrapper_OwnsStringScalarAcrossMove) {
+  qnn::QnnParamWrapper wrapper = [] {
+    std::string value = "temporary_string";
+    Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
+    scalar.dataType = QNN_DATATYPE_STRING;
+    scalar.stringValue = value.c_str();
+    return qnn::QnnParamWrapper(0, "node", "attr", scalar);
+  }();
+
+  qnn::QnnParamWrapper moved(std::move(wrapper));
+  const Qnn_Param_t& param = moved.GetQnnParam();
+  ASSERT_NE(param.scalarParam.stringValue, nullptr);
+  EXPECT_STREQ(param.scalarParam.stringValue, "temporary_string");
 }
 
 // =============================================================================
