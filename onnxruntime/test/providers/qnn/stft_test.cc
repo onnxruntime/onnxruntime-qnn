@@ -76,6 +76,34 @@ static void RunStftOpTest(const TestInputDef<SignalType>& signal_def,
                   EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
+TEST_F(QnnHTPBackendTests, StftOp_DynamicFrameStep_FallsBack) {
+  std::vector<float> signal_data(128, 1.0f);
+  std::vector<float> window_data(16, 1.0f);
+
+  RunStftOpTest<float, int32_t>(
+      TestInputDef<float>({1, 128, 1}, false, signal_data),
+      TestInputDef<int32_t>({}, false, {8}),
+      TestInputDef<float>({16}, true, window_data),
+      std::nullopt,
+      {test::MakeAttribute("onesided", static_cast<int64_t>(1))},
+      17,
+      ExpectedEPNodeAssignment::None);
+}
+
+TEST_F(QnnHTPBackendTests, StftOp_DynamicFrameLength_FallsBack) {
+  std::vector<float> signal_data(128, 1.0f);
+  std::vector<float> window_data(16, 1.0f);
+
+  RunStftOpTest<float, int32_t>(
+      TestInputDef<float>({1, 128, 1}, false, signal_data),
+      TestInputDef<int32_t>({}, true, {8}),
+      TestInputDef<float>({16}, true, window_data),
+      TestInputDef<int32_t>({}, false, {16}),
+      {test::MakeAttribute("onesided", static_cast<int64_t>(1))},
+      17,
+      ExpectedEPNodeAssignment::None);
+}
+
 TEST_F(QnnHTPBackendTests, StftOp_Float_WithWindowOnly) {
   std::vector<float> signal_data(128, 1.0f);  // Signal: shape [1, 128, 1]
   std::vector<float> window_data(16, 1.0f);   // Window: shape [16]

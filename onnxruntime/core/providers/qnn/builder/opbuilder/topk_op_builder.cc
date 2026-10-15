@@ -124,6 +124,7 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     std::vector<uint8_t> unpacked_tensor;
     const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_tensor, unpacked_tensor));
+    RETURN_IF(unpacked_tensor.size() != sizeof(int64_t), "TopK k input must be a scalar int64 initializer.");
     const int64_t* tensor_data = reinterpret_cast<const int64_t*>(unpacked_tensor.data());
     k = static_cast<uint32_t>(*tensor_data);
   } else {

@@ -115,6 +115,12 @@ Ort::Status RangeOpBuilder::ComputeRangeValues(QnnModelWrapper& qnn_model_wrappe
                 "Range: start, limit, and delta must share the same data type.");
   onnx_dtype_out = dtype;
 
+  const size_t scalar_byte_size = utils::GetElementSizeByType(dtype);
+  for (const auto& input_bytes : bytes) {
+    RETURN_IF(input_bytes.size() != scalar_byte_size,
+              "Range: start, limit, and delta must be scalar initializers.");
+  }
+
   switch (dtype) {
     case QNN_DATATYPE_FLOAT_32: {
       const float start = *reinterpret_cast<const float*>(bytes[0].data());
