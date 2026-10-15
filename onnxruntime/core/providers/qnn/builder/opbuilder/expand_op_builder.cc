@@ -42,7 +42,8 @@ void FillShapeInputData(std::vector<uint8_t>& shape_data, int shape_size, T ini_
 }
 
 // Use ElementWiseMultiply to implement data broadcast
-// Get the shape data, and create a initializer input with value 1 and same shape
+// Get the shape data, and create an initializer input with value 1 that broadcasts
+// to the output shape.
 // input[0] * input[1]
 Ort::Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                            const OrtNodeUnit& node_unit,
@@ -69,7 +70,30 @@ Ort::Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   std::vector<uint32_t> input_shape(shape_rank, 0);
   std::transform(shape_data_int64, shape_data_int64 + shape_rank, input_shape.begin(),
                  [](int64_t item) { return SafeInt<uint32_t>(item); });
-  int shape_size = std::accumulate(input_shape.begin(), input_shape.end(), 1, std::multiplies<uint32_t>());
+
+  // Smallest ones tensor that still yields the output shape: unexpanded dims
+  // stay 1 and rely on QNN implicit broadcasting. Falls back to the full
+  // output shape for dynamic, rank-mismatched, or non-broadcastable inputs.
+  std::vector<uint32_t> ones_shape = input_shape;
+  {
+    std::vector<uint32_t> data_shape;
+    if (qnn_model_wrapper.GetOnnxShape(inputs[0].shape, data_shape) &&
+        data_shape.size() == static_cast<size_t>(shape_rank)) {
+      bool valid_broadcast = true;
+      for (uint32_t i = 0; i < shape_rank; ++i) {
+        if (data_shape[i] == input_shape[i]) {
+          ones_shape[i] = 1;
+        } else if (data_shape[i] != 1) {
+          valid_broadcast = false;
+          break;
+        }
+      }
+      if (!valid_broadcast) {
+        ones_shape = input_shape;
+      }
+    }
+  }
+  int shape_size = std::accumulate(ones_shape.begin(), ones_shape.end(), 1, std::multiplies<uint32_t>());
 
   std::vector<uint8_t> shape_data;
   bool is_quantized_tensor = inputs[0].quant_param.has_value();
@@ -140,7 +164,7 @@ Ort::Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   const std::string& output_name = node_unit.Outputs()[0].name;
   std::string shape_input_name = utils::UniqueNameGenerator().New(input_name, output_name);
   QnnTensorWrapper input_tensorwrapper(shape_input_name, QNN_TENSOR_TYPE_STATIC, qnn_data_type,
-                                       std::move(quantize_param), std::move(input_shape),
+                                       std::move(quantize_param), std::move(ones_shape),
                                        std::move(shape_data));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
   input_names.push_back(shape_input_name);
