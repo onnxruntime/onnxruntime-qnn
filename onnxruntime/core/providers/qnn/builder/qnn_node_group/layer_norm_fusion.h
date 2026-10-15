@@ -36,6 +36,11 @@ class QnnModelWrapper;
 /// QNN LayerNorm cannot express. Ops after the fused part are left untouched.
 ///
 /// Scalar constants (Pow exponent, epsilon) may be float32 or float16 initializers.
+///
+/// QNN HTP LayerNorm normalizes only the last axis. A single trailing axis (axes=[-1]) maps directly
+/// to one LayerNorm. Several trailing axes are flattened into one:
+///   x [..., d1, d2] --> Reshape [P, d1*d2] --> LayerNorm(axis 1) --> Reshape [..., d1, d2]
+/// with gamma/beta collapsed to {d1*d2}.
 /// All NodeUnits must be of type SingleNode.
 /// </summary>
 class LayerNormFusion : public IQnnNodeGroup {

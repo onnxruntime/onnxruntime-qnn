@@ -4,10 +4,12 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <type_traits>
 #include <vector>
 
+#include "nlohmann/json.hpp"
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
@@ -183,6 +185,110 @@ void RunAndDump(const std::filesystem::path& json_dir, const GetTestModelFn& bui
   opts["json_qnn_graph_dir"] = json_dir.string();
   RunQnnModelTest(build_fn, opts, 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(abs_err)});
+}
+
+// Deterministic non-trivial values (so gamma/beta actually affect the output): start + step * (i % 16).
+std::vector<float> Ramp(size_t n, float start, float step) {
+  std::vector<float> v(n);
+  for (size_t i = 0; i < n; ++i) {
+    v[i] = start + step * static_cast<float>(i % 16);
+  }
+  return v;
+}
+
+// Same chain as BuildLayerNormFusionTestCase but without the trailing Add(beta): the graph output is
+// Mul(gamma). Exercises gamma-only fusion with a synthesized zeros beta.
+GetTestModelFn BuildLayerNormFusionNoBetaTestCase(
+    const TestInputDef<float>& input_def,
+    const std::vector<int64_t>& axes,
+    float epsilon,
+    const std::vector<int64_t>& gamma_shape,
+    const std::vector<float>& gamma_values) {
+  return [=](ModelTestBuilder& builder) -> void {
+    MakeTestInput<float>(builder, "input", input_def);
+
+    builder.MakeInitializer<float>("gamma", gamma_shape, gamma_values);
+    builder.MakeScalarInitializer<float>("pow_exp", 2.0f);
+    builder.MakeScalarInitializer<float>("eps", epsilon);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> rm_attrs;
+    rm_attrs.push_back(test::MakeAttribute("axes", axes));
+    rm_attrs.push_back(test::MakeAttribute("keepdims", static_cast<int64_t>(1)));
+
+    builder.AddNode("rm1", "ReduceMean", {"input"}, {"rm1_out"}, "", rm_attrs);
+    builder.AddNode("sub", "Sub", {"input", "rm1_out"}, {"sub_out"});
+    builder.AddNode("pow", "Pow", {"sub_out", "pow_exp"}, {"pow_out"});
+    builder.AddNode("rm2", "ReduceMean", {"pow_out"}, {"rm2_out"}, "", rm_attrs);
+    builder.AddNode("add_eps", "Add", {"rm2_out", "eps"}, {"add_eps_out"});
+    builder.AddNode("sqrt", "Sqrt", {"add_eps_out"}, {"sqrt_out"});
+    builder.AddNode("div", "Div", {"sub_out", "sqrt_out"}, {"div_out"});
+
+    builder.MakeOutput("output");
+    builder.AddNode("mul_gamma", "Mul", {"div_out", "gamma"}, {"output"});
+  };
+}
+
+
+
+
+
+
+
+
+
+
+// Asserts the shapes of the gamma (input 1) and beta (input 2) tensors read by the single fused QNN
+// LayerNorm in the dumped graph. Tensors are found through the LayerNorm node's input list rather than
+// by name: synthesized ones/zeros get generated names whose "_N" suffix depends on how many fusion
+// candidates were validated first.
+void ExpectLayerNormGammaBetaShapes(const std::filesystem::path& dump_dir,
+
+
+                                    const std::vector<uint32_t>& expected_gamma_dims,
+                                    const std::vector<uint32_t>& expected_beta_dims) {
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
+
+
+  std::filesystem::path json_path;
+  std::error_code ec;
+  for (const auto& entry : std::filesystem::directory_iterator(dump_dir, ec)) {
+    const auto& p = entry.path();
+    if (entry.is_regular_file() && p.extension() == ".json" &&
+        p.filename().string().find("_tensor_log") == std::string::npos) {
+      json_path = p;
+      break;
+    }
+  }
+  ASSERT_FALSE(json_path.empty()) << "No QNN JSON graph file found in " << dump_dir;
+
+  std::ifstream json_file(json_path);
+  ASSERT_TRUE(json_file.is_open()) << "Cannot open " << json_path;
+  const nlohmann::json root = nlohmann::json::parse(json_file, nullptr, /*allow_exceptions=*/false);
+  ASSERT_FALSE(root.is_discarded()) << "Failed to parse " << json_path;
+  ASSERT_TRUE(root.is_object() && root.contains("graph") && root["graph"].is_object() &&
+              root["graph"].contains("nodes") && root["graph"]["nodes"].is_object())
+      << "JSON missing 'graph.nodes' in " << json_path;
+
+  std::vector<std::string> ln_inputs;
+  size_t ln_count = 0;
+  try {
+    for (const auto& [node_name, node] : root["graph"]["nodes"].items()) {
+      if (node.is_object() && node.value("type", "") == "LayerNorm") {
+        ++ln_count;
+        ln_inputs = node.at("input_names").get<std::vector<std::string>>();
+      }
+    }
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to read LayerNorm inputs in " << json_path << ": " << ex.what();
+  }
+  ASSERT_EQ(ln_count, 1u) << "Expected exactly one LayerNorm in " << json_path;
+  ASSERT_EQ(ln_inputs.size(), 3u) << "LayerNorm must have 3 inputs (x, gamma, beta) in " << json_path;
+
+  AssertTensorShapeInQnnGraph(dump_dir, ln_inputs[1], expected_gamma_dims);
+  AssertTensorShapeInQnnGraph(dump_dir, ln_inputs[2], expected_beta_dims);
 }
 
 }  // namespace
@@ -410,6 +516,152 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_Fp16_SharedDiv_CoreOnly) {
   AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
   AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 2);
   AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 2);
+}
+
+// ---- Gamma-only fusion (synthesized zeros beta) -----------------------------
+
+// Beta missing: the chain ends at Mul(gamma). Gamma is folded into LayerNorm, beta is a synthesized
+// zeros tensor, and no element-wise op remains.
+TEST_F(QnnHTPBackendTests, LayerNormFusion_GammaOnly_NoBeta) {
+  const std::filesystem::path json_dir = "LayerNormFusion_GammaOnly_NoBeta";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  const int64_t C = 16;
+  RunAndDump(json_dir,
+             BuildLayerNormFusionNoBetaTestCase(TestInputDef<float>({1, 8, 16}, false, -2.0f, 2.0f),
+                                                {-1}, 1e-5f, {C}, Ramp(static_cast<size_t>(C), 0.5f, 0.05f)),
+             1e-2f);
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
+  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
+  ExpectLayerNormGammaBetaShapes(json_dir, {16}, {16});
+}
+
+// Beta invalid: gamma {16} is valid but beta {1, 8, 1} varies along a non-normalized axis, so it
+// cannot be folded. The full candidate is rejected and gamma-only fusion is used; Add(beta) stays.
+TEST_F(QnnHTPBackendTests, LayerNormFusion_GammaOnly_InvalidBetaShape) {
+  const std::filesystem::path json_dir = "LayerNormFusion_GammaOnly_InvalidBetaShape";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  const int64_t C = 16;
+  RunAndDump(json_dir,
+             BuildLayerNormFusionTestCase(TestInputDef<float>({1, 8, 16}, false, -2.0f, 2.0f),
+                                          {-1}, 1e-5f,
+                                          {C}, Ramp(static_cast<size_t>(C), 0.5f, 0.05f),
+                                          {1, 8, 1}, Ramp(8, -0.2f, 0.05f)),
+             1e-2f);
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
+  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
+  ExpectLayerNormGammaBetaShapes(json_dir, {16}, {16});
+}
+
+// ---- Multi-axis fusion ------------------------------------------------------
+// Normalizing over the trailing axes [-2, -1] of [1, 4, 8, 16]. QNN HTP LayerNorm only normalizes the
+// last axis, so the fusion flattens: Reshape [1,4,8,16] -> [4,128] -> LayerNorm(axis 1) -> Reshape
+// back. Gamma/beta (real or synthesized) must therefore be {128}, and exactly two Reshapes appear.
+
+// Full, multi-axis: gamma/beta {8, 16} fold into the flattened LayerNorm as {128}.
+TEST_F(QnnHTPBackendTests, LayerNormFusion_MultiAxis_Full) {
+  const std::filesystem::path json_dir = "LayerNormFusion_MultiAxis_Full";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  RunAndDump(json_dir,
+             BuildLayerNormFusionTestCase(TestInputDef<float>({1, 4, 8, 16}, false, -2.0f, 2.0f),
+                                          {-2, -1}, 1e-5f,
+                                          {8, 16}, Ramp(8 * 16, 0.5f, 0.05f),
+                                          {8, 16}, Ramp(8 * 16, -0.2f, 0.03f)),
+             1e-2f);
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
+  AssertOpInQnnGraph(json_dir, "Reshape", 2);
+  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
+  ExpectLayerNormGammaBetaShapes(json_dir, {128}, {128});
+}
+
+// Core-only, multi-axis: gamma {1, 4, 1, 1} varies along a non-normalized axis, so neither Mul nor
+// Add can be folded. LayerNorm gets synthesized ones/zeros of shape {128}.
+TEST_F(QnnHTPBackendTests, LayerNormFusion_MultiAxis_CoreOnly) {
+  const std::filesystem::path json_dir = "LayerNormFusion_MultiAxis_CoreOnly";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  RunAndDump(json_dir,
+             BuildLayerNormFusionTestCase(TestInputDef<float>({1, 4, 8, 16}, false, -2.0f, 2.0f),
+                                          {-2, -1}, 1e-5f,
+                                          {1, 4, 1, 1}, Ramp(4, 0.5f, 0.25f),
+                                          {8, 16}, Ramp(8 * 16, -0.2f, 0.03f)),
+             1e-2f);
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
+  AssertOpInQnnGraph(json_dir, "Reshape", 2);
+  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
+  ExpectLayerNormGammaBetaShapes(json_dir, {128}, {128});
+}
+
+// Gamma-only, multi-axis: padded gamma {1, 1, 8, 16} is collapsed to {128}; no beta, so a zeros
+// beta of shape {128} is synthesized.
+TEST_F(QnnHTPBackendTests, LayerNormFusion_MultiAxis_GammaOnly) {
+  const std::filesystem::path json_dir = "LayerNormFusion_MultiAxis_GammaOnly";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  RunAndDump(json_dir,
+             BuildLayerNormFusionNoBetaTestCase(TestInputDef<float>({1, 4, 8, 16}, false, -2.0f, 2.0f),
+                                                {-2, -1}, 1e-5f,
+                                                {1, 1, 8, 16}, Ramp(8 * 16, 0.5f, 0.05f)),
+             1e-2f);
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
+  AssertOpInQnnGraph(json_dir, "Reshape", 2);
+  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 0);
+  ExpectLayerNormGammaBetaShapes(json_dir, {128}, {128});
+}
+
+// fp16 multi-axis core-only: synthesized ones/zeros must be FLOAT16 tensors of shape {128}.
+TEST_F(QnnHTPBackendTests, LayerNormFusion_Fp16_MultiAxis_CoreOnly) {
+  const std::filesystem::path json_dir = "LayerNormFusion_Fp16_MultiAxis_CoreOnly";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  RunAndDump(json_dir,
+             BuildLayerNormFusionFp16TestCase(TestInputDef<float>({1, 4, 8, 16}, false, -2.0f, 2.0f),
+                                              {-2, -1}, 1e-5f,
+                                              {1, 4, 1, 1}, Ramp(4, 0.5f, 0.25f),
+                                              {8, 16}, Ramp(8 * 16, -0.2f, 0.03f)),
+             3e-2f);
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
+  AssertOpInQnnGraph(json_dir, "Reshape", 2);
+  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
+  ExpectLayerNormGammaBetaShapes(json_dir, {128}, {128});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

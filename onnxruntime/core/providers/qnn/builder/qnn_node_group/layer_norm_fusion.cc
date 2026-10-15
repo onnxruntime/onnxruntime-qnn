@@ -330,6 +330,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
                  ", input_shape=" + shape_str +
                  ", epsilon=" + std::to_string(epsilon) +
                  ", axes=[" + axes_str + "]" +
+                 (axes1.size() > 1 ? std::string(" (flattened to last axis)") : std::string()) +
                  ", gamma=" + (c.gamma ? c.gamma->name : std::string("<ones>")) +
                  ", beta=" + (c.beta ? c.beta->name : std::string("<zeros>")))
                     .c_str());
@@ -471,20 +472,16 @@ static Ort::Status ValidateAndSqueezeScaleShape(
   return Ort::Status();
 }
 
-// Builds a static tensor filled with `value`, shaped like the normalized axes of the input, using
-// the input's float data type. Used when gamma (ones) or beta (zeros) is not part of the fusion.
+// Builds a static tensor of `shape` filled with `value`, using the input's float data type. Used when
+// gamma (ones) or beta (zeros) is not part of the fusion.
 static Ort::Status MakeConstantScaleTensor(const std::string& name,
                                            Qnn_DataType_t data_type,
-                                           const std::vector<uint32_t>& input_shape,
-                                           gsl::span<const uint32_t> axes,
+                                           std::vector<uint32_t> shape,
                                            float value,
                                            QnnTensorWrapper& tensor) {
-  std::vector<uint32_t> shape;
-  shape.reserve(axes.size());
   size_t num_elems = 1;
-  for (uint32_t ax : axes) {
-    shape.push_back(input_shape[ax]);
-    num_elems *= input_shape[ax];
+  for (uint32_t d : shape) {
+    num_elems *= d;
   }
 
   std::vector<uint8_t> bytes;
@@ -516,21 +513,64 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          float epsilon,
                                          gsl::span<const uint32_t> axes,
                                          bool validate) {
-  const std::string node_name = utils::UniqueNameGenerator().New(*node_units[0]);
+  const OrtNodeUnit& rm1 = *node_units[0];
+  const std::string node_name = utils::UniqueNameGenerator().New(rm1);
 
+  TensorInfo input_info = {};
+  TensorInfo output_info = {};
+  RETURN_IF_ERROR(qmw.GetTensorInfo(root_input, input_info));
+  RETURN_IF_ERROR(qmw.GetTensorInfo(final_output, output_info));
+  const std::vector<uint32_t>& input_shape = input_info.shape;
+  RETURN_IF(input_shape.empty(), "LayerNormFusion: input must have rank > 0.");
+
+  // QNN HTP LayerNorm only normalizes a single (last) axis. When the fusion normalizes several
+  // trailing axes, flatten them into one: x [prefix..., N] -> Reshape -> [P, N] -> LayerNorm(axis 1)
+  // -> [P, N] -> Reshape -> y. Axes are a contiguous trailing suffix (checked in TryFusion), so the
+  // flatten is exact. A single axis keeps the direct, reshape-free LayerNorm.
+  const bool flatten = axes.size() > 1;
+
+  uint32_t norm_elems = 1;
+  for (uint32_t ax : axes) {
+    norm_elems *= input_shape[ax];
+  }
+  uint32_t prefix_elems = 1;
+  for (size_t i = 0; i < input_shape.size() - axes.size(); ++i) {
+    prefix_elems *= input_shape[i];
+  }
+
+  // Shapes and names the QNN LayerNorm node actually sees.
+  const std::vector<uint32_t> ln_io_shape =
+      flatten ? std::vector<uint32_t>{prefix_elems, norm_elems} : input_shape;
+  std::vector<uint32_t> ln_axes;
+  if (flatten) {
+    ln_axes = {1};
+  } else {
+    ln_axes.assign(axes.begin(), axes.end());
+  }
+  const std::string ln_input_name =
+      flatten ? utils::UniqueNameGenerator().New(node_name, "_ln_flat_x") : root_input.name;
+  const std::string ln_output_name =
+      flatten ? utils::UniqueNameGenerator().New(node_name, "_ln_flat_out") : final_output.name;
+
+  // Tensors read/written by LayerNorm. On the flatten path these are NATIVE intermediates with the
+  // [P, N] shape; Reshape preserves values, so they carry the input/output dtype and quant params.
   QnnTensorWrapper input_tensor;
-  QnnTensorWrapper gamma_tensor;
-  QnnTensorWrapper beta_tensor;
   QnnTensorWrapper output_tensor;
+  if (flatten) {
+    input_tensor = QnnTensorWrapper(ln_input_name, QNN_TENSOR_TYPE_NATIVE, input_info.qnn_data_type,
+                                    input_info.quant_param.Copy(), std::vector<uint32_t>(ln_io_shape));
+    output_tensor = QnnTensorWrapper(ln_output_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
+                                     output_info.quant_param.Copy(), std::vector<uint32_t>(ln_io_shape));
+  } else {
+    RETURN_IF_ERROR(qmw.MakeTensorWrapper(root_input, input_tensor));
+    RETURN_IF_ERROR(qmw.MakeTensorWrapper(final_output, output_tensor));
+  }
 
-  RETURN_IF_ERROR(qmw.MakeTensorWrapper(root_input, input_tensor));
-  RETURN_IF_ERROR(qmw.MakeTensorWrapper(final_output, output_tensor));
-
-  // Gamma and beta must only scale along the normalized axes.
-  // Non-normalized dims must be 1; normalized dims must match the input.
-  // The validated shape is then squeezed to 1D for QNN.
-  std::vector<uint32_t> input_shape;
-  RETURN_IF_NOT(qmw.GetOnnxShape(root_input.shape, input_shape), "Cannot get input shape.");
+  // Gamma/beta: validated against the original axes (non-normalized dims must be 1, normalized dims
+  // must match the input), then squeezed to the normalized dims. On the flatten path they are further
+  // collapsed to {N}: a static row-major buffer over contiguous trailing dims is already in [N] order,
+  // so only the shape changes, not the data.
+  const std::vector<uint32_t> flat_param_shape{norm_elems};
 
   // Synthesized gamma/beta: unquantized float of the same type as the input.
   const Qnn_DataType_t input_dtype = input_tensor.GetTensorDataType();
@@ -538,47 +578,64 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   RETURN_IF(needs_synth && input_tensor.GetQnnQuantParams().IsQuantized(),
             "LayerNormFusion: partial (no gamma/beta) fusion not supported for quantized input.");
 
-  std::string gamma_name;
-  if (gamma_input != nullptr) {
-    TensorInfo gamma_info = {};
-    RETURN_IF_ERROR(qmw.GetTensorInfo(*gamma_input, gamma_info));
-    std::vector<uint32_t> squeezed_gamma;
-    RETURN_IF_ERROR(ValidateAndSqueezeScaleShape(gamma_info.shape, input_shape, axes, squeezed_gamma));
-    gamma_info.shape = std::move(squeezed_gamma);
-    RETURN_IF_ERROR(qmw.MakeTensorWrapper(gamma_info, gamma_input->name, gamma_tensor));
-    gamma_name = gamma_input->name;
+  std::vector<uint32_t> synth_shape;
+  if (flatten) {
+    synth_shape = flat_param_shape;
   } else {
-    gamma_name = utils::UniqueNameGenerator().New(node_name, "_gamma_ones");
-    RETURN_IF_ERROR(MakeConstantScaleTensor(gamma_name, input_dtype, input_shape, axes, 1.0f, gamma_tensor));
+    for (uint32_t ax : axes) {
+      synth_shape.push_back(input_shape[ax]);
+    }
   }
 
+  auto make_param = [&](const OrtNodeUnitIODef* def, const char* synth_suffix, float synth_value,
+                        std::string& name, QnnTensorWrapper& tensor) -> Ort::Status {
+    if (def == nullptr) {
+      name = utils::UniqueNameGenerator().New(node_name, synth_suffix);
+      return MakeConstantScaleTensor(name, input_dtype, synth_shape, synth_value, tensor);
+    }
+    TensorInfo info = {};
+    RETURN_IF_ERROR(qmw.GetTensorInfo(*def, info));
+    std::vector<uint32_t> squeezed;
+    RETURN_IF_ERROR(ValidateAndSqueezeScaleShape(info.shape, input_shape, axes, squeezed));
+    if (flatten) {
+      // Only static gamma/beta can be re-laid out without a Reshape node. TryFusion only picks
+      // constant inputs, so this holds; keep the check so a dynamic tensor fails cleanly.
+      RETURN_IF_NOT(info.is_initializer,
+                    "LayerNormFusion: multi-axis fusion requires constant gamma/beta.");
+      // Distinct name: the original initializer may also be read elsewhere with its real shape.
+      // Built directly as STATIC: MakeTensorWrapper derives the tensor type from the name, and this
+      // generated name is not a known initializer, so it would wrongly come out NATIVE.
+      name = utils::UniqueNameGenerator().New(def->name, "_ln_flat");
+      std::vector<uint8_t> data;
+      RETURN_IF_ERROR(qmw.UnpackInitializerData(info.initializer_tensor, data));
+      tensor = QnnTensorWrapper(name, QNN_TENSOR_TYPE_STATIC, info.qnn_data_type, info.quant_param.Copy(),
+                                std::vector<uint32_t>(flat_param_shape), std::move(data));
+      return Ort::Status();
+    }
+    info.shape = std::move(squeezed);
+    name = def->name;
+    return qmw.MakeTensorWrapper(info, name, tensor);
+  };
+
+  std::string gamma_name;
   std::string beta_name;
-  if (beta_input != nullptr) {
-    TensorInfo beta_info = {};
-    RETURN_IF_ERROR(qmw.GetTensorInfo(*beta_input, beta_info));
-    std::vector<uint32_t> squeezed_beta;
-    RETURN_IF_ERROR(ValidateAndSqueezeScaleShape(beta_info.shape, input_shape, axes, squeezed_beta));
-    beta_info.shape = std::move(squeezed_beta);
-    RETURN_IF_ERROR(qmw.MakeTensorWrapper(beta_info, beta_input->name, beta_tensor));
-    beta_name = beta_input->name;
-  } else {
-    beta_name = utils::UniqueNameGenerator().New(node_name, "_beta_zeros");
-    RETURN_IF_ERROR(MakeConstantScaleTensor(beta_name, input_dtype, input_shape, axes, 0.0f, beta_tensor));
-  }
+  QnnTensorWrapper gamma_tensor;
+  QnnTensorWrapper beta_tensor;
+  RETURN_IF_ERROR(make_param(gamma_input, "_gamma_ones", 1.0f, gamma_name, gamma_tensor));
+  RETURN_IF_ERROR(make_param(beta_input, "_beta_zeros", 0.0f, beta_name, beta_tensor));
 
   Qnn_Scalar_t epsilon_scalar = QNN_SCALAR_INIT;
   epsilon_scalar.dataType = QNN_DATATYPE_FLOAT_32;
   epsilon_scalar.floatValue = epsilon;
-  QnnParamWrapper epsilon_param(node_units[0]->Index(), node_units[0]->Name(),
-                                QNN_OP_LAYER_NORM_PARAM_EPSILON, epsilon_scalar);
+  QnnParamWrapper epsilon_param(rm1.Index(), rm1.Name(), QNN_OP_LAYER_NORM_PARAM_EPSILON, epsilon_scalar);
 
-  std::vector<uint32_t> axes_vec(axes.begin(), axes.end());
-  std::vector<uint32_t> axes_shape{static_cast<uint32_t>(axes_vec.size())};
-  QnnParamWrapper axes_param(node_units[0]->Index(), node_units[0]->Name(),
-                             QNN_OP_LAYER_NORM_PARAM_AXES,
-                             std::move(axes_shape), std::move(axes_vec));
+  std::vector<uint32_t> axes_shape{static_cast<uint32_t>(ln_axes.size())};
+  QnnParamWrapper axes_param(rm1.Index(), rm1.Name(), QNN_OP_LAYER_NORM_PARAM_AXES,
+                             std::move(axes_shape), std::move(ln_axes));
 
   if (validate) {
+    // Reshape is always supported on HTP; validating the LayerNorm the graph will actually contain
+    // (flattened, single axis) is what decides whether this fusion candidate is accepted.
     return qmw.ValidateQnnNode(node_name,
                                QNN_OP_PACKAGE_NAME_QTI_AISW,
                                QNN_OP_LAYER_NORM,
@@ -595,29 +652,55 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   const std::string axes_param_name = axes_param.GetParamTensorName();
   RETURN_IF_NOT(qmw.AddParamWrapper(std::move(axes_param)), "Failed to add axes param.");
 
-  if (!qmw.IsQnnTensorWrapperExist(root_input.name)) {
+  if (flatten) {
+    // Register x with its real tensor type (APP_WRITE / NATIVE / STATIC) before the Reshape;
+    // AddReshapeNode's AddTensorWrapper is a no-op for a tensor that already exists.
+    if (!qmw.IsQnnTensorWrapperExist(root_input.name)) {
+      QnnTensorWrapper x_tensor;
+      RETURN_IF_ERROR(qmw.MakeTensorWrapper(root_input, x_tensor));
+      RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(x_tensor)), "Failed to add input tensor.");
+    }
+    // x [prefix..., N] -> [P, N] (NATIVE).
+    RETURN_IF_ERROR(qmw.AddReshapeNode(root_input.name, ln_input_name,
+                                       input_shape, ln_io_shape,
+                                       input_info.qnn_data_type, input_info.quant_param,
+                                       /*do_op_validation=*/false));
+  } else if (!qmw.IsQnnTensorWrapperExist(root_input.name)) {
     RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(input_tensor)), "Failed to add input tensor.");
   }
 
   if (!qmw.IsQnnTensorWrapperExist(gamma_name)) {
     RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(gamma_tensor)), "Failed to add gamma tensor.");
   }
-
   if (!qmw.IsQnnTensorWrapperExist(beta_name)) {
     RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(beta_tensor)), "Failed to add beta tensor.");
   }
-  if (!qmw.IsQnnTensorWrapperExist(final_output.name)) {
+  if (!qmw.IsQnnTensorWrapperExist(ln_output_name)) {
     RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(output_tensor)), "Failed to add output tensor.");
   }
 
   RETURN_IF_NOT(qmw.CreateQnnNode(node_name,
                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                   QNN_OP_LAYER_NORM,
-                                  {root_input.name, gamma_name, beta_name},
-                                  {final_output.name},
+                                  {ln_input_name, gamma_name, beta_name},
+                                  {ln_output_name},
                                   {epsilon_param_name, axes_param_name},
                                   validate),
                 "Failed to create fused LayerNorm node.");
+
+  if (flatten) {
+    // [P, N] -> y [prefix..., N]. Register y with its real tensor type (APP_READ when it is a graph
+    // output) first, so AddReshapeNode only adds the Reshape node and reuses both tensors.
+    if (!qmw.IsQnnTensorWrapperExist(final_output.name)) {
+      QnnTensorWrapper y_tensor;
+      RETURN_IF_ERROR(qmw.MakeTensorWrapper(final_output, y_tensor));
+      RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(y_tensor)), "Failed to add output tensor.");
+    }
+    RETURN_IF_ERROR(qmw.AddReshapeNode(ln_output_name, final_output.name,
+                                       ln_io_shape, output_info.shape,
+                                       output_info.qnn_data_type, output_info.quant_param,
+                                       /*do_op_validation=*/false));
+  }
 
   return Ort::Status();
 }
