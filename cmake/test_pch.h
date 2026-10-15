@@ -15,4 +15,9 @@
 // Windows-specific headers (if applicable)
 #ifdef _WIN32
 #include <windows.h>
+
+// Avoid collisions with C++ identifiers in tests that include Windows headers through this PCH.
+#ifdef interface
+#undef interface
+#endif
 #endif
