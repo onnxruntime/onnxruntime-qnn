@@ -16,18 +16,20 @@ source "${script_dir}/resolve_tool_versions.sh"
 
 usage() {
     cat <<USAGE
-Usage: $(basename "$0") --build-dir=<path> --golden-dir=<empty-path> [--repo-subpath=<path>]
+Usage: $(basename "$0") --build-dir=<path> --golden-dir=<empty-path> --golden-profile=<profile> [--repo-subpath=<path>]
 USAGE
 }
 
 build_dir=""
 golden_dir=""
 repo_subpath="ci/qnn-ep-test-store/snapshot-goldens"
+golden_profile=""
 for arg in "$@"; do
     case "${arg}" in
         --build-dir=*) build_dir="${arg#--build-dir=}" ;;
         --golden-dir=*) golden_dir="${arg#--golden-dir=}" ;;
         --repo-subpath=*) repo_subpath="${arg#--repo-subpath=}" ;;
+        --golden-profile=*) golden_profile="${arg#--golden-profile=}" ;;
         -h|--help) usage; exit 0 ;;
         *) log_err "Unknown argument: ${arg}"; usage >&2; exit 2 ;;
     esac
@@ -49,6 +51,9 @@ disable_store() {
 
 [ -n "${build_dir}" ] || { usage >&2; exit 2; }
 [ -n "${golden_dir}" ] || { usage >&2; exit 2; }
+if [[ ! "${golden_profile}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    disable_store "golden profile is missing or invalid."
+fi
 [ -n "${BUILD_ARTIFACTORY_REPO:-}" ] || disable_store "BUILD_ARTIFACTORY_REPO is unset."
 command -v jf >/dev/null 2>&1 || disable_store "JFrog CLI is unavailable."
 command -v unzip >/dev/null 2>&1 || disable_store "unzip is unavailable."
@@ -73,7 +78,7 @@ fi
 staging="$(mktemp -d "${golden_parent}/.snapshot-goldens.XXXXXX")"
 trap 'rm -rf "${staging}"' EXIT
 
-remote="${BUILD_ARTIFACTORY_REPO}/${repo_subpath}/latest/goldens.zip"
+remote="${BUILD_ARTIFACTORY_REPO}/${repo_subpath}/${golden_profile}/latest/goldens.zip"
 zip_path="${staging}/goldens.zip"
 log_info "Downloading snapshot golden manifest candidate: ${remote}"
 if ! jf rt download --flat "${remote}" "${staging}/"; then
@@ -85,12 +90,12 @@ if ! unzip -tqq "${zip_path}"; then
     disable_store "downloaded goldens.zip is corrupt."
 fi
 
-if ! python3 - "${zip_path}" "${qairt_version}" "${ort_version}" <<'PY'
+if ! python3 - "${zip_path}" "${golden_profile}" "${qairt_version}" "${ort_version}" <<'PY'
 import json
 import sys
 import zipfile
 
-zip_path, expected_qairt, expected_ort = sys.argv[1:]
+zip_path, expected_profile, expected_qairt, expected_ort = sys.argv[1:]
 try:
     with zipfile.ZipFile(zip_path) as archive:
         manifest = json.loads(archive.read("manifest.json"))
@@ -98,11 +103,14 @@ except (KeyError, OSError, ValueError, zipfile.BadZipFile) as exc:
     print(f"Cannot read golden manifest: {exc}", file=sys.stderr)
     raise SystemExit(1)
 
+actual_profile = manifest.get("golden_profile")
 actual_qairt = manifest.get("qairt_version")
 actual_ort = manifest.get("ort_version")
-if actual_qairt != expected_qairt or actual_ort != expected_ort:
+if (actual_profile != expected_profile or actual_qairt != expected_qairt or
+        actual_ort != expected_ort):
     print(
-        "Golden manifest version mismatch: "
+        "Golden manifest mismatch: "
+        f"profile={actual_profile!r} (expected {expected_profile!r}), "
         f"qairt={actual_qairt!r} (expected {expected_qairt!r}), "
         f"ort={actual_ort!r} (expected {expected_ort!r})",
         file=sys.stderr,
@@ -129,4 +137,4 @@ fi
 if [ -n "${GITHUB_ENV:-}" ]; then
     echo "QNN_UT_SNAPSHOT_GOLDEN_DIR=${golden_dir}" >> "${GITHUB_ENV}"
 fi
-log_info "Enabled aligned snapshot golden store: ${golden_dir} (qairt=${qairt_version}, ort=${ort_version})"
+log_info "Enabled aligned snapshot golden store: ${golden_dir} (profile=${golden_profile}, qairt=${qairt_version}, ort=${ort_version})"

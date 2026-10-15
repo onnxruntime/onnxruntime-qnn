@@ -44,11 +44,9 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.7.40        | v2.51.40          | v1.29.0              |
+| v2.8.0         | v2.51.0           | v1.30.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.7.40 was built for WinML with QAIRT 2.51.40 and is available only through WinML channels. 
-> **Note**: For mainline release of ORT QNN EP please use 2.7.0 which was built with QAIRT 2.51.0.
-> **Note**: ONNX Runtime QNN EP 2.7.0 and 2.7.40 were built and tested with ORT 1.29.0 but are compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.8.0 was built and tested with ORT 1.30.0 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
@@ -73,9 +71,9 @@ For build instructions, please see the [BUILD page](./build.md).
   - This release is validated against the following dependency versions:
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
-    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.29.0` |
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.30.0` |
     | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.51.0` |
-  - **Version note:** QNN EP v2.7.0 was built and tested with QAIRT SDK 2.51.0; the public Android Maven runtime artifact is versioned `2.51.0`.
+  - **Version note:** QNN EP v2.8.0 was built and tested with QAIRT SDK 2.51.0; the public Android Maven runtime artifact is versioned `2.51.0`.
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
@@ -249,7 +247,7 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
-|'1'|Enable the QNN HTP shared memory allocator. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
+|'1'|Enable QNN HTP shared-memory binding for this session. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
 
 |`"enable_dx12_shared_memory_allocator"`|Description|
 |---|---|
