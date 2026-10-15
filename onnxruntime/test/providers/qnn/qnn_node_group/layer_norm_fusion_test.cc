@@ -228,29 +228,17 @@ GetTestModelFn BuildLayerNormFusionNoBetaTestCase(
   };
 }
 
-
-
-
-
-
-
-
-
-
 // Asserts the shapes of the gamma (input 1) and beta (input 2) tensors read by the single fused QNN
 // LayerNorm in the dumped graph. Tensors are found through the LayerNorm node's input list rather than
 // by name: synthesized ones/zeros get generated names whose "_N" suffix depends on how many fusion
 // candidates were validated first.
 void ExpectLayerNormGammaBetaShapes(const std::filesystem::path& dump_dir,
 
-
                                     const std::vector<uint32_t>& expected_gamma_dims,
                                     const std::vector<uint32_t>& expected_beta_dims) {
   if (::testing::Test::IsSkipped()) {
     return;
   }
-
-
 
   std::filesystem::path json_path;
   std::error_code ec;
