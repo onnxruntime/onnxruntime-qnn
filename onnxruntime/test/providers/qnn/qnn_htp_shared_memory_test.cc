@@ -497,6 +497,70 @@ TEST_F(QnnHTPBackendTests, env_allocator_survives_multiple_session_lifetimes) {
   env_allocator->Free(env_allocator, post_session_allocation);
 }
 
+// Regression test for #859. ORT Core 1.30 asks an EP for every allocator
+// advertised by its factory. After one shared-memory session, a later session
+// that does not opt in must still return a valid allocator for the advertised
+// HOST_ACCESSIBLE memory instead of returning nullptr during initialization.
+// The later session must not silently enable QNN memhandle binding: that policy
+// remains session-specific, so its CPU-backed I/O uses clientBuf.
+TEST_F(QnnHTPBackendTests, shared_session_followed_by_plain_session_uses_clientbuf) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  Ort::SessionOptions shared_so;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, shared_so, MakeHtpOptions());
+
+  Ort::Session shared_session{nullptr};
+  if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", shared_so, shared_session)) {
+    GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+  }
+
+  LogCapture plain_capture;
+  Ort::SessionOptions plain_so;
+  plain_so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");
+  AttachLogCapture(plain_so, plain_capture);
+  plain_so.AppendExecutionProvider_V2(
+      *ort_env,
+      {Ort::ConstEpDevice(registered_ep_device.get())},
+      MakeHtpOptions(/*enable_shared_memory*/ false));
+
+  // On the broken ORT 1.30 path this session initialization dereferences the
+  // nullptr allocator returned by the EP and terminates the process.
+  Ort::Session plain_session{nullptr};
+  ASSERT_NO_THROW((plain_session = Ort::Session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", plain_so}));
+
+  const std::array<int64_t, 2> shape = {3, 2};
+  std::array<float, 6> input = {1, 2, 3, 4, 5, 6};
+  std::array<float, 6> output{};
+  const std::array<float, 6> expected = {1, 4, 9, 16, 25, 36};
+  Ort::MemoryInfo cpu_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+  Ort::Value bound_x = Ort::Value::CreateTensor(
+      cpu_info, input.data(), input.size(), shape.data(), shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(
+      cpu_info, output.data(), output.size(), shape.data(), shape.size());
+
+  const auto run_plain_session = [&]() {
+    output.fill(0.0f);
+    Ort::IoBinding binding(plain_session);
+    binding.BindInput("X", bound_x);
+    binding.BindOutput("Y", bound_y);
+    ASSERT_NO_THROW(plain_session.Run(Ort::RunOptions{}, binding));
+    for (size_t i = 0; i < expected.size(); ++i) {
+      EXPECT_NEAR(output[i], expected[i], 0.5f) << " at index " << i;
+    }
+  };
+
+  run_plain_session();
+
+  // Releasing the opted-in session must not invalidate the later plain
+  // session or change its allocator/binding policy.
+  shared_session = Ort::Session{nullptr};
+  run_plain_session();
+
+  EXPECT_GE(plain_capture.CountContaining(kLogSubstrClientBuf), 4u);
+  EXPECT_EQ(plain_capture.CountContaining(kLogSubstrMemHandle), 0u);
+}
+
 // Releasing the environment's allocator registration must not invalidate an
 // allocator already retained by a live session.
 TEST_F(QnnHTPBackendTests, session_allocator_survives_env_allocator_release) {
