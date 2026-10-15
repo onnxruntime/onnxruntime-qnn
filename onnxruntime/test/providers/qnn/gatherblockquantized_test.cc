@@ -420,6 +420,91 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_ScalarIndex_Rank2Output) {
   RunQnnModelTest(model_builder, provider_options, 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.05f)});
 }
+// Dynamic int64 scalar indices require an explicit Cast before the scalar-to-vector reshape.
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_DynamicInt64ScalarIndex) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto model_builder = [](ModelTestBuilder& builder) {
+    constexpr int64_t kTables = 2;
+    constexpr int64_t kVocab = 128;
+    constexpr int64_t kLogicalHidden = 64;
+    constexpr int64_t kPackedHidden = kLogicalHidden * QBits / 8;
+    constexpr int64_t kBlockSize = 32;
+    constexpr int64_t kBlocks = kLogicalHidden / kBlockSize;
+    RandomValueGenerator random{1234};
+    std::vector<float> weights(random.Gaussian<float>(
+        AsSpan({kTables, kVocab, kLogicalHidden}), 0.0f, 0.25f));
+    std::vector<uint8_t> packed_weights(static_cast<size_t>(kTables * kVocab * kPackedHidden));
+    std::vector<float> scales(static_cast<size_t>(kTables * kVocab * kBlocks));
+    QuantizeBlockwiseOnly(weights, packed_weights, scales,
+                          static_cast<int32_t>(kTables * kVocab),
+                          static_cast<int32_t>(kLogicalHidden),
+                          static_cast<int32_t>(kBlockSize), 1);
+
+    MakeTestInput<uint8_t>(builder, "data",
+                           TestInputDef<uint8_t>({kTables, kVocab, kPackedHidden}, true, packed_weights));
+    MakeTestInput<int64_t>(builder, "indices", TestInputDef<int64_t>({}, false, {0}));
+    MakeTestInput<float>(builder, "scales", TestInputDef<float>({kTables, kVocab, kBlocks}, true, scales));
+    builder.MakeOutput("output");
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("bits", static_cast<int64_t>(QBits)));
+    attributes.push_back(builder.MakeScalarAttribute("block_size", kBlockSize));
+    attributes.push_back(builder.MakeScalarAttribute("gather_axis", static_cast<int64_t>(0)));
+    attributes.push_back(builder.MakeScalarAttribute("quantize_axis", static_cast<int64_t>(2)));
+    builder.AddNode("gather_block_quantize", "GatherBlockQuantized",
+                    {"data", "indices", "scales"}, {"output"}, kMSDomain, attributes);
+  };
+
+  RunQnnModelTest(model_builder, provider_options, 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.05f)});
+}
+
+// Dynamic int32 scalar indices gathered along axis 1 verify the inserted size-one
+// dimension is placed at the Gather axis before the output reshape.
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_DynamicInt32ScalarIndex_NonzeroGatherAxis) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto model_builder = [](ModelTestBuilder& builder) {
+    constexpr int64_t kTables = 2;
+    constexpr int64_t kVocab = 128;
+    constexpr int64_t kLogicalHidden = 64;
+    constexpr int64_t kPackedHidden = kLogicalHidden * QBits / 8;
+    constexpr int64_t kBlockSize = 32;
+    constexpr int64_t kBlocks = kLogicalHidden / kBlockSize;
+    RandomValueGenerator random{1234};
+    std::vector<float> weights(random.Gaussian<float>(
+        AsSpan({kTables, kVocab, kLogicalHidden}), 0.0f, 0.25f));
+    std::vector<uint8_t> packed_weights(static_cast<size_t>(kTables * kVocab * kPackedHidden));
+    std::vector<float> scales(static_cast<size_t>(kTables * kVocab * kBlocks));
+    QuantizeBlockwiseOnly(weights, packed_weights, scales,
+                          static_cast<int32_t>(kTables * kVocab),
+                          static_cast<int32_t>(kLogicalHidden),
+                          static_cast<int32_t>(kBlockSize), 1);
+
+    MakeTestInput<uint8_t>(builder, "data",
+                           TestInputDef<uint8_t>({kTables, kVocab, kPackedHidden}, true, packed_weights));
+    MakeTestInput<int32_t>(builder, "indices", TestInputDef<int32_t>({}, false, {0}));
+    MakeTestInput<float>(builder, "scales", TestInputDef<float>({kTables, kVocab, kBlocks}, true, scales));
+    builder.MakeOutput("output");
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("bits", static_cast<int64_t>(QBits)));
+    attributes.push_back(builder.MakeScalarAttribute("block_size", kBlockSize));
+    attributes.push_back(builder.MakeScalarAttribute("gather_axis", static_cast<int64_t>(1)));
+    attributes.push_back(builder.MakeScalarAttribute("quantize_axis", static_cast<int64_t>(2)));
+    builder.AddNode("gather_block_quantize", "GatherBlockQuantized",
+                    {"data", "indices", "scales"}, {"output"}, kMSDomain, attributes);
+  };
+
+  RunQnnModelTest(model_builder, provider_options, 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.05f)});
+}
+
 // Negative test: GatherBlockQuantized is GPU-only. On the CPU backend the op
 // must be rejected by IsOpSupported and fall back (no node assigned to QNN EP).
 TEST_F(QnnCPUBackendTests, GatherBlockQuantized_CpuBackendNotSupported) {

@@ -75,6 +75,25 @@ class GatherBlockQuantizedOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
+static Ort::Status ValidateWeightAndScaleShapes(const std::vector<uint32_t>& weight_shape,
+                                                const std::vector<uint32_t>& scale_shape,
+                                                int64_t quantize_axis) {
+  RETURN_IF_NOT(weight_shape.size() == 2 || weight_shape.size() == 3,
+                "GatherBlockQuantized: only rank-2 and rank-3 weights are supported on QNN GPU");
+  RETURN_IF_NOT(weight_shape.size() == scale_shape.size(),
+                "GatherBlockQuantized: weights and scales must have the same rank");
+  RETURN_IF_NOT(quantize_axis == static_cast<int64_t>(weight_shape.size()) - 1,
+                "GatherBlockQuantized: only a trailing quantize_axis is supported on QNN GPU");
+
+  const size_t axis = static_cast<size_t>(quantize_axis);
+  for (size_t i = 0; i < weight_shape.size(); ++i) {
+    RETURN_IF_NOT(i == axis || weight_shape[i] == scale_shape[i],
+                  "GatherBlockQuantized: weights and scales must match outside quantize_axis");
+  }
+
+  return Ort::Status();
+}
+
 // ================================================================
 // IsOpSupported
 // ================================================================
@@ -141,15 +160,7 @@ Ort::Status GatherBlockQuantizedOpBuilder::IsOpSupported(
   TensorInfo scales_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], weights_info));
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], scales_info));
-  RETURN_IF_NOT(weights_info.shape.size() == scales_info.shape.size(),
-                "GatherBlockQuantized: weights and scales must have the same rank");
-  RETURN_IF_NOT(quantize_axis == static_cast<int64_t>(weights_info.shape.size()) - 1,
-                "GatherBlockQuantized: only a trailing quantize_axis is supported on QNN GPU");
-  const size_t axis = static_cast<size_t>(quantize_axis);
-  for (size_t i = 0; i < weights_info.shape.size(); ++i) {
-    RETURN_IF_NOT(i == axis || weights_info.shape[i] == scales_info.shape[i],
-                  "GatherBlockQuantized: weights and scales must match outside quantize_axis");
-  }
+  RETURN_IF_ERROR(ValidateWeightAndScaleShapes(weights_info.shape, scales_info.shape, quantize_axis));
 
   // Run the input/output processing with do_op_validation=true so the QNN
   // backend validates the op at partition time. Backend rejections then surface
@@ -199,14 +210,8 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
   OrtNodeAttrHelper helper(node_unit);
   const int64_t block_size = helper.Get("block_size", static_cast<int64_t>(32));
   const int64_t quantize_axis = helper.Get("quantize_axis", static_cast<int64_t>(1));
-  RETURN_IF_NOT(weight_shape.size() == scale_shape.size() &&
-                    quantize_axis == static_cast<int64_t>(weight_shape.size()) - 1,
-                "GatherBlockQuantized: only a trailing quantize_axis is supported on QNN GPU");
+  RETURN_IF_ERROR(ValidateWeightAndScaleShapes(weight_shape, scale_shape, quantize_axis));
   const size_t axis = static_cast<size_t>(quantize_axis);
-  for (size_t i = 0; i < weight_shape.size(); ++i) {
-    RETURN_IF_NOT(i == axis || weight_shape[i] == scale_shape[i],
-                  "GatherBlockQuantized: weights and scales must match outside quantize_axis");
-  }
   const int64_t num_blocks = std::accumulate(scale_shape.begin(),
                                              scale_shape.end(),
                                              int64_t{1},
