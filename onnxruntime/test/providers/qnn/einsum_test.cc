@@ -31,7 +31,8 @@ static void RunQnnEinsum(
     const TestInputDef<DataType>& in0,
     const TestInputDef<DataType>& in1,
     const std::string& equation,
-    const float tolerance) {
+    const float tolerance,
+    ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All) {
   ProviderOptions provider_options;
   provider_options[kQnnBackendType] = backend;
   provider_options[kOffloadGraphIoQuantization] = kOffloadGraphIoQuantizationDisable;
@@ -44,7 +45,7 @@ static void RunQnnEinsum(
           /*attrs=*/{test::MakeAttribute(kEinsumEquation, equation)}),
       /*provider_options=*/provider_options,
       /*opset_version=*/12,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(tolerance)});
+      EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(tolerance)});
 }
 
 template <typename InputAQType, typename InputBQType>
@@ -119,6 +120,20 @@ TEST_F(QnnCPUBackendTests, EinsumRank2) {
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
       /*equation=*/"ab,bc->ac",
       /*tolerance=*/1e-4f);
+}
+
+// This is a valid non-matmul equation with shorter second/output terms. It must
+// fall back instead of being indexed as though all terms had term_1's rank.
+TEST_F(QnnCPUBackendTests, EinsumDifferentTermRanksFallback) {
+  const std::vector<int64_t> shape0{2, 3, 4, 5};
+  const std::vector<int64_t> shape1{2, 3};
+  RunQnnEinsum<float>(
+      /*backend=*/kQnnBackendTypeCpu,
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, GetSequentialFloatData(shape0, -0.1f, 0.05f)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, GetSequentialFloatData(shape1, -0.1f, 0.05f)),
+      /*equation=*/"abcd,ab->ab",
+      /*tolerance=*/1e-4f,
+      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::None);
 }
 
 TEST_F(QnnCPUBackendTests, EinsumRank3MatMul) {

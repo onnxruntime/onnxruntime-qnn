@@ -91,6 +91,8 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   // Get the 6D pre-reshape output shape — used by both validate and create paths.
   TensorInfo pre_reshape_output_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(pre_reshape_output_def, pre_reshape_output_info));
+  RETURN_IF_NOT(pre_reshape_output_info.shape.size() == kEinsumRank6,
+                "Reshape-Einsum-Reshape fusion requires a rank-6 Einsum input");
   // If any QDQ node exists, the previous matching will fail and thus it is guaranteed not quantized.
   assert(!pre_reshape_output_info.quant_param.IsQuantized());
 
@@ -339,7 +341,8 @@ std::unique_ptr<IQnnNodeGroup> ReshapeEinsumReshapeNodeGroup::TryFusion(
   }
 
   std::vector<uint32_t> pre_reshape_output_shape;
-  if (!qnn_model_wrapper.GetOnnxShape(pre_reshape_node_unit->Outputs()[0].shape, pre_reshape_output_shape)) {
+  if (!qnn_model_wrapper.GetOnnxShape(pre_reshape_node_unit->Outputs()[0].shape, pre_reshape_output_shape) ||
+      pre_reshape_output_shape.size() != kEinsumRank6) {
     return nullptr;
   }
 
