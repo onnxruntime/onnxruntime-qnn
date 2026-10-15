@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 #include "QnnOpDef.h"
@@ -152,10 +153,17 @@ Ort::Status AttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
     } else {
       const auto opt_q = node_helper.GetInt64("q_num_heads");
       const auto opt_kv = node_helper.GetInt64("kv_num_heads");
-      if (opt_q.has_value()) q_nh = static_cast<uint32_t>(opt_q.value());
-      if (opt_kv.has_value()) kv_nh = static_cast<uint32_t>(opt_kv.value());
+      RETURN_IF(!opt_q.has_value() || opt_q.value() <= 0 ||
+                    opt_q.value() > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
+                "Attention: q_num_heads must be a positive uint32 value");
+      RETURN_IF(!opt_kv.has_value() || opt_kv.value() <= 0 ||
+                    opt_kv.value() > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
+                "Attention: kv_num_heads must be a positive uint32 value");
+      q_nh = static_cast<uint32_t>(opt_q.value());
+      kv_nh = static_cast<uint32_t>(opt_kv.value());
     }
-    RETURN_IF(q_nh != 0 && kv_nh != 0 && q_nh != kv_nh && q_nh % kv_nh != 0,
+    RETURN_IF(q_nh == 0 || kv_nh == 0, "Attention: head counts must be greater than zero");
+    RETURN_IF(q_nh != kv_nh && q_nh % kv_nh != 0,
               "Attention: GQA requires q_num_heads to be divisible by kv_num_heads");
   }
 
