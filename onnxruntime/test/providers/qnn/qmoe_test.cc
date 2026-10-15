@@ -19,7 +19,7 @@ namespace test {
 #if defined(_M_ARM64)
 
 // QMoE (quantized Mixture-of-Experts, com.microsoft) is only supported on QNN GPU.
-// Layout mirrors the gpt-oss style MoE block seen in real models: SwiGLU activation with
+// Layout mirrors the large MoE block seen in real models: SwiGLU activation with
 // activation_alpha=1.702 (sigmoid slope), activation_beta=1.0, a swiglu_limit clamp of 7.0,
 // top-k routing (k=4) over normalize_routing_weights, and 4-bit block(32) quantized experts
 // with no fc3 (fused gate_up SwiGLU) and no zero-points (symmetric quantization).
@@ -96,7 +96,7 @@ static void AddQMoEExpertWeight(ModelTestBuilder& builder,
 
 // Builds the full 14-input QMoE (com.microsoft) node: input, router_probs, fc1/fc2 quantized
 // weights + scales + bias, and empty fc3/zero_point slots -- matching a fused (swiglu_fusion=1)
-// gate_up_proj + down_proj gpt-oss-style expert with no zero-points (symmetric 4-bit).
+// gate_up_proj + down_proj SwiGLU expert with no zero-points (symmetric 4-bit).
 static void RunQMoETest(const QMoETestParams params,
                         ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
                         TensorVerifier verifier = ElementwiseAbsoluteVerifier{0.1f}) {
@@ -190,8 +190,8 @@ TEST_F(QnnGPUBackendTests, QMoE_Tokens8_H128_I128_E8_K4) {
   RunQMoETest(params);
 }
 
-// GPT-OSS production-shaped coverage, matching the GPU OpPackage MoE tests.
-TEST_F(QnnGPUBackendTests, QMoE_GptOss_Tokens1_H2880_I2880_E32_K4) {
+// Large production-shaped coverage, matching the GPU OpPackage QMoE tests.
+TEST_F(QnnGPUBackendTests, QMoE_Large_Tokens1_H2880_I2880_E32_K4) {
   QMoETestParams params;
   params.num_tokens = 1;
   params.hidden_size = 2880;
@@ -203,7 +203,7 @@ TEST_F(QnnGPUBackendTests, QMoE_GptOss_Tokens1_H2880_I2880_E32_K4) {
               CosineSimilarityVerifier{0.999f});
 }
 
-TEST_F(QnnGPUBackendTests, QMoE_GptOss_Tokens8_H2880_I2880_E32_K4) {
+TEST_F(QnnGPUBackendTests, QMoE_Large_Tokens8_H2880_I2880_E32_K4) {
   QMoETestParams params;
   params.num_tokens = 8;
   params.hidden_size = 2880;
