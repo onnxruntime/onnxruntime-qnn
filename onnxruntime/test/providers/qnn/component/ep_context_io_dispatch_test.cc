@@ -21,8 +21,6 @@ namespace onnxruntime {
 namespace test {
 
 namespace {
-constexpr uintptr_t kFakeSessionOptionsToken = 0x1;
-
 // Minimal OrtApi stub: GetExperimentalFunction always reports "unavailable",
 // standing in for a runtime that doesn't have the v28 experimental vtable.
 // If EpContextIoDispatch's effective_api_version guard is skipped and it
@@ -48,18 +46,24 @@ struct ExperimentalFnStubEnv {
 // A runtime without the named EPContext-encryption capability must short-circuit
 // before ever touching the experimental API, even with a non-null session_options.
 TEST(QnnUnit_EpContextIoDispatchTest, EpContextEncryptionUnsupported_NeverTouchesExperimentalApi) {
-  ExperimentalFnStubEnv env;
-  OrtGlobalApiOverride api_override(&env.stub_ort_api);
-  const OrtApiRuntimeCapabilities runtime_capabilities{
-      OrtApiRuntimeCapabilities::kEpContextEncryptionMinApiVersion - 1};
+  OrtSessionOptions* session_options = nullptr;
+  ASSERT_EQ(Ort::GetApi().CreateSessionOptions(&session_options), nullptr);
+  ASSERT_NE(session_options, nullptr);
 
-  qnn::EpContextIoDispatch dispatch(
-      *reinterpret_cast<const OrtSessionOptions*>(kFakeSessionOptionsToken),
-      runtime_capabilities);
+  {
+    ExperimentalFnStubEnv env;
+    OrtGlobalApiOverride api_override(&env.stub_ort_api);
+    const OrtApiRuntimeCapabilities runtime_capabilities{
+        OrtApiRuntimeCapabilities::kEpContextEncryptionMinApiVersion - 1};
 
-  EXPECT_EQ(env.get_experimental_function_calls, 0);
-  EXPECT_FALSE(dispatch.HasReadCallback());
-  EXPECT_FALSE(dispatch.HasWriteCallback());
+    qnn::EpContextIoDispatch dispatch(*session_options, runtime_capabilities);
+
+    EXPECT_EQ(env.get_experimental_function_calls, 0);
+    EXPECT_FALSE(dispatch.HasReadCallback());
+    EXPECT_FALSE(dispatch.HasWriteCallback());
+  }
+
+  Ort::GetApi().ReleaseSessionOptions(session_options);
 }
 
 // The default constructor represents a disabled/no-session dispatch. It must not require a
@@ -85,18 +89,24 @@ TEST(QnnUnit_EpContextIoDispatchTest, DisabledDispatch_ReadAndWrite_ReturnFailur
 // (and, with no experimental API registered by this stub, fails via the
 // existing try/catch rather than the version guard).
 TEST(QnnUnit_EpContextIoDispatchTest, EpContextEncryptionSupported_AttemptsExperimentalApi) {
-  ExperimentalFnStubEnv env;
-  OrtGlobalApiOverride api_override(&env.stub_ort_api);
-  const OrtApiRuntimeCapabilities runtime_capabilities{
-      OrtApiRuntimeCapabilities::kEpContextEncryptionMinApiVersion};
+  OrtSessionOptions* session_options = nullptr;
+  ASSERT_EQ(Ort::GetApi().CreateSessionOptions(&session_options), nullptr);
+  ASSERT_NE(session_options, nullptr);
 
-  qnn::EpContextIoDispatch dispatch(
-      *reinterpret_cast<const OrtSessionOptions*>(kFakeSessionOptionsToken),
-      runtime_capabilities);
+  {
+    ExperimentalFnStubEnv env;
+    OrtGlobalApiOverride api_override(&env.stub_ort_api);
+    const OrtApiRuntimeCapabilities runtime_capabilities{
+        OrtApiRuntimeCapabilities::kEpContextEncryptionMinApiVersion};
 
-  EXPECT_GT(env.get_experimental_function_calls, 0);
-  EXPECT_FALSE(dispatch.HasReadCallback());
-  EXPECT_FALSE(dispatch.HasWriteCallback());
+    qnn::EpContextIoDispatch dispatch(*session_options, runtime_capabilities);
+
+    EXPECT_GT(env.get_experimental_function_calls, 0);
+    EXPECT_FALSE(dispatch.HasReadCallback());
+    EXPECT_FALSE(dispatch.HasWriteCallback());
+  }
+
+  Ort::GetApi().ReleaseSessionOptions(session_options);
 }
 
 }  // namespace test
