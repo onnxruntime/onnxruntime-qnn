@@ -326,7 +326,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   // Retrieve element data type info from first SC input.
   TensorInfo elem_info{};
   auto elem_info_status = qmw.GetTensorInfo(sc_inputs[0], elem_info);
-  if (!elem_info_status.IsOK()) return std::move(elem_info_status);
+  if (!elem_info_status.IsOK()) return elem_info_status;
 
   // Unique name base derived from SequenceConstruct.
   const std::string base = utils::UniqueNameGenerator().New(seq_construct_unit);
@@ -384,7 +384,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
          index_tensor.GetQnnTensor()},
         {output_tensor.GetQnnTensor()},
         {axis_param.GetQnnParam()});
-    return std::move(validate_status);
+    return validate_status;
   }
 
   // ------------------------------------------------------------------
@@ -396,7 +396,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
     if (!qmw.IsQnnTensorWrapperExist(sc_inputs[i].name)) {
       QnnTensorWrapper elem_tensor;
       auto s = qmw.MakeTensorWrapper(sc_inputs[i], elem_tensor);
-      if (!s.IsOK()) return std::move(s);
+      if (!s.IsOK()) return s;
       RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(elem_tensor)),
                     "SequenceAtFusion: failed to add element tensor.");
     }
@@ -405,7 +405,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   // Step 2: Handle position dtype and normalize.
   TensorInfo pos_info{};
   auto pos_info_status = qmw.GetTensorInfo(pos_input, pos_info);
-  if (!pos_info_status.IsOK()) return std::move(pos_info_status);
+  if (!pos_info_status.IsOK()) return pos_info_status;
 
   std::string pos32_name;
 
@@ -428,7 +428,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
     // Static position: normalize at build time (handle negative indices).
     std::vector<uint8_t> raw_bytes;
     auto unpack_s = qmw.UnpackInitializerData(pos_info.initializer_tensor, raw_bytes);
-    if (!unpack_s.IsOK()) return std::move(unpack_s);
+    if (!unpack_s.IsOK()) return unpack_s;
 
     // Perform range and truncation checks in int64 before narrowing to int32.
     // TryFusion already validated this path; these checks are a defensive last line.
@@ -459,7 +459,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
 
     pos32_name = base + "_pos_normalized";
     auto add_s = AddInt32Const(pos32_name, pos_val);
-    if (!add_s.IsOK()) return std::move(add_s);
+    if (!add_s.IsOK()) return add_s;
 
   } else {
     // Dynamic position.
@@ -467,7 +467,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
       if (!qmw.IsQnnTensorWrapperExist(pos_input.name)) {
         QnnTensorWrapper pos_tensor;
         auto s = qmw.MakeTensorWrapper(pos_input, pos_tensor);
-        if (!s.IsOK()) return std::move(s);
+        if (!s.IsOK()) return s;
         RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(pos_tensor)),
                       "SequenceAtFusion: failed to add int64 position tensor.");
       }
@@ -482,7 +482,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
       if (!qmw.IsQnnTensorWrapperExist(pos_input.name)) {
         QnnTensorWrapper pos_tensor;
         auto s = qmw.MakeTensorWrapper(pos_input, pos_tensor);
-        if (!s.IsOK()) return std::move(s);
+        if (!s.IsOK()) return s;
         RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(pos_tensor)),
                       "SequenceAtFusion: failed to add int32 position tensor.");
       }
@@ -612,7 +612,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   if (!qmw.IsQnnTensorWrapperExist(gather_out_name)) {
     TensorInfo gather_out_info{};
     auto s = qmw.GetTensorInfo(sc_inputs[0], gather_out_info);
-    if (!s.IsOK()) return std::move(s);
+    if (!s.IsOK()) return s;
     QnnTensorWrapper gather_tw(gather_out_name, QNN_TENSOR_TYPE_NATIVE,
                                gather_out_info.qnn_data_type, gather_out_info.quant_param.Copy(),
                                std::vector<uint32_t>(gather_out_shape));
