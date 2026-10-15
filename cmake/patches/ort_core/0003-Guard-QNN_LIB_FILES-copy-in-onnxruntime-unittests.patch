@@ -1,7 +1,7 @@
-From 9e78cfd582f4388f9d009c2b0d794a60cad8ef92 Mon Sep 17 00:00:00 2001
-From: QNN EP team <noreply@qualcomm.com>
+From 1c1bbceaa59f708c41878455b7a9055ce0932ac2 Mon Sep 17 00:00:00 2001
+From: ORT QNN EP team <noreply@qualcomm.com>
 Date: Tue, 18 Aug 2026 00:00:00 +0000
-Subject: [PATCH 7/7] cmake: guard QNN_LIB_FILES copy in
+Subject: [PATCH 3/4] cmake: guard QNN_LIB_FILES copy in
  onnxruntime_unittests.cmake
 
 In static_lib mode (e.g. Android builds) QNN_LIB_FILES is empty because
@@ -24,10 +24,10 @@ line number may drift.
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/cmake/onnxruntime_unittests.cmake b/cmake/onnxruntime_unittests.cmake
-index 8d09dfc..c3feea1 100644
+index 9fa7810..fdfc3d2 100644
 --- a/cmake/onnxruntime_unittests.cmake
 +++ b/cmake/onnxruntime_unittests.cmake
-@@ -2420,7 +2420,7 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND NOT onnxruntime_CUDA_MINIMAL
+@@ -2512,7 +2512,7 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND NOT onnxruntime_CUDA_MINIMAL
                  ${JAVA_NATIVE_TEST_DIR}/${CUSTOM_OP_LIBRARY_DST_FILE_NAME})
  
          # also copy other library dependencies that may be required by tests to native-test

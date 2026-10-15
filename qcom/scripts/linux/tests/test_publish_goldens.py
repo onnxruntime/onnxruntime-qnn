@@ -12,7 +12,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "publish_goldens.sh"
 QAIRT_VERSION = "2.50.40"
-ORT_VERSION = "1.29.0"
+ORT_VERSION = "1.30.0"
 REPO = "test-repo"
 SUBPATH = "ci/snapshot-goldens-pr923-test"
 GOLDEN_PROFILE = "linux-x86_64-htp-simulator"

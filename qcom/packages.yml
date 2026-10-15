@@ -153,24 +153,24 @@ onnx_models:
   sha256: 5c877a633970248e181018ccdabb280cec22e1b113f3068b6585d3f55cac3fb2
   content_root: onnx-models-{version}
 ort_prebuilt_windows_x64: &ort_prebuilt_common
-  version: 1.29.0
+  version: 1.30.0
   url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-x64-{version}.zip
-  sha256: c9b4b7086b529ad814f428c1bad028e20a25d7dc0699836775faace4ab5b78b2
+  sha256: c6ba983baf5681af108599675d2a89c2d145512d02de28aed0bff177cd0ba949
   content_root: onnxruntime-win-x64-{version}
 ort_prebuilt_windows_arm64:
   <<: *ort_prebuilt_common
   url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-arm64-{version}.zip
-  sha256: a094a49c3ced0f9fca554647cc7566ae99d93a63a8ce6bf47975561c2de7608e
+  sha256: e53db8a50b23ae35be901cc93428baf997dc8d420333b097b2eae53d3ea9f2d3
   content_root: onnxruntime-win-arm64-{version}
 ort_prebuilt_linux_x64:
   <<: *ort_prebuilt_common
   url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-linux-x64-{version}.tgz
-  sha256: c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba
+  sha256: a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd
   content_root: onnxruntime-linux-x64-{version}
 ort_prebuilt_linux_aarch64:
   <<: *ort_prebuilt_common
   url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-linux-aarch64-{version}.tgz
-  sha256: e1799098ebc054b370f6176a450f158720f297818c613e5dc99b92e2ec82346f
+  sha256: e16a27a8ed330bbc698df7330b0cf56e722f354e3bcc92118682c74ef3c3e3da
   content_root: onnxruntime-linux-aarch64-{version}
 python_311_windows_x86_64: &py_x86_64_common
   version: 3.11.9
