@@ -55,9 +55,7 @@ output_path.write_text(json.dumps({{"testsuites": [{{"name": suite, "failures": 
     fake_bin.mkdir()
     write_executable(
         fake_bin / "cygpath",
-        "#!/usr/bin/env bash\n"
-        'test "$1" = "-w"\n'
-        'printf "WIN::%s\\n" "$2"\n',
+        '#!/usr/bin/env bash\ntest "$1" = "-w"\nprintf "WIN::%s\\n" "$2"\n',
     )
 
     env = os.environ | {
