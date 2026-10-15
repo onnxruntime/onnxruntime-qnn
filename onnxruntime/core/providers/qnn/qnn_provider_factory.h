@@ -18,7 +18,7 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
 
-  void SetRuntimeCapabilities(RuntimeCapabilities capabilities) noexcept {
+  void SetRuntimeCapabilities(OrtApiRuntimeCapabilities capabilities) noexcept {
     ApiPtrs::runtime_capabilities = capabilities;
   }
 

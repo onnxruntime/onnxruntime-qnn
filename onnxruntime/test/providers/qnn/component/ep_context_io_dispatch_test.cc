@@ -50,8 +50,8 @@ struct ExperimentalFnStubEnv {
 TEST(QnnUnit_EpContextIoDispatchTest, EpContextEncryptionUnsupported_NeverTouchesExperimentalApi) {
   ExperimentalFnStubEnv env;
   OrtGlobalApiOverride api_override(&env.stub_ort_api);
-  const RuntimeCapabilities runtime_capabilities{
-      RuntimeCapabilities::kEpContextEncryptionMinApiVersion - 1};
+  const OrtApiRuntimeCapabilities runtime_capabilities{
+      OrtApiRuntimeCapabilities::kEpContextEncryptionMinApiVersion - 1};
 
   qnn::EpContextIoDispatch dispatch(
       *reinterpret_cast<const OrtSessionOptions*>(kFakeSessionOptionsToken),
@@ -87,8 +87,8 @@ TEST(QnnUnit_EpContextIoDispatchTest, DisabledDispatch_ReadAndWrite_ReturnFailur
 TEST(QnnUnit_EpContextIoDispatchTest, EpContextEncryptionSupported_AttemptsExperimentalApi) {
   ExperimentalFnStubEnv env;
   OrtGlobalApiOverride api_override(&env.stub_ort_api);
-  const RuntimeCapabilities runtime_capabilities{
-      RuntimeCapabilities::kEpContextEncryptionMinApiVersion};
+  const OrtApiRuntimeCapabilities runtime_capabilities{
+      OrtApiRuntimeCapabilities::kEpContextEncryptionMinApiVersion};
 
   qnn::EpContextIoDispatch dispatch(
       *reinterpret_cast<const OrtSessionOptions*>(kFakeSessionOptionsToken),

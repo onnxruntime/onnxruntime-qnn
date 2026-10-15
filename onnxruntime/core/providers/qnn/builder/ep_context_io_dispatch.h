@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/qnn_runtime_capabilities.h"
+#include "core/providers/qnn/ort_api_runtime_capabilities.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -42,7 +42,7 @@ class EpContextIoDispatch {
   // `logger` (optional) receives a WARNING if resolution genuinely fails rather than the app
   // simply not registering anything.
   explicit EpContextIoDispatch(const OrtSessionOptions& session_options,
-                               const RuntimeCapabilities& runtime_capabilities,
+                               const OrtApiRuntimeCapabilities& runtime_capabilities,
                                const Ort::Logger* logger = nullptr) noexcept;
   ~EpContextIoDispatch() = default;
 

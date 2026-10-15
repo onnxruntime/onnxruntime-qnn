@@ -11,7 +11,7 @@ namespace qnn {
 EpContextIoDispatch::EpContextIoDispatch() noexcept : config_{nullptr} {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& session_options,
-                                         const RuntimeCapabilities& runtime_capabilities,
+                                         const OrtApiRuntimeCapabilities& runtime_capabilities,
                                          const Ort::Logger* logger) noexcept
     : config_{nullptr} {
   // The named capability is negotiated with the actual runtime, not inferred from the
@@ -108,7 +108,7 @@ Ort::Status EpContextIoDispatch::Write(const std::string& name,
 EpContextIoDispatch::EpContextIoDispatch() noexcept {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& /*session_options*/,
-                                         const RuntimeCapabilities& /*runtime_capabilities*/,
+                                         const OrtApiRuntimeCapabilities& /*runtime_capabilities*/,
                                          const Ort::Logger* /*logger*/) noexcept {}
 
 bool EpContextIoDispatch::HasReadCallback() const noexcept { return false; }
