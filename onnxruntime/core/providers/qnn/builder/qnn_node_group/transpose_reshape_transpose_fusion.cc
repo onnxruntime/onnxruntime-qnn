@@ -28,13 +28,34 @@ constexpr char kOpReshape[] = "Reshape";
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
 
-/// @brief Get transpose permutation attribute
-std::optional<std::vector<int64_t>> GetTransposePerm(const OrtNodeUnit& transpose) {
+/// @brief Get and validate a transpose permutation, applying the ONNX default when absent.
+std::optional<std::vector<int64_t>> GetTransposePerm(const OrtNodeUnit& transpose, size_t rank) {
   if (transpose.OpType() != kOpTranspose) {
     return std::nullopt;
   }
+
   OrtNodeAttrHelper helper(transpose);
-  return helper.Get(kAttrTransposePerm, std::vector<int64_t>());
+  std::vector<int64_t> perm = helper.Get(kAttrTransposePerm, std::vector<int64_t>());
+  if (perm.empty()) {
+    perm.resize(rank);
+    for (size_t i = 0; i < rank; ++i) {
+      perm[i] = static_cast<int64_t>(rank - 1 - i);
+    }
+  }
+
+  if (perm.size() != rank) {
+    return std::nullopt;
+  }
+
+  std::vector<bool> seen(rank, false);
+  for (int64_t dim : perm) {
+    if (dim < 0 || static_cast<size_t>(dim) >= rank || seen[static_cast<size_t>(dim)]) {
+      return std::nullopt;
+    }
+    seen[static_cast<size_t>(dim)] = true;
+  }
+
+  return perm;
 }
 
 // Match pattern: Transpose -> Reshape -> Transpose
@@ -131,9 +152,9 @@ bool CanFuseToReshape(
   //      final_mapping[1] = [perm1[d] for d in reshape_mapping[0]] = [perm1[0], perm1[1]] = [1, 2]
   std::vector<std::vector<size_t>> final_mapping(output_rank);
   for (size_t i = 0; i < output_rank; ++i) {
-    size_t src_idx = static_cast<size_t>(perm2[i]);
-    for (size_t intermediate_dim : reshape_mapping[src_idx]) {
-      final_mapping[i].push_back(static_cast<size_t>(perm1[intermediate_dim]));
+    size_t src_idx = static_cast<size_t>(perm2.at(i));
+    for (size_t intermediate_dim : reshape_mapping.at(src_idx)) {
+      final_mapping[i].push_back(static_cast<size_t>(perm1.at(intermediate_dim)));
     }
   }
 
@@ -164,7 +185,7 @@ bool CanFuseToReshape(
   for (size_t i = 0; i < output_rank; ++i) {
     int64_t dim_size = 1;
     for (size_t orig_dim : final_mapping[i]) {
-      dim_size *= input_shape[orig_dim];
+      dim_size *= input_shape.at(orig_dim);
     }
     fused_shape.push_back(dim_size);
   }
@@ -287,9 +308,13 @@ std::unique_ptr<IQnnNodeGroup> TransposeReshapeTransposeFusion::TryFusion(
     return nullptr;
   }
 
+  if (input_shape->size() != intermediate_shape->size() || reshape_shape->size() != output_shape->size()) {
+    return nullptr;
+  }
+
   // Get permutations
-  auto perm1 = GetTransposePerm(*transpose1);
-  auto perm2 = GetTransposePerm(*transpose2);
+  auto perm1 = GetTransposePerm(*transpose1, input_shape->size());
+  auto perm2 = GetTransposePerm(*transpose2, reshape_shape->size());
 
   if (!perm1.has_value() || !perm2.has_value()) {
     return nullptr;
