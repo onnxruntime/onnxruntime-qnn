@@ -473,21 +473,19 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_DynamicInt32ScalarIndex_NonzeroG
     constexpr int64_t kTables = 2;
     constexpr int64_t kVocab = 128;
     constexpr int64_t kLogicalHidden = 64;
-    constexpr int64_t kPackedHidden = kLogicalHidden * QBits / 8;
     constexpr int64_t kBlockSize = 32;
     constexpr int64_t kBlocks = kLogicalHidden / kBlockSize;
     RandomValueGenerator random{1234};
     std::vector<float> weights(random.Gaussian<float>(
         AsSpan({kTables, kVocab, kLogicalHidden}), 0.0f, 0.25f));
-    std::vector<uint8_t> packed_weights(static_cast<size_t>(kTables * kVocab * kPackedHidden));
+    std::vector<Int4x2> unpacked_weights;
     std::vector<float> scales(static_cast<size_t>(kTables * kVocab * kBlocks));
-    QuantizeBlockwiseOnly(weights, packed_weights, scales,
-                          static_cast<int32_t>(kTables * kVocab),
-                          static_cast<int32_t>(kLogicalHidden),
-                          static_cast<int32_t>(kBlockSize), 1);
+    QuantizeBlockwiseInt4Unpacked(weights, unpacked_weights, scales,
+                                  static_cast<int32_t>(kTables * kVocab),
+                                  static_cast<int32_t>(kLogicalHidden),
+                                  static_cast<int32_t>(kBlockSize));
 
-    MakeTestInput<uint8_t>(builder, "data",
-                           TestInputDef<uint8_t>({kTables, kVocab, kPackedHidden}, true, packed_weights));
+    builder.MakeInitializer<Int4x2>("data", {kTables, kVocab, kLogicalHidden}, unpacked_weights);
     MakeTestInput<int32_t>(builder, "indices", TestInputDef<int32_t>({}, false, {0}));
     MakeTestInput<float>(builder, "scales", TestInputDef<float>({kTables, kVocab, kBlocks}, true, scales));
     builder.MakeOutput("output");
