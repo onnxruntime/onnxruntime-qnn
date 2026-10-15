@@ -11,7 +11,7 @@ namespace qnn {
 EpContextIoDispatch::EpContextIoDispatch() noexcept : config_{nullptr} {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& session_options,
-                                         const QnnRuntimeCapabilities& runtime_capabilities,
+                                         const RuntimeCapabilities& runtime_capabilities,
                                          const Ort::Logger* logger) noexcept
     : config_{nullptr} {
   // The named capability is negotiated with the actual runtime, not inferred from the
@@ -64,9 +64,7 @@ bool EpContextIoDispatch::HasWriteCallback() const noexcept {
 }
 
 Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<char>& out) const {
-  if (!HasReadCallback()) {
-    return MAKE_EP_FAIL("EPContext read callback is unavailable.");
-  }
+  RETURN_IF_NOT(HasReadCallback(), "EPContext read callback is unavailable.");
 
   Ort::AllocatorWithDefaultOptions allocator;
   void* data = nullptr;
@@ -91,9 +89,7 @@ Ort::Status EpContextIoDispatch::Write(const std::string& name,
                                        const void* buffer,
                                        size_t buffer_size,
                                        const Ort::Logger& logger) const {
-  if (!HasWriteCallback()) {
-    return MAKE_EP_FAIL("EPContext write callback is unavailable.");
-  }
+  RETURN_IF_NOT(HasWriteCallback(), "EPContext write callback is unavailable.");
 
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
               ("EPContext data forwarded to App write callback: " + name).c_str());
@@ -112,7 +108,7 @@ Ort::Status EpContextIoDispatch::Write(const std::string& name,
 EpContextIoDispatch::EpContextIoDispatch() noexcept {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& /*session_options*/,
-                                         const QnnRuntimeCapabilities& /*runtime_capabilities*/,
+                                         const RuntimeCapabilities& /*runtime_capabilities*/,
                                          const Ort::Logger* /*logger*/) noexcept {}
 
 bool EpContextIoDispatch::HasReadCallback() const noexcept { return false; }

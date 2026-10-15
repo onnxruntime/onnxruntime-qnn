@@ -253,11 +253,7 @@ struct ApiPtrs {
   const OrtApi& ort_api;
   const OrtEpApi& ep_api;
   const OrtModelEditorApi& model_editor_api;
-  qnn::QnnRuntimeCapabilities runtime_capabilities{qnn::QnnRuntimeCapabilities::Unavailable()};
-
-  const qnn::QnnRuntimeCapabilities& GetRuntimeCapabilities() const noexcept {
-    return runtime_capabilities;
-  }
+  RuntimeCapabilities runtime_capabilities{RuntimeCapabilities::Unavailable()};
 };
 
 // Helper to release Ort one or more objects obtained from the public C API at the end of their scope.
