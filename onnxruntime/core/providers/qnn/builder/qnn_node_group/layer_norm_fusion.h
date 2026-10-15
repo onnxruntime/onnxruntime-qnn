@@ -27,10 +27,21 @@ class QnnModelWrapper;
 ///                                  |                                               |
 ///                                  +-----------------------------------------------+
 ///
+/// The affine tail is optional. Tried in order of preference:
+///   - Full:       ... --> Div --> Mul(gamma) --> Add(beta)  ==>  LayerNorm(x, gamma, beta)
+///   - Gamma only: ... --> Div --> Mul(gamma)                ==>  LayerNorm(x, gamma, zeros)
+///   - Core only:  ... --> Div                               ==>  LayerNorm(x, ones,  zeros)
+/// Core-only fusion covers the case where the normalized tensor feeds several consumers (e.g. it is
+/// shared by multiple heads that each apply their own gamma/beta) or where gamma/beta have a shape
+/// QNN LayerNorm cannot express. Ops after the fused part are left untouched.
+///
+/// Scalar constants (Pow exponent, epsilon) may be float32 or float16 initializers.
 /// All NodeUnits must be of type SingleNode.
 /// </summary>
 class LayerNormFusion : public IQnnNodeGroup {
  public:
+  /// An empty gamma_input_name / beta_input_name means a ones / zeros tensor is synthesized.
+  /// The fused output is node_units.back()->Outputs()[0].
   LayerNormFusion(std::vector<const OrtNodeUnit*>&& node_units,
                   const OrtNodeUnit* target_node_unit,
                   float epsilon,

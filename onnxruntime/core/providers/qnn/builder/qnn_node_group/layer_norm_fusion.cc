@@ -4,6 +4,8 @@
 #include "core/providers/qnn/builder/qnn_node_group/layer_norm_fusion.h"
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <gsl/gsl>
 #include <optional>
 #include <unordered_set>
@@ -24,49 +26,29 @@ namespace qnn {
 #define CreateOnQnn(qmw, node_units, root_input, gamma_input, beta_input, final_output, epsilon, axes) \
   CreateOrValidateOnQnn((qmw), (node_units), (root_input), (gamma_input), (beta_input), (final_output), (epsilon), (axes), false)
 
+// gamma_input / beta_input may be nullptr: a ones / zeros static tensor is synthesized instead.
 static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          gsl::span<const OrtNodeUnit* const> node_units,
                                          const OrtNodeUnitIODef& root_input,
-                                         const OrtNodeUnitIODef& gamma_input,
-                                         const OrtNodeUnitIODef& beta_input,
+                                         const OrtNodeUnitIODef* gamma_input,
+                                         const OrtNodeUnitIODef* beta_input,
                                          const OrtNodeUnitIODef& final_output,
                                          float epsilon,
                                          gsl::span<const uint32_t> axes,
                                          bool validate);
 
-static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
-                                                   const std::string& input_name) {
-  if (!qmw.IsConstantInput(input_name)) {
-    return std::nullopt;
-  }
+// Scalar constants (Pow exponent, epsilon) are read with GetScalarConstantValue (utils.h), which
+// accepts both float32 and float16 initializers. fp16 models (e.g. exported with
+// keep_io_types / float16 conversion) store these constants as FLOAT16.
 
-  const OrtValueInfo* value_info = qmw.GetConstantTensor(input_name);
-  if (!value_info) {
-    return std::nullopt;
+// Returns the first constant input of `node_unit`, or nullptr if none.
+static const OrtNodeUnitIODef* FindConstantInput(const QnnModelWrapper& qmw, const OrtNodeUnit& node_unit) {
+  for (const auto& inp : node_unit.Inputs()) {
+    if (qmw.IsConstantInput(inp.name)) {
+      return &inp;
+    }
   }
-
-  Ort::ConstValueInfo ort_value_info(value_info);
-  Ort::ConstValue ort_value;
-  if (!ort_value_info.GetInitializer(ort_value).IsOK()) {
-    return std::nullopt;
-  }
-
-  auto type_info = ort_value_info.TypeInfo();
-  auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
-  if (tensor_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-    return std::nullopt;
-  }
-
-  if (tensor_info.GetElementCount() != 1) {
-    return std::nullopt;
-  }
-
-  const float* data = ort_value.GetTensorData<float>();
-  if (!data) {
-    return std::nullopt;
-  }
-
-  return *data;
+  return nullptr;
 }
 
 std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
@@ -158,7 +140,8 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   if (pow_inputs.size() < 2) {
     return nullptr;
   }
-  const std::optional<float> pow_exp = GetConstantFloatScalar(qnn_model_wrapper, pow_inputs[1].name);
+
+  const std::optional<float> pow_exp = GetScalarConstantValue(qnn_model_wrapper, pow_inputs[1].name);
   if (!pow_exp.has_value() || pow_exp.value() != 2.0f) {
     return nullptr;
   }
@@ -227,8 +210,9 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     return nullptr;
   }
   std::optional<float> epsilon_opt;
+
   for (const auto& inp : add_eps_inputs) {
-    auto val = GetConstantFloatScalar(qnn_model_wrapper, inp.name);
+    auto val = GetScalarConstantValue(qnn_model_wrapper, inp.name);
     if (val.has_value()) {
       epsilon_opt = val;
       break;
@@ -261,64 +245,57 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     return nullptr;
   }
 
-  // Div → Mul(γ)
+  // ---- Optional affine tail: Div → Mul(γ) → Add(β) ----
+  // Try the longest fusable tail first, then fall back to shorter ones. Each candidate is
+  // validated on QNN (which also checks gamma/beta shapes), so an unsupported gamma/beta
+  // simply degrades to a shorter fusion instead of rejecting LayerNorm altogether.
+  //   1. Full:       LayerNorm(x, γ, β)       — Div has a single Mul child with a constant,
+  //                                             which has a single Add child with a constant.
+  //   2. Gamma only: LayerNorm(x, γ, zeros)   — Add(β) missing / not fusable.
+  //   3. Core only:  LayerNorm(x, ones, zeros) — Div output shared by several consumers
+  //                                             (e.g. multi-head norm) or Mul(γ) not fusable.
   const std::array<std::string_view, 1> mul_types{"Mul"};
   const OrtNodeUnit* mul_gamma_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *div_node_unit,
                                                               mul_types, node_to_node_unit,
                                                               node_unit_to_qnn_node_group);
-  if (mul_gamma_node_unit == nullptr) {
-    return nullptr;
-  }
-
-  // Find gamma: the constant input to Mul.
-  const auto& mul_inputs = mul_gamma_node_unit->Inputs();
-  if (mul_inputs.size() < 2) {
-    return nullptr;
-  }
-  const OrtNodeUnitIODef* gamma_input_def = nullptr;
-  for (const auto& inp : mul_inputs) {
-    if (qnn_model_wrapper.IsConstantInput(inp.name)) {
-      gamma_input_def = &inp;
-      break;
-    }
-  }
+  const OrtNodeUnitIODef* gamma_input_def =
+      mul_gamma_node_unit ? FindConstantInput(qnn_model_wrapper, *mul_gamma_node_unit) : nullptr;
   if (gamma_input_def == nullptr) {
-    return nullptr;
-  }
-  // TODO: If gamma is invalid to fuse (e.g., dynamic or wrong shape), consider partial fusion:
-  // fuse the normalization core (ReduceMean→...→Div) into LayerNorm(scale=ones, bias=β),
-  // leaving Mul(γ) as a standalone op after the fused node.
-
-  // Mul(γ) → Add(β)
-  const OrtNodeUnit* add_beta_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *mul_gamma_node_unit,
-                                                             add_types, node_to_node_unit,
-                                                             node_unit_to_qnn_node_group);
-  if (add_beta_node_unit == nullptr) {
-    return nullptr;
+    mul_gamma_node_unit = nullptr;
   }
 
-  // Find beta: the constant input to the final Add.
-  const auto& add_beta_inputs = add_beta_node_unit->Inputs();
-  if (add_beta_inputs.size() < 2) {
-    return nullptr;
-  }
+  const OrtNodeUnit* add_beta_node_unit = nullptr;
   const OrtNodeUnitIODef* beta_input_def = nullptr;
-  for (const auto& inp : add_beta_inputs) {
-    if (qnn_model_wrapper.IsConstantInput(inp.name)) {
-      beta_input_def = &inp;
-      break;
+  if (mul_gamma_node_unit != nullptr) {
+    add_beta_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *mul_gamma_node_unit,
+                                            add_types, node_to_node_unit,
+                                            node_unit_to_qnn_node_group);
+    beta_input_def = add_beta_node_unit ? FindConstantInput(qnn_model_wrapper, *add_beta_node_unit) : nullptr;
+    if (beta_input_def == nullptr) {
+      add_beta_node_unit = nullptr;
     }
   }
-  if (beta_input_def == nullptr) {
-    return nullptr;
-  }
 
-  std::vector<const OrtNodeUnit*> node_units = {
+  const std::vector<const OrtNodeUnit*> core_units = {
       &reduce_mean_node_unit, sub_node_unit, pow_node_unit, reduce_mean2_node_unit,
-      add_eps_node_unit, sqrt_node_unit, div_node_unit, mul_gamma_node_unit, add_beta_node_unit};
-
+      add_eps_node_unit, sqrt_node_unit, div_node_unit};
   const OrtNodeUnitIODef& root_input = rm1_inputs[0];
-  const OrtNodeUnitIODef& final_output = add_beta_node_unit->Outputs()[0];
+
+  struct Candidate {
+    const OrtNodeUnit* mul_gamma;
+    const OrtNodeUnitIODef* gamma;
+    const OrtNodeUnit* add_beta;
+    const OrtNodeUnitIODef* beta;
+    const char* kind;
+  };
+  std::vector<Candidate> candidates;
+  if (add_beta_node_unit != nullptr) {
+    candidates.push_back({mul_gamma_node_unit, gamma_input_def, add_beta_node_unit, beta_input_def, "full"});
+  }
+  if (mul_gamma_node_unit != nullptr) {
+    candidates.push_back({mul_gamma_node_unit, gamma_input_def, nullptr, nullptr, "gamma-only"});
+  }
+  candidates.push_back({nullptr, nullptr, nullptr, nullptr, "core-only"});
 
   std::string shape_str;
   for (size_t i = 0; i < input_shape.size(); ++i) {
@@ -330,25 +307,40 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     if (i > 0) axes_str += ",";
     axes_str += std::to_string(axes1[i]);
   }
-  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-              ("LayerNormFusion: Fusing LayerNorm starting at node: " + reduce_mean_node_unit.Name() +
-               ", input_shape=" + shape_str +
-               ", epsilon=" + std::to_string(epsilon) +
-               ", axes=[" + axes_str + "]" +
-               ", gamma=" + gamma_input_def->name +
-               ", beta=" + beta_input_def->name)
-                  .c_str());
 
-  if (auto status = ValidateOnQnn(qnn_model_wrapper, node_units, root_input,
-                                  *gamma_input_def, *beta_input_def, final_output,
-                                  epsilon, axes1);
-      !status.IsOK()) {
-    return nullptr;
+  for (const Candidate& c : candidates) {
+    std::vector<const OrtNodeUnit*> node_units = core_units;
+    if (c.mul_gamma) node_units.push_back(c.mul_gamma);
+    if (c.add_beta) node_units.push_back(c.add_beta);
+    const OrtNodeUnitIODef& final_output = node_units.back()->Outputs()[0];
+
+    if (auto status = ValidateOnQnn(qnn_model_wrapper, node_units, root_input,
+                                    c.gamma, c.beta, final_output, epsilon, axes1);
+        !status.IsOK()) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("LayerNormFusion: " + std::string(c.kind) + " fusion rejected at " +
+                   reduce_mean_node_unit.Name() + ": " + status.GetErrorMessage())
+                      .c_str());
+      continue;
+    }
+
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                ("LayerNormFusion: Fusing " + std::string(c.kind) + " LayerNorm starting at node: " +
+                 reduce_mean_node_unit.Name() +
+                 ", input_shape=" + shape_str +
+                 ", epsilon=" + std::to_string(epsilon) +
+                 ", axes=[" + axes_str + "]" +
+                 ", gamma=" + (c.gamma ? c.gamma->name : std::string("<ones>")) +
+                 ", beta=" + (c.beta ? c.beta->name : std::string("<zeros>")))
+                    .c_str());
+
+    return std::make_unique<LayerNormFusion>(std::move(node_units), &reduce_mean_node_unit,
+                                             epsilon, axes1,
+                                             c.gamma ? c.gamma->name : std::string(),
+                                             c.beta ? c.beta->name : std::string());
   }
 
-  return std::make_unique<LayerNormFusion>(std::move(node_units), &reduce_mean_node_unit,
-                                           epsilon, axes1,
-                                           gamma_input_def->name, beta_input_def->name);
+  return nullptr;
 }
 
 LayerNormFusion::LayerNormFusion(std::vector<const OrtNodeUnit*>&& node_units,
@@ -365,47 +357,51 @@ LayerNormFusion::LayerNormFusion(std::vector<const OrtNodeUnit*>&& node_units,
       beta_input_name_(std::move(beta_input_name)) {
 }
 
-// Finds the OrtNodeUnitIODef matching the given name from a node's inputs.
-static const OrtNodeUnitIODef* FindInputByName(const OrtNodeUnit& node_unit, const std::string& name) {
-  for (const auto& inp : node_unit.Inputs()) {
-    if (inp.name == name) {
-      return &inp;
+// Finds the OrtNodeUnitIODef with the given name among the inputs of any fused node unit.
+// An empty name means "not present" (synthesized ones/zeros) and yields nullptr with ok=true.
+static const OrtNodeUnitIODef* FindInputByName(gsl::span<const OrtNodeUnit* const> node_units,
+                                               const std::string& name, bool& ok) {
+  ok = true;
+  if (name.empty()) {
+    return nullptr;
+  }
+  for (const OrtNodeUnit* nu : node_units) {
+    for (const auto& inp : nu->Inputs()) {
+      if (inp.name == name) {
+        return &inp;
+      }
     }
   }
+  ok = false;
   return nullptr;
 }
 
 Ort::Status LayerNormFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
-  const OrtNodeUnit& rm1 = *node_units_[0];
-  const OrtNodeUnit& add_beta = *node_units_.back();
-  const OrtNodeUnit& mul_gamma = *node_units_[node_units_.size() - 2];
-
-  const OrtNodeUnitIODef* gamma_def = FindInputByName(mul_gamma, gamma_input_name_);
-  const OrtNodeUnitIODef* beta_def = FindInputByName(add_beta, beta_input_name_);
-  if (!gamma_def || !beta_def) {
+  bool gamma_ok = false, beta_ok = false;
+  const OrtNodeUnitIODef* gamma_def = FindInputByName(node_units_, gamma_input_name_, gamma_ok);
+  const OrtNodeUnitIODef* beta_def = FindInputByName(node_units_, beta_input_name_, beta_ok);
+  if (!gamma_ok || !beta_ok) {
     return MAKE_EP_FAIL("LayerNormFusion: cannot find gamma or beta inputs.");
   }
 
-  return ValidateOnQnn(qmw, node_units_, rm1.Inputs()[0],
-                       *gamma_def, *beta_def,
-                       add_beta.Outputs()[0], epsilon_, axes_);
+  return ValidateOnQnn(qmw, node_units_, node_units_[0]->Inputs()[0],
+                       gamma_def, beta_def,
+                       node_units_.back()->Outputs()[0], epsilon_, axes_);
 }
 
 Ort::Status LayerNormFusion::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
-  const OrtNodeUnit& rm1 = *node_units_[0];
-  const OrtNodeUnit& add_beta = *node_units_.back();
-  const OrtNodeUnit& mul_gamma = *node_units_[node_units_.size() - 2];
-
-  const OrtNodeUnitIODef* gamma_def = FindInputByName(mul_gamma, gamma_input_name_);
-  const OrtNodeUnitIODef* beta_def = FindInputByName(add_beta, beta_input_name_);
-  if (!gamma_def || !beta_def) {
+  bool gamma_ok = false, beta_ok = false;
+  const OrtNodeUnitIODef* gamma_def = FindInputByName(node_units_, gamma_input_name_, gamma_ok);
+  const OrtNodeUnitIODef* beta_def = FindInputByName(node_units_, beta_input_name_, beta_ok);
+  if (!gamma_ok || !beta_ok) {
     return MAKE_EP_FAIL("LayerNormFusion: cannot find gamma or beta inputs.");
   }
 
+  const OrtNodeUnit& rm1 = *node_units_[0];
   auto status = CreateOnQnn(qmw, node_units_, rm1.Inputs()[0],
-                            *gamma_def, *beta_def,
-                            add_beta.Outputs()[0], epsilon_, axes_);
+                            gamma_def, beta_def,
+                            node_units_.back()->Outputs()[0], epsilon_, axes_);
   if (status.IsOK()) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
                 ("LayerNormFusion: Successfully fused LayerNorm node: " + rm1.Name()).c_str());
@@ -475,11 +471,47 @@ static Ort::Status ValidateAndSqueezeScaleShape(
   return Ort::Status();
 }
 
+// Builds a static tensor filled with `value`, shaped like the normalized axes of the input, using
+// the input's float data type. Used when gamma (ones) or beta (zeros) is not part of the fusion.
+static Ort::Status MakeConstantScaleTensor(const std::string& name,
+                                           Qnn_DataType_t data_type,
+                                           const std::vector<uint32_t>& input_shape,
+                                           gsl::span<const uint32_t> axes,
+                                           float value,
+                                           QnnTensorWrapper& tensor) {
+  std::vector<uint32_t> shape;
+  shape.reserve(axes.size());
+  size_t num_elems = 1;
+  for (uint32_t ax : axes) {
+    shape.push_back(input_shape[ax]);
+    num_elems *= input_shape[ax];
+  }
+
+  std::vector<uint8_t> bytes;
+  if (data_type == QNN_DATATYPE_FLOAT_32) {
+    std::vector<float> vals(num_elems, value);
+    bytes.resize(num_elems * sizeof(float));
+    std::memcpy(bytes.data(), vals.data(), bytes.size());
+  } else if (data_type == QNN_DATATYPE_FLOAT_16) {
+    const Ort::Float16_t v(value);
+    bytes.resize(num_elems * sizeof(uint16_t));
+    for (size_t i = 0; i < num_elems; ++i) {
+      std::memcpy(bytes.data() + i * sizeof(uint16_t), &v.val, sizeof(uint16_t));
+    }
+  } else {
+    return MAKE_EP_FAIL("LayerNormFusion: synthesized gamma/beta only supported for float32/float16 input.");
+  }
+
+  tensor = QnnTensorWrapper(name, QNN_TENSOR_TYPE_STATIC, data_type, QnnQuantParamsWrapper(),
+                            std::move(shape), std::move(bytes));
+  return Ort::Status();
+}
+
 static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          gsl::span<const OrtNodeUnit* const> node_units,
                                          const OrtNodeUnitIODef& root_input,
-                                         const OrtNodeUnitIODef& gamma_input,
-                                         const OrtNodeUnitIODef& beta_input,
+                                         const OrtNodeUnitIODef* gamma_input,
+                                         const OrtNodeUnitIODef* beta_input,
                                          const OrtNodeUnitIODef& final_output,
                                          float epsilon,
                                          gsl::span<const uint32_t> axes,
@@ -500,21 +532,38 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qmw.GetOnnxShape(root_input.shape, input_shape), "Cannot get input shape.");
 
-  {
+  // Synthesized gamma/beta: unquantized float of the same type as the input.
+  const Qnn_DataType_t input_dtype = input_tensor.GetTensorDataType();
+  const bool needs_synth = (gamma_input == nullptr || beta_input == nullptr);
+  RETURN_IF(needs_synth && input_tensor.GetQnnQuantParams().IsQuantized(),
+            "LayerNormFusion: partial (no gamma/beta) fusion not supported for quantized input.");
+
+  std::string gamma_name;
+  if (gamma_input != nullptr) {
     TensorInfo gamma_info = {};
-    RETURN_IF_ERROR(qmw.GetTensorInfo(gamma_input, gamma_info));
+    RETURN_IF_ERROR(qmw.GetTensorInfo(*gamma_input, gamma_info));
     std::vector<uint32_t> squeezed_gamma;
     RETURN_IF_ERROR(ValidateAndSqueezeScaleShape(gamma_info.shape, input_shape, axes, squeezed_gamma));
     gamma_info.shape = std::move(squeezed_gamma);
-    RETURN_IF_ERROR(qmw.MakeTensorWrapper(gamma_info, gamma_input.name, gamma_tensor));
+    RETURN_IF_ERROR(qmw.MakeTensorWrapper(gamma_info, gamma_input->name, gamma_tensor));
+    gamma_name = gamma_input->name;
+  } else {
+    gamma_name = utils::UniqueNameGenerator().New(node_name, "_gamma_ones");
+    RETURN_IF_ERROR(MakeConstantScaleTensor(gamma_name, input_dtype, input_shape, axes, 1.0f, gamma_tensor));
   }
-  {
+
+  std::string beta_name;
+  if (beta_input != nullptr) {
     TensorInfo beta_info = {};
-    RETURN_IF_ERROR(qmw.GetTensorInfo(beta_input, beta_info));
+    RETURN_IF_ERROR(qmw.GetTensorInfo(*beta_input, beta_info));
     std::vector<uint32_t> squeezed_beta;
     RETURN_IF_ERROR(ValidateAndSqueezeScaleShape(beta_info.shape, input_shape, axes, squeezed_beta));
     beta_info.shape = std::move(squeezed_beta);
-    RETURN_IF_ERROR(qmw.MakeTensorWrapper(beta_info, beta_input.name, beta_tensor));
+    RETURN_IF_ERROR(qmw.MakeTensorWrapper(beta_info, beta_input->name, beta_tensor));
+    beta_name = beta_input->name;
+  } else {
+    beta_name = utils::UniqueNameGenerator().New(node_name, "_beta_zeros");
+    RETURN_IF_ERROR(MakeConstantScaleTensor(beta_name, input_dtype, input_shape, axes, 0.0f, beta_tensor));
   }
 
   Qnn_Scalar_t epsilon_scalar = QNN_SCALAR_INIT;
@@ -549,10 +598,12 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   if (!qmw.IsQnnTensorWrapperExist(root_input.name)) {
     RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(input_tensor)), "Failed to add input tensor.");
   }
-  if (!qmw.IsQnnTensorWrapperExist(gamma_input.name)) {
+
+  if (!qmw.IsQnnTensorWrapperExist(gamma_name)) {
     RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(gamma_tensor)), "Failed to add gamma tensor.");
   }
-  if (!qmw.IsQnnTensorWrapperExist(beta_input.name)) {
+
+  if (!qmw.IsQnnTensorWrapperExist(beta_name)) {
     RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(beta_tensor)), "Failed to add beta tensor.");
   }
   if (!qmw.IsQnnTensorWrapperExist(final_output.name)) {
@@ -562,7 +613,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   RETURN_IF_NOT(qmw.CreateQnnNode(node_name,
                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                   QNN_OP_LAYER_NORM,
-                                  {root_input.name, gamma_input.name, beta_input.name},
+                                  {root_input.name, gamma_name, beta_name},
                                   {final_output.name},
                                   {epsilon_param_name, axes_param_name},
                                   validate),
