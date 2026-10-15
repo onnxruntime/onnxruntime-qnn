@@ -18,6 +18,10 @@ class QnnRuntimeCapabilities {
   constexpr explicit QnnRuntimeCapabilities(uint32_t effective_api_version) noexcept
       : effective_api_version_{effective_api_version} {}
 
+  static constexpr QnnRuntimeCapabilities Unavailable() noexcept {
+    return QnnRuntimeCapabilities{0};
+  }
+
   constexpr bool SupportsEpContextEncryption() const noexcept {
     return effective_api_version_ >= kEpContextEncryptionMinApiVersion;
   }

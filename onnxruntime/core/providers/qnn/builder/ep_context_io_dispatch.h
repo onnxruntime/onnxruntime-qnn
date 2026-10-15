@@ -27,7 +27,7 @@ class EpContextIoDispatch {
  public:
   // Creates a permanently disabled dispatch for paths without an application session.
   // Session-bound callers must use the constructor below and supply the runtime-negotiated
-  // API version explicitly.
+  // capabilities explicitly.
   EpContextIoDispatch() noexcept;
 
   // Resolves the callbacks from `session_options`. Never throws.
