@@ -621,7 +621,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       Qnn_ErrorHandle_t result = qnn_interface_.backendRegisterOpPackage(
           backend_handle_,
           op_package.path.c_str(),
-          op_package.interface.c_str(),
+          op_package.interface_provider.c_str(),
           op_package.target.c_str());
 
       if (result != QNN_SUCCESS) {
@@ -678,7 +678,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       RETURN_IF(QNN_SUCCESS != result,
                 ("Failed to register op package to backend. Error: " + QnnErrorHandleToString(result)).c_str());
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Successfully register the op package.");
-      std::string op_package_for_registration = op_package.interface;
+      std::string op_package_for_registration = op_package.interface_provider;
       std::string suffix = "InterfaceProvider";
       if (op_package_for_registration.size() >= suffix.size() &&
           op_package_for_registration.compare(op_package_for_registration.size() - suffix.size(), suffix.size(), suffix) == 0) {

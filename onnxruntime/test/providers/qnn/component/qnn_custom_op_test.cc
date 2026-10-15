@@ -155,7 +155,7 @@ TEST(QnnUnit_OpPackageParserTest, ParseOpPackages_AbsolutePath) {
   ASSERT_EQ(op_packages.size(), 1u);
   EXPECT_EQ(op_packages[0].op_type, "MyOp");
   EXPECT_EQ(op_packages[0].path, tmp_dll.string());
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
+  EXPECT_EQ(op_packages[0].interface_provider, "MyAddOpPackageInterfaceProvider");
   EXPECT_TRUE(op_packages[0].target.empty());
 
   // Variant with explicit ":CPU" target.
@@ -174,7 +174,7 @@ TEST(QnnUnit_OpPackageParserTest, ParseOpPackages_AbsolutePath) {
   ASSERT_EQ(op_packages.size(), 1u);
   EXPECT_EQ(op_packages[0].op_type, "MyOp");
   EXPECT_EQ(op_packages[0].path, "/tmp/foo.so");
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
+  EXPECT_EQ(op_packages[0].interface_provider, "MyAddOpPackageInterfaceProvider");
   EXPECT_TRUE(op_packages[0].target.empty());
 
   op_packages.clear();
@@ -202,7 +202,7 @@ TEST(QnnUnit_OpPackageParserTest, ParseOpPackages_AbsolutePath_NotYetOnDisk) {
   ASSERT_EQ(op_packages.size(), 1u);
   EXPECT_EQ(op_packages[0].op_type, "MyOp");
   EXPECT_EQ(op_packages[0].path, non_existent_path);
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
+  EXPECT_EQ(op_packages[0].interface_provider, "MyAddOpPackageInterfaceProvider");
   EXPECT_TRUE(op_packages[0].target.empty());
 
   // Variant with explicit ":CPU" target — the merge must leave room for the trailing target token.
@@ -235,7 +235,7 @@ TEST(QnnUnit_OpPackageParserTest, ParseOpPackages_RelativePath) {
 #else
   EXPECT_EQ(op_packages[0].path, "foo.so");
 #endif
-  EXPECT_EQ(op_packages[0].interface, "MyAddOpPackageInterfaceProvider");
+  EXPECT_EQ(op_packages[0].interface_provider, "MyAddOpPackageInterfaceProvider");
   EXPECT_TRUE(op_packages[0].target.empty());
 
   op_packages.clear();
