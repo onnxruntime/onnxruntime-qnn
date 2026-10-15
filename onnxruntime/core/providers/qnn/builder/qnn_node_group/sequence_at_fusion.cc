@@ -103,8 +103,7 @@ std::unique_ptr<IQnnNodeGroup> SequenceAtFusion::TryFusion(
   if (sc_outputs.size() != 1) {
     return nullptr;
   }
-  const Ort::ConstValue seq_output_value = sc_outputs[0];
-  const std::string seq_output_name = seq_output_value.GetName();
+  const std::string seq_output_name = sc_outputs[0].GetName();
 
   // (a) Reject if the sequence tensor is itself a graph output.
   if (qnn_model_wrapper.IsGraphOutput(seq_output_name)) {
