@@ -38,7 +38,7 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | `qnn_quant_params_wrapper_test.cc` | `QnnUnit_QuantParamsWrapperTest` | `builder/qnn_quant_params_wrapper.cc` |
 | `qnn_model_test.cc` | `QnnUnit_ModelTest` | `builder/qnn_model.cc` |
 | `qnn_utils_test.cc` | `QnnUnit_UtilsTest` | `builder/qnn_utils.cc` |
-| `qnn_ep_utils_test.cc` | `QnnUnit_EpUtilsTest` | `qnn_ep_utils.cc` |
+| `qdq_node_group_selector_test.cc` | `QnnUnit_NodeGroupUtilsTest` | `qdq_node_group_selector.cc` |
 | `qnn_ep_profiler_test.cc` | `QnnUnit_EpProfilerTest` | `qnn_ep_profiler.cc` (ORT API v25+) |
 | `ort_api_test.cc` | `QnnUnit_OrtApiTest` | `ort_api.cc` |
 | `qnn_backend_manager_test.cc` | `QnnUnit_BackendManagerTest` (stub, no real lib) / `QnnUnit_BackendManagerHtpTest` (loads a real backend, skips when unavailable) | `builder/qnn_backend_manager.cc` |
