@@ -1,0 +1,91 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: "[TEMP][DO NOT MERGE] Cleanup legacy snapshot golden paths"
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup-legacy-snapshot-goldens:
+    if: ${{ github.event.pull_request.number == 576 }}
+    runs-on: [Linux, self-hosted]
+    env:
+      BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+
+    steps:
+      - name: Set up JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Delete exact legacy snapshot golden paths
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="${BUILD_ARTIFACTORY_REPO}"
+          base="ci/qnn-ep-test-store/snapshot-goldens"
+          legacy_archive="${base}/archive"
+          legacy_latest="${base}/latest"
+          protected_golden="${base}/linux-x86_64-htp-simulator/latest/goldens.zip"
+
+          if [[ -z "${repo}" ]]; then
+            echo "BUILD_ARTIFACTORY_REPO is empty." >&2
+            exit 1
+          fi
+
+          expected_archive="ci/qnn-ep-test-store/snapshot-goldens/archive"
+          expected_latest="ci/qnn-ep-test-store/snapshot-goldens/latest"
+          if [[ "${legacy_archive}" != "${expected_archive}" ||
+                "${legacy_latest}" != "${expected_latest}" ]]; then
+            echo "Refusing cleanup: legacy paths do not match the exact allowlist." >&2
+            exit 1
+          fi
+
+          echo "Verifying protected profile golden before cleanup:"
+          echo "  ${repo}/${protected_golden}"
+          jf rt curl -k -f -XGET "/api/storage/${repo}/${protected_golden}"
+
+          echo "Legacy archive contents:"
+          jf rt curl -k -f -XGET "/api/storage/${repo}/${legacy_archive}?list&deep=1&listFolders=1"
+          echo "Legacy latest contents:"
+          jf rt curl -k -f -XGET "/api/storage/${repo}/${legacy_latest}?list&deep=1&listFolders=1"
+
+          echo "Deleting exact legacy paths only:"
+          echo "  ${repo}/${legacy_archive}"
+          echo "  ${repo}/${legacy_latest}"
+          jf rt delete --quiet "${repo}/${legacy_archive}/"
+          jf rt delete --quiet "${repo}/${legacy_latest}/"
+
+          # Artifactory can retain empty directory nodes after deleting their
+          # contents. Remove only the two exact allowlisted legacy directories.
+          jf plugin install rm-empty
+          jf rm-empty folders "${repo}/${legacy_archive}/" --quiet
+          jf rm-empty folders "${repo}/${legacy_latest}/" --quiet
+
+          verify_removed() {
+            local path="$1"
+            local status
+            status="$(jf rt curl -k -s -o /dev/null -w "%{http_code}" -XGET "/api/storage/${repo}/${path}")"
+            if [[ "${status}" != "404" ]]; then
+              echo "Expected ${repo}/${path} to be absent, got HTTP ${status}." >&2
+              exit 1
+            fi
+          }
+
+          verify_removed "${legacy_archive}"
+          verify_removed "${legacy_latest}"
+
+          echo "Verifying protected profile golden after cleanup:"
+          jf rt curl -k -f -XGET "/api/storage/${repo}/${protected_golden}"
+
+          echo "Legacy snapshot golden paths were removed successfully."
