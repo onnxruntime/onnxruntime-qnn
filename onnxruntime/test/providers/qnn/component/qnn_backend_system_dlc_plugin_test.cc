@@ -33,6 +33,8 @@
 #include <string>
 #include <vector>
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 // QnnCommon.h must precede the HTP/System headers: it defines the UNNAMED macro
 // that turns their `union UNNAMED { ... }` into anonymous unions.
 #include "QnnCommon.h"

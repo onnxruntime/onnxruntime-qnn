@@ -13,6 +13,8 @@
 
 #include "gtest/gtest.h"
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "HTP/QnnHtpDevice.h"
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"

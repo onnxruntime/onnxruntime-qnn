@@ -20,6 +20,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "HTP/QnnHtpDevice.h"
 
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
