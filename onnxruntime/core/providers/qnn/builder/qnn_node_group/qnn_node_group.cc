@@ -65,6 +65,30 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
     // pins this op type to a different backend, decline before reaching the op builder.
     RETURN_IF_ERROR(qmw.GetModelSettings().op_affinity.Evaluate(op_type, qmw.GetQnnBackendType()));
 
+    // HTP v68 does not support FP16 or FP32 tensors for compute ops. Reject any such op here,
+    // before dispatch to individual op builders, so the check cannot be bypassed by overrides.
+    // QuantizeLinear and DequantizeLinear are exempt: they are type-bridging ops that inherently
+    // have FP32/FP16 on one side and are valid on all HTP architectures.
+    if (IsNpuBackend(qmw.GetQnnBackendType()) &&
+        qmw.GetHtpArch() == QNN_HTP_DEVICE_ARCH_V68 &&
+        op_type != "QuantizeLinear" && op_type != "DequantizeLinear") {
+      const auto check_io = [&](const std::vector<OrtNodeUnitIODef>& io_defs) -> Ort::Status {
+        for (const auto& io_def : io_defs) {
+          if (!io_def.Exists()) {
+            continue;
+          }
+          TensorInfo tensor_info = {};
+          RETURN_IF_ERROR(qmw.GetTensorInfo(io_def, tensor_info));
+          const Qnn_DataType_t qnn_dt = tensor_info.qnn_data_type;
+          RETURN_IF(qnn_dt == QNN_DATATYPE_FLOAT_32 || qnn_dt == QNN_DATATYPE_FLOAT_16,
+                    "QNN EP does not support FP32 or FP16 tensors on HTP v68.");
+        }
+        return Ort::Status();
+      };
+      RETURN_IF_ERROR(check_io(node_unit_->Inputs()));
+      RETURN_IF_ERROR(check_io(node_unit_->Outputs()));
+    }
+
     return op_builder->IsOpSupported(qmw, *node_unit_, logger);
   }
 
