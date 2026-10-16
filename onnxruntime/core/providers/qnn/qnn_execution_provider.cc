@@ -63,6 +63,26 @@ static std::string MakeSharedLibraryPath(std::string_view name) {
 #endif
 }
 
+const std::unordered_map<OrtHardwareDeviceType, std::string>& QnnEp::GetDefaultBackends() {
+  // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
+  // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
+  // But if QNN-EP is distributed separately from the OnnxRuntime library (e.g. EP ABI or WinML), the backend library may
+  // well not be relative to the OnnxRuntime but to the EP library itself instead.
+  // If the EP library is co-located with the OnnxRuntime library, then this is consistent with the existing behavior,
+  // but an EP library that is shipped 'out-of-band' will use a backend relative to itself.
+  static const std::unordered_map<OrtHardwareDeviceType, std::string> kDefaultBackends = {
+#if defined(_WIN32)
+      {OrtHardwareDeviceType_NPU, "QnnHtp.dll"},
+      {OrtHardwareDeviceType_GPU, "QnnGpu.dll"},
+#else
+      {OrtHardwareDeviceType_NPU, "libQnnHtp.so"},
+      {OrtHardwareDeviceType_GPU, "libQnnGpu.so"},
+#endif
+  };
+
+  return kDefaultBackends;
+}
+
 const std::string kDefaultCpuBackendPath = MakeSharedLibraryPath("QnnCpu");
 const std::string kDefaultGenieBackendPath = MakeSharedLibraryPath("Genie");
 const std::string kDefaultGpuBackendPath = MakeSharedLibraryPath("QnnGpu");
@@ -441,6 +461,61 @@ static bool ProbeDumpDirectoryWritable(const std::string& dir,
   return true;
 }
 
+std::string QnnEp::GetDefaultBackendPath(const std::vector<const OrtHardwareDevice*>& devices) const {
+  // If neither "backend_path" nor "backend_type" has been given in the provider options, then determine the backend based
+  // on the provided devices. As QNN EP does not support partitioning across backends, if multiple devices are provided,
+  // default to HTP (if present) or else to the GPU.
+  const OrtHardwareDevice* device_to_use = nullptr;
+  if (devices.size() == 0) {
+    LOG_AND_THROW_ERROR(logger_, "No devices were provided to QNN EP.");
+  } else if (devices.size() == 1) {
+    device_to_use = devices[0];
+  } else {
+    const auto is_npu = [this](const OrtHardwareDevice* device) {
+      return ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_NPU;
+    };
+    const auto is_gpu = [this](const OrtHardwareDevice* device) {
+      return ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_GPU;
+    };
+
+    auto device_it = std::find_if(devices.begin(), devices.end(), is_npu);
+    if (device_it != devices.end()) {
+      ORT_CXX_LOG(logger_,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+                  "QNN EP only supports one device. Only the NPU device will be used.");
+      device_to_use = *device_it;
+    } else {
+      device_it = std::find_if(devices.begin(), devices.end(), is_gpu);
+      if (device_it != devices.end()) {
+        ORT_CXX_LOG(logger_,
+                    OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+                    "QNN EP only supports one device. An NPU device was not provided, so only the GPU device will be used.");
+        device_to_use = *device_it;
+      } else {
+        LOG_AND_THROW_ERROR(logger_, "Multiple devices were provided to QNN EP, but neither an NPU nor a GPU was included.");
+      }
+    }
+  }
+  assert(device_to_use != nullptr);
+
+  const auto& default_backends = GetDefaultBackends();
+  auto default_backends_it = default_backends.find(ort_api.HardwareDevice_Type(device_to_use));
+  if (default_backends_it == default_backends.end()) {
+    LOG_AND_THROW_ERROR(logger_, "Could not determine default backend path for device");
+  }
+
+  // Identify the path of the current dynamic library, and expect that the backend library is in the same directory.
+  auto current_path = onnxruntime::GetDynamicLibraryLocationByAddress(
+      reinterpret_cast<const void*>(&onnxruntime::GetDynamicLibraryLocationByAddress));
+
+  std::filesystem::path parent_path;
+  if (!current_path.empty()) {
+    parent_path = std::filesystem::path{std::move(current_path)}.parent_path();
+  }
+
+  return (parent_path / default_backends_it->second).string();
+}
+
 void QnnEp::ParsePerSocHtpConfigs() {
   std::string soc_model_per_soc_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("soc_model"), "", soc_model_per_soc_str);
@@ -638,9 +713,10 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() const
   return nullptr;
 }
 
-QnnEp::QnnEp(const QnnEpFactory& factory,
+QnnEp::QnnEp(QnnEpFactory& factory,
              const std::string& name,
              const OrtSessionOptions& session_options,
+             const std::vector<const OrtHardwareDevice*>& devices,
              const OrtLogger* logger)
     : OrtEp{},
       ApiPtrs{static_cast<const ApiPtrs&>(factory)},
@@ -835,6 +911,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     if (backend_path_from_options.has_value()) {
       backend_path = std::move(*backend_path_from_options);
     } else {
+      backend_path = GetDefaultBackendPath(devices);
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Using default backend path: " + backend_path).c_str());
     }
 
@@ -1553,7 +1630,8 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     qnn_backend_manager_ = shared_qnn_backend_manager;
   } else {
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
-        qnn::QnnBackendManagerConfig{backend_path,
+        qnn::QnnBackendManagerConfig{devices,
+                                     backend_path,
                                      profiling_level_etw,
                                      profiling_level,
                                      profiling_file_path,
@@ -1573,6 +1651,8 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   }
   // Terminator reset is deferred to GetCapabilityImpl (after SetupBackend) for both
   // htp_share_resource_optimization and share_ep_contexts paths, so no reset here.
+
+  factory_.RegisterQnnBackendManager(qnn_backend_manager_);
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
@@ -1665,6 +1745,48 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                  qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data());
   }
 
+  for (const OrtHardwareDevice* device : devices) {
+    const auto device_type = ort_api.HardwareDevice_Type(device);
+    switch (device_type) {
+      case OrtHardwareDeviceType_NPU:
+        if (qnn::IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
+          OrtMemoryInfo* mem_info = nullptr;
+          auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
+                                                     OrtMemoryInfoDeviceType_CPU,
+                                                     /*vendor*/ 0x5143,
+                                                     /*device_id*/ 0,
+                                                     OrtDeviceMemoryType_HOST_ACCESSIBLE,
+                                                     /*alignment*/ 0,
+                                                     OrtAllocatorType::OrtDeviceAllocator,
+                                                     &mem_info);
+          if (status != nullptr) {
+            ort_api.ReleaseMemoryInfo(mem_info);
+          } else {
+            host_accessible_memory_infos_[device_type] = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
+          }
+        }
+        break;
+      case OrtHardwareDeviceType_GPU:
+        if (qnn::IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
+          OrtMemoryInfo* mem_info = nullptr;
+          auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
+                                                     OrtMemoryInfoDeviceType_CPU,
+                                                     /*vendor*/ 0x5143,
+                                                     /*device_id*/ 0,
+                                                     OrtDeviceMemoryType_HOST_ACCESSIBLE,
+                                                     /*alignment*/ 0,
+                                                     OrtAllocatorType::OrtDeviceAllocator,
+                                                     &mem_info);
+          if (status != nullptr) {
+            ort_api.ReleaseMemoryInfo(mem_info);
+          } else {
+            host_accessible_memory_infos_[device_type] = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
+          }
+        }
+        break;
+    }
+  }
+
 #if defined(_WIN32)
   if (qnn::QnnTelemetry::SupportsETW()) {
     auto& etwRegistrationManager = qnn::QnnTelemetry::Instance();
@@ -1739,6 +1861,11 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
 
 QnnEp::~QnnEp() {
   if (qnn_backend_manager_) {
+    // The factory retains the manager so its libraries stay loaded. Release QNN resources
+    // when this is the last EP using the manager, preserving shared-manager semantics.
+    if (!((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1)) {
+      qnn_backend_manager_->ReleaseResources();
+    }
     auto thread_id = std::this_thread::get_id();
     qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
     // NOTE: do NOT tear down the release timer here. The QnnBackendManager may be
@@ -2026,7 +2153,9 @@ static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& or
     OrtNodeAttrHelper node_helper(*node);
     std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(qnn::SOURCE, ""));
 
-    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
+    if (op_type == qnn::EPCONTEXT_OP &&
+        (cache_source == "qnnexecutionprovider" || cache_source == "qnnexecutionprovider.virtual" ||
+         cache_source == "qnn" || cache_source == "qnn.virtual")) {
       const char* node_name = nullptr;
       if (ort_api.Node_GetName(node, &node_name) != nullptr) {
         return false;
@@ -2075,7 +2204,8 @@ static void GetMainEPCtxNodes(const OrtGraph* graph,
 
     if (is_main_context &&
         op_type == qnn::EPCONTEXT_OP &&
-        (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
+        (cache_source == "qnnexecutionprovider" || cache_source == "qnnexecutionprovider.virtual" ||
+         cache_source == "qnn" || cache_source == "qnn.virtual")) {
       const char* node_name = nullptr;
       auto node_status = ort_api.Node_GetName(node, &node_name);
       if (node_status != nullptr) {
@@ -2122,7 +2252,9 @@ void QnnEp::PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* grap
     OrtNodeAttrHelper node_helper(*node);
     std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(qnn::SOURCE, ""));
 
-    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
+    if (op_type == qnn::EPCONTEXT_OP &&
+        (cache_source == "qnnexecutionprovider" || cache_source == "qnnexecutionprovider.virtual" ||
+         cache_source == "qnn" || cache_source == "qnn.virtual")) {
       const char* node_name = nullptr;
       auto partition_status = ort_api.Node_GetName(node, &node_name);
       if (partition_status != nullptr) {
@@ -2181,6 +2313,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
     if (!setup_st.IsOK()) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
     }
+    ep->factory_.RegisterGenieBackendManager(ep->genie_backend_manager_);
   }
   ep->genie_api_loader_ = std::make_shared<GenieApiLoader>((ep->genie_backend_manager_)->GetGenieBackendHandle());
   // Get all nodes from the graph

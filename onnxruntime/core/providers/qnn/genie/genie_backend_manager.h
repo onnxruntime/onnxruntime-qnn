@@ -52,6 +52,9 @@ class GenieBackendManager : public std::enable_shared_from_this<GenieBackendMana
   // Initializes handles to Genie resources (device, logger, etc.).
   Ort::Status SetupBackend();
 
+  // Unloads the Genie library. This must only be called when the QNN EP module is unloaded.
+  void UnloadBackendLibraries();
+
   void* GetGenieBackendHandle() { return backend_lib_handle_; }
 
  private:
