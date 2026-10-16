@@ -12,7 +12,7 @@
 
 #include <vector>
 
-#include "core/providers/qnn/qnn_ep_utils.h"
+#include "core/providers/qnn/builder/qnn_ep_utils.h"
 #include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
