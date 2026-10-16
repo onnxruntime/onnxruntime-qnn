@@ -79,6 +79,7 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
     QnnSystemContext_GraphInfoVersion_t version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3;
     QnnHtpSystemContext_GraphInfoBlobVersion_t blob_version = QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_VERSION_V1;
     uint64_t spill_fill_buffer_size = 0;
+    bool has_blob_info = true;
   };
 
   void SetUp() override {
@@ -131,7 +132,7 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
     for (const GraphSpec& spec : graphs) {
       QnnSystemContext_GraphInfo_t graph_info{};
       graph_info.version = spec.version;
-      if (spec.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
+      if (spec.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3 && spec.has_blob_info) {
         QnnHtpSystemContext_GraphBlobInfo_t& blob = blobs_.emplace_back();
         std::memset(&blob, 0, sizeof(blob));
         blob.version = spec.blob_version;
@@ -854,6 +855,18 @@ TEST_F(QnnUnit_BackendSystemDlcPluginTest, GetDlcMaxSpillFillBufferSize_GetBinar
 
   ExpectErrorContains(Plugin().GetDlcMaxSpillFillBufferSize(max_size), "Failed to get context binary info");
   // The system context created for the query is still freed.
+  EXPECT_EQ(calls.back(), "systemContextFree");
+}
+
+TEST_F(QnnUnit_BackendSystemDlcPluginTest, GetDlcMaxSpillFillBufferSize_NullHtpGraphInfo_ReturnsError) {
+  const uint8_t dlc[4] = {0};
+  ASSERT_TRUE(Plugin().SetupDlcFromBinary(dlc, sizeof(dlc)).IsOK());
+  GraphSpec graph;
+  graph.has_blob_info = false;
+  AddRecord({graph});
+  uint64_t max_size = 0;
+
+  ExpectErrorContains(Plugin().GetDlcMaxSpillFillBufferSize(max_size), "DLC HTP graph info is null");
   EXPECT_EQ(calls.back(), "systemContextFree");
 }
 

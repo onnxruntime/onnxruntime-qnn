@@ -172,6 +172,17 @@ TEST(QnnUnit_ModelTest, Deserialize_UnsupportedVersion_ReturnsError) {
   EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
 }
 
+TEST(QnnUnit_ModelTest, Deserialize_Version1_NullGraphName_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  QnnSystemContext_GraphInfo_t info{};
+  info.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1;
+
+  Qnn_ContextHandle_t fake_ctx = nullptr;
+  EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
+}
+
 TEST(QnnUnit_ModelTest, Deserialize_Version1_NullInputTensors_ReturnsError) {
   QnnModelMinimalTestContext ctx;
   ASSERT_TRUE(ctx.IsValid());
@@ -205,6 +216,17 @@ TEST(QnnUnit_ModelTest, Deserialize_Version1_NullOutputTensors_ReturnsError) {
 }
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 18)
+TEST(QnnUnit_ModelTest, Deserialize_Version2_NullGraphName_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  QnnSystemContext_GraphInfo_t info{};
+  info.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_2;
+
+  Qnn_ContextHandle_t fake_ctx = nullptr;
+  EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
+}
+
 TEST(QnnUnit_ModelTest, Deserialize_Version2_NullInputTensors_ReturnsError) {
   // Covers the V2 conditional branch at lines 844-849.
   QnnModelMinimalTestContext ctx;
@@ -222,6 +244,17 @@ TEST(QnnUnit_ModelTest, Deserialize_Version2_NullInputTensors_ReturnsError) {
 #endif
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+TEST(QnnUnit_ModelTest, Deserialize_Version3_NullGraphName_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  QnnSystemContext_GraphInfo_t info{};
+  info.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3;
+
+  Qnn_ContextHandle_t fake_ctx = nullptr;
+  EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
+}
+
 TEST(QnnUnit_ModelTest, Deserialize_Version3_NullInputTensors_ReturnsError) {
   // Covers the V3 conditional branch at lines 853-858.
   QnnModelMinimalTestContext ctx;
