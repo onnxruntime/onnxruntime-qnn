@@ -35,6 +35,8 @@
 
 #include "gtest/gtest.h"
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
