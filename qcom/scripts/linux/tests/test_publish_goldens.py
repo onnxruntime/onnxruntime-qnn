@@ -191,4 +191,4 @@ def test_publish_supports_windows_binary_and_build_root_cache(tmp_path: Path) ->
     )
 
     assert result.returncode == 0, result.stderr
-    assert "profile=windows-x86_64-htp-simulator qairt=2.50.40 ort=1.29.0" in result.stderr
+    assert f"profile=windows-x86_64-htp-simulator qairt={QAIRT_VERSION} ort={ORT_VERSION}" in result.stderr
