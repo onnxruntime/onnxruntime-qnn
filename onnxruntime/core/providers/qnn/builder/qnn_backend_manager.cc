@@ -2377,6 +2377,7 @@ Ort::Status QnnBackendManager::SetupBackendExceptDeviceAndContext() {
 
 Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arch,
                                                      uint32_t soc_model,
+                                                     bool enable_htp_weight_sharing,
                                                      bool enable_htp_extended_udma_mode,
                                                      bool enable_htp_prepare_only,
                                                      bool enable_htp_ref_weight_sharing,
@@ -2399,7 +2400,7 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
   }
 
   if (status.IsOK()) {
-    status = CreateContext(false /*enable_htp_weight_sharing*/,
+    status = CreateContext(enable_htp_weight_sharing,
                            enable_htp_extended_udma_mode,
                            enable_htp_prepare_only,
                            enable_htp_ref_weight_sharing,

@@ -247,11 +247,10 @@ constexpr const uint32_t kMaxRpcPolling = 9999;
 constexpr const uint64_t kDefaultTimerTimeoutUs = 300000;
 
 struct OnnxTensorInfo {
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OnnxTensorInfo);
   OnnxTensorInfo(size_t index, int32_t data_type, std::vector<int64_t>&& shape) : index_(index), data_type_(data_type), shape_(std::move(shape)) {}
   size_t index_;
-  const int32_t data_type_;  // Uses TensorProto::DataType
-  const std::vector<int64_t> shape_;
+  int32_t data_type_;  // Uses TensorProto::DataType
+  std::vector<int64_t> shape_;
 };
 
 // Book-keeping for graph input or output tensors.
@@ -335,42 +334,49 @@ class QnnTensorWrapper {
                    std::vector<uint8_t>&& client_buf = {},
                    Qnn_TensorMemType_t mem_type = QNN_TENSORMEMTYPE_RAW) : tensor_name_(name),
                                                                            dimensions_(std::move(shape)),
-                                                                           client_buf_(std::move(client_buf)),
                                                                            quant_params_(quantize_params) {
+    // Any type casting happens on this local buffer, before it is published to the immutable
+    // (and potentially shared) client_buf_.
+    std::vector<uint8_t> buf = std::move(client_buf);
+
     if (data_type == QNN_DATATYPE_INT_64) {
       // QNN doesn't support int64_t, so we cast to int32_t.
       if (tensor_type == QNN_TENSOR_TYPE_NATIVE) {
         data_type = QNN_DATATYPE_INT_32;
       }
-      if (client_buf_.size()) {
-        const size_t num_elems = client_buf_.size() / sizeof(int64_t);
+      if (buf.size()) {
+        const size_t num_elems = buf.size() / sizeof(int64_t);
         std::vector<uint8_t> cast_data;
         cast_data.resize(num_elems * sizeof(int32_t));
-        gsl::span<int64_t> origin_values{reinterpret_cast<int64_t*>(client_buf_.data()), num_elems};
+        gsl::span<int64_t> origin_values{reinterpret_cast<int64_t*>(buf.data()), num_elems};
         gsl::span<int32_t> new_values(reinterpret_cast<int32_t*>(cast_data.data()), num_elems);
         for (size_t i = 0; i < num_elems; i++) {
           new_values[i] = static_cast<int32_t>(origin_values[i]);
         }
         data_type = QNN_DATATYPE_INT_32;
-        client_buf_ = std::move(cast_data);
+        buf = std::move(cast_data);
       }
     } else if (data_type == QNN_DATATYPE_FLOAT_64) {
       // QNN doesn't support double, so we cast to float.
       if (tensor_type == QNN_TENSOR_TYPE_NATIVE) {
         data_type = QNN_DATATYPE_FLOAT_32;
       }
-      if (client_buf_.size()) {
-        const size_t num_elems = client_buf_.size() / sizeof(double);
+      if (buf.size()) {
+        const size_t num_elems = buf.size() / sizeof(double);
         std::vector<uint8_t> cast_data;
         cast_data.resize(num_elems * sizeof(float));
-        gsl::span<double> origin_values{reinterpret_cast<double*>(client_buf_.data()), num_elems};
+        gsl::span<double> origin_values{reinterpret_cast<double*>(buf.data()), num_elems};
         gsl::span<float> new_values(reinterpret_cast<float*>(cast_data.data()), num_elems);
         for (size_t i = 0; i < num_elems; i++) {
           new_values[i] = static_cast<float>(origin_values[i]);
         }
         data_type = QNN_DATATYPE_FLOAT_32;
-        client_buf_ = std::move(cast_data);
+        buf = std::move(cast_data);
       }
+    }
+
+    if (!buf.empty()) {
+      client_buf_ = std::make_shared<const std::vector<uint8_t>>(std::move(buf));
     }
 
     SetQnnTensorType(qnn_tensor_, tensor_type);
@@ -379,7 +385,7 @@ class QnnTensorWrapper {
     SetQnnTensorDim(qnn_tensor_, dimensions_);
     SetQnnTensorMemType(qnn_tensor_, mem_type);
     if (QNN_TENSOR_TYPE_STATIC == tensor_type) {
-      SetQnnTensorClientBuf(qnn_tensor_, client_buf_);
+      ApplyClientBufToQnnTensor();
     }
 
     SetQnnTensorQParams(qnn_tensor_, quant_params_.Get());
@@ -395,7 +401,7 @@ class QnnTensorWrapper {
               "QnnTensorWrapper::Init(const Qnn_Tensor_t&) does not support static initializers");
 
     tensor_name_ = GetQnnTensorName(qnn_tensor);
-    client_buf_.clear();
+    client_buf_.reset();
 
     qnn_tensor_ = qnn_tensor;
     SetQnnTensorName(qnn_tensor_, tensor_name_.c_str());
@@ -431,6 +437,29 @@ class QnnTensorWrapper {
   }
 
   ~QnnTensorWrapper() = default;
+
+  // Cheap duplicate of this wrapper, for re-composing the same graph onto another QNN context
+  // (e.g. once per SoC of a multi-SoC context binary). The metadata is duplicated so each
+  // composition can mutate it independently -- QNN-assigned tensor IDs, data type conversions,
+  // resolved tensor names -- while the (potentially large) static tensor data is shared, not copied.
+  QnnTensorWrapper Clone() const {
+    QnnTensorWrapper cloned;
+    cloned.tensor_name_ = tensor_name_;
+    cloned.tensor_name_override_ = tensor_name_override_;
+    cloned.dimensions_ = dimensions_;
+    cloned.client_buf_ = client_buf_;  // Shares the buffer: refcount bump, no memcpy.
+    cloned.quant_params_ = quant_params_.Copy();
+    cloned.qnn_tensor_ = qnn_tensor_;
+
+    // A QNN tensor ID is assigned by the backend per graph, so the clone starts out unassigned.
+    SetQnnTensorID(cloned.qnn_tensor_, 0);
+    SetQnnTensorName(cloned.qnn_tensor_, cloned.GetResolvedTensorName().c_str());
+    SetQnnTensorDim(cloned.qnn_tensor_, cloned.dimensions_);
+    cloned.ApplyClientBufToQnnTensor();
+    SetQnnTensorQParams(cloned.qnn_tensor_, cloned.quant_params_.Get());
+
+    return cloned;
+  }
 
   const Qnn_Tensor_t& GetQnnTensor() const {
     return qnn_tensor_;
@@ -477,6 +506,16 @@ class QnnTensorWrapper {
   }
 
  private:
+  // Points qnn_tensor_'s clientBuf at the current backing buffer. Must be re-run whenever
+  // client_buf_ is rebound, since Qnn_Tensor_t only holds a raw pointer into it.
+  void ApplyClientBufToQnnTensor() {
+    if (client_buf_) {
+      SetQnnTensorClientBuf(qnn_tensor_, *client_buf_);
+    } else {
+      SetQnnTensorClientBuf(qnn_tensor_, nullptr, 0);
+    }
+  }
+
   void SwapOther(QnnTensorWrapper&& other) noexcept {
     std::swap(tensor_name_, other.tensor_name_);
     std::swap(tensor_name_override_, other.tensor_name_override_);
@@ -486,14 +525,16 @@ class QnnTensorWrapper {
     std::swap(qnn_tensor_, other.qnn_tensor_);
     SetQnnTensorName(qnn_tensor_, GetResolvedTensorName().c_str());
     SetQnnTensorDim(qnn_tensor_, dimensions_);
-    SetQnnTensorClientBuf(qnn_tensor_, client_buf_);
+    ApplyClientBufToQnnTensor();
     SetQnnTensorQParams(qnn_tensor_, quant_params_.Get());
   }
 
   std::string tensor_name_;           // The tensor's actual name used inside QNN graph
   std::string tensor_name_override_;  // Optional override to original ONNX tensor name
   std::vector<uint32_t> dimensions_;
-  std::vector<uint8_t> client_buf_;
+  // Static tensor data, null when the tensor carries none. Immutable once constructed so that
+  // Clone() can share it instead of duplicating the weights.
+  std::shared_ptr<const std::vector<uint8_t>> client_buf_;
   Qnn_Tensor_t qnn_tensor_ = QNN_TENSOR_INIT;
   QnnQuantParamsWrapper quant_params_;
 };
@@ -503,7 +544,7 @@ class QnnParamWrapper {
   QnnParamWrapper(size_t node_index,
                   const std::string& node_name,
                   const std::string& name,
-                  Qnn_Scalar_t scalarParam) : name_(name), shape_({}), param_data_({}) {
+                  Qnn_Scalar_t scalarParam) : name_(name), shape_({}) {
     qnn_param_.paramType = QNN_PARAMTYPE_SCALAR;
     qnn_param_.name = name_.c_str();
     std::stringstream ss;
@@ -517,7 +558,10 @@ class QnnParamWrapper {
                   const std::string& name,
                   Qnn_DataType_t data_type,
                   std::vector<uint32_t>&& shape,
-                  std::vector<uint8_t>&& param_data) : name_(name), shape_(std::move(shape)), param_data_(std::move(param_data)) {
+                  std::vector<uint8_t>&& param_data) : name_(name),
+                                                       shape_(std::move(shape)),
+                                                       param_data_(std::make_shared<const std::vector<uint8_t>>(
+                                                           std::move(param_data))) {
     qnn_param_.paramType = QNN_PARAMTYPE_TENSOR;
     qnn_param_.name = name_.c_str();
     std::stringstream ss;
@@ -529,7 +573,7 @@ class QnnParamWrapper {
     SetQnnTensorDataType(qnn_param_.tensorParam, data_type);
     SetQnnTensorDim(qnn_param_.tensorParam, shape_);
     SetQnnTensorMemType(qnn_param_.tensorParam, QNN_TENSORMEMTYPE_RAW);
-    SetQnnTensorClientBuf(qnn_param_.tensorParam, param_data_);
+    SetQnnTensorClientBuf(qnn_param_.tensorParam, *param_data_);
   }
 
   QnnParamWrapper(size_t node_index,
@@ -538,8 +582,9 @@ class QnnParamWrapper {
                   std::vector<uint32_t>&& shape,
                   std::vector<uint32_t>&& param_data,
                   bool is_signed = false) : name_(name), shape_(std::move(shape)) {
-    param_data_.resize(param_data.size() * sizeof(uint32_t));
-    std::memcpy(param_data_.data(), const_cast<void*>(static_cast<const void*>(param_data.data())), param_data_.size());
+    std::vector<uint8_t> data(param_data.size() * sizeof(uint32_t));
+    std::memcpy(data.data(), param_data.data(), data.size());
+    param_data_ = std::make_shared<const std::vector<uint8_t>>(std::move(data));
     qnn_param_.paramType = QNN_PARAMTYPE_TENSOR;
     qnn_param_.name = name_.c_str();
     std::stringstream ss;
@@ -551,7 +596,7 @@ class QnnParamWrapper {
     SetQnnTensorDataType(qnn_param_.tensorParam, is_signed ? QNN_DATATYPE_INT_32 : QNN_DATATYPE_UINT_32);
     SetQnnTensorDim(qnn_param_.tensorParam, shape_);
     SetQnnTensorMemType(qnn_param_.tensorParam, QNN_TENSORMEMTYPE_RAW);
-    SetQnnTensorClientBuf(qnn_param_.tensorParam, param_data_);
+    SetQnnTensorClientBuf(qnn_param_.tensorParam, *param_data_);
   }
 
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnParamWrapper);
@@ -565,11 +610,35 @@ class QnnParamWrapper {
     if (qnn_param_.paramType == QNN_PARAMTYPE_TENSOR) {
       SetQnnTensorName(qnn_param_.tensorParam, tensor_name_.c_str());
       SetQnnTensorDim(qnn_param_.tensorParam, shape_);
-      SetQnnTensorClientBuf(qnn_param_.tensorParam, param_data_);
+      if (param_data_) {
+        SetQnnTensorClientBuf(qnn_param_.tensorParam, *param_data_);
+      }
     }
   }
 
   ~QnnParamWrapper() = default;
+
+  // See QnnTensorWrapper::Clone(): duplicates the metadata, shares the param data buffer.
+  QnnParamWrapper Clone() const {
+    QnnParamWrapper cloned;
+    cloned.name_ = name_;
+    cloned.tensor_name_ = tensor_name_;
+    cloned.shape_ = shape_;
+    cloned.param_data_ = param_data_;  // Shares the buffer: refcount bump, no memcpy.
+    cloned.qnn_param_ = qnn_param_;
+    cloned.qnn_param_.name = cloned.name_.c_str();
+    if (cloned.qnn_param_.paramType == QNN_PARAMTYPE_TENSOR) {
+      // A QNN tensor ID is assigned by the backend per graph, so the clone starts out unassigned.
+      SetQnnTensorID(cloned.qnn_param_.tensorParam, 0);
+      SetQnnTensorName(cloned.qnn_param_.tensorParam, cloned.tensor_name_.c_str());
+      SetQnnTensorDim(cloned.qnn_param_.tensorParam, cloned.shape_);
+      if (cloned.param_data_) {
+        SetQnnTensorClientBuf(cloned.qnn_param_.tensorParam, *cloned.param_data_);
+      }
+    }
+
+    return cloned;
+  }
 
   const std::string& GetName() const {
     return name_;
@@ -594,10 +663,15 @@ class QnnParamWrapper {
                            std::string& error_msg);
 
  private:
+  // Only for Clone(), which fills every member explicitly.
+  QnnParamWrapper() = default;
+
   std::string name_;
   std::string tensor_name_;
   std::vector<uint32_t> shape_;
-  std::vector<uint8_t> param_data_;
+  // Param tensor data, null for scalar params. Immutable once constructed so that Clone() can
+  // share it instead of duplicating it.
+  std::shared_ptr<const std::vector<uint8_t>> param_data_;
   Qnn_Param_t qnn_param_ = QNN_PARAM_INIT;
 };
 
@@ -731,6 +805,17 @@ class QnnOpProperty {
     std::swap(param_tensor_names_, other.param_tensor_names_);
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnOpProperty);
+
+  // Duplicate of this op property, for re-composing the same graph onto another QNN context.
+  // Explicit rather than a copy constructor so the move-only invariant stays visible at call sites.
+  QnnOpProperty Clone() const {
+    return QnnOpProperty(qnn_node_name_,
+                         package_name_,
+                         qnn_node_type_,
+                         std::vector<std::string>(input_names_),
+                         std::vector<std::string>(output_names_),
+                         std::vector<std::string>(param_tensor_names_));
+  }
 
  private:
   std::string qnn_node_name_;
