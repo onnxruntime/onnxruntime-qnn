@@ -742,6 +742,7 @@ TEST(QnnUnit_EpUtilsTest, MatMul_ConvertBeforeOpGroupHonorsHtpTypeRules) {
       {u8, u8, s16, false},   // signed 16-bit output needs an int8 weight
       {u8, s16, s16, false},  // signed 16-bit output needs an int8 weight
       {u8, u16, s8, false},   // weight wider than the output
+      {u16, u8, u8, false},   // narrowing: narrow-after-op path, which needs a Q scale the fake lacks
       {u4, u8, u8, false},    // no 4-bit activation
       {u8, u4, u16, false},   // no 4-bit weight
   };
