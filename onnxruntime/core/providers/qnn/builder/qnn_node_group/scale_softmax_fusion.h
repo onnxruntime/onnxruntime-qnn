@@ -16,7 +16,8 @@ namespace qnn {
 class QnnModelWrapper;
 
 /// <summary>
-/// Represents a fusion of pattern: Softmax(Mul(x, scalar_scale)) => QnnSoftmax(x, beta=scalar_scale)
+/// Represents a fusion of pattern: Softmax(Mul(x, scale)) => QnnSoftmax(x, beta=scale),
+/// where scale is a single-element (scalar-like) constant.
 /// </summary>
 class ScaleSoftmaxFusion : public IQnnNodeGroup {
  public:
