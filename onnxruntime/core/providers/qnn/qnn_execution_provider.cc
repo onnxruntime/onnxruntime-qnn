@@ -1569,7 +1569,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                      skip_backend_op_validation,
                                      reused_io_limit_mb,
                                      enable_htp_cross_device_prepare},
-        ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
+        static_cast<const ApiPtrs&>(*this), logger_);
   }
   // Terminator reset is deferred to GetCapabilityImpl (after SetupBackend) for both
   // htp_share_resource_optimization and share_ep_contexts paths, so no reset here.
@@ -1715,18 +1715,11 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   }
 #endif
 
-  // Owns the EPContext callbacks resolved from session_options. On pre-v28 ORT this is a no-op
-  // stub with HasReadCallback()/HasWriteCallback() returning false.
-  // When running on ORT < 1.28, pass nullptr to skip the Experimental::EpContextConfig path
-  // that would dereference API vtable entries that don't exist in older runtimes (crash).
-  const OrtSessionOptions* session_opts_for_epctx = &session_options_;
-  if (factory.effective_api_version_ < 28) {
-    session_opts_for_epctx = nullptr;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "ORT runtime API version is below 28 (v1.28). "
-                "EPContext encryption callbacks are unavailable; upgrade to onnxruntime >= 1.28 to enable.");
-  }
-  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_opts_for_epctx, &logger_);
+  // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
+  // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
+  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
+                                                            runtime_capabilities,
+                                                            &logger_);
 
   // File mapping and encryption are mutually exclusive: an App-provided read callback replaces
   // the on-disk read, so file mapping must be off when a read callback is registered.
@@ -1884,7 +1877,7 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   init_input_output_info(model_outputs.names, model_outputs.indices, graph_outputs);
 
   auto qnn_model_wrapper = qnn::QnnModelWrapper(*graph,
-                                                ApiPtrs{ort_api, ep_api, model_editor_api},
+                                                static_cast<const ApiPtrs&>(*this),
                                                 logger_,
                                                 *qnn_backend_manager_,
                                                 model_inputs,
@@ -2562,7 +2555,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     const std::string fused_node_name = Ort::ConstNode(fused_node).GetName();
 
     std::unique_ptr<qnn::QnnModel> qnn_model = std::make_unique<qnn::QnnModel>(
-        qnn_backend_manager_.get(), ApiPtrs{ort_api, ep_api, model_editor_api});
+        qnn_backend_manager_.get(), static_cast<const ApiPtrs&>(*this));
 
     qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
         QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
