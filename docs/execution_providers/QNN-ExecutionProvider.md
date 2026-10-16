@@ -225,8 +225,8 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 
 |`"enable_htp_matmul_lut"`|Description|
 |---|---|
-|`"0"`|Disable the HTP MatMul LUT kernel optimization.|
-|`"1"`|Default. Enable the HTP MatMul LUT kernel optimization. Available only on Windows with QAIRT 2.51 or later.|
+|`"0"`|Default. Disable the HTP MatMul LUT kernel optimization.|
+|`"1"`|Enable the HTP MatMul LUT kernel optimization. Available only on Windows with QAIRT 2.51 or later.|
 
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|

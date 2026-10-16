@@ -30,7 +30,7 @@ namespace qnn {
 #define QNN_SYSTEM_DLC_API_ENABLED
 #endif  // QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
 
-// HTP MatMul LUT is currently enabled only on Windows with QAIRT SDK 2.51+.
+// HTP MatMul LUT is currently supported only on Windows with QAIRT SDK 2.51+.
 // QNN_SDK_VERSION_MAJOR/MINOR are injected by CMake from the SDK version.
 #if defined(_WIN32) && defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
     (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
@@ -178,7 +178,7 @@ typedef struct HtpGraphConfigs {
   bool enable_htp_fp16_precision = false;
   bool enable_htp_monolithic_lstm = false;
   bool enable_htp_fp16_clamp_overflow = false;  // Intentionally undocumented; for internal/diagnostic use only.
-  bool enable_htp_matmul_lut = ORT_QNN_HTP_MATMUL_LUT_SUPPORTED;
+  bool enable_htp_matmul_lut = false;
 } HtpGraphConfigs_t;
 
 enum class QnnBackendType : uint8_t {
