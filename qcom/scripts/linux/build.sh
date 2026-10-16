@@ -149,6 +149,8 @@ fi
 build_dir="${build_root}/${build_dir_name}"
 
 qairt_sdk_file_path="${build_dir}/qairt-sdk-path-${config}.txt"
+# build.py reruns CMake only when --update is provided. Track the resolved mode
+# so switching coverage/internal-symbol settings cannot reuse a stale CMake cache.
 qnn_build_mode_file_path="${build_dir}/qnn-build-mode-${config}.txt"
 
 if [ -z "${qairt_sdk_root}" ]; then

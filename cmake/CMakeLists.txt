@@ -77,8 +77,9 @@ option(onnxruntime_CROSS_COMPILING "Cross compiling onnx runtime" OFF)
 option(onnxruntime_GCOV_COVERAGE "Compile with options necessary to run code coverage" OFF)
 option(onnxruntime_DONT_VECTORIZE "Do not vectorize operations in Eigen" OFF)
 
-# Coverage builds are only supported on Linux with GCC.
-# Pass -DENABLE_COVERAGE=ON to cmake to enable (e.g. via build.sh --enable-coverage).
+# ENABLE_COVERAGE controls GCC coverage instrumentation and is supported only on Linux.
+# QNN internal-symbol access is a separate test capability without instrumentation. The
+# QCOM Linux build wrapper enables both for coverage builds to preserve the existing suite.
 option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
 option(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS
        "Build QNN EP with internal symbols exported for unit tests. Do not use for production binaries." OFF)

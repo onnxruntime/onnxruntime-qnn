@@ -57,7 +57,6 @@ jobs:
           # Snapshot/accuracy tiers require QNN EP internal symbols, but golden
           # publishing does not need coverage instrumentation or a report.
           python3 qcom/build_and_test.py \
-            --config Release \
             build_ort_linux_x86_64_internal_symbols
 
       - name: Prepare golden store
