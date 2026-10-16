@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -15,6 +16,7 @@
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_spill_fill_utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
 
@@ -242,30 +244,8 @@ Ort::Status QnnBackendSystemDlcPlugin::GetDlcMaxSpillFillBufferSize(uint64_t& ma
         graph_count,
         &graphs_info));
 
-    for (uint32_t graph_idx = 0; graph_idx < graph_count; ++graph_idx) {
-      if (graphs_info[graph_idx].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
-        auto htp_graph_info = reinterpret_cast<QnnHtpSystemContext_GraphBlobInfo_t*>(
-            graphs_info[graph_idx].graphInfoV3.graphBlobInfo);
-        if (htp_graph_info->version == QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_VERSION_V1) {
-          auto spill_fill_buffer_size = htp_graph_info->contextBinaryGraphBlobInfoV1.spillFillBufferSize;
-          max_spill_fill_buffer_size = spill_fill_buffer_size > max_spill_fill_buffer_size ? spill_fill_buffer_size
-                                                                                           : max_spill_fill_buffer_size;
-        } else {
-          ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_,
-                          ORT_LOGGING_LEVEL_VERBOSE,
-                          "Unknown system context HTP graph info blob version.");
-        }
-      } else if (graphs_info[graph_idx].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1 ||
-                 graphs_info[graph_idx].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_2) {
-        ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_,
-                        ORT_LOGGING_LEVEL_VERBOSE,
-                        "Skip as not supported in system context graph info v1 & v2.");
-      } else {
-        ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_,
-                        ORT_LOGGING_LEVEL_VERBOSE,
-                        "Unknown system context graph info version.");
-      }
-    }
+    max_spill_fill_buffer_size =
+        std::max(max_spill_fill_buffer_size, GetMaxSpillFillBufferSizeFromGraphInfo(graphs_info, graph_count));
   }
 
   ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "DLC max spill-fill buffer size got.");
