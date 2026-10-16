@@ -385,6 +385,28 @@ TEST_F(QnnHTPBackendTests, GatherOp_BoolInputOutput) {
                            ExpectedEPNodeAssignment::All);
 }
 
+// Test that a raw (unquantized, no QDQ nodes) UINT8 `data` initializer runs on HTP. Models that
+// store a lookup table as raw bytes and dequantize manually downstream (e.g.
+// Gather -> Cast(float) -> Mul(scale) -> Add(bias)) hit this path.
+TEST_F(QnnHTPBackendTests, GatherOp_RawUint8DataInput) {
+  RunOpTest<uint8_t, int32_t>("Gather",
+                              TestInputDef<uint8_t>({3, 2}, true, {10, 20, 30, 40, 50, 60}),
+                              TestInputDef<int32_t>({2, 2}, true, {0, 1, 1, 2}),
+                              {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                              13,
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Same as above, but with a dynamic (non-initializer) UINT8 `data` input.
+TEST_F(QnnHTPBackendTests, GatherOp_RawUint8DataInput_Dynamic) {
+  RunOpTest<uint8_t, int32_t>("Gather",
+                              TestInputDef<uint8_t>({3, 2}, false, {10, 20, 30, 40, 50, 60}),
+                              TestInputDef<int32_t>({2, 2}, true, {0, 1, 1, 2}),
+                              {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                              13,
+                              ExpectedEPNodeAssignment::All);
+}
+
 // Test the accuracy of a QDQ GatherND model on QNN EP. Checks if the QDQ model on QNN EP is as accurate as the QDQ model on CPU EP.
 template <typename QuantType, typename IndicesType>
 static void RunQDQGatherNDOpTest(const TestInputDef<float>& input_def,
