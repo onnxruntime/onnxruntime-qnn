@@ -22,11 +22,11 @@
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 using namespace ONNX_NAMESPACE;
 
 #define ORT_MODEL_FOLDER ORT_TSTR("testdata/")
-// interface macro defined in combaseapi.h conflicts with its use in this file.
-#undef interface
 
 constexpr std::string_view kDlcOutputDir("dlc_output");
 

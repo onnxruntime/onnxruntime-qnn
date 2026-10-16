@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "core/providers/qnn/custom_op/qnn_custom_op.h"
 #include "core/providers/qnn/custom_op/qnn_custom_op_domain_parser.h"
 #include "core/providers/qnn/builder/op_package/op_package_parser.h"
