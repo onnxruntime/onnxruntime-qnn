@@ -27,15 +27,18 @@
 
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <unordered_map>
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/shared_context.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
@@ -186,6 +189,90 @@ TEST(QnnUnit_BackendManagerTest, GetContextBinaryBuffer_BeforeSetup_ReturnsError
   auto status = manager->GetContextBinaryBuffer(/*is_multi_soc_buffer=*/false, &context_buffer, written_size);
   EXPECT_FALSE(status.IsOK());
   EXPECT_EQ(context_buffer, nullptr);
+}
+
+TEST(QnnUnit_BackendManagerTest, ContextCreateAsyncCallbackInfo_PreservesInitiatingManager) {
+  StubApiEnv env;
+  auto initiating_manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
+  auto other_manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
+  ASSERT_NE(initiating_manager, nullptr);
+  ASSERT_NE(other_manager, nullptr);
+
+  qnn::ContextCreateAsyncCallbackInfo callback_info(initiating_manager, {"node_0"});
+  SharedContext::GetInstance().SetSharedQnnBackendManager(other_manager);
+
+  EXPECT_EQ(callback_info.LockBackendManager(), initiating_manager);
+
+  SharedContext::GetInstance().ResetSharedQnnBackendManager();
+  EXPECT_EQ(callback_info.LockBackendManager(), initiating_manager);
+}
+
+TEST(QnnUnit_BackendManagerTest, ContextCreateAsyncCallbackInfo_OwnsNodeNames) {
+  StubApiEnv env;
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+  std::vector<std::string> node_names{"node_0", "node_1"};
+  qnn::ContextCreateAsyncCallbackInfo callback_info(manager, node_names);
+
+  node_names.clear();
+
+  ASSERT_EQ(callback_info.GetEpNodeNames().size(), 2u);
+  EXPECT_EQ(callback_info.GetEpNodeNames()[0], "node_0");
+  EXPECT_EQ(callback_info.GetEpNodeNames()[1], "node_1");
+}
+
+TEST(QnnUnit_BackendManagerTest, ContextCreateAsyncCallbackInfo_OutlivesManager) {
+  const size_t initial_registry_size = qnn::ContextCreateAsyncCallbackInfo::RegistrySize();
+  StubApiEnv env;
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+  void* callback_token = qnn::ContextCreateAsyncCallbackInfo::Create(manager, {"node_0"});
+  auto callback_info = qnn::ContextCreateAsyncCallbackInfo::Acquire(callback_token);
+  ASSERT_NE(callback_info, nullptr);
+
+  manager.reset();
+
+  EXPECT_EQ(callback_info->LockBackendManager(), nullptr);
+  ASSERT_EQ(callback_info->GetEpNodeNames().size(), 1u);
+  EXPECT_EQ(callback_info->GetEpNodeNames()[0], "node_0");
+  callback_info->Release();
+  callback_info.reset();
+  qnn::ContextCreateAsyncCallbackInfo::UnregisterAndDrain(gsl::make_span(&callback_token, 1));
+  EXPECT_EQ(qnn::ContextCreateAsyncCallbackInfo::RegistrySize(), initial_registry_size);
+}
+
+TEST(QnnUnit_BackendManagerTest, ContextCreateAsyncCallbackInfo_RegistryDoesNotGrow) {
+  const size_t initial_registry_size = qnn::ContextCreateAsyncCallbackInfo::RegistrySize();
+  std::vector<void*> callback_tokens;
+
+  for (size_t iteration = 0; iteration < 100; ++iteration) {
+    callback_tokens.push_back(qnn::ContextCreateAsyncCallbackInfo::Create(nullptr, {"node_0"}));
+    qnn::ContextCreateAsyncCallbackInfo::UnregisterAndDrain(callback_tokens);
+    callback_tokens.clear();
+    ASSERT_EQ(qnn::ContextCreateAsyncCallbackInfo::RegistrySize(), initial_registry_size);
+  }
+}
+
+TEST(QnnUnit_BackendManagerTest, ContextCreateAsyncCallbackInfo_WaitsForAdmittedCallback) {
+  void* callback_token = qnn::ContextCreateAsyncCallbackInfo::Create(nullptr, {"node_0"});
+  auto callback_info = qnn::ContextCreateAsyncCallbackInfo::Acquire(callback_token);
+  ASSERT_NE(callback_info, nullptr);
+
+  auto drain_future = std::async(std::launch::async, [&callback_token]() {
+    qnn::ContextCreateAsyncCallbackInfo::UnregisterAndDrain(gsl::make_span(&callback_token, 1));
+  });
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (auto additional_callback = qnn::ContextCreateAsyncCallbackInfo::Acquire(callback_token)) {
+    additional_callback->Release();
+    ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+    std::this_thread::yield();
+  }
+  EXPECT_EQ(drain_future.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+
+  callback_info->Release();
+  EXPECT_EQ(drain_future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+  EXPECT_EQ(qnn::ContextCreateAsyncCallbackInfo::Acquire(callback_token), nullptr);
 }
 
 // ---------------------------------------------------------------------------

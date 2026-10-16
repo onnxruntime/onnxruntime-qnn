@@ -35,7 +35,6 @@
 #include "core/providers/qnn/qnn_ep_profiler.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_telemetry.h"
-#include "core/providers/qnn/shared_context.h"
 #include "core/providers/qnn/qnn_external_resource_importer.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -1214,32 +1213,136 @@ static void ContextCreateAsyncCallback(Qnn_ContextHandle_t context,
                                        QnnContext_createFromBinaryAsyncNotifyType_t /* notify_type */,
                                        void* notify_param,
                                        Qnn_ErrorHandle_t /* status */) {
-  auto qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
-
-  if (context) {
-    qnn_backend_manager->ProcessContextFromBinListAsync(context, notify_param);
-  }
-}
-
-void QnnBackendManager::ProcessContextFromBinListAsync(Qnn_ContextHandle_t context, void* notifyParam) {
-  std::ostringstream context_ss;
-  context_ss << context;
-
-  std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
-  if (!notifyParam) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_WARNING,
-                    ("No known node names associated with context handle: " + context_ss.str()).c_str());
+  auto callback_info = ContextCreateAsyncCallbackInfo::Acquire(notify_param);
+  if (!callback_info) {
     return;
   }
 
-  std::vector<std::string>* ep_node_names = reinterpret_cast<std::vector<std::string>*>(notifyParam);
-  for (const auto& node_name : *ep_node_names) {
-    if (!(ep_context_handle_map_.emplace(node_name, context).second)) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_VERBOSE,
-                      ("Unable to map " + context_ss.str() + " to " + node_name).c_str());
+  struct CallbackGuard {
+    explicit CallbackGuard(ContextCreateAsyncCallbackInfo& callback_info) : callback_info(callback_info) {}
+    ~CallbackGuard() { callback_info.Release(); }
+    ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(CallbackGuard);
+    ContextCreateAsyncCallbackInfo& callback_info;
+  } callback_guard(*callback_info);
+
+  auto qnn_backend_manager = callback_info->LockBackendManager();
+  if (context && qnn_backend_manager) {
+    qnn_backend_manager->ProcessContextFromBinListAsync(context, *callback_info);
+  }
+}
+
+namespace {
+
+struct ContextCreateAsyncCallbackRegistry {
+  std::mutex mutex;
+  uintptr_t next_token = 1;
+  std::unordered_map<uintptr_t, std::shared_ptr<ContextCreateAsyncCallbackInfo>> entries;
+};
+
+ContextCreateAsyncCallbackRegistry& GetContextCreateAsyncCallbackRegistry() {
+  static ContextCreateAsyncCallbackRegistry registry;
+  return registry;
+}
+
+}  // namespace
+
+void* ContextCreateAsyncCallbackInfo::Create(
+    const std::shared_ptr<QnnBackendManager>& manager,
+    const std::vector<std::string>& node_names) {
+  auto callback_info = std::make_shared<ContextCreateAsyncCallbackInfo>(manager, node_names);
+  auto& registry = GetContextCreateAsyncCallbackRegistry();
+  std::lock_guard<std::mutex> lock(registry.mutex);
+  if (registry.next_token == 0) {
+    throw std::runtime_error("Async context callback token space exhausted.");
+  }
+  const uintptr_t token = registry.next_token++;
+  registry.entries.emplace(token, std::move(callback_info));
+  return reinterpret_cast<void*>(token);
+}
+
+std::shared_ptr<ContextCreateAsyncCallbackInfo> ContextCreateAsyncCallbackInfo::Acquire(void* token) {
+  if (!token) {
+    return nullptr;
+  }
+
+  auto& registry = GetContextCreateAsyncCallbackRegistry();
+  std::lock_guard<std::mutex> lock(registry.mutex);
+  auto callback_info_it = registry.entries.find(reinterpret_cast<uintptr_t>(token));
+  if (callback_info_it == registry.entries.end()) {
+    return nullptr;
+  }
+
+  auto callback_info = callback_info_it->second;
+  {
+    std::lock_guard<std::mutex> callback_lock(callback_info->mutex_);
+    ++callback_info->callbacks_in_flight_;
+  }
+
+  return callback_info;
+}
+
+void ContextCreateAsyncCallbackInfo::UnregisterAndDrain(gsl::span<void* const> tokens) {
+  std::vector<std::shared_ptr<ContextCreateAsyncCallbackInfo>> callback_infos;
+  auto& registry = GetContextCreateAsyncCallbackRegistry();
+  {
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    callback_infos.reserve(tokens.size());
+    for (void* token : tokens) {
+      auto callback_info_it = registry.entries.find(reinterpret_cast<uintptr_t>(token));
+      if (callback_info_it == registry.entries.end()) {
+        continue;
+      }
+
+      callback_infos.push_back(std::move(callback_info_it->second));
+      registry.entries.erase(callback_info_it);
     }
+  }
+
+  for (const auto& callback_info : callback_infos) {
+    callback_info->WaitForCallbacks();
+  }
+}
+
+size_t ContextCreateAsyncCallbackInfo::RegistrySize() {
+  auto& registry = GetContextCreateAsyncCallbackRegistry();
+  std::lock_guard<std::mutex> lock(registry.mutex);
+  return registry.entries.size();
+}
+
+void ContextCreateAsyncCallbackInfo::Release() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  Expects(callbacks_in_flight_ > 0);
+  --callbacks_in_flight_;
+  if (callbacks_in_flight_ == 0) {
+    callbacks_drained_cv_.notify_all();
+  }
+}
+
+void ContextCreateAsyncCallbackInfo::WaitForCallbacks() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  callbacks_drained_cv_.wait(lock, [this]() { return callbacks_in_flight_ == 0; });
+}
+
+void QnnBackendManager::ProcessContextFromBinListAsync(
+    Qnn_ContextHandle_t context,
+    const ContextCreateAsyncCallbackInfo& callback_info) {
+  std::ostringstream context_ss;
+  context_ss << context;
+
+  std::vector<std::string> unmapped_node_names;
+  {
+    std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
+    for (const auto& node_name : callback_info.GetEpNodeNames()) {
+      if (!ep_context_handle_map_.emplace(node_name, context).second) {
+        unmapped_node_names.push_back(node_name);
+      }
+    }
+  }
+
+  for (const auto& node_name : unmapped_node_names) {
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Unable to map " + context_ss.str() + " to " + node_name).c_str());
   }
 
   auto s = AddQnnContextHandle(context);
@@ -1517,9 +1620,19 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   if (file_mapped_weights_enabled_ && file_mapper_) {
     // Retry logic -- if context creation failed with file mapped weights, then retry with feature disabled
+    const size_t callback_token_start = context_create_async_callback_tokens_.size();
     auto res = CreateContextFromListAsyncWithCallback(configs_vec.data(), context_bin_map);
     if (!res.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, (res.GetErrorMessage() + ". Retrying with feature disabled.").c_str());
+      ContextCreateAsyncCallbackInfo::UnregisterAndDrain(
+          gsl::make_span(context_create_async_callback_tokens_).subspan(callback_token_start));
+      context_create_async_callback_tokens_.erase(
+          context_create_async_callback_tokens_.begin() + callback_token_start,
+          context_create_async_callback_tokens_.end());
+      {
+        std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
+        ep_context_handle_map_.clear();
+      }
     } else {
       return Ort::Status();
     }
@@ -1532,6 +1645,8 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
                                                           std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
                                                           const qnn::EpContextIoDispatch& io_dispatch) {
+  RETURN_IF(qnn_interface_.contextCreateFromBinaryListAsync == nullptr,
+            "Invalid function pointer for contextCreateFromBinaryListAsync.");
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV1_t> context_paramsv1_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
@@ -1549,12 +1664,13 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
     size_t buffer_size = buffer.size();
     buffer_list.push_back(std::move(buffer));
 
+    void* callback_token = ContextCreateAsyncCallbackInfo::Create(shared_from_this(), *it.second);
     QnnContext_ParamsV1_t context_params_v1 = {nullptr,
                                                buffer_list.back().data(),
                                                buffer_size,
                                                nullptr,
                                                ContextCreateAsyncCallback,
-                                               it.second.get()};
+                                               callback_token};
 
     QnnContext_Params_t context_params = {QnnContext_ParamsVersion_t::QNN_CONTEXT_PARAMS_VERSION_1,
                                           {context_params_v1}};
@@ -1562,6 +1678,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
     context_params_list.push_back(std::move(context_params));
     context_paramsv1_list.push_back(std::move(context_params_v1));
     context_params_ptr_list.push_back(&context_params_list.back());
+    context_create_async_callback_tokens_.push_back(callback_token);
   }
   context_params_ptr_list.push_back(nullptr);
   auto result = qnn_interface_.contextCreateFromBinaryListAsync(backend_handle_,
@@ -1578,14 +1695,15 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
 Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnContext_Config_t** configs,
                                                                       std::unordered_map<std::string,
                                                                                          std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
+  RETURN_IF(qnn_interface_.contextCreateFromBinaryListAsync == nullptr,
+            "Invalid function pointer for contextCreateFromBinaryListAsync.");
+  RETURN_IF(file_mapper_ == nullptr, "File mapper is unavailable.");
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV2_t> context_paramsv2_list;
-  std::vector<Qnn_ContextBinaryCallback_t> context_callbacks_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
 
   context_params_list.reserve(context_bin_map.size());
   context_paramsv2_list.reserve(context_bin_map.size());
-  context_callbacks_list.reserve(context_bin_map.size());
   context_params_ptr_list.reserve(context_bin_map.size() + 1);
 
   for (auto& it : context_bin_map) {
@@ -1618,6 +1736,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     }
 
     auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(buffer, buffer_size, this);
+    void* callback_token = ContextCreateAsyncCallbackInfo::Create(shared_from_this(), *it.second);
 
     Qnn_ContextBinaryCallback_t context_file_map_callbacks;
     context_file_map_callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
@@ -1627,7 +1746,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     context_file_map_callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
 
     file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
-    context_callbacks_list.push_back(std::move(context_file_map_callbacks));
+    async_context_binary_callbacks_.push_back(std::move(context_file_map_callbacks));
 
     // Callbacks require QnnContext_ParamsV2_t which is new to QNN API 2.32
     QnnContext_ParamsV2_t context_params_v2 = {nullptr,
@@ -1635,8 +1754,8 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                buffer_size,
                                                nullptr,
                                                ContextCreateAsyncCallback,
-                                               it.second.get(),
-                                               &context_callbacks_list.back()};
+                                               callback_token,
+                                               &async_context_binary_callbacks_.back()};
 
     QnnContext_Params_t context_params = {QnnContext_ParamsVersion_t::QNN_CONTEXT_PARAMS_VERSION_2,
                                           {}};
@@ -1646,6 +1765,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     context_params.v2 = &context_paramsv2_list.back();
     context_params_list.push_back(std::move(context_params));
     context_params_ptr_list.push_back(&(context_params_list.back()));
+    context_create_async_callback_tokens_.push_back(callback_token);
   }
   context_params_ptr_list.push_back(nullptr);
   auto result = qnn_interface_.contextCreateFromBinaryListAsync(backend_handle_,
@@ -1820,6 +1940,14 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
 }
 
 Ort::Status QnnBackendManager::ReleaseContext() {
+  ContextCreateAsyncCallbackInfo::UnregisterAndDrain(context_create_async_callback_tokens_);
+  context_create_async_callback_tokens_.clear();
+
+  {
+    std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
+    ep_context_handle_map_.clear();
+  }
+
   if (false == context_created_) {
     return Ort::Status();
   }
@@ -1827,7 +1955,6 @@ Ort::Status QnnBackendManager::ReleaseContext() {
   // release QNN context handles
   contexts_.clear();
   context_map_.clear();
-  ep_context_handle_map_.clear();
 
   context_created_ = false;
   return Ort::Status();
@@ -2008,8 +2135,12 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   Qnn_ContextHandle_t context = nullptr;
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   if (htp_share_resource_optimization_ == 1) {
-    if (ep_context_handle_map_.find(node_name) != ep_context_handle_map_.end()) {
-      context = ep_context_handle_map_.at(node_name);
+    {
+      std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
+      auto context_it = ep_context_handle_map_.find(node_name);
+      if (context_it != ep_context_handle_map_.end()) {
+        context = context_it->second;
+      }
     }
     RETURN_IF(nullptr == context, ("Failed to retrieve context for " + node_name).c_str());
 
@@ -2109,8 +2240,13 @@ Ort::Status QnnBackendManager::SetupBackend(
     if (htp_share_resource_optimization_ == 1) {
       // If a context bin filepath has not been processed yet,
       // then a new context must be created for the set of context bins
-      auto first_mapping_it = ep_context_handle_map_.find(context_bin_map.begin()->first);
-      if (first_mapping_it == ep_context_handle_map_.end()) {
+      bool context_exists = false;
+      {
+        std::lock_guard<std::mutex> map_lock(ep_context_handle_map_mutex_);
+        context_exists = ep_context_handle_map_.find(context_bin_map.begin()->first) !=
+                         ep_context_handle_map_.end();
+      }
+      if (!context_exists) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
         return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
                                                            io_dispatch);
@@ -2118,13 +2254,16 @@ Ort::Status QnnBackendManager::SetupBackend(
 
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
 
-      for (auto& it : context_bin_map) {
-        auto context_bin_filepath = it.first;
-        auto ep_node_names = *(it.second);
+      {
+        std::lock_guard<std::mutex> map_lock(ep_context_handle_map_mutex_);
+        for (auto& it : context_bin_map) {
+          const auto& context_bin_filepath = it.first;
+          const auto& ep_node_names = *it.second;
 
-        auto context = ep_context_handle_map_.at(context_bin_filepath);
-        for (auto node_name : ep_node_names) {
-          ep_context_handle_map_.emplace(node_name, context);
+          auto context = ep_context_handle_map_.at(context_bin_filepath);
+          for (const auto& node_name : ep_node_names) {
+            ep_context_handle_map_.emplace(node_name, context);
+          }
         }
       }
     }
