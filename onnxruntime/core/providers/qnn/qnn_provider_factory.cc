@@ -741,12 +741,10 @@ OrtStatus* CreateEpFactories(const char* registration_name,
   // Factory could use registration_name or define its own EP name.
   std::unique_ptr<onnxruntime::QnnEpFactory> factory;
   try {
-    factory = std::make_unique<onnxruntime::QnnEpFactory>(registration_name,
-                                                          onnxruntime::ApiPtrs{*ort_api,
-                                                                               *ep_api,
-                                                                               *model_editor_api,
-                                                                               onnxruntime::OrtApiRuntimeCapabilities(
-                                                                                   requested_api_version)});
+    factory = std::make_unique<onnxruntime::QnnEpFactory>(
+        registration_name,
+        onnxruntime::ApiPtrs{*ort_api, *ep_api, *model_editor_api,
+                             onnxruntime::OrtApiRuntimeCapabilities(requested_api_version)});
   } catch (const std::exception& e) {
     return ort_api->CreateStatus(ORT_FAIL, e.what());
   } catch (...) {
