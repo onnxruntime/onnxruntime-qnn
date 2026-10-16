@@ -443,7 +443,11 @@ static void RunHTPPackedGQATest(int32_t num_heads,
                                 float scale,
                                 int32_t do_rotary,
                                 float fp32_abs_err = 1e-2f,
-                                int32_t max_seq_len = 0) {
+                                int32_t max_seq_len = 0,
+                                int32_t rotary_interleaved = 0,
+                                std::optional<int32_t> local_window_size = std::nullopt,
+                                bool with_attention_bias = false,
+                                bool with_head_sink = false) {
   // GQA op validation fails on HTP (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE) on V68 and below.
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
@@ -473,7 +477,17 @@ static void RunHTPPackedGQATest(int32_t num_heads,
                                  static_cast<T>(-1.0f), static_cast<T>(1.0f));
   }
 
+  if (with_attention_bias) {
+    config.attention_bias_def.emplace(std::vector<int64_t>{batch_size, num_heads, sequence_length, total_seq_len},
+                                      false, static_cast<T>(-0.1f), static_cast<T>(0.1f));
+  }
+  if (with_head_sink) {
+    config.head_sink_def.emplace(std::vector<int64_t>{num_heads}, false, static_cast<T>(0.1f), static_cast<T>(0.5f));
+  }
+
   config.do_rotary = do_rotary;
+  config.rotary_interleaved = rotary_interleaved;
+  config.local_window_size = local_window_size;
   config.kv_num_heads = kv_num_heads;
   config.num_heads = num_heads;
   config.scale = scale;
@@ -572,6 +586,32 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Llama3_AR1_FP32) {
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_Rotary_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
+
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 41)
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_RotaryInterleaved_FP32) {
+  RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1,
+                              /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 0, /*rotary_interleaved*/ 1);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_FP32) {
+  RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0,
+                              /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 0, /*rotary_interleaved*/ 0,
+                              std::nullopt, /*with_attention_bias*/ true);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_HeadSink_FP32) {
+  RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0,
+                              /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 0, /*rotary_interleaved*/ 0,
+                              std::nullopt, /*with_attention_bias*/ false, /*with_head_sink*/ true);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_LocalWindow_FP32) {
+  RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0,
+                              /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 0, /*rotary_interleaved*/ 0,
+                              /*local_window_size*/ 128);
+}
+#endif
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
