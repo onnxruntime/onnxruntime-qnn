@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 //
-// Function-level unit tests for qnn_ep_utils.cc.
+// Function-level unit tests for qdq_node_group_selector.cc.
 //
 // Tests the OrtNodeGroupSelector::Check() family using FakeGraph / FakeNode /
 // FakeValueInfo from qnn_fake_ort_graph.h — no real QNN backend required.
@@ -12,7 +12,7 @@
 
 #include <vector>
 
-#include "core/providers/qnn/builder/qnn_ep_utils.h"
+#include "core/providers/qnn/builder/qdq_node_group_selector.h"
 #include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
@@ -1832,7 +1832,7 @@ TEST(QnnUnit_EpUtilsTest, MatMul_QLinearCheckQDQNodesFails_ReturnsFalse) {
 
 // =============================================================================
 // Additional selector Check() branches — targeted coverage for
-// qnn_ep_utils.cc L736/1037/1065/1093/1192/1206/1267
+// qdq_node_group_selector.cc L736/1037/1065/1093/1192/1206/1267
 // =============================================================================
 
 // OrtGemmNodeGroupSelector: dq_nodes.size() < 2 → returns false.
