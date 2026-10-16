@@ -7,6 +7,7 @@
 #include <cmath>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gmock/gmock.h"
@@ -223,6 +224,24 @@ void VerifyEPNodeAssignment(const Ort::Session& current_session, const std::stri
     // or some of the graph
     ASSERT_GT(num_ep_nodes, static_cast<size_t>(0)) << "No nodes were assigned to " << provider_type;
   }
+}
+
+std::function<void(const Ort::Session&)> CreateEPNodeAssignmentVerifier(std::string provider_type,
+                                                                        std::vector<std::string> expected_node_names) {
+  return [provider_type = std::move(provider_type),
+          expected_node_names = std::move(expected_node_names)](const Ort::Session& session) {
+    std::vector<std::string> actual_node_names;
+    for (const auto& subgraph : session.GetEpGraphAssignmentInfo()) {
+      if (subgraph.GetEpName() == provider_type) {
+        for (const auto& node : subgraph.GetNodes()) {
+          actual_node_names.push_back(node.GetName());
+        }
+      }
+    }
+
+    EXPECT_THAT(actual_node_names, ::testing::UnorderedElementsAreArray(expected_node_names))
+        << "Unexpected node assignment to " << provider_type;
+  };
 }
 
 static gsl::span<const std::byte> GetModelBytes(ModelPathOrBytes model_path_or_bytes,
