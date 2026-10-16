@@ -260,6 +260,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   qnn::HtpGraphConfigs_t htp_graph_configs_;
 
   bool dump_json_qnn_graph_ = false;
+  bool dump_qnn_graph_golden_metadata_ = false;
   std::string json_qnn_graph_dir_ = "";
 
   // === Qnn Ep Input Graph ===

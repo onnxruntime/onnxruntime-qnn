@@ -105,7 +105,7 @@ class QnnModelWrapper {
                      std::vector<std::string>&& param_tensor_names,
                      bool do_op_validation = false);
 
-  bool ComposeQnnGraph(bool build_json_qnn_graph = false);
+  bool ComposeQnnGraph(bool build_json_qnn_graph = false, bool include_static_data_hash = false);
 
   Qnn_GraphHandle_t GetQnnGraph() const { return graph_; }
 

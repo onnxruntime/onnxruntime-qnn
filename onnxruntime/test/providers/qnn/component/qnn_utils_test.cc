@@ -594,6 +594,80 @@ static void RunJsonGraphParamTest(const char* op_name, Qnn_DataType_t param_dt,
   EXPECT_TRUE(!j["graph"]["nodes"].empty()) << "for op=" << op_name;
 }
 
+static nlohmann::json GetStaticTensorHashJson(std::vector<uint8_t> data,
+                                              bool client_data_available = true) {
+  TensorFixture param_fix, in_fix, out_fix;
+  param_fix.Init<uint8_t>("weights", QNN_DATATYPE_UINT_8, std::move(data));
+  if (!client_data_available) {
+    qnn::SetQnnTensorClientBuf(param_fix.tensor, static_cast<void*>(nullptr),
+                               static_cast<uint32_t>(param_fix.raw_bytes.size()));
+  }
+  in_fix.InitIO("input", QNN_DATATYPE_UINT_8, {static_cast<uint32_t>(param_fix.shape[0])});
+  out_fix.InitIO("output", QNN_DATATYPE_UINT_8, in_fix.shape);
+
+  Qnn_Param_t param{};
+  param.paramType = QNN_PARAMTYPE_TENSOR;
+  param.name = "weights";
+  param.tensorParam = param_fix.tensor;
+
+  qnn::QnnOpConfigWrapper op("hash_op", "qti.aisw", "Relu",
+                             {in_fix.tensor}, {out_fix.tensor}, {param});
+  qnn::utils::QnnJSONGraph json_graph;
+  json_graph.AddOp(op, true);
+  return json_graph.Finalize()["graph"]["nodes"]["hash_op"]["tensor_params"]["weights"]["weights"]
+                              ["static_data_hash"];
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_StaticTensorHashIsContentSensitive) {
+  const nlohmann::json first = GetStaticTensorHashJson({0, 1, 2, 3});
+  const nlohmann::json second = GetStaticTensorHashJson({0, 1, 2, 4});
+
+  EXPECT_EQ(first["algorithm"], "sha256");
+  EXPECT_EQ(first["byte_count"], 4);
+  ASSERT_TRUE(first.contains("digest"));
+  EXPECT_EQ(first["digest"].get<std::string>().size(), 64);
+  EXPECT_EQ(first["digest"], "054edec1d0211f624fed0cbca9d4f9400b0e491c43742af2c5b0abebf0c990d8");
+  EXPECT_NE(first["digest"], second["digest"]);
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_StaticTensorHashMatchesKnownVectors) {
+  struct HashTestCase {
+    const char* name;
+    std::vector<uint8_t> data;
+    const char* expected_digest;
+  };
+
+  const std::vector<HashTestCase> test_cases = {
+      {"abc", {0x61, 0x62, 0x63}, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+      {"55_bytes", std::vector<uint8_t>(55, 0x61),
+       "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318"},
+      {"56_bytes", std::vector<uint8_t>(56, 0x61),
+       "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"},
+      {"64_bytes", std::vector<uint8_t>(64, 0x61),
+       "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"},
+      {"65_bytes", std::vector<uint8_t>(65, 0x61),
+       "635361c48bb9eab14198e76ea8ab7f1a41685d6ad62aa9146d301d4f17eb0ae0"},
+  };
+
+  for (const HashTestCase& test_case : test_cases) {
+    SCOPED_TRACE(test_case.name);
+    const nlohmann::json hash = GetStaticTensorHashJson(test_case.data);
+    EXPECT_EQ(hash["algorithm"], "sha256");
+    EXPECT_EQ(hash["byte_count"].get<size_t>(), test_case.data.size());
+    ASSERT_TRUE(hash.contains("digest"));
+    EXPECT_EQ(hash["digest"].get<std::string>(), test_case.expected_digest);
+  }
+}
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_StaticTensorHashReportsUnavailableWithoutClientData) {
+  const nlohmann::json hash = GetStaticTensorHashJson({0, 1, 2, 3}, false);
+
+  EXPECT_EQ(hash["algorithm"], "sha256");
+  EXPECT_EQ(hash["byte_count"], 4);
+  EXPECT_EQ(hash["status"], "unavailable");
+  EXPECT_FALSE(hash.contains("digest"));
+}
+
 TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_SFixedPoint8) {
   RunJsonGraphParamTest<int8_t>("op_i8", QNN_DATATYPE_SFIXED_POINT_8,
                                 QNN_DATATYPE_SFIXED_POINT_8, {-1, 0, 1, 2});
