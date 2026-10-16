@@ -3,7 +3,8 @@
 
 #include "core/providers/qnn/qnn_provider_factory.h"
 
-#include <algorithm>
+#include "core/providers/qnn/qnn_data_transfer.h"
+
 #include <cassert>
 #include <cstdlib>
 #include <cstdint>
@@ -118,15 +119,19 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   // Build additional custom-op domains from ORT_QNN_CUSTOM_OP_DOMAINS env var (env-var UDO ops).
   // GetCustomOpDomains is called at SessionOptionsAppendExecutionProvider_V2 time (before CreateEp),
   // so we parse once here at factory construction and cache the result for all sessions.
-  // SetDefaultLogger is called before factory construction in CreateEpFactories, so
-  // OrtLoggingManager::GetDefaultLoggerPtr() is already set and valid here.
-  BuildCustomOpDomainsFromEnv(OrtLoggingManager::GetDefaultLogger(), ep_name_, custom_op_domains_, custom_op_objects_);
+  // SetDefaultLogger is called before factory construction in CreateEpFactories.
+  // Direct construction can still register valid domains without a logger;
+  // malformed entries simply cannot emit warnings in that case.
+  const Ort::Logger* default_logger = OrtLoggingManager::HasDefaultLogger()
+                                          ? &OrtLoggingManager::GetDefaultLogger()
+                                          : nullptr;
+  BuildCustomOpDomainsFromEnv(default_logger, ep_name_, custom_op_domains_, custom_op_objects_);
 
   // HOST_ACCESSIBLE memory for HTP and GPU backends.
   OrtMemoryInfo* mem_info = nullptr;
   auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
                                              OrtMemoryInfoDeviceType_CPU,
-                                             /*vendor*/ 0x5143,
+                                             kQualcommPciVendorId,
                                              /*device_id*/ 0,
                                              OrtDeviceMemoryType_HOST_ACCESSIBLE,
                                              /*alignment*/ 0,
@@ -450,11 +455,10 @@ void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, Ort
   }
 }
 
-OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* /* this_ptr */,
+OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* this_ptr,
                                                              OrtDataTransferImpl** data_transfer) noexcept {
-  *data_transfer = nullptr;
-
-  return nullptr;
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+  return CreateQnnHostAccessibleDataTransfer(factory->ort_api, factory->ep_api, data_transfer);
 }
 
 bool ORT_API_CALL QnnEpFactory::IsStreamAwareImpl(const OrtEpFactory* /*this_ptr*/) noexcept {

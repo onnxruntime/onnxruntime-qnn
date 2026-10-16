@@ -10,9 +10,20 @@
 
 namespace onnxruntime {
 
+namespace {
+
+void LogWarning(const Ort::Logger* logger, const std::string& message) {
+  if (logger != nullptr) {
+    const Ort::Logger& logger_ref = *logger;
+    ORT_CXX_LOG(logger_ref, ORT_LOGGING_LEVEL_WARNING, message.c_str());
+  }
+}
+
+}  // namespace
+
 void ParseCustomOpDomains(const std::string& spec,
                           std::vector<CustomOpDomainSpec>& out,
-                          const Ort::Logger& logger) {
+                          const Ort::Logger* logger) {
   if (spec.empty()) {
     return;
   }
@@ -23,10 +34,9 @@ void ParseCustomOpDomains(const std::string& spec,
     // string_view::find returns npos if ':' is absent.
     const auto colon_pos = entry.find(':');
     if (colon_pos == std::string_view::npos) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                  ("Invalid ORT_QNN_CUSTOM_OP_DOMAINS entry (missing ':'): " + std::string(entry) +
-                   ". Expected domain_name:OpType1[,OpType2]. Skipping.")
-                      .c_str());
+      LogWarning(logger,
+                 "Invalid ORT_QNN_CUSTOM_OP_DOMAINS entry (missing ':'): " + std::string(entry) +
+                     ". Expected domain_name:OpType1[,OpType2]. Skipping.");
       continue;
     }
 
@@ -34,18 +44,16 @@ void ParseCustomOpDomains(const std::string& spec,
     const std::string_view op_types_csv = entry.substr(colon_pos + 1);
 
     if (domain.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                  ("ORT_QNN_CUSTOM_OP_DOMAINS entry has empty domain name: " + std::string(entry) +
-                   ". Skipping.")
-                      .c_str());
+      LogWarning(logger,
+                 "ORT_QNN_CUSTOM_OP_DOMAINS entry has empty domain name: " + std::string(entry) +
+                     ". Skipping.");
       continue;
     }
 
     if (op_types_csv.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                  ("ORT_QNN_CUSTOM_OP_DOMAINS entry has empty op-types list for domain '" + domain +
-                   "'. Skipping.")
-                      .c_str());
+      LogWarning(logger,
+                 "ORT_QNN_CUSTOM_OP_DOMAINS entry has empty op-types list for domain '" + domain +
+                     "'. Skipping.");
       continue;
     }
 
@@ -53,18 +61,17 @@ void ParseCustomOpDomains(const std::string& spec,
     for (const auto& op_type_sv : qnn::utils::SplitString(op_types_csv, ",", /*keep_empty=*/false)) {
       const std::string op_type(op_type_sv);
       if (op_type.empty()) {
-        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                    ("ORT_QNN_CUSTOM_OP_DOMAINS: empty op-type in domain '" + domain + "'. Skipping entry.")
-                        .c_str());
+        LogWarning(logger,
+                   "ORT_QNN_CUSTOM_OP_DOMAINS: empty op-type in domain '" + domain +
+                       "'. Skipping entry.");
         continue;
       }
       op_types.push_back(op_type);
     }
 
     if (op_types.empty()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                  ("ORT_QNN_CUSTOM_OP_DOMAINS: no valid op-types for domain '" + domain + "'. Skipping.")
-                      .c_str());
+      LogWarning(logger,
+                 "ORT_QNN_CUSTOM_OP_DOMAINS: no valid op-types for domain '" + domain + "'. Skipping.");
       continue;
     }
 

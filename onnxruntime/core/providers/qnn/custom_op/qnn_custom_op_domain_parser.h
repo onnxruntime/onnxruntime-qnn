@@ -30,6 +30,6 @@ struct CustomOpDomainSpec {
 // following the same pattern as ParseOpPackages in op_package_parser.h.
 void ParseCustomOpDomains(const std::string& spec,
                           std::vector<CustomOpDomainSpec>& out,
-                          const Ort::Logger& logger);
+                          const Ort::Logger* logger);
 
 }  // namespace onnxruntime

@@ -7,8 +7,9 @@
 // without constructing a real QnnEp instance. They exercise:
 //   - Basic getters (name/vendor/version/vendor-id/is-stream-aware) and the
 //     ctor's CreateMemoryInfo_V2 wiring.
+//   - Factory data-transfer creation and CPU/QNN host-accessible copies.
 //   - Trivial factory methods that never dispatch through the OrtApi tables
-//     (CreateDataTransferImpl, ReleaseEpImpl(nullptr)).
+//     (ReleaseEpImpl(nullptr)).
 //   - CreateEpFactories / ReleaseEpFactory extern-"C" entry points, focused
 //     on argument-validation and version-check error paths that do NOT
 //     reach the QnnEpFactory ctor's Ort::InitApi() (which would clobber the
@@ -37,6 +38,7 @@
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_data_transfer.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "onnxruntime_config.h"
 
@@ -71,6 +73,14 @@ static OrtHardwareDevice* MakeFakeHwDevice(uintptr_t tag) {
   return reinterpret_cast<OrtHardwareDevice*>(tag);
 }
 
+static OrtMemoryDevice* MakeFakeMemoryDevice(uintptr_t tag) {
+  return reinterpret_cast<OrtMemoryDevice*>(tag);
+}
+
+static OrtValue* MakeFakeOrtValue(uintptr_t tag) {
+  return reinterpret_cast<OrtValue*>(tag);
+}
+
 // Non-null pointer used as a placeholder OrtEpDevice*, OrtSessionOptions*, etc.
 // The stubs treat these as opaque tokens and never dereference them.
 static constexpr uintptr_t kFakeToken = 0x1;
@@ -102,6 +112,20 @@ struct StatusRecord {
   std::string msg;
 };
 
+struct MemoryDeviceRecord {
+  OrtMemoryInfoDeviceType device_type;
+  OrtDeviceMemoryType memory_type;
+  uint32_t vendor_id;
+};
+
+struct TensorRecord {
+  const OrtMemoryDevice* memory_device;
+  void* data;
+  size_t size;
+  ONNXTensorElementDataType element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+  std::vector<int64_t> shape;
+};
+
 class FactoryStubContext {
  public:
   OrtApi stub_ort_api{};
@@ -112,6 +136,10 @@ class FactoryStubContext {
   // per test before calling into factory code.
   std::unordered_map<const OrtHardwareDevice*, OrtHardwareDeviceType> device_type_map;
   std::unordered_map<const OrtHardwareDevice*, uint32_t> device_vendor_map;
+
+  // Memory-device and tensor metadata used by OrtDataTransferImpl tests.
+  std::unordered_map<const OrtMemoryDevice*, MemoryDeviceRecord> memory_device_map;
+  std::unordered_map<const OrtValue*, TensorRecord> tensor_map;
 
   // Ordered log of every OrtHardwareDevice* passed to CreateEpDevice.
   std::vector<const OrtHardwareDevice*> created_ep_devices;
@@ -199,6 +227,46 @@ class FactoryStubContext {
     };
     stub_ort_api.GetErrorCode = [](const OrtStatus* s) noexcept -> OrtErrorCode {
       return reinterpret_cast<const StatusRecord*>(s)->code;
+    };
+    stub_ort_api.GetTensorElementTypeAndShapeDataReference =
+        [](const OrtValue* value, ONNXTensorElementDataType* element_type,
+           const int64_t** shape, size_t* shape_len) noexcept -> OrtStatus* {
+      auto* self = current_;
+      auto it = self->tensor_map.find(value);
+      if (it == self->tensor_map.end()) {
+        return reinterpret_cast<OrtStatus*>(new StatusRecord{ORT_INVALID_ARGUMENT, "unknown tensor"});
+      }
+      *element_type = it->second.element_type;
+      *shape = it->second.shape.data();
+      *shape_len = it->second.shape.size();
+      return nullptr;
+    };
+    stub_ort_api.GetTensorSizeInBytes = [](const OrtValue* value, size_t* size) noexcept -> OrtStatus* {
+      auto* self = current_;
+      auto it = self->tensor_map.find(value);
+      if (it == self->tensor_map.end()) {
+        return reinterpret_cast<OrtStatus*>(new StatusRecord{ORT_INVALID_ARGUMENT, "unknown tensor"});
+      }
+      *size = it->second.size;
+      return nullptr;
+    };
+    stub_ort_api.GetTensorData = [](const OrtValue* value, const void** data) noexcept -> OrtStatus* {
+      auto* self = current_;
+      auto it = self->tensor_map.find(value);
+      if (it == self->tensor_map.end()) {
+        return reinterpret_cast<OrtStatus*>(new StatusRecord{ORT_INVALID_ARGUMENT, "unknown tensor"});
+      }
+      *data = it->second.data;
+      return nullptr;
+    };
+    stub_ort_api.GetTensorMutableData = [](OrtValue* value, void** data) noexcept -> OrtStatus* {
+      auto* self = current_;
+      auto it = self->tensor_map.find(value);
+      if (it == self->tensor_map.end()) {
+        return reinterpret_cast<OrtStatus*>(new StatusRecord{ORT_INVALID_ARGUMENT, "unknown tensor"});
+      }
+      *data = it->second.data;
+      return nullptr;
     };
 
     stub_ort_api.CreateMemoryInfo_V2 =
@@ -315,6 +383,28 @@ class FactoryStubContext {
   }
 
   void InstallOrtEpApiStubs() {
+    stub_ep_api.Value_GetMemoryDevice = [](const OrtValue* value) noexcept -> const OrtMemoryDevice* {
+      auto* self = current_;
+      auto it = self->tensor_map.find(value);
+      return it == self->tensor_map.end() ? nullptr : it->second.memory_device;
+    };
+    stub_ep_api.MemoryDevice_GetDeviceType =
+        [](const OrtMemoryDevice* memory_device) noexcept -> OrtMemoryInfoDeviceType {
+      auto* self = current_;
+      auto it = self->memory_device_map.find(memory_device);
+      return it == self->memory_device_map.end() ? OrtMemoryInfoDeviceType_CPU : it->second.device_type;
+    };
+    stub_ep_api.MemoryDevice_GetMemoryType =
+        [](const OrtMemoryDevice* memory_device) noexcept -> OrtDeviceMemoryType {
+      auto* self = current_;
+      auto it = self->memory_device_map.find(memory_device);
+      return it == self->memory_device_map.end() ? OrtDeviceMemoryType_DEFAULT : it->second.memory_type;
+    };
+    stub_ep_api.MemoryDevice_GetVendorId = [](const OrtMemoryDevice* memory_device) noexcept -> uint32_t {
+      auto* self = current_;
+      auto it = self->memory_device_map.find(memory_device);
+      return it == self->memory_device_map.end() ? 0 : it->second.vendor_id;
+    };
     stub_ep_api.CreateEpDevice =
         [](OrtEpFactory*, const OrtHardwareDevice* device,
            const OrtKeyValuePairs*, const OrtKeyValuePairs*,
@@ -422,10 +512,8 @@ static OrtApiBase MakeFakeApiBase() {
   return base;
 }
 
-// Base fixture: resets the process-wide default logger to nullptr at the start
-// of each test so that HasDefaultLogger()==false is the default state. Tests
-// that need a non-null default logger call OrtLoggingManager::SetDefaultLogger
-// themselves.
+// Base fixture resets the process-wide logger. Factory construction still
+// parses ORT_QNN_CUSTOM_OP_DOMAINS when no logger is installed.
 class QnnUnit_ProviderFactoryTest : public ::testing::Test {
  protected:
   void SetUp() override { OrtLoggingManager::SetDefaultLogger(nullptr); }
@@ -481,18 +569,195 @@ TEST_F(QnnUnit_ProviderFactoryTest, IsStreamAware_ReturnsFalse) {
   EXPECT_FALSE(factory.IsStreamAware(&factory));
 }
 
-TEST_F(QnnUnit_ProviderFactoryTest, CreateDataTransfer_SetsNullAndReturnsOk) {
+TEST_F(QnnUnit_ProviderFactoryTest, CreateDataTransfer_ReturnsInitializedTransfer) {
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
-  OrtDataTransferImpl* transfer = reinterpret_cast<OrtDataTransferImpl*>(0xDEAD);
+  OrtDataTransferImpl* transfer = nullptr;
   EXPECT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
-  EXPECT_EQ(transfer, nullptr);
+  ASSERT_NE(transfer, nullptr);
+  EXPECT_EQ(transfer->ort_version_supported, ORT_API_VERSION);
+  EXPECT_NE(transfer->CanCopy, nullptr);
+  EXPECT_NE(transfer->CopyTensors, nullptr);
+  EXPECT_NE(transfer->Release, nullptr);
+  transfer->Release(transfer);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, DataTransfer_CanCopyOnlyQnnHostAccessibleCpuMemory) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  OrtDataTransferImpl* transfer = nullptr;
+  ASSERT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
+  ASSERT_NE(transfer, nullptr);
+
+  const auto* cpu = MakeFakeMemoryDevice(10);
+  const auto* qnn_shared = MakeFakeMemoryDevice(11);
+  const auto* other_shared = MakeFakeMemoryDevice(12);
+  const auto* gpu = MakeFakeMemoryDevice(13);
+  ctx.memory_device_map[cpu] = {
+      OrtMemoryInfoDeviceType_CPU, OrtDeviceMemoryType_DEFAULT, 0};
+  ctx.memory_device_map[qnn_shared] = {
+      OrtMemoryInfoDeviceType_CPU, OrtDeviceMemoryType_HOST_ACCESSIBLE, kQualcommPciVendorId};
+  ctx.memory_device_map[other_shared] = {
+      OrtMemoryInfoDeviceType_CPU, OrtDeviceMemoryType_HOST_ACCESSIBLE, 0x1234};
+  ctx.memory_device_map[gpu] = {
+      OrtMemoryInfoDeviceType_GPU, OrtDeviceMemoryType_DEFAULT, kQualcommPciVendorId};
+
+  EXPECT_TRUE(transfer->CanCopy(transfer, cpu, qnn_shared));
+  EXPECT_TRUE(transfer->CanCopy(transfer, qnn_shared, cpu));
+  EXPECT_FALSE(transfer->CanCopy(transfer, qnn_shared, qnn_shared));
+  EXPECT_FALSE(transfer->CanCopy(transfer, qnn_shared, other_shared));
+  EXPECT_FALSE(transfer->CanCopy(transfer, cpu, cpu));
+  EXPECT_FALSE(transfer->CanCopy(transfer, cpu, other_shared));
+  EXPECT_FALSE(transfer->CanCopy(transfer, gpu, qnn_shared));
+  transfer->Release(transfer);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, DataTransfer_ZeroTensorsIsNoOp) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  OrtDataTransferImpl* transfer = nullptr;
+  ASSERT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
+  ASSERT_NE(transfer, nullptr);
+
+  EXPECT_EQ(transfer->CopyTensors(transfer, nullptr, nullptr, nullptr, 0), nullptr);
+  transfer->Release(transfer);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, DataTransfer_CopiesMultipleTensorsInBothDirections) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  OrtDataTransferImpl* transfer = nullptr;
+  ASSERT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
+  ASSERT_NE(transfer, nullptr);
+
+  const auto* cpu = MakeFakeMemoryDevice(10);
+  const auto* qnn_shared = MakeFakeMemoryDevice(11);
+  ctx.memory_device_map[cpu] = {
+      OrtMemoryInfoDeviceType_CPU, OrtDeviceMemoryType_DEFAULT, 0};
+  ctx.memory_device_map[qnn_shared] = {
+      OrtMemoryInfoDeviceType_CPU, OrtDeviceMemoryType_HOST_ACCESSIBLE, kQualcommPciVendorId};
+
+  std::vector<uint8_t> cpu_data{1, 2, 3, 4};
+  std::vector<uint8_t> shared_data(cpu_data.size(), 0);
+  std::vector<uint8_t> shared_data_2{5, 6, 7};
+  std::vector<uint8_t> cpu_data_2(shared_data_2.size(), 0);
+  auto* cpu_value = MakeFakeOrtValue(20);
+  auto* shared_value = MakeFakeOrtValue(21);
+  auto* shared_value_2 = MakeFakeOrtValue(22);
+  auto* cpu_value_2 = MakeFakeOrtValue(23);
+  ctx.tensor_map[cpu_value] = {cpu, cpu_data.data(), cpu_data.size()};
+  ctx.tensor_map[shared_value] = {qnn_shared, shared_data.data(), shared_data.size()};
+  ctx.tensor_map[shared_value_2] = {qnn_shared, shared_data_2.data(), shared_data_2.size()};
+  ctx.tensor_map[cpu_value_2] = {cpu, cpu_data_2.data(), cpu_data_2.size()};
+
+  const OrtValue* sources[] = {cpu_value, shared_value_2};
+  OrtValue* destinations[] = {shared_value, cpu_value_2};
+  EXPECT_EQ(transfer->CopyTensors(transfer, sources, destinations, nullptr, 2), nullptr);
+  EXPECT_EQ(shared_data, cpu_data);
+  EXPECT_EQ(cpu_data_2, shared_data_2);
+  transfer->Release(transfer);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, DataTransfer_RejectsSizeMismatchAndOrdinaryCpuCopy) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  OrtDataTransferImpl* transfer = nullptr;
+  ASSERT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
+  ASSERT_NE(transfer, nullptr);
+
+  const auto* cpu = MakeFakeMemoryDevice(10);
+  const auto* qnn_shared = MakeFakeMemoryDevice(11);
+  ctx.memory_device_map[cpu] = {
+      OrtMemoryInfoDeviceType_CPU, OrtDeviceMemoryType_DEFAULT, 0};
+  ctx.memory_device_map[qnn_shared] = {
+      OrtMemoryInfoDeviceType_CPU, OrtDeviceMemoryType_HOST_ACCESSIBLE, kQualcommPciVendorId};
+
+  std::vector<uint8_t> source_data{1, 2, 3, 4};
+  std::vector<uint8_t> destination_data(3, 0);
+  auto* source = MakeFakeOrtValue(20);
+  auto* destination = MakeFakeOrtValue(21);
+  ctx.tensor_map[source] = {cpu, source_data.data(), source_data.size()};
+  ctx.tensor_map[destination] = {qnn_shared, destination_data.data(), destination_data.size()};
+  const OrtValue* sources[] = {source};
+  OrtValue* destinations[] = {destination};
+
+  OrtStatus* status = transfer->CopyTensors(transfer, sources, destinations, nullptr, 1);
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(ctx.stub_ort_api.GetErrorCode(status), ORT_INVALID_ARGUMENT);
+  EXPECT_NE(std::string(ctx.stub_ort_api.GetErrorMessage(status)).find("sizes differ"), std::string::npos);
+  ctx.stub_ort_api.ReleaseStatus(status);
+
+  ctx.tensor_map[destination] = {cpu, destination_data.data(), destination_data.size()};
+  status = transfer->CopyTensors(transfer, sources, destinations, nullptr, 1);
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(ctx.stub_ort_api.GetErrorCode(status), ORT_INVALID_ARGUMENT);
+  EXPECT_NE(std::string(ctx.stub_ort_api.GetErrorMessage(status)).find("only supports"), std::string::npos);
+  ctx.stub_ort_api.ReleaseStatus(status);
+  transfer->Release(transfer);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, DataTransfer_RejectsStringAndMismatchedTensorMetadata) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  OrtDataTransferImpl* transfer = nullptr;
+  ASSERT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
+  ASSERT_NE(transfer, nullptr);
+
+  const auto* cpu = MakeFakeMemoryDevice(10);
+  const auto* qnn_shared = MakeFakeMemoryDevice(11);
+  ctx.memory_device_map[cpu] = {
+      OrtMemoryInfoDeviceType_CPU, OrtDeviceMemoryType_DEFAULT, 0};
+  ctx.memory_device_map[qnn_shared] = {
+      OrtMemoryInfoDeviceType_CPU, OrtDeviceMemoryType_HOST_ACCESSIBLE, kQualcommPciVendorId};
+
+  std::vector<uint8_t> source_data(4);
+  std::vector<uint8_t> destination_data(4);
+  auto* source = MakeFakeOrtValue(20);
+  auto* destination = MakeFakeOrtValue(21);
+  ctx.tensor_map[source] = {
+      cpu, source_data.data(), source_data.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING, {1}};
+  ctx.tensor_map[destination] = {
+      qnn_shared, destination_data.data(), destination_data.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING, {1}};
+  const OrtValue* sources[] = {source};
+  OrtValue* destinations[] = {destination};
+
+  OrtStatus* status = transfer->CopyTensors(transfer, sources, destinations, nullptr, 1);
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(ctx.stub_ort_api.GetErrorCode(status), ORT_INVALID_ARGUMENT);
+  EXPECT_NE(std::string(ctx.stub_ort_api.GetErrorMessage(status)).find("string tensors"), std::string::npos);
+  ctx.stub_ort_api.ReleaseStatus(status);
+
+  ctx.tensor_map[source].element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  ctx.tensor_map[destination].element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
+  status = transfer->CopyTensors(transfer, sources, destinations, nullptr, 1);
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(ctx.stub_ort_api.GetErrorCode(status), ORT_INVALID_ARGUMENT);
+  EXPECT_NE(std::string(ctx.stub_ort_api.GetErrorMessage(status)).find("types or shapes differ"),
+            std::string::npos);
+  ctx.stub_ort_api.ReleaseStatus(status);
+
+  ctx.tensor_map[destination].element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  ctx.tensor_map[destination].shape = {2};
+  status = transfer->CopyTensors(transfer, sources, destinations, nullptr, 1);
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(ctx.stub_ort_api.GetErrorCode(status), ORT_INVALID_ARGUMENT);
+  EXPECT_NE(std::string(ctx.stub_ort_api.GetErrorMessage(status)).find("types or shapes differ"),
+            std::string::npos);
+  ctx.stub_ort_api.ReleaseStatus(status);
+
+  transfer->Release(transfer);
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, CreateAllocator_HostAccessible_DoesNotLoadRpcMem) {
   FactoryStubContext ctx;
-  UseFactoryStubs use(ctx);
+  UseGlobalFactoryStubs use(ctx);
+  OrtLoggingManager::SetDefaultLogger(reinterpret_cast<OrtLogger*>(kFakeToken));
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
 
   // ORT calls the factory allocator callback while registering every
