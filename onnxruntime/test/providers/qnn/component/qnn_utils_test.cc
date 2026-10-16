@@ -8,8 +8,11 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -1625,6 +1628,82 @@ TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_EmptySpanIsSafe) {
                                             gsl::make_span(bytes));
   EXPECT_TRUE(bytes.empty());
 }
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_ValidRelativePathStaysInModelDirectory) {
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(),
+                                                    std::filesystem::path("weights") / "data.bin",
+                                                    resolved_path);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(resolved_path.parent_path().filename(), "weights");
+  EXPECT_EQ(resolved_path.filename(), "data.bin");
+}
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_ParentTraversalReturnsError) {
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(),
+                                                    "../outside.bin", resolved_path);
+  EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_EmptyModelDirectoryUsesCurrentDirectory) {
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath({}, "data.bin", resolved_path);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(resolved_path, std::filesystem::weakly_canonical(std::filesystem::current_path() / "data.bin"));
+}
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_RootedPathReturnsError) {
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(),
+                                                    std::filesystem::path("/") / "outside.bin",
+                                                    resolved_path);
+  EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_SymlinkOutsideModelDirectoryReturnsError) {
+  const std::filesystem::path test_root =
+      std::filesystem::temp_directory_path() /
+      ("qnn_external_data_path_test_" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const std::filesystem::path model_directory = test_root / "model";
+  const std::filesystem::path outside_directory = test_root / "outside";
+  const std::filesystem::path outside_file = outside_directory / "outside.bin";
+  const std::filesystem::path link = model_directory / "data.bin";
+
+  std::error_code error_code;
+  std::filesystem::remove_all(test_root, error_code);
+  ASSERT_TRUE(std::filesystem::create_directories(model_directory, error_code)) << error_code.message();
+  ASSERT_TRUE(std::filesystem::create_directories(outside_directory, error_code)) << error_code.message();
+  std::ofstream(outside_file).put('x');
+  ASSERT_TRUE(std::filesystem::exists(outside_file));
+
+  std::filesystem::create_symlink(outside_file, link, error_code);
+  if (error_code) {
+    const std::string symlink_error = error_code.message();
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(test_root, cleanup_error);
+    GTEST_SKIP() << "Symlink creation is not supported: " << symlink_error;
+  }
+
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath(model_directory, link.filename(), resolved_path);
+  EXPECT_FALSE(status.IsOK());
+
+  std::filesystem::remove_all(test_root, error_code);
+}
+
+#ifdef _WIN32
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_RootedWindowsPathsReturnError) {
+  for (const std::filesystem::path& path : {std::filesystem::path("\\outside.bin"),
+                                            std::filesystem::path("C:outside.bin"),
+                                            std::filesystem::path("C:\\outside.bin")}) {
+    std::filesystem::path resolved_path;
+    auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(), path, resolved_path);
+    EXPECT_FALSE(status.IsOK()) << path.string();
+  }
+}
+#endif
 
 }  // namespace test
 }  // namespace onnxruntime
