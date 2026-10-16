@@ -38,6 +38,7 @@
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_data_transfer.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "onnxruntime_config.h"
 
@@ -511,10 +512,8 @@ static OrtApiBase MakeFakeApiBase() {
   return base;
 }
 
-// Base fixture: resets the process-wide default logger to nullptr at the start
-// of each test so that HasDefaultLogger()==false is the default state. Tests
-// that need a non-null default logger call OrtLoggingManager::SetDefaultLogger
-// themselves.
+// Base fixture resets the process-wide logger. Factory construction still
+// parses ORT_QNN_CUSTOM_OP_DOMAINS when no logger is installed.
 class QnnUnit_ProviderFactoryTest : public ::testing::Test {
  protected:
   void SetUp() override { OrtLoggingManager::SetDefaultLogger(nullptr); }
@@ -607,10 +606,23 @@ TEST_F(QnnUnit_ProviderFactoryTest, DataTransfer_CanCopyOnlyQnnHostAccessibleCpu
 
   EXPECT_TRUE(transfer->CanCopy(transfer, cpu, qnn_shared));
   EXPECT_TRUE(transfer->CanCopy(transfer, qnn_shared, cpu));
-  EXPECT_TRUE(transfer->CanCopy(transfer, qnn_shared, qnn_shared));
+  EXPECT_FALSE(transfer->CanCopy(transfer, qnn_shared, qnn_shared));
+  EXPECT_FALSE(transfer->CanCopy(transfer, qnn_shared, other_shared));
   EXPECT_FALSE(transfer->CanCopy(transfer, cpu, cpu));
   EXPECT_FALSE(transfer->CanCopy(transfer, cpu, other_shared));
   EXPECT_FALSE(transfer->CanCopy(transfer, gpu, qnn_shared));
+  transfer->Release(transfer);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, DataTransfer_ZeroTensorsIsNoOp) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  OrtDataTransferImpl* transfer = nullptr;
+  ASSERT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
+  ASSERT_NE(transfer, nullptr);
+
+  EXPECT_EQ(transfer->CopyTensors(transfer, nullptr, nullptr, nullptr, 0), nullptr);
   transfer->Release(transfer);
 }
 

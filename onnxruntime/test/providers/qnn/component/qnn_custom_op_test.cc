@@ -34,7 +34,7 @@ namespace test {
 TEST(QnnUnit_CustomOpDomainParserTest, SingleDomainSingleOp) {
   Ort::Logger logger = MakeNullLogger();
   std::vector<onnxruntime::CustomOpDomainSpec> specs;
-  onnxruntime::ParseCustomOpDomains("udo_domain:MyAdd", specs, logger);
+  onnxruntime::ParseCustomOpDomains("udo_domain:MyAdd", specs, &logger);
   ASSERT_EQ(specs.size(), 1u);
   EXPECT_EQ(specs[0].domain, "udo_domain");
   ASSERT_EQ(specs[0].op_types.size(), 1u);
@@ -44,7 +44,7 @@ TEST(QnnUnit_CustomOpDomainParserTest, SingleDomainSingleOp) {
 TEST(QnnUnit_CustomOpDomainParserTest, SingleDomainMultipleOps) {
   Ort::Logger logger = MakeNullLogger();
   std::vector<onnxruntime::CustomOpDomainSpec> specs;
-  onnxruntime::ParseCustomOpDomains("my_domain:OpA,OpB,OpC", specs, logger);
+  onnxruntime::ParseCustomOpDomains("my_domain:OpA,OpB,OpC", specs, &logger);
   ASSERT_EQ(specs.size(), 1u);
   EXPECT_EQ(specs[0].domain, "my_domain");
   ASSERT_EQ(specs[0].op_types.size(), 3u);
@@ -56,7 +56,7 @@ TEST(QnnUnit_CustomOpDomainParserTest, SingleDomainMultipleOps) {
 TEST(QnnUnit_CustomOpDomainParserTest, MultipleDomains) {
   Ort::Logger logger = MakeNullLogger();
   std::vector<onnxruntime::CustomOpDomainSpec> specs;
-  onnxruntime::ParseCustomOpDomains("domainA:OpX;domainB:OpY,OpZ", specs, logger);
+  onnxruntime::ParseCustomOpDomains("domainA:OpX;domainB:OpY,OpZ", specs, &logger);
   ASSERT_EQ(specs.size(), 2u);
   EXPECT_EQ(specs[0].domain, "domainA");
   ASSERT_EQ(specs[0].op_types.size(), 1u);
@@ -70,7 +70,7 @@ TEST(QnnUnit_CustomOpDomainParserTest, MultipleDomains) {
 TEST(QnnUnit_CustomOpDomainParserTest, EmptyString) {
   Ort::Logger logger = MakeNullLogger();
   std::vector<onnxruntime::CustomOpDomainSpec> specs;
-  onnxruntime::ParseCustomOpDomains("", specs, logger);
+  onnxruntime::ParseCustomOpDomains("", specs, &logger);
   EXPECT_TRUE(specs.empty());
 }
 
@@ -78,7 +78,7 @@ TEST(QnnUnit_CustomOpDomainParserTest, MissingColon_Skipped) {
   Ort::Logger logger = MakeNullLogger();
   std::vector<onnxruntime::CustomOpDomainSpec> specs;
   // Entry without ':' is malformed and should be skipped; valid entry still processed.
-  onnxruntime::ParseCustomOpDomains("bad_entry;good_domain:Op1", specs, logger);
+  onnxruntime::ParseCustomOpDomains("bad_entry;good_domain:Op1", specs, &logger);
   ASSERT_EQ(specs.size(), 1u);
   EXPECT_EQ(specs[0].domain, "good_domain");
 }
@@ -86,7 +86,7 @@ TEST(QnnUnit_CustomOpDomainParserTest, MissingColon_Skipped) {
 TEST(QnnUnit_CustomOpDomainParserTest, EmptyDomain_Skipped) {
   Ort::Logger logger = MakeNullLogger();
   std::vector<onnxruntime::CustomOpDomainSpec> specs;
-  onnxruntime::ParseCustomOpDomains(":MyOp;valid_domain:MyOp2", specs, logger);
+  onnxruntime::ParseCustomOpDomains(":MyOp;valid_domain:MyOp2", specs, &logger);
   ASSERT_EQ(specs.size(), 1u);
   EXPECT_EQ(specs[0].domain, "valid_domain");
 }
@@ -94,7 +94,7 @@ TEST(QnnUnit_CustomOpDomainParserTest, EmptyDomain_Skipped) {
 TEST(QnnUnit_CustomOpDomainParserTest, EmptyOpTypeList_Skipped) {
   Ort::Logger logger = MakeNullLogger();
   std::vector<onnxruntime::CustomOpDomainSpec> specs;
-  onnxruntime::ParseCustomOpDomains("domain_no_ops:;valid_domain:Op1", specs, logger);
+  onnxruntime::ParseCustomOpDomains("domain_no_ops:;valid_domain:Op1", specs, &logger);
   ASSERT_EQ(specs.size(), 1u);
   EXPECT_EQ(specs[0].domain, "valid_domain");
 }

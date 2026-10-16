@@ -32,7 +32,7 @@ std::string ReadCustomOpDomainsEnvVar() {
 
 }  // namespace
 
-void BuildCustomOpDomainsFromEnv(const Ort::Logger& logger,
+void BuildCustomOpDomainsFromEnv(const Ort::Logger* logger,
                                  const std::string& ep_name,
                                  std::vector<Ort::CustomOpDomain>& out_domains,
                                  std::vector<std::unique_ptr<qnn::QnnUdoPlaceholderOp>>& out_ops) {
@@ -48,9 +48,12 @@ void BuildCustomOpDomainsFromEnv(const Ort::Logger& logger,
     // factory). Skip it here so we don't register the domain twice, which trips ORT's
     // "Domain already set in registry".
     if (spec.domain == kQtiAiswDomain) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                  "ORT_QNN_CUSTOM_OP_DOMAINS: ignoring reserved domain 'qti_aisw' "
-                  "(built-in block ops are always registered).");
+      if (logger != nullptr) {
+        const Ort::Logger& logger_ref = *logger;
+        ORT_CXX_LOG(logger_ref, ORT_LOGGING_LEVEL_WARNING,
+                    "ORT_QNN_CUSTOM_OP_DOMAINS: ignoring reserved domain 'qti_aisw' "
+                    "(built-in block ops are always registered).");
+      }
       continue;
     }
 

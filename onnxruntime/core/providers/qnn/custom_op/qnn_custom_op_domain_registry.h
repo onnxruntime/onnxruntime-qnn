@@ -18,7 +18,7 @@ namespace onnxruntime {
 // them alive for as long as the domains are registered with ORT.
 //
 // No-op (leaves out_domains/out_ops untouched) if the env var is unset or empty.
-void BuildCustomOpDomainsFromEnv(const Ort::Logger& logger,
+void BuildCustomOpDomainsFromEnv(const Ort::Logger* logger,
                                  const std::string& ep_name,
                                  std::vector<Ort::CustomOpDomain>& out_domains,
                                  std::vector<std::unique_ptr<qnn::QnnUdoPlaceholderOp>>& out_ops);

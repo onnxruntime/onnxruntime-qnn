@@ -15,10 +15,6 @@
 
 namespace onnxruntime {
 
-// Qualcomm's PCI vendor ID. This identifies QNN memory devices and is distinct
-// from QnnEpFactory::vendor_id_, which is the ACPI "QCOM" code.
-inline constexpr uint32_t kQualcommPciVendorId = 0x5143;
-
 class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
