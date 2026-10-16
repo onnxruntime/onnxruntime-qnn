@@ -18,10 +18,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
 
-  void SetRuntimeCapabilities(OrtApiRuntimeCapabilities capabilities) noexcept {
-    ApiPtrs::runtime_capabilities = capabilities;
-  }
-
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
     return host_accessible_memory_info_.get();
   }
