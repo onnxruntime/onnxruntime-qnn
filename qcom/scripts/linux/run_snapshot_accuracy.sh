@@ -112,7 +112,7 @@ if [ -z "${binary}" ] && [ -x "${build_dir}/onnxruntime_provider_test" ]; then
 fi
 
 if [ -z "${binary}" ]; then
-    die "onnxruntime_provider_test not found under ${build_dir}. Is this a coverage build?"
+    die "onnxruntime_provider_test not found under ${build_dir}. Build a QNN EP internal-symbol test binary first."
 fi
 
 bin_dir="$(dirname "${binary}")"
@@ -125,10 +125,10 @@ run_provider_test() {
     )
 }
 
-# Verify this is a coverage build: probe for snapshot tests.
+# Verify the binary contains snapshot tests.
 snapshot_probe=$(run_provider_test --gtest_list_tests --gtest_filter="QnnSnapshot_*" 2>/dev/null || true)
 if [ -z "${snapshot_probe}" ]; then
-    die "No QnnSnapshot_* tests found in binary. This is not a coverage build (requires --enable-coverage)."
+    die "No QnnSnapshot_* tests found in binary. This requires a QNN EP internal-symbol test build."
 fi
 
 extract_snapshot_groups() {
