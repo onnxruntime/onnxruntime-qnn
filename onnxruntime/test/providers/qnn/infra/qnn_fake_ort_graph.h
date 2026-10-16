@@ -460,7 +460,7 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
         reinterpret_cast<const OrtTensorTypeAndShapeInfo*>(v));
     return nullptr;
   };
-  // GetTensorMutableData: production code (qnn_ep_utils.cc) calls the mutable variant via api_ptrs_.
+  // GetTensorMutableData: production code (qdq_node_group_selector.cc) calls the mutable variant via api_ptrs_.
   api.GetTensorMutableData = [](OrtValue* v, void** out) noexcept -> OrtStatus* {
     auto* fov = reinterpret_cast<FakeOrtValue*>(v);
     *out = (fov->elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)

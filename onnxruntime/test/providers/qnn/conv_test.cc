@@ -3645,7 +3645,7 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
       } else if (bias_per_channel) {
         // Per-channel quantized bias: distinct quantized value and scale per output channel (DQ axis=0).
         // Use INT32-quantized bias directly (no QL node — avoids ORT QL opset validation for INT32).
-        // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qnn_ep_utils.cc:741).
+        // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qdq_node_group_selector.cc:741).
         // Non-zero quant values ensure the per-channel scale indexing is actually exercised.
         // Omit zero_point (symmetric): ORT per-axis DQ requires zp be null or 1D of size OC.
         std::vector<int32_t> bias_quant(static_cast<size_t>(OC));
