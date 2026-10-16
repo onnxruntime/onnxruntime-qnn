@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   windows-x86-golden-publish-validation:
-    name: "PR #975 Windows x86 golden producer dry run"
+    name: "PR #975 Windows x86 golden producer publish validation"
     uses: ./.github/workflows/qualcomm-internal-snapshot-golden-publish.yml
     secrets: inherit
     with:
@@ -24,4 +24,4 @@ jobs:
       build_dir: build/windows-x86_64-internal-symbols
       build_config: Release
       python_executable: python.exe
-      dry_run: true
+      dry_run: false
