@@ -501,7 +501,8 @@ std::ostream& operator<<(std::ostream& out, const Qnn_ClientBuffer_t& client_buf
 }
 
 std::ostream& operator<<(std::ostream& out, const Qnn_Tensor_t& tensor) {
-  out << " name=" << GetQnnTensorName(tensor);
+  const char* const tensor_name = GetQnnTensorName(tensor);
+  out << " name=" << (tensor_name ? tensor_name : "<null>");
   out << " id=" << GetQnnTensorID(tensor);
   out << " version=" << tensor.version;
   out << " type=" << GetQnnTensorType(tensor);
