@@ -45,7 +45,7 @@ class ModelTestDef(NamedTuple):
 
 
 class ModelTestCase:
-    def __init__(self, model_def: ModelTestDef) -> None:
+    def __init__(self, model_def: ModelTestDef, json_dump_dir: Path | None = None) -> None:
         self.__model_root = model_def.model_root
         self.__rtol = model_def.rtol
         self.__atol = model_def.atol
@@ -67,11 +67,22 @@ class ModelTestCase:
             session_options.add_session_config_entry("ep.context_enable", "1")
             session_options.add_session_config_entry("ep.context_file_path", str(context_model_path))
 
+        # Enable QNN graph JSON dump if a dump directory is specified.
+        # The dump happens during CompileImpl (triggered by session creation).
+        if json_dump_dir is not None:
+            json_dump_dir.mkdir(parents=True, exist_ok=True)
+            session_options.add_session_config_entry("ep.qnnexecutionprovider.dump_json_qnn_graph", "1")
+            session_options.add_session_config_entry("ep.qnnexecutionprovider.json_qnn_graph_dir", str(json_dump_dir))
+
         logging.info(f"Preparing {self.__model_root.name}")
         self.__session = onnxruntime.InferenceSession(
             model_def.model_root / f"{model_def.model_root.name}.onnx",
             sess_options=session_options,
         )
+
+    def dump_graph_only(self) -> None:
+        """Release session after graph compilation/dump — no inference needed."""
+        del self.__session
 
     def load_inputs(self) -> list[dict[str, np.ndarray]]:
         return self.__tensors_from_files(self.input_paths)
