@@ -49,3 +49,31 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
     uses: ./.github/workflows/qualcomm-internal-asan.yml
     secrets: inherit
+
+  full-ci-gate:
+    name: Full CI gate
+    if: ${{ always() }}
+    needs: [build-and-test-all, coverage, asan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify full CI results
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BUILD_AND_TEST_RESULT: ${{ needs.build-and-test-all.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          ASAN_RESULT: ${{ needs.asan.result }}
+        run: |
+          if [[ "$BUILD_AND_TEST_RESULT" != "success" ]]; then
+            echo "Build and test result: $BUILD_AND_TEST_RESULT"
+            exit 1
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$COVERAGE_RESULT" != "success" || "$ASAN_RESULT" != "success" ]]; then
+              echo "Coverage result: $COVERAGE_RESULT"
+              echo "ASAN result: $ASAN_RESULT"
+              exit 1
+            fi
+          fi
+
+          echo "All required full CI jobs passed."
