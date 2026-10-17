@@ -784,7 +784,8 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             float input_scale,
                             const std::vector<uint32_t>& output_shape,
                             bool output_symmetric,
-                            bool do_op_validation);
+                            bool do_op_validation,
+                            Qnn_TensorType_t output_tensor_type = QNN_TENSOR_TYPE_NATIVE);
 
 // Adds `output_name` and the op producing it. HTP Conv/MatMul/FullyConnected only emit their activation's
 // datatype, so a 16-bit activation with an 8-bit output is built as the op into a 16-bit intermediate

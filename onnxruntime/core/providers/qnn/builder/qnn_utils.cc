@@ -1838,7 +1838,8 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             float input_scale,
                             const std::vector<uint32_t>& output_shape,
                             bool output_symmetric,
-                            bool do_op_validation) {
+                            bool do_op_validation,
+                            Qnn_TensorType_t output_tensor_type) {
   // Assume input is already handled.
   float scale = 0.0f;
   int32_t offset = 0;
@@ -1847,7 +1848,7 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
 
   std::vector<uint32_t> output_shape_copy = output_shape;
   QnnTensorWrapper convert_output_tensorwrapper(convert_output_name,
-                                                QNN_TENSOR_TYPE_NATIVE,
+                                                output_tensor_type,
                                                 output_qnn_data_type,
                                                 QnnQuantParamsWrapper::PerTensor(scale, offset),
                                                 std::move(output_shape_copy));
