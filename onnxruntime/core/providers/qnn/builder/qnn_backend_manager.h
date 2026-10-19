@@ -12,7 +12,6 @@
 #include <dlfcn.h>
 #endif
 
-#include <condition_variable>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -61,42 +60,6 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
 class QnnModel;
 class QnnBackendSystemDlcPlugin;
 class QnnBackendManager;
-
-// QNN retains this notifyParam for contextCreateFromBinaryListAsync callbacks. Keep the
-// initiating manager identity and node names independent of mutable process-wide shared state
-// and of the caller's context-bin map.
-class ContextCreateAsyncCallbackInfo {
- public:
-  ContextCreateAsyncCallbackInfo(const std::shared_ptr<QnnBackendManager>& manager,
-                                 const std::vector<std::string>& node_names)
-      : backend_manager_(manager), ep_node_names_(node_names) {}
-
-  static void* Create(
-      const std::shared_ptr<QnnBackendManager>& manager,
-      const std::vector<std::string>& node_names);
-  static std::shared_ptr<ContextCreateAsyncCallbackInfo> Acquire(void* token);
-  static void UnregisterAndDrain(gsl::span<void* const> tokens);
-  static size_t RegistrySize();
-
-  void Release();
-
-  std::shared_ptr<QnnBackendManager> LockBackendManager() const {
-    return backend_manager_.lock();
-  }
-
-  const std::vector<std::string>& GetEpNodeNames() const {
-    return ep_node_names_;
-  }
-
- private:
-  void WaitForCallbacks();
-
-  const std::weak_ptr<QnnBackendManager> backend_manager_;
-  const std::vector<std::string> ep_node_names_;
-  std::mutex mutex_;
-  std::condition_variable callbacks_drained_cv_;
-  size_t callbacks_in_flight_ = 0;
-};
 
 class QnnSerializerConfig {
  public:
@@ -423,10 +386,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   QnnSerializerConfig* GetQnnSerializerConfig();
 
-  // Handler called by ContextCreateAsyncCallback after resolving the manager that initiated the
-  // request. For each node name, a mapping to the context handle will be created.
+  // Handler called for a successful context initialization notification.
   void ProcessContextFromBinListAsync(Qnn_ContextHandle_t handle,
-                                      const ContextCreateAsyncCallbackInfo& callback_info);
+                                      gsl::span<const std::string> ep_node_names);
 
   // Sets the context priority to the given value, if valid
   Ort::Status SetContextPriority(ContextPriority context_priority);
@@ -791,10 +753,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Map of EP Main Context Node names to Qnn_ContextHandle_t
   std::mutex ep_context_handle_map_mutex_;
   std::unordered_map<std::string, Qnn_ContextHandle_t> ep_context_handle_map_;
-
-  // Opaque, non-reused callback tokens. Teardown unregisters and drains their records before
-  // releasing context state, so late callbacks miss without retaining process-lifetime tombstones.
-  std::vector<void*> context_create_async_callback_tokens_;
 
   // Vector of Qnn_ContextHandle_t. The context handles are owned by context_map_.
   std::vector<Qnn_ContextHandle_t> contexts_;
