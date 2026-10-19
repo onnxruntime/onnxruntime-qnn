@@ -52,6 +52,28 @@ namespace test {
 using qnn::utils::operator<<;
 
 // =============================================================================
+// qnn::utils::InvertPerm
+// =============================================================================
+
+TEST(QnnUnit_UtilsTest, InvertPerm_ValidPermutation) {
+  const std::vector<int64_t> perm{2, 0, 1};
+  std::vector<int64_t> inverse(perm.size());
+
+  EXPECT_TRUE(qnn::utils::InvertPerm(gsl::make_span(perm), gsl::make_span(inverse)).IsOK());
+  EXPECT_EQ(inverse, (std::vector<int64_t>{1, 2, 0}));
+}
+
+TEST(QnnUnit_UtilsTest, InvertPerm_OutOfRangeElementReturnsError) {
+  for (const std::vector<int64_t>& perm : {
+           std::vector<int64_t>{0, -1},
+           std::vector<int64_t>{0, 2},
+       }) {
+    std::vector<int64_t> inverse(perm.size());
+    EXPECT_FALSE(qnn::utils::InvertPerm(gsl::make_span(perm), gsl::make_span(inverse)).IsOK());
+  }
+}
+
+// =============================================================================
 // qnn::utils::GetElementSizeByType(Qnn_DataType_t)
 // =============================================================================
 
@@ -1272,7 +1294,7 @@ TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerChannel_ScalesUpdated) {
 
 TEST(QnnUnit_UtilsTest, GetQnnErrorMessage_ReturnsNonEmptyString) {
   QnnRealHtpBackendContext backend;
-  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available";
+  ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
   std::string msg = qnn::utils::GetQnnErrorMessage(backend.qnn_interface,
                                                    static_cast<Qnn_ErrorHandle_t>(1));
   EXPECT_FALSE(msg.empty());
@@ -1280,7 +1302,7 @@ TEST(QnnUnit_UtilsTest, GetQnnErrorMessage_ReturnsNonEmptyString) {
 
 TEST(QnnUnit_UtilsTest, GetVerboseQnnErrorMessage_ReturnsNonEmptyString) {
   QnnRealHtpBackendContext backend;
-  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available";
+  ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
   std::string msg = qnn::utils::GetVerboseQnnErrorMessage(backend.qnn_interface,
                                                           static_cast<Qnn_ErrorHandle_t>(1));
   EXPECT_FALSE(msg.empty());

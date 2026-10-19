@@ -505,9 +505,10 @@ TEST_F(QnnHTPBackendTests, Gemm_ZeroBeta_Static_B_And_Bias_U8) {
 // qdq@QNN_EP val: 28.229671478271484 (err: 1.2051048278808594, err/output_range: 3.8336660861968994%)
 // qdq@CPU_EP val: 29.092588424682617 (err: 0.34218788146972656, err/output_range: 1.0885642766952515%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 2.7451016902923584%
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test 8-bit QDQ Gemm with transposed A/B and static B and Bias inputs.
 TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U8) {
-  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
   std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
   std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
@@ -516,7 +517,10 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U8) {
                                          TestInputDef<float>({1, 4}, true, input_c_data)},
                                         {test::MakeAttribute("transA", static_cast<int64_t>(1)),
                                          test::MakeAttribute("transB", static_cast<int64_t>(1))},
-                                        ExpectedEPNodeAssignment::All);
+                                        ExpectedEPNodeAssignment::All,
+                                        13,
+                                        false,
+                                        GetV79OrLaterTieRoundingTolerance(7));
 }
 
 // Test QDQ Gemm (16bit activation, 8bit weight) with transposed A/B and static B and Bias inputs.
@@ -541,9 +545,10 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U16Act_U8Weight) {
 // qdq@QNN_EP val: 28.229671478271484 (err: 1.2051048278808594, err/output_range: 3.8336660861968994%)
 // qdq@CPU_EP val: 29.092588424682617 (err: 0.34218788146972656, err/output_range: 1.0885642766952515%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 2.7451016902923584%
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test QDQ Gemm with transposed A/B and dynamic (i.e., not initializer) B and Bias inputs.
 TEST_F(QnnHTPBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
-  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
   std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
   std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
@@ -552,7 +557,10 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
                                          TestInputDef<float>({1, 4}, false, input_c_data)},
                                         {test::MakeAttribute("transA", static_cast<int64_t>(1)),
                                          test::MakeAttribute("transB", static_cast<int64_t>(1))},
-                                        ExpectedEPNodeAssignment::All);
+                                        ExpectedEPNodeAssignment::All,
+                                        13,
+                                        false,
+                                        GetV79OrLaterTieRoundingTolerance(7));
 }
 
 // Reproduces the CLIP text projection averaging pattern where ORT's MatMulAddFusion

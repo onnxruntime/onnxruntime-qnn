@@ -497,7 +497,8 @@ static void RunReduceOpQDQTest(const std::string& op_type,
                                bool keepdims,
                                int opset,
                                ExpectedEPNodeAssignment expected_ep_assignment,
-                               bool use_ms_domain_qdq = false) {
+                               bool use_ms_domain_qdq = false,
+                               QDQTolerance tolerance = QDQTolerance()) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -511,7 +512,8 @@ static void RunReduceOpQDQTest(const std::string& op_type,
                                                            noop_with_empty_axes, use_ms_domain_qdq),
                        provider_options,
                        opset,
-                       expected_ep_assignment);
+                       expected_ep_assignment,
+                       tolerance);
 }
 
 //
@@ -525,19 +527,22 @@ static void RunReduceOpQDQTest(const std::string& op_type,
 // qdq@QNN_EP val: -2.6541414260864258 (err: 0.13106870651245117, err/output_range: 4.7058820724487305%)
 // qdq@CPU_EP val: -2.7415206432342529 (err: 0.043689489364624023, err/output_range: 1.5686246156692505%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 3.1372575759887695%
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test creates a Q -> DQ -> ReduceSum -> Q -> DQ graph, and checks that all
 // nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
 //
 // - Uses uint8 as the quantization type.
 // - Uses opset 13, which has "axes" as an input.
 TEST_F(QnnHTPBackendTests, ReduceSumU8Opset13) {
-  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   RunReduceOpQDQTest<uint8_t>("ReduceSum",
                               TestInputDef<float>({2, 2}, false, {-10.0f, 3.21289f, -5.9981f, 10.0f}),
                               {0, 1},  // axes
                               true,    // keepdims
                               13,      // opset
-                              ExpectedEPNodeAssignment::All);
+                              ExpectedEPNodeAssignment::All,
+                              false,
+                              GetV79OrLaterTieRoundingTolerance(8));
 }
 
 // Test 8-bit QDQ ReduceSum of last axis.
@@ -557,19 +562,22 @@ TEST_F(QnnHTPBackendTests, ReduceSumU8Opset13_LastAxis) {
 // qdq@QNN_EP val: -2.6541414260864258 (err: 0.13106870651245117, err/output_range: 4.7058820724487305%)
 // qdq@CPU_EP val: -2.7415206432342529 (err: 0.043689489364624023, err/output_range: 1.5686246156692505%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 3.1372575759887695%
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test creates a Q -> DQ -> ReduceSum -> Q -> DQ graph, and checks that all
 // nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
 //
 // - Uses uint8 as the quantization type.
 // - Uses opset 11, which has "axes" as an attribute.
 TEST_F(QnnHTPBackendTests, ReduceSumU8Opset11) {
-  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   RunReduceOpQDQTest<uint8_t>("ReduceSum",
                               TestInputDef<float>({2, 2}, false, {-10.0f, 3.21289f, -5.9981f, 10.0f}),
                               {0, 1},  // axes
                               true,    // keepdims
                               11,      // opset
-                              ExpectedEPNodeAssignment::All);
+                              ExpectedEPNodeAssignment::All,
+                              false,
+                              GetV79OrLaterTieRoundingTolerance(8));
 }
 
 // Test creates a Q -> DQ -> ReduceSum -> Q -> DQ graph, and checks that all
@@ -739,19 +747,22 @@ TEST_F(QnnHTPBackendTests, ReduceMinS8Opset18) {
 // qdq@QNN_EP val: -0.66353535652160645 (err: 0.032767176628112793, err/output_range: 4.7058820724487305%)
 // qdq@CPU_EP val: -0.68538016080856323 (err: 0.010922372341156006, err/output_range: 1.5686246156692505%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 3.1372575759887695%
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test creates a Q -> DQ -> ReduceMean -> Q -> DQ graph, and checks that all
 // nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
 //
 // - Uses uint8 as the quantization type.
 // - Uses opset 18, which has "axes" as an input.
 TEST_F(QnnHTPBackendTests, ReduceMeanU8Opset18) {
-  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   RunReduceOpQDQTest<uint8_t>("ReduceMean",
                               TestInputDef<float>({2, 2}, false, {-10.0f, 3.21289f, -5.9981f, 10.0f}),
                               {0, 1},  // axes
                               true,    // keepdims
                               18,      // opset
-                              ExpectedEPNodeAssignment::All);
+                              ExpectedEPNodeAssignment::All,
+                              false,
+                              GetV79OrLaterTieRoundingTolerance(8));
 }
 
 // Test 8-bit QDQ ReduceMean of last axis
@@ -772,19 +783,22 @@ TEST_F(QnnHTPBackendTests, ReduceMeanU8Opset18_LastAxis) {
 // qdq@QNN_EP val: -0.66353535652160645 (err: 0.032767176628112793, err/output_range: 4.7058820724487305%)
 // qdq@CPU_EP val: -0.68538016080856323 (err: 0.010922372341156006, err/output_range: 1.5686246156692505%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 3.1372575759887695%
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test creates a Q -> DQ -> ReduceMean -> Q -> DQ graph, and checks that all
 // nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
 //
 // - Uses uint8 as the quantization type.
 // - Uses opset 13, which has "axes" as an attribute.
 TEST_F(QnnHTPBackendTests, ReduceMeanU8Opset13) {
-  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   RunReduceOpQDQTest<uint8_t>("ReduceMean",
                               TestInputDef<float>({2, 2}, false, {-10.0f, 3.21289f, -5.9981f, 10.0f}),
                               {0, 1},  // axes
                               true,    // keepdims
                               13,      // opset
-                              ExpectedEPNodeAssignment::All);
+                              ExpectedEPNodeAssignment::All,
+                              false,
+                              GetV79OrLaterTieRoundingTolerance(8));
 }
 
 // Test creates a Q -> DQ -> ReduceMean -> Q -> DQ graph, and checks that all

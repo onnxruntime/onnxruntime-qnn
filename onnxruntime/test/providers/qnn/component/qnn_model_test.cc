@@ -26,6 +26,37 @@
 namespace onnxruntime {
 namespace test {
 
+namespace {
+
+template <typename Tag, typename Tag::type Member>
+struct QnnModelPrivateMember {
+  friend typename Tag::type GetQnnModelPrivateMember(Tag) { return Member; }
+};
+
+struct SetupTensorsTag {
+  using type = Ort::Status (qnn::QnnModel::*)(std::vector<qnn::QnnTensorInfo>&,
+                                              const std::vector<qnn::QnnTensorWrapper>&,
+                                              bool);
+  friend type GetQnnModelPrivateMember(SetupTensorsTag);
+};
+
+template struct QnnModelPrivateMember<SetupTensorsTag, &qnn::QnnModel::SetupTensors>;
+
+struct BindQnnTensorMemoryTag {
+  using type = Ort::Status (qnn::QnnModel::*)(const Ort::Logger&,
+                                              const OrtMemoryInfo*,
+                                              void*,
+                                              uint32_t,
+                                              Qnn_ContextHandle_t,
+                                              Qnn_Tensor_t&);
+  friend type GetQnnModelPrivateMember(BindQnnTensorMemoryTag);
+};
+
+template struct QnnModelPrivateMember<BindQnnTensorMemoryTag,
+                                      &qnn::QnnModel::BindQnnTensorMemoryToOrtValueMemory>;
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // QnnModelMinimalTestContext
 //
@@ -42,9 +73,20 @@ struct QnnModelMinimalTestContext {
   std::shared_ptr<qnn::QnnBackendManager> manager;
   std::unique_ptr<qnn::QnnModel> model;
 
-  QnnModelMinimalTestContext() {
+  explicit QnnModelMinimalTestContext(bool use_gpu_default_memory = false) {
+    stub_ort_api.MemoryInfoGetDeviceType = use_gpu_default_memory
+                                               ? +[](const OrtMemoryInfo*, OrtMemoryInfoDeviceType* device_type) noexcept {
+                                                   *device_type = OrtMemoryInfoDeviceType_GPU;
+                                                 }
+                                               : +[](const OrtMemoryInfo*, OrtMemoryInfoDeviceType* device_type) noexcept {
+                                                   *device_type = OrtMemoryInfoDeviceType_CPU;
+                                                 };
+    stub_ort_api.MemoryInfoGetDeviceMemType = [](const OrtMemoryInfo*) noexcept {
+      return OrtDeviceMemoryType_DEFAULT;
+    };
+
     qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnHtp.so";
+    cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -66,7 +108,7 @@ struct QnnModelMinimalTestContext {
 // QnnModelHtpTestContext
 //
 // Full context for tests that need a real QNN HTP backend (ComposeGraph,
-// FinalizeGraphs, etc.). Loads libQnnHtp.so and runs SetupBackend.
+// FinalizeGraphs, etc.). Loads the platform HTP backend and runs SetupBackend.
 // On x86_64 the validation path works but execution requires HTP hardware.
 // Tests should call GTEST_SKIP() when IsValid() returns false.
 // ---------------------------------------------------------------------------
@@ -89,7 +131,7 @@ struct QnnModelHtpTestContext {
     };
 
     qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnHtp.so";
+    cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -227,6 +269,78 @@ TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_Basic_PopulatesInputsOutputs) {
 
   auto status = ctx.model->SetGraphInputOutputInfo(mc);
   EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
+}
+
+TEST(QnnUnit_ModelTest, SetupTensors_SparseOutputIndex_ReturnsCompactedTensorInfo) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+  FakeValueInfo output0{"output0", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  FakeValueInfo output1{"output1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  FakeGraph graph{{}, {}, {&output0, &output1}, {}};
+  FakeNode fused{"fused", "QnnPartition_0", "", 13, {}, {&output0, &output1}};
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names{"output0", "output1"};
+  qnn::ModelSettings settings{};
+  qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+                                     &input_names, &output_names, &settings};
+  ASSERT_TRUE(ctx.model->SetGraphInputOutputInfo(model_context).IsOK());
+
+  std::vector<qnn::QnnTensorWrapper> tensor_wrappers;
+  tensor_wrappers.emplace_back("output1", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  std::vector<qnn::QnnTensorInfo> tensor_infos;
+  const auto setup_tensors = GetQnnModelPrivateMember(SetupTensorsTag{});
+
+  const auto status = ((*ctx.model).*setup_tensors)(tensor_infos, tensor_wrappers, false);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  ASSERT_EQ(tensor_infos.size(), 1u);
+  EXPECT_EQ(tensor_infos[0].tensor_wrapper, &tensor_wrappers[0]);
+  EXPECT_EQ(tensor_infos[0].ort_index, 1u);
+}
+
+TEST(QnnUnit_ModelTest, SetupTensors_OutputCountLessThanTensorWrapperCount_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+  FakeValueInfo output0{"output0", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  FakeGraph graph{{}, {}, {&output0}, {}};
+  FakeNode fused{"fused", "QnnPartition_0", "", 13, {}, {&output0}};
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names{"output0"};
+  qnn::ModelSettings settings{};
+  qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+                                     &input_names, &output_names, &settings};
+  ASSERT_TRUE(ctx.model->SetGraphInputOutputInfo(model_context).IsOK());
+
+  std::vector<qnn::QnnTensorWrapper> tensor_wrappers;
+  tensor_wrappers.emplace_back("output0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  tensor_wrappers.emplace_back("output1", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  std::vector<qnn::QnnTensorInfo> tensor_infos;
+  const auto setup_tensors = GetQnnModelPrivateMember(SetupTensorsTag{});
+
+  const auto status = ((*ctx.model).*setup_tensors)(tensor_infos, tensor_wrappers, false);
+  EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_ModelTest, BindTensor_UnregisteredGpuDefaultMemory_ReturnsError) {
+  QnnModelMinimalTestContext ctx(/*use_gpu_default_memory=*/true);
+  ASSERT_TRUE(ctx.IsValid());
+
+  const auto bind_tensor_memory = GetQnnModelPrivateMember(BindQnnTensorMemoryTag{});
+  int data = 0;
+  Qnn_Tensor_t qnn_tensor = QNN_TENSOR_INIT;
+  const auto status = ((*ctx.model).*bind_tensor_memory)(
+      ctx.logger, reinterpret_cast<const OrtMemoryInfo*>(1), &data, sizeof(data), nullptr, qnn_tensor);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(status.GetErrorMessage(), "GPU DEFAULT memory is not a registered imported memory handle.");
 }
 
 // ---------------------------------------------------------------------------

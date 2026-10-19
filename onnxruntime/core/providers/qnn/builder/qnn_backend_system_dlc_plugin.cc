@@ -11,6 +11,7 @@
 #include "System/QnnSystemContext.h"
 #include "System/QnnSystemDlc.h"
 #include "System/QnnSystemInterface.h"
+#include "System/QnnSystemLog.h"
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
@@ -24,18 +25,13 @@ QnnBackendSystemDlcPlugin::QnnBackendSystemDlcPlugin(QnnBackendManager* qnn_back
     : qnn_backend_manager_(qnn_backend_manager) {}
 
 QnnBackendSystemDlcPlugin::~QnnBackendSystemDlcPlugin() {
-#ifdef QNN_SYSTEM_DLC_API_ENABLED
-  Ort::Status status = ReleaseDlc();
-  if (!status.IsOK()) {
-    ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_,
-                    ORT_LOGGING_LEVEL_ERROR,
-                    ("Failed to ReleaseDlc: " + status.GetErrorMessage()).c_str());
+  if (Ort::Status status = Release(); !status.IsOK()) {
+    ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
   }
-#endif  // QNN_SYSTEM_DLC_API_ENABLED
 }
 
 Ort::Status QnnBackendSystemDlcPlugin::AddContextToDlc(const Qnn_ContextHandle_t& context_handle) {
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Adding context to DLC.");
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Adding context to DLC.");
 
 #ifdef QNN_SYSTEM_DLC_API_ENABLED
   RETURN_IF(qnn_backend_manager_->qnn_interface_.contextAddToDlc == nullptr,
@@ -45,7 +41,7 @@ Ort::Status QnnBackendSystemDlcPlugin::AddContextToDlc(const Qnn_ContextHandle_t
   RETURN_IF(result != QNN_SUCCESS,
             ("Failed to add context to DLC. Error: " + qnn_backend_manager_->QnnErrorHandleToString(result)).c_str());
 
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Context added to DLC.");
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Context added to DLC.");
   return Ort::Status();
 #else
   ORT_UNUSED_PARAMETER(context_handle);
@@ -53,12 +49,42 @@ Ort::Status QnnBackendSystemDlcPlugin::AddContextToDlc(const Qnn_ContextHandle_t
 #endif  // QNN_SYSTEM_DLC_API_ENABLED
 }
 
-Ort::Status QnnBackendSystemDlcPlugin::CreateDlc() {
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Creating DLC.");
+Ort::Status QnnBackendSystemDlcPlugin::CreateDlcFromBinary(const uint8_t* buffer, uint64_t buffer_length) {
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating DLC from binary.");
+
+#ifdef QNN_SYSTEM_DLC_API_ENABLED
+  RETURN_IF(dlc_created_, "DLC created already.");
+
+  RETURN_IF(qnn_backend_manager_->qnn_sys_interface_.systemDlcCreateFromBinary == nullptr,
+            "Failed to create DLC from binary without QnnSystemDlc_createFromBinary API.");
+
+  Qnn_ErrorHandle_t result = qnn_backend_manager_->qnn_sys_interface_.systemDlcCreateFromBinary(
+      system_log_handle_,
+      buffer,
+      buffer_length,
+      &dlc_handle_);
+  RETURN_IF(result != QNN_SUCCESS,
+            ("Failed to create DLC from binary. Error: " + qnn_backend_manager_->QnnErrorHandleToString(result))
+                .c_str());
+
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "DLC created from binary.");
+  dlc_created_ = true;
+
+  return Ort::Status();
+
+#else
+  ORT_UNUSED_PARAMETER(buffer);
+  ORT_UNUSED_PARAMETER(buffer_length);
+  return MAKE_EP_FAIL("DLC creation from binary is only supported in QAIRT 2.48+ SDK.");
+#endif  // QNN_SYSTEM_DLC_API_ENABLED
+}
+
+Ort::Status QnnBackendSystemDlcPlugin::CreateEmptyDlc() {
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating DLC from scratch.");
 
 #ifdef QNN_SYSTEM_DLC_API_ENABLED
   if (dlc_created_) {
-    ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "DLC created already.");
+    ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "DLC created already.");
     return Ort::Status();
   }
 
@@ -66,13 +92,13 @@ Ort::Status QnnBackendSystemDlcPlugin::CreateDlc() {
             "Failed to create DLC without QnnSystemDlc_createWithDestinationDir API.");
 
   Qnn_ErrorHandle_t result = qnn_backend_manager_->qnn_sys_interface_.systemDlcCreateWithDestinationDir(
-      qnn_backend_manager_->log_handle_,
+      system_log_handle_,
       nullptr,
       &dlc_handle_);
   RETURN_IF(result != QNN_SUCCESS,
             ("Failed to create DLC. Error: " + qnn_backend_manager_->QnnErrorHandleToString(result)).c_str());
 
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "DLC created.");
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "DLC created.");
   dlc_created_ = true;
 
   return Ort::Status();
@@ -81,34 +107,32 @@ Ort::Status QnnBackendSystemDlcPlugin::CreateDlc() {
 #endif  // QNN_SYSTEM_DLC_API_ENABLED
 }
 
-Ort::Status QnnBackendSystemDlcPlugin::ReleaseDlc() {
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Freeing DLC.");
+Ort::Status QnnBackendSystemDlcPlugin::CreateSystemLog() {
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating SystemLog.");
 
-#ifdef QNN_SYSTEM_DLC_API_ENABLED
-  if (!dlc_created_) {
-    ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "No DLC to be freed.");
+  if (system_log_handle_) {
+    ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "SystemLog created already.");
     return Ort::Status();
   }
 
-  RETURN_IF(qnn_backend_manager_->qnn_sys_interface_.systemDlcFree == nullptr,
-            "Failed to free DLC without QnnSystemDlc_free API.");
+  RETURN_IF(qnn_backend_manager_->qnn_sys_interface_.systemLogCreate == nullptr,
+            "Failed to create SystemLog without QnnSystemLog_create API.");
 
-  Qnn_ErrorHandle_t result = qnn_backend_manager_->qnn_sys_interface_.systemDlcFree(dlc_handle_);
+  auto ort_log_level = qnn_backend_manager_->logger_ptr_->GetLoggingSeverityLevel();
+  QnnLog_Level_t qnn_log_level = qnn_backend_manager_->MapOrtSeverityToQNNLogLevel(ort_log_level);
+
+  Qnn_ErrorHandle_t result = qnn_backend_manager_->qnn_sys_interface_.systemLogCreate(qnn_backend_manager_->QnnLogging,
+                                                                                      qnn_log_level,
+                                                                                      &system_log_handle_);
   RETURN_IF(result != QNN_SUCCESS,
-            ("Failed to free DLC. Error: " + qnn_backend_manager_->QnnErrorHandleToString(result)).c_str());
+            ("Failed to create SystemLog. Error: " + qnn_backend_manager_->QnnErrorHandleToString(result)).c_str());
 
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "DLC freed");
-  dlc_handle_ = nullptr;
-  dlc_created_ = false;
-
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "SystemLog created.");
   return Ort::Status();
-#else
-  return MAKE_EP_FAIL("DLC free is only supported in QAIRT 2.48+ SDK.");
-#endif  // QNN_SYSTEM_DLC_API_ENABLED
 }
 
 Ort::Status QnnBackendSystemDlcPlugin::GetDlcBinaryBuffer(unsigned char** dlc_buffer, uint64_t& buffer_size) {
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Getting DLC binary.");
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Getting DLC binary.");
 
 #ifdef QNN_SYSTEM_DLC_API_ENABLED
   RETURN_IF(dlc_buffer == nullptr, "Null dlc_buffer pointer provided.");
@@ -153,29 +177,15 @@ Ort::Status QnnBackendSystemDlcPlugin::GetDlcBinaryBuffer(unsigned char** dlc_bu
 }
 
 Ort::Status QnnBackendSystemDlcPlugin::GetDlcBinaryInfo(QnnSystemContext_Handle_t sys_ctx_handle,
-                                                        const uint8_t* buffer,
-                                                        uint64_t buffer_length,
                                                         Qnn_Version_t& blob_version,
                                                         uint32_t& graph_count,
                                                         QnnSystemContext_GraphInfo_t** graphs_info) {
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Getting DLC binary info.");
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Getting DLC binary info.");
 
 #ifdef QNN_SYSTEM_DLC_API_ENABLED
   // In current workflow, DLC binary info is required when backend attempts to load from EP context, and thus DLC
-  // should not be created already.
-  RETURN_IF(dlc_created_, "DLC is unexpectedly created already.");
-  RETURN_IF(qnn_backend_manager_->qnn_sys_interface_.systemDlcCreateFromBinary == nullptr,
-            "Failed to get DLC binary info without QnnSystemDlc_createFromBinary API.");
-
-  Qnn_ErrorHandle_t rt = qnn_backend_manager_->qnn_sys_interface_.systemDlcCreateFromBinary(
-      qnn_backend_manager_->log_handle_,
-      buffer,
-      buffer_length,
-      &dlc_handle_);
-  RETURN_IF(rt != QNN_SUCCESS,
-            ("Failed to create QNN DLC from binary. Error: " + qnn_backend_manager_->QnnErrorHandleToString(rt))
-                .c_str());
-  dlc_created_ = true;
+  // should be created from binary first.
+  RETURN_IF_NOT(dlc_created_, "Expecting DLC is created from binary first.");
 
   std::vector<const uint8_t*> record_buffers;
   std::vector<uint64_t> record_buffer_sizes;
@@ -191,14 +201,11 @@ Ort::Status QnnBackendSystemDlcPlugin::GetDlcBinaryInfo(QnnSystemContext_Handle_
       graph_count,
       graphs_info));
 
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "DLC binary info got.");
-  RETURN_IF_ERROR(ReleaseDlc());
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "DLC binary info got.");
 
   return Ort::Status();
 #else
   ORT_UNUSED_PARAMETER(sys_ctx_handle);
-  ORT_UNUSED_PARAMETER(buffer);
-  ORT_UNUSED_PARAMETER(buffer_length);
   ORT_UNUSED_PARAMETER(blob_version);
   ORT_UNUSED_PARAMETER(graph_count);
   ORT_UNUSED_PARAMETER(graphs_info);
@@ -207,11 +214,10 @@ Ort::Status QnnBackendSystemDlcPlugin::GetDlcBinaryInfo(QnnSystemContext_Handle_
 }
 
 Ort::Status QnnBackendSystemDlcPlugin::GetDlcMaxSpillFillBufferSize(uint64_t& max_spill_fill_buffer_size) {
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Getting DLC max spill-fill buffer size.");
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Getting DLC max spill-fill buffer size.");
 
 #ifdef QNN_SYSTEM_DLC_API_ENABLED
-  // In current workflow, spill-fill buffer size is queried after DLC buffer is acquired, and thus DLC should already
-  // be created.
+  // In current workflow, spill-fill buffer size is queried after DLC created from binary.
   RETURN_IF_NOT(dlc_created_, "No DLC to get max spill-fill buffer size from.");
 
   std::vector<const uint8_t*> record_buffers;
@@ -262,7 +268,7 @@ Ort::Status QnnBackendSystemDlcPlugin::GetDlcMaxSpillFillBufferSize(uint64_t& ma
     }
   }
 
-  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_INFO, "DLC max spill-fill buffer size got.");
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "DLC max spill-fill buffer size got.");
   return Ort::Status();
 #else
   ORT_UNUSED_PARAMETER(max_spill_fill_buffer_size);
@@ -311,6 +317,109 @@ Ort::Status QnnBackendSystemDlcPlugin::GetDlcRecordBuffers(bool most_optimal_onl
   ORT_UNUSED_PARAMETER(record_buffer_sizes);
   return MAKE_EP_FAIL("DLC record buffer acquisition is only supported in QAIRT 2.48+ SDK.");
 #endif  // QNN_SYSTEM_DLC_API_ENABLED
+}
+
+Ort::Status QnnBackendSystemDlcPlugin::Release() {
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Releasing.");
+
+  bool has_error = false;
+  if (Ort::Status status = ReleaseDlc(); !status.IsOK()) {
+    ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
+    has_error = true;
+  }
+  if (Ort::Status status = ReleaseSystemLog(); !status.IsOK()) {
+    ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
+    has_error = true;
+  }
+
+  RETURN_IF(has_error, "Failed to release.");
+
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Released.");
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendSystemDlcPlugin::ReleaseDlc() {
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Releasing DLC.");
+
+#ifdef QNN_SYSTEM_DLC_API_ENABLED
+  if (!dlc_created_) {
+    ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "No DLC to be freed.");
+    return Ort::Status();
+  }
+
+  RETURN_IF(qnn_backend_manager_->qnn_sys_interface_.systemDlcFree == nullptr,
+            "Failed to free DLC without QnnSystemDlc_free API.");
+
+  Qnn_ErrorHandle_t result = qnn_backend_manager_->qnn_sys_interface_.systemDlcFree(dlc_handle_);
+  RETURN_IF(result != QNN_SUCCESS,
+            ("Failed to free DLC. Error: " + qnn_backend_manager_->QnnErrorHandleToString(result)).c_str());
+
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "DLC released");
+  dlc_handle_ = nullptr;
+  dlc_created_ = false;
+
+#endif  // QNN_SYSTEM_DLC_API_ENABLED
+
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendSystemDlcPlugin::ReleaseSystemLog() {
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Releasing SystemLog.");
+
+  if (!system_log_handle_) {
+    ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "No SystemLog to be freed.");
+    return Ort::Status();
+  }
+
+  RETURN_IF(qnn_backend_manager_->qnn_sys_interface_.systemLogFree == nullptr,
+            "Failed to free SystemLog without QnnSystemLog_free API.");
+
+  Qnn_ErrorHandle_t result = qnn_backend_manager_->qnn_sys_interface_.systemLogFree(system_log_handle_);
+  RETURN_IF(result != QNN_SUCCESS,
+            ("Failed to free SystemLog. Error: " + qnn_backend_manager_->QnnErrorHandleToString(result)).c_str());
+
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "SystemLog released.");
+  system_log_handle_ = nullptr;
+
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendSystemDlcPlugin::SetupDlc() {
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Setting up DLC.");
+
+  Ort::Status status = CreateSystemLog();
+  if (status.IsOK()) {
+    status = CreateEmptyDlc();
+  }
+
+  if (!status.IsOK()) {
+    if (Ort::Status rel_status = Release(); !rel_status.IsOK()) {
+      ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_ERROR, rel_status.GetErrorMessage().c_str());
+    }
+    return status;
+  }
+
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "DLC set up.");
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendSystemDlcPlugin::SetupDlcFromBinary(const uint8_t* buffer, uint64_t buffer_length) {
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Setting up DLC from binary.");
+
+  Ort::Status status = CreateSystemLog();
+  if (status.IsOK()) {
+    status = CreateDlcFromBinary(buffer, buffer_length);
+  }
+
+  if (!status.IsOK()) {
+    if (Ort::Status rel_status = Release(); !rel_status.IsOK()) {
+      ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_ERROR, rel_status.GetErrorMessage().c_str());
+    }
+    return status;
+  }
+
+  ORT_CXX_LOG_PTR(qnn_backend_manager_->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "DLC set up from binary.");
+  return Ort::Status();
 }
 
 }  // namespace qnn

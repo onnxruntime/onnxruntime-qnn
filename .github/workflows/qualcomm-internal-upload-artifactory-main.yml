@@ -15,6 +15,10 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: "rc0"
+      skip_android_builds:
+        description: "If true, skip building and uploading Android AAR/Maven artifacts."
+        type: boolean
+        default: false
 
 jobs:
   check-admin-permission:
@@ -55,3 +59,4 @@ jobs:
       nightly_build: false
       skip_publish: false
       version_suffix: ${{ inputs.version_suffix }}
+      skip_android_builds: ${{ inputs.skip_android_builds }}

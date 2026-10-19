@@ -197,7 +197,7 @@ bool QnnModelWrapper::AddParamWrapper(QnnParamWrapper&& param_wrapper) {
   return true;
 }
 
-const QnnTensorWrapper& QnnModelWrapper::GetQnnTensorWrapper(const std::string& tensor_name) {
+const QnnTensorWrapper& QnnModelWrapper::GetQnnTensorWrapper(const std::string& tensor_name) const {
   auto map_iter = model_tensors_map_.find(tensor_name);
   if (map_iter != model_tensors_map_.end()) {
     return (map_iter->second);

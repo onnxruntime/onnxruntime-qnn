@@ -476,7 +476,7 @@ def test_zip(args: argparse.Namespace) -> None:
         ]
     elif is_host_x86_64():
         configs = [
-            ("win-x64", "windows-x86_64", "QnnCpu.dll"),
+            ("win-x64", "windows-x86_64", "QnnHtp.dll"),
         ]
     else:
         log.warning(f"Unknown Windows architecture: {platform.machine()}")
@@ -538,7 +538,7 @@ def test_tgz(args: argparse.Namespace) -> None:
     if is_host_arm64():
         tgz_arch, test_bin_arch, backend_lib = "linux-aarch64", "linux-arm64", "libQnnHtp.so"
     elif is_host_x86_64():
-        tgz_arch, test_bin_arch, backend_lib = "linux-x64", "linux-x86_64", "libQnnCpu.so"
+        tgz_arch, test_bin_arch, backend_lib = "linux-x64", "linux-x86_64", "libQnnHtp.so"
     else:
         log.warning(f"Unknown Linux architecture: {platform.machine()}")
         return
@@ -592,11 +592,11 @@ def test_nuget(args: argparse.Namespace) -> None:
         )
         return
 
-    # Determine host-appropriate RID and backend
+    # Determine host-appropriate RID. Both NuGet runtime packages use QnnHtp.dll.
     if is_host_arm64():
-        runtime_id, backend_dll = "win-arm64", "QnnHtp.dll"
+        runtime_id = "win-arm64"
     elif is_host_x86_64():
-        runtime_id, backend_dll = "win-x64", "QnnCpu.dll"
+        runtime_id = "win-x64"
     else:
         log.warning(f"Unknown Windows architecture: {platform.machine()}")
         return
@@ -612,8 +612,6 @@ def test_nuget(args: argparse.Namespace) -> None:
             runtime_id,
             "-ModelPath",
             str(MODEL_PATH),
-            "-BackendDll",
-            backend_dll,
         ],
     )
 

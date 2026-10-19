@@ -9,6 +9,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/mixed_precision_convert_utils.h"
 #include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -892,6 +893,10 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                      op_output_quant_param.Copy(),
                                                      op_output_shape, do_op_validation));
   } else {
+    if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+      RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names,
+                                                                output_info.qnn_data_type, do_op_validation));
+    }
     const Qnn_DataType_t activation_qnn_data_type =
         qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
     RETURN_IF_ERROR(utils::AddOpWithQuantizedOutput(qnn_model_wrapper, utils::UniqueNameGenerator().New(node_unit),

@@ -9,6 +9,7 @@
 
 #include "QnnInterface.h"
 #include "HTP/QnnHtpDevice.h"
+#include "System/QnnSystemInterface.h"
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
@@ -52,7 +53,12 @@ class StubBackendManager {
 
   const qnn::QnnBackendManager* Get() const { return manager_.get(); }
 
+  // Non-const access for components that take a mutable QnnBackendManager*
+  // (e.g. QnnBackendSystemDlcPlugin).
+  qnn::QnnBackendManager* GetMutable() { return manager_.get(); }
+
   QNN_INTERFACE_VER_TYPE& QnnInterface();
+  QNN_SYSTEM_INTERFACE_VER_TYPE& SystemInterface();
   Qnn_BackendHandle_t& BackendHandle();
   QNN_INTERFACE_VER_TYPE& ValidatorInterface();
   Qnn_BackendHandle_t& ValidatorBackendHandle();

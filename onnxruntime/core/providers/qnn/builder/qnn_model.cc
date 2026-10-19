@@ -22,6 +22,9 @@
 #include "core/providers/qnn/qnn_ep_profiler.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 #include "core/providers/qnn/shared_context.h"
+#ifdef _WIN32
+#include "core/providers/qnn/qnn_external_resource_importer.h"
+#endif
 
 namespace onnxruntime {
 namespace qnn {
@@ -493,35 +496,60 @@ Ort::Status QnnModel::ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs,
   return Ort::Status();
 }
 
-static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
-                                                       const Ort::Logger& logger,
-                                                       QnnBackendManager& qnn_backend_manager,
-                                                       const OrtMemoryInfo* ort_value_memory_info,
-                                                       void* ort_value_data, uint32_t ort_value_data_size,
-                                                       Qnn_ContextHandle_t qnn_context,
-                                                       Qnn_Tensor_t& qnn_tensor) {
+Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& logger,
+                                                          const OrtMemoryInfo* ort_value_memory_info,
+                                                          void* ort_value_data,
+                                                          uint32_t ort_value_data_size,
+                                                          Qnn_ContextHandle_t qnn_context,
+                                                          Qnn_Tensor_t& qnn_tensor) {
   // either set qnn_tensor memHandle or clientBuf
   OrtMemoryInfoDeviceType ort_value_memory_info_device_type;
-  ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
-  OrtDeviceMemoryType ort_value_memory_info_device_memory_type = ort_api.MemoryInfoGetDeviceMemType(ort_value_memory_info);
+  api_ptrs_.ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
+  OrtDeviceMemoryType ort_value_memory_info_device_memory_type =
+      api_ptrs_.ort_api.MemoryInfoGetDeviceMemType(ort_value_memory_info);
   const bool uses_shared_memory =
       ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
       ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE;
   const bool uses_imported_memory =
       ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_GPU &&
       ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_DEFAULT;
+  const QnnAllocatorType qnn_allocator_type = qnn_backend_manager_->GetQnnAllocatorType();
+  bool has_matching_shared_allocation = false;
+  if (IsHtpSharedMemoryAllocator(qnn_allocator_type)) {
+    has_matching_shared_allocation = HtpSharedMemoryAllocator::IsAllocationTracked(ort_value_data);
+  }
+#ifdef _WIN32
+  else if (IsDx12SharedMemoryAllocator(qnn_allocator_type)) {
+    has_matching_shared_allocation = Dx12SharedMemoryAllocator::IsAllocationTracked(ort_value_data);
+  }
+  const bool can_use_imported_memory =
+      uses_imported_memory && QnnExternalResourceImporterImpl::FindImportMemory(ort_value_data);
+#else
+  const bool can_use_imported_memory = false;
+#endif
+  const bool can_use_shared_memory = uses_shared_memory && has_matching_shared_allocation;
 
-  if (uses_shared_memory || uses_imported_memory) {
+  if (uses_imported_memory && !can_use_imported_memory) {
+    return MAKE_EP_FAIL("GPU DEFAULT memory is not a registered imported memory handle.");
+  }
+
+  if (can_use_shared_memory || can_use_imported_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t memHandle to ORT tensor shared memory.");
     Qnn_MemHandle_t qnn_mem_handle{};
-    RETURN_IF_ERROR(qnn_backend_manager.GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
-                                                                      qnn_mem_handle));
+    RETURN_IF_ERROR(qnn_backend_manager_->GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
+                                                                        qnn_mem_handle));
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_MEMHANDLE);
     SetQnnTensorMemHandle(qnn_tensor, qnn_mem_handle);
   } else {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
     SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
+    if (!zero_copy_fallback_warned_ &&
+        (uses_shared_memory || uses_imported_memory || qnn_allocator_type != QnnAllocatorType::NONE)) {
+      zero_copy_fallback_warned_ = true;
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  "QNN zero-copy memory binding was not used; falling back to clientBuf.");
+    }
   }
 
   return Ort::Status();
@@ -633,9 +661,7 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorData(ort_input_tensor, &raw_data));
 
     RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
-        api_ptrs_.ort_api,
         logger,
-        *qnn_backend_manager_,
         static_cast<const OrtMemoryInfo*>(input_tensor_mem_info),
         const_cast<void*>(raw_data), qnn_input_info.tensor_byte_size,
         graph_info_->GraphContext(),
@@ -679,9 +705,7 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorMutableData(ort_output_tensor, &mutable_data));
 
     RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
-        api_ptrs_.ort_api,
         logger,
-        *qnn_backend_manager_,
         static_cast<const OrtMemoryInfo*>(output_tensor_mem_info),
         mutable_data, qnn_output_info.tensor_byte_size,
         graph_info_->GraphContext(),
@@ -876,7 +900,9 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
     RETURN_IF(input_count < tensor_count, "The count of graph inputs should be at least the count of tensor_wrapper!");
     qnn_tensor_infos.resize(input_count);
   } else {
-    qnn_tensor_infos.resize(tensor_count);
+    auto output_count = graph_outputs_.indices.size();
+    RETURN_IF(output_count < tensor_count, "The count of graph outputs should be at least the count of tensor_wrapper!");
+    qnn_tensor_infos.resize(output_count);
   }
 
   for (auto& tensor_wrapper : tensor_wrappers) {
@@ -888,24 +914,24 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
     const auto& tensor_name = tensor_wrapper.GetName();
     auto qnn_index = is_input ? GetGraphInputIndex(tensor_name) : GetOutputIndex(tensor_name);
     auto ort_index = is_input ? GetOrtInputIndex(tensor_name) : qnn_index;
+    RETURN_IF(qnn_index >= qnn_tensor_infos.size(),
+              ("QNN tensor index is out of range for tensor: " + tensor_name).c_str());
 
     QnnTensorInfo& qnn_tensor_info = qnn_tensor_infos[qnn_index];
     qnn_tensor_info.tensor_wrapper = &tensor_wrapper;
     qnn_tensor_info.tensor_byte_size = static_cast<uint32_t>(length);
     qnn_tensor_info.ort_index = ort_index;
   }
-  // The number of graph inputs and the number of tensor wrappers may not match.
+  // The number of graph inputs/outputs and the number of tensor wrappers may not match.
   // - For example, for ResizeNearestNeighbor op, Qnn only cares about the 1st input,
   //   so the rest of the inputs are not converted to tensor wrappers.
   // - However, these remaining inputs still appear in the graph inputs, resulting in
   //   a discrepancy in the input quantities.
-  // If not all inputs are used, erase the empty allocations in qnn_tensor_infos.
-  if (is_input) {
-    qnn_tensor_infos.erase(std::remove_if(qnn_tensor_infos.begin(),
-                                          qnn_tensor_infos.end(),
-                                          [](QnnTensorInfo qnn_tensor_info) { return qnn_tensor_info.tensor_wrapper == nullptr; }),
-                           qnn_tensor_infos.end());
-  }
+  // If not all inputs/outputs are used, erase the empty allocations in qnn_tensor_infos.
+  qnn_tensor_infos.erase(std::remove_if(qnn_tensor_infos.begin(),
+                                        qnn_tensor_infos.end(),
+                                        [](QnnTensorInfo qnn_tensor_info) { return qnn_tensor_info.tensor_wrapper == nullptr; }),
+                         qnn_tensor_infos.end());
   return Ort::Status();
 }
 

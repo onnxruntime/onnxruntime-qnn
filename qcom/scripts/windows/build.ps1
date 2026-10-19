@@ -46,6 +46,10 @@ param (
     [ValidateSet("", "3.11", "3.12", "3.13", "3.14")]
     [string]$TargetPyVersion = "",
 
+    [Parameter(Mandatory = $false,
+               HelpMessage = "Build QNN EP with internal symbols exported for unit tests. Not for production.")]
+    [bool]$QnnInternalUtSymbols = $false,
+
     [Parameter(Mandatory = $true,
                HelpMessage = "Python virtual environment to activate.")]
     [string]$PyVEnv
@@ -71,6 +75,10 @@ else {
         }
     }
     $BuildDir = (Join-Path $BuildRoot "windows-$BuildDirArch")
+}
+
+if ($QnnInternalUtSymbols) {
+    $BuildDir = "$BuildDir-internal-symbols"
 }
 
 if (-not (Test-Path $BuildDir)) {
@@ -208,6 +216,10 @@ if ($CMakeGenerator -eq "Ninja") {
     $PlatformArgs += "--cmake_extra_defines", "CMAKE_OBJECT_PATH_MAX=240"
 }
 
+if ($QnnInternalUtSymbols) {
+    $PlatformArgs += "--cmake_extra_defines", "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS=ON"
+}
+
 $VersionSuffixArg = @()
 if ($env:ORT_VERSION_SUFFIX) {
     $VersionSuffixArg += "--version_suffix", "$env:ORT_VERSION_SUFFIX"
@@ -282,6 +294,7 @@ else {
             New-Item -ItemType Directory (Join-Path $BuildDir $Config) | Out-Null
         }
         Copy-Item -Path $TestRunner -Destination (Join-Path $BuildDir $Config)
+        Copy-Item -Path $RepoRoot\qcom\scripts\windows\utils.ps1 -Destination (Join-Path $BuildDir $Config)
         Copy-Item (Join-Path $CMakeBinDir "ctest.exe") -Destination (Join-Path $BuildDir $Config)
         Copy-Item -Path $RepoRoot\qcom\scripts\all\python_test_files.txt -Destination (Join-Path $BuildDir $Config)
     }
