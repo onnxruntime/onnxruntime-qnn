@@ -821,7 +821,7 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_AddAllocatorInfoFails_Do
 // synthesize a virtual NPU OrtHardwareDevice for AOT cross-compilation.
 // ===========================================================================
 
-#if !defined(__aarch64__) && !defined(_M_ARM64)
+#if !QNN_ARCH_ARM64
 
 TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_AdvertisesVirtualNpu) {
   FactoryStubContext ctx;
@@ -900,7 +900,7 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_Explici
   EXPECT_FALSE(found_is_virtual) << "Explicit NPU on x86 — no synthesis, no IsVirtual metadata.";
 }
 
-#endif  // !__aarch64__ && !_M_ARM64
+#endif  // !QNN_ARCH_ARM64
 
 TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_RealNpuPresent_NoSynthesis) {
   FactoryStubContext ctx;

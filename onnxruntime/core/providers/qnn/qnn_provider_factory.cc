@@ -241,7 +241,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
     const bool has_real_undetected_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
 
-#if !defined(__aarch64__) && !defined(_M_ARM64)
+#if !QNN_ARCH_ARM64
     constexpr bool is_cross_compile_host = true;
 #else
     constexpr bool is_cross_compile_host = false;
