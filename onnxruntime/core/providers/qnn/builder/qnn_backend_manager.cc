@@ -1144,6 +1144,8 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
   rpcmem_library_->Api().register_buf(unaligned_data_ptr, size, NULL,
                                       rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
 
+  // register_buf does not return a status. rpcmem_to_fd is the API-defined verification
+  // that registration succeeded, so a failed lookup is not added to the registration list.
   auto fd = rpcmem_library_->Api().to_fd(unaligned_data_ptr);
   if (fd == -1) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to register DMA data mapping to RPCMEM");
@@ -1200,10 +1202,6 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
   std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
   const auto mapping = std::find(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
                                  std::make_pair(data_mem.dmaBuffer.data, static_cast<uint64_t>(data_mem.memSize)));
-  if (mapping == mapped_fastrpc_buffers_.end()) {
-    // Failure cleanup or an earlier release may already have deregistered this request.
-    return QNN_SUCCESS;
-  }
   if (!rpcmem_library_ || !rpcmem_library_->Api().register_buf || !rpcmem_library_->Api().to_fd) {
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
@@ -1220,9 +1218,11 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
 
-  // Erase only this registration. QNN may request the same range more than once and
-  // each successful registration has a corresponding release callback.
-  mapped_fastrpc_buffers_.erase(mapping);
+  if (mapping != mapped_fastrpc_buffers_.end()) {
+    // Erase only this registration. QNN may request the same range more than once and
+    // each successful registration has a corresponding release callback.
+    mapped_fastrpc_buffers_.erase(mapping);
+  }
   return QNN_SUCCESS;
 }
 #endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
