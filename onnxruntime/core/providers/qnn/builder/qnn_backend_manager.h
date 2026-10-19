@@ -3,11 +3,6 @@
 
 #pragma once
 
-// Windows headers may define `interface` as a macro. QNN API parameter names use this word.
-#ifdef interface
-#undef interface
-#endif
-
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
