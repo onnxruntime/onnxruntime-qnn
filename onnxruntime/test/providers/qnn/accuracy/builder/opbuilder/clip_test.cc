@@ -25,11 +25,11 @@
 // which conflict with the QNN-EP-internal kOnnxDomain copy that
 // clip_test.cc receives via infra/qnn_unit_test_utils.h → ort_api.h.
 //
-// Whole file gated on QNN_EP_ACCURACY_UT (enabled together with
-// ENABLE_COVERAGE on Linux x86_64 — see cmake/onnxruntime_unittests.cmake).
+// Whole file gated on QNN_EP_ACCURACY_UT (enabled for QNN provider-test
+// builds; see cmake/onnxruntime_unittests.cmake).
 // When OFF, file compiles to nothing.
 
-#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS && QNN_EP_ACCURACY_UT
+#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_ACCURACY_UT
 
 #include <cstdint>
 #include <numeric>
@@ -138,6 +138,10 @@ void RunClipAccuracy(const ClipSpec& spec) {
                       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)});
       break;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: {
+#if defined(_M_ARM64)
+      SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+
       // FP16 needs FP32 reference (ORT-CPU may not have native FP16 Clip).
       // Build FP32-ref spec from same shape/min/max but FLOAT dtype.
       ClipSpec f32_ref = spec;
@@ -160,6 +164,10 @@ template <typename QType>
 void RunClipQDQFloatHelper(const ClipQDQFloatSpec& spec,
                            const TestInputDef<float>& input_def,
                            const std::vector<TestInputDef<float>>& min_max_defs) {
+#if defined(_M_ARM64)
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+
   ProviderOptions po = MakeAccuracyProviderOptions(spec.accuracy_backend);
   auto f32_model_builder = BuildOpTestCase<float, float>(
       "Clip_node", "Clip", {input_def}, min_max_defs, /*attrs=*/{});
@@ -342,12 +350,27 @@ void RunClipQDQQuantAccuracy(const ClipQDQQuantSpec& spec) {
 // op-builder-snapshot explicit-min/max set and the session-snapshot
 // default-min/max set, so accuracy = snapshot ∪ session holds by construction
 // (see clip_specs.h).
+
+template <typename T>
+class QnnAccHtpTestBase : public ::testing::Test,
+                          public ::testing::WithParamInterface<T> {
+ protected:
+  void SetUp() override {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    Ort::Logger logger;
+    Ort::Status status = QnnHTPBackendTests::EnsurePlatformAttributes(logger);
+    ASSERT_TRUE(status.IsOK())
+        << "Failed to initialize QNN HTP platform attributes: " << status.GetErrorMessage();
+#endif
+  }
+};
+
 class QnnAcc_Clip_AccuracyTest
-    : public ::testing::TestWithParam<ClipSpec> {};
+    : public QnnAccHtpTestBase<ClipSpec> {};
 class QnnAcc_Clip_Accuracy_QDQFloatTest
-    : public ::testing::TestWithParam<ClipQDQFloatSpec> {};
+    : public QnnAccHtpTestBase<ClipQDQFloatSpec> {};
 class QnnAcc_Clip_Accuracy_QDQQuantTest
-    : public ::testing::TestWithParam<ClipQDQQuantSpec> {};
+    : public QnnAccHtpTestBase<ClipQDQQuantSpec> {};
 
 TEST_P(QnnAcc_Clip_AccuracyTest, Case) {
   RunClipAccuracy(GetParam());
@@ -379,4 +402,4 @@ INSTANTIATE_TEST_SUITE_P(
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS && QNN_EP_ACCURACY_UT
+#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_ACCURACY_UT

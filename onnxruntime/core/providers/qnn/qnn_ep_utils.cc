@@ -58,19 +58,26 @@ std::optional<ONNXTensorElementDataType> GetNodeInputDataType(const OrtNode* nod
   return GetDataTypeFromValueInfo(ort_api, inputs[index]);
 }
 
-// 1.2.1 True if `type` is a convertible (4/8/16-bit, signed or unsigned) fixed-point encoding.
-bool IsConvertibleFixedPointType(ONNXTensorElementDataType type) {
+// 1.2.1 Bit width (4, 8, 16) of a convertible fixed-point encoding, or 0 if `type` is not one.
+int FixedPointBitWidth(ONNXTensorElementDataType type) {
   switch (type) {
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
+      return 4;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      return 8;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
-      return true;
+      return 16;
     default:
-      return false;
+      return 0;
   }
+}
+
+// True if `type` is a convertible (4/8/16-bit, signed or unsigned) fixed-point encoding.
+bool IsConvertibleFixedPointType(ONNXTensorElementDataType type) {
+  return FixedPointBitWidth(type) != 0;
 }
 
 // 1.2.2 True if `a` and `b` are a mismatched pair of convertible fixed-point encodings.
@@ -1136,6 +1143,22 @@ static bool IsSupportedActivationOutputTypePair(const OrtGraph* graph, const Ort
   return is_16bit_input && is_8bit_output && IsQOrDQScalePositiveConstantScalar(graph, ort_api, q_node);
 }
 
+// A mismatched pair whose activation is not wider than the output is built as a Convert of the activation to the
+// output's precision followed by the op (a wider activation is narrowed after the op instead). HTP MatMul and
+// FullyConnected take 8- or 16-bit activations, weights and outputs, need the weight no wider than the output (the
+// converted activation's width), and pair a signed 16-bit activation only with an int8 weight.
+static bool IsConvertBeforeOpGroup(ONNXTensorElementDataType dt_input, ONNXTensorElementDataType dt_weight,
+                                   ONNXTensorElementDataType dt_output) {
+  const auto is_htp_width = [](ONNXTensorElementDataType type) {
+    const int bits = FixedPointBitWidth(type);
+    return bits == 8 || bits == 16;
+  };
+  return NeedsPrecisionConvert(dt_input, dt_output) && is_htp_width(dt_input) && is_htp_width(dt_weight) &&
+         is_htp_width(dt_output) && FixedPointBitWidth(dt_input) <= FixedPointBitWidth(dt_output) &&
+         FixedPointBitWidth(dt_weight) <= FixedPointBitWidth(dt_output) &&
+         (dt_output != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16 || dt_weight == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8);
+}
+
 // Float activation with a weight-only DQ of a constant per-channel initializer. QNN takes the weight as a
 // static quantized tensor, whereas a standalone per-channel DQ is unsupported and would leave the weight
 // as a graph input.
@@ -1357,7 +1380,8 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
 
   auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
   return dt_output.has_value() &&
-         IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]);
+         (IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]) ||
+          IsConvertBeforeOpGroup(dt_input.value(), dt_weight.value(), dt_output.value()));
 }
 
 bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,

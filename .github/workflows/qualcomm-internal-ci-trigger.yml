@@ -203,10 +203,86 @@ jobs:
       startsWith(github.event.workflow_run.head_branch, 'ci/approve-ci/')
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
+      pull-requests: write
+      statuses: write
     steps:
       # This handler runs from the default branch and never checks out PR code.
-      - uses: actions/github-script@v8
+      - name: Report approved CI result
+        id: report
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const branch = run.head_branch;
+            const match = /^ci\/approve-ci\/(\d+)\/([0-9a-f]{40})\/\d+-\d+$/.exec(branch);
+            if (!match || match[2] !== run.head_sha ||
+                run.head_repository?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                run.path !== '.github/workflows/qualcomm-internal-ci.yml') {
+              core.info('Not a matching temporary approved-CI branch; no result to report.');
+              return;
+            }
+
+            const prNumber = Number(match[1]);
+            const approvedSha = match[2];
+            const passed = run.conclusion === 'success';
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo,
+              run_id: run.id,
+              filter: 'latest',
+              per_page: 100,
+            });
+            const passingConclusions = new Set(['success', 'skipped', 'neutral']);
+            const publicationFailures = [];
+            let publishedCount = 0;
+            for (const job of jobs) {
+              try {
+                await github.rest.repos.createCommitStatus({
+                  ...context.repo,
+                  sha: approvedSha,
+                  state: passingConclusions.has(job.conclusion) ? 'success' : 'failure',
+                  context: job.name,
+                  description: `Maintainer-approved CI job ${job.conclusion || 'unknown'}`,
+                  target_url: job.html_url || run.html_url,
+                });
+                publishedCount += 1;
+              } catch (error) {
+                publicationFailures.push(job.name);
+                core.warning(`Failed to publish status for ${job.name}: ${error.message}`);
+              }
+            }
+            const allStatusesPublished = jobs.length > 0 && publicationFailures.length === 0;
+            core.setOutput('statuses-published', allStatusesPublished);
+
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            const currentHeadWarning = pr.head.sha === approvedSha
+              ? ''
+              : `\n\n⚠️ This result is for an older commit. The current PR head is \`${pr.head.sha}\`.`;
+            const result = passed
+              ? '✅ Maintainer-approved full CI passed'
+              : `❌ Maintainer-approved full CI completed with conclusion \`${run.conclusion}\``;
+
+            const publicationNote = publicationFailures.length === 0
+              ? `\n\nPublished ${publishedCount} CI job results back to the PR.`
+              : `\n\nWARNING: Published ${publishedCount} CI job results, but failed to publish ${publicationFailures.length}.`;
+            const currentHeadNote = `${publicationNote}${currentHeadWarning}`;
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: `${result} for \`${approvedSha}\`. [View workflow run](${run.html_url}).${currentHeadNote}`,
+            });
+            if (!allStatusesPublished) {
+              core.setFailed('One or more approved CI job statuses could not be published.');
+            }
+
+      - name: Delete approved CI branch
+        if: ${{ always() && steps.report.outputs.statuses-published == 'true' }}
+        uses: actions/github-script@v8
         with:
           script: |
             const run = context.payload.workflow_run;
