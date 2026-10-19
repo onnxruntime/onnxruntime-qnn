@@ -2274,11 +2274,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   // a cached-context backend so a real EPContext can reuse it. If this graph
   // is not an EPContext model, discard that tentative setup and let the
   // regular setup below create the backend with the actual graph's settings.
-  if (ep->backend_setup_from_compatibility_check_) {
+  if (!is_qnn_ctx_model && ep->backend_setup_from_compatibility_check_) {
     ep->backend_setup_from_compatibility_check_ = false;
-    if (!is_qnn_ctx_model) {
-      ep->qnn_backend_manager_->ReleaseResources();
-    }
+    ep->qnn_backend_manager_->ReleaseResources();
   }
 
   if (is_qnn_ctx_model && ep->share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
@@ -3772,18 +3770,18 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   bool reuse_compatibility_backend = htp_share_resource_optimization_ != 1;
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    Ort::Status setup_status = reuse_compatibility_backend
-                                   ? qnn_backend_manager_->SetupBackend(
-                                         /*load_from_cached_context*/ true,
-                                         /*need_load_system_lib*/ true,
-                                         /*share_ep_contexts*/ false,
-                                         /*htp_share_resource_optimization*/ -1,
-                                         enable_file_mapped_weights_,
-                                         rpcmem_library_,
-                                         dummy_map)
-                                   : qnn_backend_manager_->SetupBackend(
-                                         true, true, false, false, false, nullptr, dummy_map);
-    if (!setup_status.IsOK() && reuse_compatibility_backend) {
+    Ort::Status setup_status;
+    if (reuse_compatibility_backend) {
+      setup_status = qnn_backend_manager_->SetupBackend(
+          /*load_from_cached_context*/ true,
+          /*need_load_system_lib*/ true,
+          /*share_ep_contexts*/ false,
+          /*htp_share_resource_optimization*/ -1,
+          enable_file_mapped_weights_,
+          rpcmem_library_,
+          dummy_map);
+    }
+    if (!reuse_compatibility_backend || !setup_status.IsOK()) {
       // Preserve compatibility validation when the reusable setup is not
       // supported. SetupBackend cleaned up its failed attempt, so retry with
       // the original isolated probe configuration.
