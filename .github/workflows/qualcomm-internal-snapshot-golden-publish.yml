@@ -152,3 +152,45 @@ jobs:
           else
             echo "Mode: **publish** (uploaded to Artifactory)" >> "${GITHUB_STEP_SUMMARY}"
           fi
+
+      - name: Clean producer build directory (Windows)
+        if: ${{ always() && runner.os == 'Windows' }}
+        shell: powershell
+        env:
+          PRODUCER_BUILD_DIR: ${{ inputs.build_dir }}
+        run: |
+          $workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd(
+            [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+          $buildRoot = [IO.Path]::GetFullPath((Join-Path $workspace "build")).TrimEnd(
+            [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+          $target = [IO.Path]::GetFullPath((Join-Path $workspace $env:PRODUCER_BUILD_DIR)).TrimEnd(
+            [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+          $buildPrefix = $buildRoot + [IO.Path]::DirectorySeparatorChar
+
+          if (-not $target.StartsWith($buildPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to clean path outside the workspace build directory: $target"
+          }
+
+          if (Test-Path -LiteralPath $target) {
+            Remove-Item -LiteralPath $target -Recurse -Force
+          }
+
+      - name: Clean producer build directory (Linux)
+        if: ${{ always() && runner.os != 'Windows' }}
+        env:
+          PRODUCER_BUILD_DIR: ${{ inputs.build_dir }}
+        run: |
+          set -euo pipefail
+
+          build_root="$(realpath -m "${GITHUB_WORKSPACE}/build")"
+          target="$(realpath -m "${GITHUB_WORKSPACE}/${PRODUCER_BUILD_DIR}")"
+
+          case "${target}" in
+            "${build_root}"/*) ;;
+            *)
+              echo "Refusing to clean path outside the workspace build directory: ${target}" >&2
+              exit 1
+              ;;
+          esac
+
+          rm -rf -- "${target}"
