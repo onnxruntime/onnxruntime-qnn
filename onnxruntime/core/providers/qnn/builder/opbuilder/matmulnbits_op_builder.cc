@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -125,6 +126,16 @@ const std::unordered_set<int64_t> kGpuSupportedBlockSize{32};
 // HTP expects block size to be multiple of a value according to bits.
 const std::unordered_map<int64_t, int64_t> kHtpSupportedBitsAndBlockSizeMultipliers{{2, 16}, {4, 8}, {8, 4}};
 
+Ort::Status ValidateMatMulNBitsDimensions(int64_t K, int64_t N) {
+  RETURN_IF(K <= 0 || N <= 0, "MatMulNBits K and N must both be positive.");
+  RETURN_IF(K > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
+                N > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
+            "MatMulNBits K and N must fit in uint32.");
+  RETURN_IF(N > std::numeric_limits<int64_t>::max() / K,
+            "MatMulNBits K * N overflows int64.");
+  return Ort::Status();
+}
+
 void UnpackWeightData(const std::vector<uint8_t>& packed_data,
                       const int64_t bits,
                       const int64_t num_elements_per_uint8,
@@ -184,6 +195,7 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
   const int64_t N = node_helper.Get("N", static_cast<int64_t>(0));
   const int64_t bits = node_helper.Get("bits", static_cast<int64_t>(0));
   const int64_t block_size = node_helper.Get("block_size", static_cast<int64_t>(0));
+  RETURN_IF_ERROR(ValidateMatMulNBitsDimensions(K, N));
 
   if (is_gpu_backend) {
     RETURN_IF(kGpuSupportedBits.find(bits) == kGpuSupportedBits.end(),
@@ -314,8 +326,8 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
   const int64_t bits = node_helper.Get("bits", static_cast<int64_t>(0));
   const int64_t block_size = node_helper.Get("block_size", static_cast<int64_t>(0));
 
-  // Should already be guaranteed in IsOpSupported.
-  RETURN_IF_NOT(K > 0 && N > 0 && bits > 0 && block_size > 0, "Unexpected MatMulNbits attribute values.");
+  RETURN_IF_ERROR(ValidateMatMulNBitsDimensions(K, N));
+  RETURN_IF_NOT(bits > 0 && block_size > 0, "Unexpected MatMulNbits attribute values.");
 
   // Prepare essential parameters
   const int64_t k_blocks = K / block_size;
@@ -607,7 +619,9 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                               bool do_op_validation) const {
   // Extract Parameters
   OrtNodeAttrHelper node_helper(node_unit);
+  const int64_t K = node_helper.Get("K", static_cast<int64_t>(0));
   const int64_t N = node_helper.Get("N", static_cast<int64_t>(0));
+  RETURN_IF_ERROR(ValidateMatMulNBitsDimensions(K, N));
 
   const OrtNodeUnitIODef& output_tensor = node_unit.Outputs()[0];
   TensorInfo output_info = {};
