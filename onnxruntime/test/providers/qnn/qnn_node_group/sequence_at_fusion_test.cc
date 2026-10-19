@@ -111,7 +111,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_PositiveIndex) {
       BuildSequenceAtTestCase<int64_t>({3, 4}, /*N=*/3, /*dynamic=*/false, /*pos=*/1LL),
       opts,
       /*opset=*/11,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
 
   AssertOpInQnnGraph(json_dir, "Gather", 1);
   AssertOpInQnnGraph(json_dir, "Concat", 1);
@@ -132,7 +132,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_NegativeIndex) {
       BuildSequenceAtTestCase<int64_t>({3, 4}, /*N=*/3, /*dynamic=*/false, /*pos=*/-1LL),
       opts,
       /*opset=*/11,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
 
   AssertOpInQnnGraph(json_dir, "Gather", 1);
   AssertOpInQnnGraph(json_dir, "Concat", 1);
@@ -153,7 +153,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_FirstIndex_Int32) {
       BuildSequenceAtTestCase<int32_t>({2, 5}, /*N=*/4, /*dynamic=*/false, /*pos=*/0),
       opts,
       /*opset=*/11,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
 
   AssertOpInQnnGraph(json_dir, "Gather", 1);
   AssertOpInQnnGraph(json_dir, "Concat", 1);
@@ -174,7 +174,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_LastIndex_Int32) {
       BuildSequenceAtTestCase<int32_t>({2, 5}, /*N=*/4, /*dynamic=*/false, /*pos=*/3),
       opts,
       /*opset=*/11,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
 
   AssertOpInQnnGraph(json_dir, "Gather", 1);
   AssertOpInQnnGraph(json_dir, "Concat", 1);
@@ -195,7 +195,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_DynamicPosition_Int32) {
       BuildSequenceAtTestCase<int32_t>({2, 3}, /*N=*/3, /*dynamic=*/true, /*pos=*/1),
       opts,
       /*opset=*/11,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
 
   AssertOpInQnnGraph(json_dir, "Gather", 1);
   AssertOpInQnnGraph(json_dir, "Concat", 1);
@@ -218,7 +218,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_DynamicNegativeIndex) {
       BuildSequenceAtTestCase<int32_t>({2, 3}, /*N=*/3, /*dynamic=*/true, /*pos=*/-1),
       opts,
       /*opset=*/11,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
 
   AssertOpInQnnGraph(json_dir, "Gather", 1);
   AssertOpInQnnGraph(json_dir, "ElementWiseSelect", 1);
@@ -239,7 +239,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_Float16Elements) {
       BuildSequenceAtFloat16TestCase({4}, /*N=*/2, /*pos=*/0LL),
       opts,
       /*opset=*/11,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
 
   AssertOpInQnnGraph(json_dir, "Gather", 1);
 }
@@ -259,7 +259,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_SingleElementSequence) {
       BuildSequenceAtTestCase<int32_t>({2, 2}, /*N=*/1, /*dynamic=*/false, /*pos=*/0),
       opts,
       /*opset=*/11,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
 
   AssertOpInQnnGraph(json_dir, "Gather", 1);
 }
@@ -307,7 +307,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_PosFromInPartitionOp_ListedBeforeSeq
 
   RunQnnModelTest(
       build_fn, opts, /*opset=*/11,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
 
   AssertOpInQnnGraph(json_dir, "Gather", 1);
   AssertOpInQnnGraph(json_dir, "ElementWiseSelect", 1);  // dynamic pos normalization
