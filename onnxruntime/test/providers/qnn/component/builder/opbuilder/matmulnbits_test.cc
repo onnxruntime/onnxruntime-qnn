@@ -69,6 +69,15 @@ TEST(QnnUnit_MatMulNBits_ComponentTest, RejectsInvalidDimensionsBeforeNarrowingO
                    .IsOK());
 }
 
+TEST(QnnUnit_MatMulNBits_ComponentTest, RejectsZeroBlockSizeBeforeDivision) {
+  const IOpBuilder* builder = GetOpBuilder("MatMulNBits");
+  ASSERT_NE(builder, nullptr);
+
+  const Ort::Status status = CheckMatMulNBitsSupport(*builder, 64, 32, 4, 0);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("bits and block_size must both be positive"), std::string::npos);
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

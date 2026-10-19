@@ -136,6 +136,14 @@ Ort::Status ValidateMatMulNBitsDimensions(int64_t K, int64_t N) {
   return Ort::Status();
 }
 
+Ort::Status ValidateMatMulNBitsBlockAttributes(int64_t bits, int64_t block_size) {
+  RETURN_IF(bits <= 0 || block_size <= 0,
+            "MatMulNBits bits and block_size must both be positive.");
+  RETURN_IF(block_size > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
+            "MatMulNBits block_size must fit in uint32.");
+  return Ort::Status();
+}
+
 void UnpackWeightData(const std::vector<uint8_t>& packed_data,
                       const int64_t bits,
                       const int64_t num_elements_per_uint8,
@@ -196,6 +204,7 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
   const int64_t bits = node_helper.Get("bits", static_cast<int64_t>(0));
   const int64_t block_size = node_helper.Get("block_size", static_cast<int64_t>(0));
   RETURN_IF_ERROR(ValidateMatMulNBitsDimensions(K, N));
+  RETURN_IF_ERROR(ValidateMatMulNBitsBlockAttributes(bits, block_size));
 
   if (is_gpu_backend) {
     RETURN_IF(kGpuSupportedBits.find(bits) == kGpuSupportedBits.end(),
@@ -327,7 +336,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
   const int64_t block_size = node_helper.Get("block_size", static_cast<int64_t>(0));
 
   RETURN_IF_ERROR(ValidateMatMulNBitsDimensions(K, N));
-  RETURN_IF_NOT(bits > 0 && block_size > 0, "Unexpected MatMulNbits attribute values.");
+  RETURN_IF_ERROR(ValidateMatMulNBitsBlockAttributes(bits, block_size));
 
   // Prepare essential parameters
   const int64_t k_blocks = K / block_size;
@@ -621,7 +630,10 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
   OrtNodeAttrHelper node_helper(node_unit);
   const int64_t K = node_helper.Get("K", static_cast<int64_t>(0));
   const int64_t N = node_helper.Get("N", static_cast<int64_t>(0));
+  const int64_t bits = node_helper.Get("bits", static_cast<int64_t>(0));
+  const int64_t block_size = node_helper.Get("block_size", static_cast<int64_t>(0));
   RETURN_IF_ERROR(ValidateMatMulNBitsDimensions(K, N));
+  RETURN_IF_ERROR(ValidateMatMulNBitsBlockAttributes(bits, block_size));
 
   const OrtNodeUnitIODef& output_tensor = node_unit.Outputs()[0];
   TensorInfo output_info = {};
