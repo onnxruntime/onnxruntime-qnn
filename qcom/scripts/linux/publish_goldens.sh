@@ -46,8 +46,8 @@
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
 source "${REPO_ROOT}/qcom/scripts/linux/common.sh"
-# shellcheck source=resolve_tool_versions.sh
-source "${REPO_ROOT}/qcom/scripts/linux/resolve_tool_versions.sh"
+# shellcheck source=../all/resolve_tool_versions.sh
+source "${REPO_ROOT}/qcom/scripts/all/resolve_tool_versions.sh"
 
 set_strict_mode
 
