@@ -2274,8 +2274,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   // a cached-context backend so a real EPContext can reuse it. If this graph
   // is not an EPContext model, discard that tentative setup and let the
   // regular setup below create the backend with the actual graph's settings.
-  if (ep->compatibility_setup_pending_graph_kind_check_) {
-    ep->compatibility_setup_pending_graph_kind_check_ = false;
+  if (ep->backend_setup_from_compatibility_check_) {
+    ep->backend_setup_from_compatibility_check_ = false;
     if (!is_qnn_ctx_model) {
       ep->qnn_backend_manager_->ReleaseResources();
     }
@@ -3760,37 +3760,37 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   }
 
   // Compatibility validation runs before GetCapability. For a normal EPContext
-  // session, prepare the actual backend configuration now and retain it for
-  // GetCapability. This avoids opening and closing a QNN device solely for
+  // session, retain the backend setup used for validation so GetCapability can
+  // reuse it. This avoids opening and closing a QNN device solely for
   // validation, only to create the same device again when the cached context
-  // is loaded. The session has already constructed this QnnEp, so all options
-  // (including the EPContext read callback and file-mapping state) are known.
+  // is loaded.
   //
-  // htp_share_resource_optimization creates contexts during SetupBackend and
-  // requires graph-derived context_bin_map data. Multi-SoC uses a separate
-  // staged setup path. Keep the previous isolated validation setup for those
-  // configurations rather than changing their resource lifecycle here.
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
-  const bool can_reuse_compatibility_setup =
-      htp_share_resource_optimization_ != 1 && !enable_multi_soc_ep_context_;
+  // HTP resource sharing creates contexts during SetupBackend and requires
+  // graph-derived context_bin_map data, so its compatibility setup cannot be
+  // reused.
+  bool reuse_compatibility_backend = htp_share_resource_optimization_ != 1;
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    const Ort::Status setup_status = can_reuse_compatibility_setup
-                                         ? qnn_backend_manager_->SetupBackend(
-                                               /*load_from_cached_context*/ true,
-                                               /*need_load_system_lib*/ true,
-                                               share_ep_contexts_,
-                                               htp_share_resource_optimization_,
-                                               enable_file_mapped_weights_,
-                                               rpcmem_library_,
-                                               dummy_map,
-                                               *io_dispatch_,
-                                               enable_htp_extended_udma_mode_,
-                                               prepare_only_,
-                                               enable_htp_graph_splitting_,
-                                               htp_graph_splitting_num_prepare_threads_)
-                                         : qnn_backend_manager_->SetupBackend(
-                                               true, true, false, false, false, nullptr, dummy_map);
+    Ort::Status setup_status = reuse_compatibility_backend
+                                   ? qnn_backend_manager_->SetupBackend(
+                                         /*load_from_cached_context*/ true,
+                                         /*need_load_system_lib*/ true,
+                                         /*share_ep_contexts*/ false,
+                                         /*htp_share_resource_optimization*/ -1,
+                                         enable_file_mapped_weights_,
+                                         rpcmem_library_,
+                                         dummy_map)
+                                   : qnn_backend_manager_->SetupBackend(
+                                         true, true, false, false, false, nullptr, dummy_map);
+    if (!setup_status.IsOK() && reuse_compatibility_backend) {
+      // Preserve compatibility validation when the reusable setup is not
+      // supported. SetupBackend cleaned up its failed attempt, so retry with
+      // the original isolated probe configuration.
+      reuse_compatibility_backend = false;
+      setup_status = qnn_backend_manager_->SetupBackend(
+          true, true, false, false, false, nullptr, dummy_map);
+    }
     if (!setup_status.IsOK()) {
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_WARNING,
@@ -3800,8 +3800,8 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
       *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
       return nullptr;
     }
-    if (can_reuse_compatibility_setup) {
-      compatibility_setup_pending_graph_kind_check_ = true;
+    if (reuse_compatibility_backend) {
+      backend_setup_from_compatibility_check_ = true;
     }
   }
 
@@ -3813,9 +3813,8 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
   }
 
-  if (!is_backend_setup && !can_reuse_compatibility_setup) {
-    // Advanced resource-sharing and multi-SoC paths did an isolated setup.
-    // They cannot reuse it because their real setup requires graph data.
+  if (!is_backend_setup && !reuse_compatibility_backend) {
+    // The isolated compatibility setup is only used for validation.
     qnn_backend_manager_->ReleaseResources();
   }
 

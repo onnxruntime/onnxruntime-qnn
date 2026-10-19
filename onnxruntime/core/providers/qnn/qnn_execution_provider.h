@@ -312,7 +312,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // graph. If validation retained a backend prepared as a cached-context
   // load, GetCapability consumes this one-shot marker after determining the
   // actual graph kind.
-  bool compatibility_setup_pending_graph_kind_check_ = false;
+  bool backend_setup_from_compatibility_check_ = false;
 
   // One-shot guard so the HNRD fallback warning emitted by WarnIfHnrdPathActive()
   // fires at most once per session, even when GetCapability is invoked multiple
