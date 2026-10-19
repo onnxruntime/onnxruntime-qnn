@@ -17,8 +17,22 @@ on:
   merge_group:
     types: [checks_requested]
 
-  # Allow this workflow to be run manually from the Actions tab
+  # Allow this workflow to be run manually from the Actions tab. The approved
+  # fork path supplies all three inputs; ordinary manual runs leave them empty.
   workflow_dispatch:
+    inputs:
+      approved_pr_number:
+        description: Pull request number for maintainer-approved fork CI
+        required: false
+        type: string
+      approved_sha:
+        description: Immutable fork pull request head SHA approved by a maintainer
+        required: false
+        type: string
+      approval_branch:
+        description: Temporary base-repository branch created for the approved SHA
+        required: false
+        type: string
 
 # only one active job per PR. this will cause jobs to be immediately cancelled on subsequent pushes in PRs.
 # ref: https://docs.github.com/en/actions/using-jobs/using-concurrency#example-using-a-fallback-value
@@ -49,3 +63,135 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
     uses: ./.github/workflows/qualcomm-internal-asan.yml
     secrets: inherit
+
+  report-approved-ci:
+    name: Report approved CI
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.approved_pr_number != '' &&
+      inputs.approved_sha != '' &&
+      inputs.approval_branch != ''
+    needs: [build-and-test-all, coverage, asan]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+      statuses: write
+    env:
+      APPROVED_PR_NUMBER: ${{ inputs.approved_pr_number }}
+      APPROVED_SHA: ${{ inputs.approved_sha }}
+      APPROVAL_BRANCH: ${{ inputs.approval_branch }}
+    steps:
+      - name: Publish approved CI results
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNumberText = process.env.APPROVED_PR_NUMBER;
+            const approvedSha = process.env.APPROVED_SHA.toLowerCase();
+            const branch = process.env.APPROVAL_BRANCH;
+
+            if (!/^[1-9]\d*$/.test(prNumberText) || !/^[0-9a-f]{40}$/.test(approvedSha)) {
+              core.setFailed('Approved CI reporting inputs contain an invalid PR number or SHA.');
+              return;
+            }
+
+            const prNumber = Number(prNumberText);
+            const branchMatch = /^ci\/approve-ci\/(\d+)\/([0-9a-f]{40})\/\d+-\d+$/.exec(branch);
+            if (!branchMatch || Number(branchMatch[1]) !== prNumber || branchMatch[2] !== approvedSha ||
+                context.ref !== `refs/heads/${branch}` || context.sha.toLowerCase() !== approvedSha) {
+              core.setFailed('Approved CI reporting inputs do not match the dispatched ref and SHA.');
+              return;
+            }
+
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              ...context.repo,
+              run_id: context.runId,
+            });
+            if (run.event !== 'workflow_dispatch' || run.head_branch !== branch ||
+                run.head_sha !== approvedSha ||
+                run.head_repository?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                run.path !== '.github/workflows/qualcomm-internal-ci.yml') {
+              core.setFailed('Current workflow run does not match the approved CI provenance.');
+              return;
+            }
+
+            const { data: approvalRef } = await github.rest.git.getRef({
+              ...context.repo,
+              ref: `heads/${branch}`,
+            });
+            if (approvalRef.object.type !== 'commit' || approvalRef.object.sha !== approvedSha) {
+              core.setFailed('Temporary approved-CI branch no longer points to the approved SHA.');
+              return;
+            }
+
+            const allJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo,
+              run_id: run.id,
+              filter: 'latest',
+              per_page: 100,
+            });
+            const reportJobName = 'Report approved CI';
+            const incompleteJobs = allJobs.filter(job => job.name !== reportJobName && !job.conclusion);
+            const jobs = allJobs.filter(job => job.name !== reportJobName && job.conclusion);
+            if (jobs.length === 0 || incompleteJobs.length !== 0) {
+              core.setFailed(`Cannot publish approved CI results: ${jobs.length} completed jobs and ${incompleteJobs.length} incomplete jobs found.`);
+              return;
+            }
+
+            const passingConclusions = new Set(['success', 'skipped', 'neutral']);
+            const failingJobs = jobs.filter(job => !passingConclusions.has(job.conclusion));
+            const publicationFailures = [];
+            let publishedCount = 0;
+            for (const job of jobs) {
+              try {
+                await github.rest.repos.createCommitStatus({
+                  ...context.repo,
+                  sha: approvedSha,
+                  state: passingConclusions.has(job.conclusion) ? 'success' : 'failure',
+                  context: job.name,
+                  description: `Maintainer-approved CI job ${job.conclusion}`,
+                  target_url: job.html_url || run.html_url,
+                });
+                publishedCount += 1;
+              } catch (error) {
+                publicationFailures.push(job.name);
+                core.warning(`Failed to publish status for ${job.name}: ${error.message}`);
+              }
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            const currentHeadWarning = pr.head.sha === approvedSha
+              ? ''
+              : `\n\n⚠️ This result is for an older commit. The current PR head is \`${pr.head.sha}\`.`;
+            const result = failingJobs.length === 0
+              ? '✅ Maintainer-approved full CI passed'
+              : `❌ Maintainer-approved full CI failed (${failingJobs.length} job${failingJobs.length === 1 ? '' : 's'})`;
+            const publicationNote = publicationFailures.length === 0
+              ? `\n\nPublished ${publishedCount} CI job results back to the PR.`
+              : `\n\nWARNING: Published ${publishedCount} CI job results, but failed to publish ${publicationFailures.length}.`;
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: `${result} for \`${approvedSha}\`. [View workflow run](${run.html_url}).${publicationNote}${currentHeadWarning}`,
+            });
+
+            if (publicationFailures.length !== 0) {
+              core.setFailed('One or more approved CI job statuses could not be published.');
+              return;
+            }
+
+            try {
+              await github.rest.git.deleteRef({
+                ...context.repo,
+                ref: `heads/${branch}`,
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info('Temporary approved-CI branch was already removed.');
+            }
