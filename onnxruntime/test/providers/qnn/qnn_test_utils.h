@@ -1670,7 +1670,7 @@ inline void MakeTestInput(ModelTestBuilder& builder,
 //
 // i.e., initial bias => manual quantization (int32) => DQ => final float bias
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder, const std::string& name, const TestInputDef<float>& bias_def, float bias_scale,
-                                 bool use_contrib_qdq = false);
+                                 bool use_contrib_qdq = false, int32_t bias_zero_point = 0);
 
 /**
  * Returns a function that builds a model with a single operator with N inputs type InputType1 and M inputs

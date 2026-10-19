@@ -102,7 +102,8 @@ static GetTestModelFn BuildF32ConvTestCase(const std::string& conv_op_type, cons
   };
 }
 
-// Creates a graph with a single Q/DQ Conv operator with mismatched bias scales to test bias requantization.
+// Creates a graph with a single Q/DQ Conv operator with configurable bias scale and zero-point
+// to test bias requantization.
 template <typename ActivationQType, typename WeightQType>
 static GetTestQDQModelFn<ActivationQType> BuildQDQConvBiasRequantTestCase(
     const std::string& conv_op_type,
@@ -114,10 +115,13 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvBiasRequantTestCase(
     const std::vector<int64_t>& dilations,
     std::optional<int64_t> group,
     const std::string& auto_pad = "NOTSET",
-    bool use_contrib_qdq = false) {
+    bool use_contrib_qdq = false,
+    int32_t bias_zero_point = 0,
+    bool use_correct_bias_scale = false) {
   return [conv_op_type, input_def, weights_def, bias_def, strides, pads,
-          dilations, group, auto_pad, use_contrib_qdq](ModelTestBuilder& builder,
-                                                       std::vector<QuantParams<ActivationQType>>& output_qparams) {
+          dilations, group, auto_pad, use_contrib_qdq,
+          bias_zero_point, use_correct_bias_scale](ModelTestBuilder& builder,
+                                                   std::vector<QuantParams<ActivationQType>>& output_qparams) {
     std::vector<std::string> conv_input_names;
 
     // input -> Q/DQ ->
@@ -136,12 +140,13 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvBiasRequantTestCase(
 
     // bias -> Create bias with MISMATCHED scale to trigger requantization
     if (!bias_def.GetShape().empty()) {
-      // Intentionally use a WRONG bias scale that doesn't match (input_scale * weight_scale)
-      // This should trigger the bias requantization logic in QNN EP
+      // Use a mismatched bias scale by default to trigger requantization, or the matching scale
+      // when testing a non-zero bias zero-point as the independent trigger.
       const float correct_bias_scale = input_qparams.scale * weights_qparams.scale;
-      const float wrong_bias_scale = correct_bias_scale * 2.5f;  // Intentionally wrong scale
+      const float bias_scale = use_correct_bias_scale ? correct_bias_scale : correct_bias_scale * 2.5f;
 
-      conv_input_names.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, wrong_bias_scale, use_contrib_qdq));
+      conv_input_names.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale,
+                                                      use_contrib_qdq, bias_zero_point));
     }
 
     // Conv attrs (must be provided at node creation)
@@ -1423,6 +1428,44 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_BiasRequantization) {
                                                                          "NOTSET"),                                                // Auto pad
                        provider_options,
                        13,  // opset
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(0.015f));
+}
+
+// Test bias requantization when the bias zero-point is non-zero, even though the bias scale matches
+// (activation_scale * weight_scale). This ensures the bias offset alone triggers requantization.
+TEST_F(QnnHTPBackendTests, ConvU8S8S32_BiasRequantization_NonZeroZeroPoint) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, -10.0f, 10.0f);
+  TestInputDef<float> weights_def({3, 2, 2, 2}, true, -1.0f, 5.0f);
+  TestInputDef<float> bias_def({3}, true, -1.0f, 1.0f);
+
+  TestQDQModelAccuracy(BuildF32ConvTestCase("Conv",
+                                            input_def,
+                                            weights_def,
+                                            bias_def,
+                                            {1, 1},
+                                            {0, 0, 0, 0},
+                                            {1, 1},
+                                            1,
+                                            "NOTSET"),
+                       BuildQDQConvBiasRequantTestCase<uint8_t, int8_t>("Conv",
+                                                                        input_def,
+                                                                        weights_def,
+                                                                        bias_def,
+                                                                        {1, 1},
+                                                                        {0, 0, 0, 0},
+                                                                        {1, 1},
+                                                                        1,
+                                                                        "NOTSET",
+                                                                        false,
+                                                                        5,
+                                                                        true),
+                       provider_options,
+                       13,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(0.015f));
 }
