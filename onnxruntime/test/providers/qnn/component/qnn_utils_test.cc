@@ -1322,7 +1322,7 @@ TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerChannel_ScalesUpdated) {
 
 TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerChannel_ChangesScaleAndOffset) {
   // Channel 0: (15 - 5) * 0.2 = 2.0, then 2.0 / 0.1 - 0 = 20.
-  // Channel 1: (-4 + 2) * 0.5 = -1.0, then -1.0 / 0.25 - (-3) = -1.
+  // Channel 1: (-4 + 2) * 0.5 = -1.0, then -1.0 / 0.25 - 0 = -4.
   const std::vector<int32_t> int32_vals = {15, -4};
   std::vector<uint8_t> bias_data(int32_vals.size() * sizeof(int32_t));
   std::memcpy(bias_data.data(), int32_vals.data(), bias_data.size());
@@ -1352,7 +1352,7 @@ TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerChannel_ChangesScaleAndOffset) {
   std::vector<int32_t> out_vals(2);
   std::memcpy(out_vals.data(), requantized.data(), requantized.size());
   EXPECT_EQ(out_vals[0], 20);
-  EXPECT_EQ(out_vals[1], -1);
+  EXPECT_EQ(out_vals[1], -4);
 }
 
 // =============================================================================
