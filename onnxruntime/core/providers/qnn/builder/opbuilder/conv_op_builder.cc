@@ -7,6 +7,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/mixed_precision_convert_utils.h"
 #include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -206,7 +207,7 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     // Conv's actual compute bitwidth is always the wider of the activation's and the output's: when
     // the activation is wider, it's Converted down only after Conv (AddOpWithQuantizedOutput);
     // otherwise the activation is Converted up to the output's precision before Conv runs.
-    // See ProcessConv2D3DInputs's is_narrowing_output.
+    // See utils::ConvertActivationToOutputPrecision.
     Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
     RETURN_IF_ERROR(utils::GetQnnDataType(node_unit.Outputs()[0].quant_param.has_value(),
                                           node_unit.Outputs()[0].type, declared_output_dtype));
@@ -473,26 +474,12 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
     RETURN_IF_ERROR(utils::GetQnnDataType(conv_output.quant_param.has_value(), conv_output.type,
                                           declared_output_dtype));
-    // 2. A 16-bit activation feeding an 8-bit output is already handled by
-    // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output. Convert
-    // only the other mismatched fixed-point pairs here; same-precision Conv is untouched.
-    const bool is_narrowing_output = utils::IsNarrowingQuantOutput(act_dtype, declared_output_dtype);
-    if (!is_narrowing_output && utils::NeedsPrecisionConvert(act_dtype, declared_output_dtype)) {
-      RETURN_IF_NOT(act_wrapper.GetQnnQuantParams().IsPerTensor(),
-                    "Conv's mixed-precision activation Convert only supports per-tensor quantization");
-      // 3. Convert the activation to the output's precision before Conv consumes it.
-      const Qnn_QuantizeParams_t& act_quant_param = act_wrapper.GetQnnQuantParams().Get();
-      const std::string converted_act_name = utils::UniqueNameGenerator().New(act_name, "_convert");
-      RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper, act_name, converted_act_name,
-                                             act_dtype, declared_output_dtype,
-                                             act_quant_param.scaleOffsetEncoding.offset,
-                                             act_quant_param.scaleOffsetEncoding.scale,
-                                             act_wrapper.GetTensorDims(),
-                                             /*output_symmetric*/ false, do_op_validation));
-      // 4. Conv now computes/emits natively at declared_output_dtype; no further bridging needed.
-      input_names[0] = converted_act_name;
-      act_dtype = declared_output_dtype;
-    }
+    // 2. Convert the activation to the output's precision before Conv consumes it, so Conv computes and emits
+    // natively at declared_output_dtype. A 16-bit activation feeding an 8-bit output is left to
+    // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output.
+    RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names, declared_output_dtype,
+                                                              do_op_validation));
+    act_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
   }
 
   // Detect block-quantized weight. Per ONNX opset 21, the scale rank equals the weight rank

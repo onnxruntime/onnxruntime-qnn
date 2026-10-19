@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/qnn_bq_utils.h"
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -31,6 +32,11 @@ const QnnHtpDevice_Arch_t kHtpNativeBQMinArch = QNN_HTP_DEVICE_ARCH_V81;
 const InlinedHashSet<uint32_t> kHtpNativeBQBits{4};
 const InlinedHashSet<uint32_t> kHtpNativeBQBlockSize{32, 64, 128};
 const uint32_t kHtpNativeBQChannelMultiplier = 32;
+
+// HTP LPBQ minimum and maximum per-block int scale.
+const uint32_t kHtpLpbqPerBlockIntScaleBitwidth = 4;
+const uint8_t kHtpLpbqMinPerBlockIntScale = 1;
+const uint8_t kHtpLpbqMaxPerBlockIntScale = 1 << kHtpLpbqPerBlockIntScaleBitwidth;
 }  // namespace
 
 namespace bq {
@@ -213,6 +219,14 @@ bool IsHTPSupportedNativeBQ(QnnHtpDevice_Arch_t htp_arch,
 #else
   return false;
 #endif
+}
+
+bool IsValidLPBQPerBlockIntScale(gsl::span<const uint8_t> per_block_int_scale) {
+  return std::all_of(per_block_int_scale.begin(),
+                     per_block_int_scale.end(),
+                     [](uint8_t scale) {
+                       return scale >= kHtpLpbqMinPerBlockIntScale && scale <= kHtpLpbqMaxPerBlockIntScale;
+                     });
 }
 
 }  // namespace bq

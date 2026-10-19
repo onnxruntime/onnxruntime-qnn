@@ -1995,8 +1995,11 @@ class QnnHTPBackendTests : public ::testing::Test {
 #endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
   }
 
+  // Initializes and caches QNN HTP platform attributes without requiring this test fixture's SetUp().
+  static Ort::Status EnsurePlatformAttributes(const Ort::Logger& logger);
+
   // Query QNN platform attributes by directly calling QNN APIs
-  Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
+  static Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
 
   static std::optional<QnnHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.
   static BackendSupport cached_htp_support_;                                               // Set by the first test using this fixture.

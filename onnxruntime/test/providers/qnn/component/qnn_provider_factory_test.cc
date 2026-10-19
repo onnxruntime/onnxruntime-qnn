@@ -693,7 +693,8 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_GpuQualcomm_CreatesEpDev
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CpuHost_CreatesEpDevice) {
-  // On the x86_64 coverage host QnnCpuBackendEnabled() is always true.
+  // QNN test_main opts into CPU advertisement on ARM64 before EP registration.
+  // On x86, CPU advertisement is enabled by default for the HTP emulator.
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());

@@ -686,6 +686,38 @@ static BackendSupport GetHTPSupport() {
   return BackendSupport::SUPPORTED;
 }
 
+Ort::Status QnnHTPBackendTests::EnsurePlatformAttributes(const Ort::Logger& logger) {
+  if (cached_platform_attrs_.has_value()) {
+    return Ort::Status();
+  }
+
+  QnnPlatformAttributes attrs;
+  Ort::Status query_status = QueryQnnPlatformAttributesDirectly(attrs, logger);
+  if (!query_status.IsOK()) {
+    return query_status;
+  }
+
+  auto version_to_string = [](Qnn_Version_t version) {
+    return std::to_string(version.major) + "." +
+           std::to_string(version.minor) + "." +
+           std::to_string(version.patch);
+  };
+
+  std::stringstream ss;
+  ss << "QNN platform attributes: "
+     << "HTP arch: " << attrs.htp_arch
+     << ", DLBC supported: " << attrs.dlbc_supported
+     << ", VTCM size MB: " << attrs.vtcm_size_mb
+     << ", SoC model: " << attrs.soc_model
+     << ", SDK version: " << attrs.sdk_version
+     << ", Core API version: " << version_to_string(attrs.core_api_version)
+     << ", Backend API version: " << version_to_string(attrs.backend_api_version);
+
+  std::cout << ss.str() << std::endl;
+  cached_platform_attrs_ = attrs;
+  return Ort::Status();
+}
+
 void QnnHTPBackendTests::SetUp() {
   if (cached_htp_support_ == BackendSupport::SUPPORTED) {
     return;
@@ -705,38 +737,10 @@ void QnnHTPBackendTests::SetUp() {
     FAIL();
   }
 
-  // query the platform attributes if not already cached.
-  if (!cached_platform_attrs_.has_value()) {
-    QnnPlatformAttributes attrs;
-
-    Ort::Status query_status = QueryQnnPlatformAttributesDirectly(attrs, logger);
-    if (!query_status.IsOK()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("QueryQnnPlatformAttributesDirectly failed: " + query_status.GetErrorMessage()).c_str());
-    } else {
-      auto version_to_string = [](Qnn_Version_t version) {
-        return std::to_string(version.major) + "." +
-               std::to_string(version.minor) + "." +
-               std::to_string(version.patch);
-      };
-
-      // Create a string stream to build the output message
-      std::stringstream ss;
-      ss << "QNN platform attributes: "
-         << "HTP arch: " << attrs.htp_arch
-         << ", DLBC supported: " << attrs.dlbc_supported
-         << ", VTCM size MB: " << attrs.vtcm_size_mb
-         << ", SoC model: " << attrs.soc_model
-         << ", SDK version: " << attrs.sdk_version
-         << ", Core API version: " << version_to_string(attrs.core_api_version)
-         << ", Backend API version: " << version_to_string(attrs.backend_api_version);
-
-      std::string platform_info_str = ss.str();
-      std::cout << platform_info_str << std::endl;
-      // TODO: Fix the crash here with ORT_CXX_LOG
-      // ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO, platform_info_str.c_str());
-
-      cached_platform_attrs_ = attrs;
-    }
+  Ort::Status query_status = EnsurePlatformAttributes(logger);
+  if (!query_status.IsOK()) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                ("QueryQnnPlatformAttributesDirectly failed: " + query_status.GetErrorMessage()).c_str());
   }
 }
 
