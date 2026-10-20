@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
@@ -241,18 +242,24 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
     const bool has_real_undetected_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
 
-#if !QNN_ARCH_ARM64
-    constexpr bool is_cross_compile_host = true;
-#else
-    constexpr bool is_cross_compile_host = false;
-#endif
+    bool allow_virtual_devices = false;
+    if (!has_real_undetected_npu) {
+      OrtKeyValuePairs* env_config = nullptr;
+      RETURN_IF_NOT_NULL(factory->ep_api.GetEnvConfigEntries(&env_config));
+      std::unique_ptr<OrtKeyValuePairs, decltype(factory->ort_api.ReleaseKeyValuePairs)> entries(
+          env_config, factory->ort_api.ReleaseKeyValuePairs);
+      if (entries) {
+        const char* allow = factory->ort_api.GetKeyValue(entries.get(), "allow_virtual_devices");
+        allow_virtual_devices = allow != nullptr && std::strcmp(allow, "1") == 0;
+      }
+    }
 
-    const bool synthesize_npu = has_real_undetected_npu || is_cross_compile_host;
+    const bool synthesize_npu = has_real_undetected_npu || allow_virtual_devices;
 
     if (synthesize_npu) {
       // ORT Core didn't enumerate an NPU OrtHardwareDevice; synthesize one.
-      // Real-but-undetected NPU (WoS Makena, Linux/Android arm64): not virtual — can execute.
-      // Cross-compile host (x86/x64): virtual — compile-only, no local NPU hardware.
+      // A real-but-undetected NPU is executable. Otherwise, the environment has
+      // explicitly allowed a compile-only virtual device with no local hardware.
       const bool is_virtual = !has_real_undetected_npu;
       OrtHardwareDevice* synthesized_npu_hw_device = nullptr;
       RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, synthesized_npu_hw_device, is_virtual));

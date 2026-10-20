@@ -113,6 +113,7 @@ class FactoryStubContext {
   // per test before calling into factory code.
   std::unordered_map<const OrtHardwareDevice*, OrtHardwareDeviceType> device_type_map;
   std::unordered_map<const OrtHardwareDevice*, uint32_t> device_vendor_map;
+  std::unordered_map<std::string, std::string> env_config;
 
   // Ordered log of (key, value) pairs passed to AddKeyValuePair (e.g., hw device metadata).
   std::vector<std::pair<std::string, std::string>> added_kv_pairs;
@@ -227,6 +228,12 @@ class FactoryStubContext {
       }
     };
     stub_ort_api.ReleaseKeyValuePairs = [](OrtKeyValuePairs*) noexcept {};
+    stub_ort_api.GetKeyValue = [](const OrtKeyValuePairs*, const char* key) noexcept -> const char* {
+      auto* self = current_;
+      if (self == nullptr || key == nullptr) return nullptr;
+      const auto it = self->env_config.find(key);
+      return it == self->env_config.end() ? nullptr : it->second.c_str();
+    };
 
     stub_ort_api.HardwareDevice_Type =
         [](const OrtHardwareDevice* dev) noexcept -> OrtHardwareDeviceType {
@@ -323,6 +330,10 @@ class FactoryStubContext {
   }
 
   void InstallOrtEpApiStubs() {
+    stub_ep_api.GetEnvConfigEntries = [](OrtKeyValuePairs** out) noexcept -> OrtStatus* {
+      *out = reinterpret_cast<OrtKeyValuePairs*>(kFakeToken);
+      return nullptr;
+    };
     stub_ep_api.CreateEpDevice =
         [](OrtEpFactory*, const OrtHardwareDevice* device,
            const OrtKeyValuePairs*, const OrtKeyValuePairs*,
@@ -827,6 +838,7 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_Adverti
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  ctx.env_config["allow_virtual_devices"] = "1";
 
   // Pass no devices at all — no NPU in the input array.
   OrtEpDevice* ep_devices[4] = {nullptr};
@@ -852,6 +864,7 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_CpuDevi
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  ctx.env_config["allow_virtual_devices"] = "1";
 
   // Pass only a CPU device — no NPU in the input array.
   OrtHardwareDevice* cpu = MakeFakeHwDevice(30);
@@ -867,6 +880,20 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_CpuDevi
   EXPECT_EQ(num, 2u);
   ASSERT_EQ(ctx.created_ep_devices.size(), 2u);
   EXPECT_EQ(ctx.created_ep_devices[0], cpu);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHostWithoutOptIn_DoesNotAdvertiseVirtualNpu) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, nullptr, 0, ep_devices, 4, &num), nullptr);
+
+  EXPECT_EQ(num, 0u);
+  EXPECT_TRUE(ctx.created_ep_devices.empty());
+  EXPECT_TRUE(ctx.added_kv_pairs.empty());
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_ExplicitNpuNoDoubleSynthesis) {
