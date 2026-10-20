@@ -199,7 +199,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       const std::string& context_bin_filepath,
       std::string node_name,
       std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
-      int64_t max_spill_fill_size,
+      int64_t group_max_spill_fill_size,
+      int64_t declared_max_spill_fill_size,
       const qnn::EpContextIoDispatch& io_dispatch,
       bool is_multi_soc_buffer = false);
 
