@@ -47,6 +47,7 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | `onnx_ctx_model_helper_test.cc` | `QnnUnit_OnnxCtxModelHelperTest` | `builder/onnx_ctx_model_helper.cc` |
 | `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderTest` | `qnn_execution_provider.cc` |
 | `qnn_execution_provider_test.cc` | `QnnUnit_ExecutionProviderHtpTest` | `qnn_execution_provider.cc` (real HTP backend paths) |
+| `shared_context_test.cc` | `QnnUnit_SharedContextTest` | `shared_context.h` |
 
 Future op-builder migrations can add `component/builder/opbuilder/<op>_test.cc` files
 using `QnnUnit_<Op>_ComponentTest` suites. Those PRs should keep component-only

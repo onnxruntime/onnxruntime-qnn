@@ -716,7 +716,7 @@ struct PerTensorIODefFixture {
     g_mock_init_reg.clear();
     SetupMockInitRegistryStubs(ctx);
     ApiPtrs api_ptrs = ctx.MakeApiPtrs();
-    const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
+    const OrtGraph* fake_graph = reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
     backend_manager.BackendType() = qnn::QnnBackendType::HTP;
     wrapper = std::make_unique<qnn::QnnModelWrapper>(
         fake_graph, api_ptrs, null_logger_,
