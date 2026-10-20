@@ -151,9 +151,7 @@ jobs:
         # has_code_changes=false jobs skip the expensive recursive fetch while still reporting green.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}
-        # checkout's safe.directory does not persist, and the runner account
-        # often does not own the reused workspace (dubious ownership).
-        run: git config --global --add safe.directory "*" && git submodule update --init --recursive
+        run: git submodule update --init --recursive
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.has_code_changes }}
@@ -284,9 +282,7 @@ jobs:
         # Submodules omitted here; initialized below only when a heavy test run is needed.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}
-        # checkout's safe.directory does not persist, and the runner account
-        # often does not own the reused workspace (dubious ownership).
-        run: git config --global --add safe.directory "*" && git submodule update --init --recursive
+        run: git submodule update --init --recursive
 
       - name: Setup JFrog CLI
         if: ${{ inputs.has_code_changes }}
@@ -355,9 +351,7 @@ jobs:
         # Submodules omitted here; initialized below only when a heavy wheel smoke test is needed.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}
-        # checkout's safe.directory does not persist, and the runner account
-        # often does not own the reused workspace (dubious ownership).
-        run: git config --global --add safe.directory "*" && git submodule update --init --recursive
+        run: git submodule update --init --recursive
 
       - name: Setup JFrog CLI
         if: ${{ inputs.has_code_changes }}
