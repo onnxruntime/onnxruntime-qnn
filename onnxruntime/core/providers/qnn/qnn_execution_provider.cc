@@ -50,6 +50,7 @@
 #include "core/providers/qnn/htp_usr_drv_utils.h"
 #include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/builder/qdq_node_group_selector.h"
+#include "core/providers/qnn/qnn_ep_partition_utils.h"
 #include "core/providers/qnn/soc_utility/soc_utils.h"
 
 // Forward declarations for NodeUnit-related classes
