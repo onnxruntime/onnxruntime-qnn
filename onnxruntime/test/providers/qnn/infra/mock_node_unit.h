@@ -98,7 +98,6 @@ namespace detail {
 struct MockNodeUnitImpl {
   // deque: push_back never invalidates existing element addresses.
   std::deque<FakeValueInfo> vis;
-  std::deque<FakeOpAttr> attrs;
   std::deque<FakeNode> nodes;
   std::deque<FakeOpAttr> attrs;
   OrtApi ctor_api{};
