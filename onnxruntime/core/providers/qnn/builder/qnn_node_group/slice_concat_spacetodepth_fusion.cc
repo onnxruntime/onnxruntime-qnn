@@ -707,14 +707,15 @@ std::unique_ptr<IQnnNodeGroup> SliceConcatSpaceToDepthFusion::TryFusion(
     }
   }
 
-  // HTP SpaceToDepth supports float and fixed-point only; backend validation can be skipped, so check here.
-  // No arch gate: V68 cannot run float graphs on device.
+  // HTP SpaceToDepth supports float and fixed-point only, and float is wrong on V68. Backend validation can be
+  // skipped, so check here. An unset arch (NONE, e.g. AI Hub conversion) is not V68, so it still fuses.
   if (!reference_quant.has_value()) {
     return nullptr;
   }
   const bool is_float = reference_quant->qnn_dtype == QNN_DATATYPE_FLOAT_32 ||
                         reference_quant->qnn_dtype == QNN_DATATYPE_FLOAT_16;
-  if (!reference_quant->quantized && !is_float) {
+  if (!reference_quant->quantized &&
+      (!is_float || model_wrapper.GetHtpArch() == QNN_HTP_DEVICE_ARCH_V68)) {
     return nullptr;
   }
 

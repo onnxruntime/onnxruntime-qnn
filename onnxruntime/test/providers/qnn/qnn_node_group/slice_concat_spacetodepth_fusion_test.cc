@@ -152,24 +152,51 @@ GetTestModelFn BuildTiledSliceConcatTestCase(bool use_qdq, bool use_contrib_qdq,
   };
 }
 
-ProviderOptions HtpOptions() {
+// Unquantized parallel stem in Focus order over element type T.
+template <typename T>
+GetTestModelFn BuildUnquantizedTiledSliceConcatTestCase() {
+  return [](ModelTestBuilder& builder) -> void {
+    MakeTestInput<T>(builder, "image",
+                     TestInputDef<T>({1, 3, 8, 6}, false, static_cast<T>(-1.0f), static_cast<T>(1.0f)));
+    std::vector<std::string> tiles;
+    for (int64_t h = 0; h < 2; ++h) {
+      for (int64_t w = 0; w < 2; ++w) {
+        const std::string name = "SliceH" + std::to_string(h) + "W" + std::to_string(w);
+        builder.Make1DInitializer<int64_t>(name + "_starts", {0, 0, h, w});
+        builder.Make1DInitializer<int64_t>(name + "_ends", {1, 3, 8, 6});
+        builder.Make1DInitializer<int64_t>(name + "_axes", {0, 1, 2, 3});
+        builder.Make1DInitializer<int64_t>(name + "_steps", {1, 1, 2, 2});
+        builder.AddNode(name, "Slice",
+                        {"image", name + "_starts", name + "_ends", name + "_axes", name + "_steps"},
+                        {name + "_out"}, kOnnxDomain);
+        tiles.push_back(name + "_out");
+      }
+    }
+    builder.AddNode("Concat", "Concat", {tiles[0], tiles[2], tiles[1], tiles[3]}, {"Y"}, kOnnxDomain,
+                    {test::MakeAttribute("axis", static_cast<int64_t>(1))});
+    builder.MakeOutput("Y");
+  };
+}
+
+ProviderOptions HtpOptions([[maybe_unused]] uint32_t soc_model = QNN_SOC_MODEL_SM8550) {
   ProviderOptions options;
   options["backend_type"] = "htp";
   options["offload_graph_io_quantization"] = "0";
 #if defined(__linux__) && !defined(__aarch64__)
   // The simulator defaults to V68, where float SpaceToDepth is wrong.
-  options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+  options["soc_model"] = std::to_string(soc_model);
 #endif
   return options;
 }
 
 void RunTiledSliceConcatFusionTest(const std::filesystem::path& dir, GetTestModelFn model_fn, int expect_s2d,
-                                   int expect_gather, float tolerance = 1e-2f) {
+                                   int expect_gather, float tolerance = 1e-2f,
+                                   uint32_t soc_model = QNN_SOC_MODEL_SM8550) {
   std::filesystem::remove_all(dir);
   ASSERT_TRUE(std::filesystem::create_directory(dir));
   auto cleanup = gsl::finally([&dir]() { std::filesystem::remove_all(dir); });
 
-  ProviderOptions options = HtpOptions();
+  ProviderOptions options = HtpOptions(soc_model);
   options["dump_json_qnn_graph"] = "1";
   options["json_qnn_graph_dir"] = dir.string();
 
@@ -250,6 +277,59 @@ TEST_F(QnnHTPBackendTests, TiledSliceConcat_Float_Fused) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunTiledSliceConcatFusionTest("TiledSliceConcatFloat_HTP", BuildTiledSliceConcatTestCase(false, false), 2, 0);
 }
+
+TEST_F(QnnHTPBackendTests, TiledSliceConcat_Float16_Fused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunTiledSliceConcatFusionTest("TiledSliceConcatFloat16_HTP",
+                                BuildUnquantizedTiledSliceConcatTestCase<Ort::Float16_t>(), 2, 0);
+}
+
+#if defined(__linux__) && !defined(__aarch64__)
+// Float SpaceToDepth is wrong on V68: a known-V68 target keeps Slice+Concat and stays accurate.
+TEST_F(QnnHTPBackendTests, TiledSliceConcat_Float_V68_NotFused) {
+  RunTiledSliceConcatFusionTest("TiledSliceConcatFloatV68_HTP", BuildTiledSliceConcatTestCase(false, false), 0, 0,
+                                1e-2f, QNN_SOC_MODEL_SM8350);
+}
+
+// Unquantized non-float tensors are not valid S2D input: fail closed. The AI Hub converter skips backend op
+// validation, which would otherwise reject int32, so skip it here to reach the fusion's own dtype check.
+// The IR serializer cannot execute, so only create the session.
+TEST_F(QnnHTPBackendTests, TiledSliceConcat_Int32_SkipBackendValidation_NotFused) {
+  if (IsIRBackendSupported() == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
+  }
+  const std::filesystem::path dir = "TiledSliceConcatInt32_HTP";
+  std::filesystem::remove_all(dir);
+  ASSERT_TRUE(std::filesystem::create_directory(dir));
+  auto cleanup = gsl::finally([&dir]() { std::filesystem::remove_all(dir); });
+
+  ProviderOptions options = HtpOptions();
+  options["dump_json_qnn_graph"] = "1";
+  options["json_qnn_graph_dir"] = dir.string();
+  options["skip_backend_op_validation"] = "1";
+  options["dump_qnn_ir_dlc"] = "1";
+  options["dump_qnn_ir_dlc_dir"] = (dir / "dlc").string();
+  options["qnn_ir_backend_path"] = "libQnnIr.so";
+
+  ModelTestBuilder helper;
+  BuildUnquantizedTiledSliceConcatTestCase<int32_t>()(helper);
+  const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+  opset_id_proto->set_domain(kOnnxDomain);
+  opset_id_proto->set_version(13);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  Ort::SessionOptions so;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model_data.data(), model_data.size(), so));
+
+  AssertOpInQnnGraph(dir, "SpaceToDepth", 0);
+  AssertOpInQnnGraph(dir, "StridedSlice", 4);
+}
+#endif
 
 // Duplicated phase must fail closed (S2D would drop a block).
 TEST_F(QnnHTPBackendTests, TiledSliceConcat_DuplicatePhase_NotFused) {
