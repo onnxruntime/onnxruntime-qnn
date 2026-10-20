@@ -42,6 +42,19 @@ struct SetupTensorsTag {
 
 template struct QnnModelPrivateMember<SetupTensorsTag, &qnn::QnnModel::SetupTensors>;
 
+struct BindQnnTensorMemoryTag {
+  using type = Ort::Status (qnn::QnnModel::*)(const Ort::Logger&,
+                                              const OrtMemoryInfo*,
+                                              void*,
+                                              uint32_t,
+                                              Qnn_ContextHandle_t,
+                                              Qnn_Tensor_t&);
+  friend type GetQnnModelPrivateMember(BindQnnTensorMemoryTag);
+};
+
+template struct QnnModelPrivateMember<BindQnnTensorMemoryTag,
+                                      &qnn::QnnModel::BindQnnTensorMemoryToOrtValueMemory>;
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -60,9 +73,20 @@ struct QnnModelMinimalTestContext {
   std::shared_ptr<qnn::QnnBackendManager> manager;
   std::unique_ptr<qnn::QnnModel> model;
 
-  QnnModelMinimalTestContext() {
+  explicit QnnModelMinimalTestContext(bool use_gpu_default_memory = false) {
+    stub_ort_api.MemoryInfoGetDeviceType = use_gpu_default_memory
+                                               ? +[](const OrtMemoryInfo*, OrtMemoryInfoDeviceType* device_type) noexcept {
+                                                   *device_type = OrtMemoryInfoDeviceType_GPU;
+                                                 }
+                                               : +[](const OrtMemoryInfo*, OrtMemoryInfoDeviceType* device_type) noexcept {
+                                                   *device_type = OrtMemoryInfoDeviceType_CPU;
+                                                 };
+    stub_ort_api.MemoryInfoGetDeviceMemType = [](const OrtMemoryInfo*) noexcept {
+      return OrtDeviceMemoryType_DEFAULT;
+    };
+
     qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnHtp.so";
+    cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -84,7 +108,7 @@ struct QnnModelMinimalTestContext {
 // QnnModelHtpTestContext
 //
 // Full context for tests that need a real QNN HTP backend (ComposeGraph,
-// FinalizeGraphs, etc.). Loads libQnnHtp.so and runs SetupBackend.
+// FinalizeGraphs, etc.). Loads the platform HTP backend and runs SetupBackend.
 // On x86_64 the validation path works but execution requires HTP hardware.
 // Tests should call GTEST_SKIP() when IsValid() returns false.
 // ---------------------------------------------------------------------------
@@ -107,7 +131,7 @@ struct QnnModelHtpTestContext {
     };
 
     qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnHtp.so";
+    cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -148,6 +172,17 @@ TEST(QnnUnit_ModelTest, Deserialize_UnsupportedVersion_ReturnsError) {
   EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
 }
 
+TEST(QnnUnit_ModelTest, Deserialize_Version1_NullGraphName_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  QnnSystemContext_GraphInfo_t info{};
+  info.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1;
+
+  Qnn_ContextHandle_t fake_ctx = nullptr;
+  EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
+}
+
 TEST(QnnUnit_ModelTest, Deserialize_Version1_NullInputTensors_ReturnsError) {
   QnnModelMinimalTestContext ctx;
   ASSERT_TRUE(ctx.IsValid());
@@ -181,6 +216,17 @@ TEST(QnnUnit_ModelTest, Deserialize_Version1_NullOutputTensors_ReturnsError) {
 }
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 18)
+TEST(QnnUnit_ModelTest, Deserialize_Version2_NullGraphName_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  QnnSystemContext_GraphInfo_t info{};
+  info.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_2;
+
+  Qnn_ContextHandle_t fake_ctx = nullptr;
+  EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
+}
+
 TEST(QnnUnit_ModelTest, Deserialize_Version2_NullInputTensors_ReturnsError) {
   // Covers the V2 conditional branch at lines 844-849.
   QnnModelMinimalTestContext ctx;
@@ -198,6 +244,17 @@ TEST(QnnUnit_ModelTest, Deserialize_Version2_NullInputTensors_ReturnsError) {
 #endif
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+TEST(QnnUnit_ModelTest, Deserialize_Version3_NullGraphName_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  QnnSystemContext_GraphInfo_t info{};
+  info.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3;
+
+  Qnn_ContextHandle_t fake_ctx = nullptr;
+  EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
+}
+
 TEST(QnnUnit_ModelTest, Deserialize_Version3_NullInputTensors_ReturnsError) {
   // Covers the V3 conditional branch at lines 853-858.
   QnnModelMinimalTestContext ctx;
@@ -303,6 +360,20 @@ TEST(QnnUnit_ModelTest, SetupTensors_OutputCountLessThanTensorWrapperCount_Retur
 
   const auto status = ((*ctx.model).*setup_tensors)(tensor_infos, tensor_wrappers, false);
   EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_ModelTest, BindTensor_UnregisteredGpuDefaultMemory_ReturnsError) {
+  QnnModelMinimalTestContext ctx(/*use_gpu_default_memory=*/true);
+  ASSERT_TRUE(ctx.IsValid());
+
+  const auto bind_tensor_memory = GetQnnModelPrivateMember(BindQnnTensorMemoryTag{});
+  int data = 0;
+  Qnn_Tensor_t qnn_tensor = QNN_TENSOR_INIT;
+  const auto status = ((*ctx.model).*bind_tensor_memory)(
+      ctx.logger, reinterpret_cast<const OrtMemoryInfo*>(1), &data, sizeof(data), nullptr, qnn_tensor);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(status.GetErrorMessage(), "GPU DEFAULT memory is not a registered imported memory handle.");
 }
 
 // ---------------------------------------------------------------------------

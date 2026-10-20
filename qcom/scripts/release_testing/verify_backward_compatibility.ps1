@@ -80,7 +80,9 @@ try {
     }
 
     # Run the sample test against the older onnxruntime
-    python $SamplePath
+    # The backward compatibility test must execute with QNN HTP. Do not allow
+    # ORT to silently fall back to CPU if the QNN backend cannot initialize.
+    python $SamplePath --disable-cpu-fallback
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Backward Compatibility test FAILED (exit $LASTEXITCODE)" -ForegroundColor Red
         exit $LASTEXITCODE

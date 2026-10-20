@@ -757,12 +757,12 @@ static void RunDynamicInput1QuantErrorTest(const char* test_name,
   }
 }
 
-// A 16-bit activation with an 8-bit output stays in one node unit: the op runs at 16 bits and a Convert narrows it.
+// A mismatched activation/output precision stays in one node unit via a Convert.
 template <typename ActivationQType, typename WeightQType, typename OutputQType>
-static void RunNarrowingOutputTest(const char* test_name, bool weight_is_initializer,
-                                   Qnn_DataType_t expected_convert_type) {
+static void RunMixedPrecisionOutputTest(const char* test_name, bool weight_is_initializer,
+                                        Qnn_DataType_t expected_convert_type) {
   namespace fs = std::filesystem;
-  const fs::path graph_dir = fs::temp_directory_path() / (std::string("MatMulOp_QDQ_NarrowingOutput_") + test_name);
+  const fs::path graph_dir = fs::temp_directory_path() / (std::string("MatMulOp_QDQ_MixedPrecisionOutput_") + test_name);
   fs::remove_all(graph_dir);
   ASSERT_TRUE(fs::create_directories(graph_dir));
   auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
@@ -785,23 +785,53 @@ static void RunNarrowingOutputTest(const char* test_name, bool weight_is_initial
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationU8Output_StaticWeight) {
-  RunNarrowingOutputTest<uint16_t, uint8_t, uint8_t>("u16_u8_static", /*weight_is_initializer=*/true,
-                                                     QNN_DATATYPE_UFIXED_POINT_8);
+  RunMixedPrecisionOutputTest<uint16_t, uint8_t, uint8_t>("u16_u8_static", /*weight_is_initializer=*/true,
+                                                          QNN_DATATYPE_UFIXED_POINT_8);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationU8Output_DynamicInput1) {
-  RunNarrowingOutputTest<uint16_t, uint8_t, uint8_t>("u16_u8_dynamic", /*weight_is_initializer=*/false,
-                                                     QNN_DATATYPE_UFIXED_POINT_8);
+  RunMixedPrecisionOutputTest<uint16_t, uint8_t, uint8_t>("u16_u8_dynamic", /*weight_is_initializer=*/false,
+                                                          QNN_DATATYPE_UFIXED_POINT_8);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationS8Output_StaticWeight) {
-  RunNarrowingOutputTest<uint16_t, uint8_t, int8_t>("u16_s8_static", /*weight_is_initializer=*/true,
-                                                    QNN_DATATYPE_SFIXED_POINT_8);
+  RunMixedPrecisionOutputTest<uint16_t, uint8_t, int8_t>("u16_s8_static", /*weight_is_initializer=*/true,
+                                                         QNN_DATATYPE_SFIXED_POINT_8);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_S16ActivationS8Output_StaticWeight) {
-  RunNarrowingOutputTest<int16_t, int8_t, int8_t>("s16_s8_static", /*weight_is_initializer=*/true,
-                                                  QNN_DATATYPE_SFIXED_POINT_8);
+  RunMixedPrecisionOutputTest<int16_t, int8_t, int8_t>("s16_s8_static", /*weight_is_initializer=*/true,
+                                                       QNN_DATATYPE_SFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationU16Output_StaticWeight) {
+  RunMixedPrecisionOutputTest<uint8_t, uint8_t, uint16_t>("u8_u16_static", /*weight_is_initializer=*/true,
+                                                          QNN_DATATYPE_UFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationU16Output_DynamicInput1) {
+  RunMixedPrecisionOutputTest<uint8_t, uint8_t, uint16_t>("u8_u16_dynamic", /*weight_is_initializer=*/false,
+                                                          QNN_DATATYPE_UFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_S8ActivationS16Output_StaticWeight) {
+  RunMixedPrecisionOutputTest<int8_t, int8_t, int16_t>("s8_s16_static", /*weight_is_initializer=*/true,
+                                                       QNN_DATATYPE_SFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationU16Output_U16Weight_DynamicInput1) {
+  RunMixedPrecisionOutputTest<uint8_t, uint16_t, uint16_t>("u8_u16w_u16_dynamic", /*weight_is_initializer=*/false,
+                                                           QNN_DATATYPE_UFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationS8Output_StaticWeight) {
+  RunMixedPrecisionOutputTest<uint8_t, uint8_t, int8_t>("u8_s8_static", /*weight_is_initializer=*/true,
+                                                        QNN_DATATYPE_SFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationS16Output_StaticWeight) {
+  RunMixedPrecisionOutputTest<uint16_t, int8_t, int16_t>("u16_s16_static", /*weight_is_initializer=*/true,
+                                                         QNN_DATATYPE_SFIXED_POINT_16);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8) {

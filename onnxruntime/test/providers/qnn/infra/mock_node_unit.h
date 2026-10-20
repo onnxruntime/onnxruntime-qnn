@@ -100,6 +100,7 @@ struct MockNodeUnitImpl {
   std::deque<FakeValueInfo> vis;
   std::deque<FakeOpAttr> attrs;
   std::deque<FakeNode> nodes;
+  std::deque<FakeOpAttr> attrs;
   OrtApi ctor_api{};
   std::unique_ptr<OrtNodeUnit> unit;
   // Constructed last, destroyed first: routes global Ort::GetApi() to ctor_api
@@ -155,6 +156,7 @@ class MockNodeUnit {
 // Domain defaults to "" (default ONNX domain); since_version to 1; index to 0.
 // index feeds Node_GetId → UniqueNameGenerator / QnnParamWrapper → QNN tensor
 // names / snapshot goldens, so keep it deterministic across runs.
+// Attributes are installed on the mock node and remain valid for the holder's lifetime.
 inline MockNodeUnit MakeMockNodeUnit(
     std::string op_type,
     std::vector<OrtNodeUnitIODef> inputs,
@@ -163,7 +165,7 @@ inline MockNodeUnit MakeMockNodeUnit(
     std::string domain = "",
     int since_version = 1,
     size_t index = 0,
-    std::vector<FakeOpAttr> attributes = {}) {
+    std::vector<FakeOpAttr> attrs = {}) {
   auto impl = std::make_unique<detail::MockNodeUnitImpl>();
   InstallFakeGraphApiStubs(impl->ctor_api);
 
@@ -186,10 +188,9 @@ inline MockNodeUnit MakeMockNodeUnit(
   node.id = index;
   node.inputs = make_slots(inputs);
   node.outputs = make_slots(outputs);
-  for (auto& attribute : attributes) {
-    impl->attrs.push_back(std::move(attribute));
-    FakeOpAttr& stored_attribute = impl->attrs.back();
-    node.attrs.emplace(stored_attribute.name, &stored_attribute);
+  for (auto& attr : attrs) {
+    impl->attrs.push_back(std::move(attr));
+    node.attrs[impl->attrs.back().name] = &impl->attrs.back();
   }
   impl->nodes.push_back(std::move(node));
 
@@ -220,7 +221,8 @@ inline MockNodeUnit MakeMockQDQNodeUnit(
     std::string name = "",
     std::string domain = "",
     int since_version = 1,
-    size_t index = 0) {
+    size_t index = 0,
+    std::vector<FakeOpAttr> attrs = {}) {
   auto impl = std::make_unique<detail::MockNodeUnitImpl>();
   InstallFakeGraphApiStubs(impl->ctor_api);
 
@@ -301,6 +303,10 @@ inline MockNodeUnit MakeMockQDQNodeUnit(
   target.id = index;
   target.inputs = std::move(target_inputs);
   target.outputs = std::move(target_outputs);
+  for (auto& attr : attrs) {
+    impl->attrs.push_back(std::move(attr));
+    target.attrs[impl->attrs.back().name] = &impl->attrs.back();
+  }
   impl->nodes.push_back(std::move(target));
   const OrtNode* target_ptr = impl->nodes.back().AsNode();
 

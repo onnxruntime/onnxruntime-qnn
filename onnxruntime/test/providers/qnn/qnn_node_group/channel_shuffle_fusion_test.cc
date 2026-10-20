@@ -17,10 +17,12 @@ namespace test {
 
 namespace {
 
-GetTestModelFn BuildTestCase() {
-  return [](ModelTestBuilder& builder) -> void {
+GetTestModelFn BuildTestCase(int64_t height = 8, int64_t width = 8,
+                             std::vector<int64_t> channel_shuffle_perm = {0, 2, 1, 3, 4}) {
+  return [=](ModelTestBuilder& builder) -> void {
     const int64_t num_channels = 12;
-    const std::vector<int64_t> input_shape{1, num_channels, 8, 8};
+    const int64_t conv2_kernel_height = height == 1 ? 1 : 3;
+    const std::vector<int64_t> input_shape{1, num_channels, height, width};
     const auto input_def = TestInputDef<float>(input_shape, false, -0.5f, 0.5f);
 
     // input
@@ -53,7 +55,7 @@ GetTestModelFn BuildTestCase() {
     // Transpose: reshape1_out -> transpose_out
     {
       std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-      attrs.push_back(test::MakeAttribute("perm", std::vector<int64_t>{0, 2, 1, 3, 4}));
+      attrs.push_back(test::MakeAttribute("perm", channel_shuffle_perm));
       builder.AddNode("Transpose1",
                       "Transpose",
                       {"reshape1_out"},
@@ -70,14 +72,14 @@ GetTestModelFn BuildTestCase() {
                     {"reshape2_out"});
 
     // Conv2 weights
-    const std::vector<int64_t> conv2_weight_shape = {num_channels, 1, 3, 1};
+    const std::vector<int64_t> conv2_weight_shape = {num_channels, 1, conv2_kernel_height, 1};
     builder.MakeInitializer<float>("conv2_weight", conv2_weight_shape, -2.f, 2.f);
 
     // Conv2: reshape2_out + conv2_weight -> Y
     {
       std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
       attrs.push_back(test::MakeAttribute("group", static_cast<int64_t>(num_channels)));
-      attrs.push_back(test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 1}));
+      attrs.push_back(test::MakeAttribute("kernel_shape", std::vector<int64_t>{conv2_kernel_height, 1}));
       builder.MakeOutput("Y");
       builder.AddNode("Conv2",
                       "Conv",
@@ -89,6 +91,45 @@ GetTestModelFn BuildTestCase() {
   };
 }
 
+GetTestModelFn BuildExplicitChannelShufflePattern(bool collapse_unit_batch,
+                                                  std::vector<int64_t> middle_perm,
+                                                  std::vector<int64_t> tail_perm = {0, 2, 3, 1},
+                                                  std::vector<int64_t> reshape2_shape = {1, 12, 4, 5},
+                                                  bool add_head_transpose = false,
+                                                  std::vector<int64_t> head_perm = {0, 3, 1, 2},
+                                                  std::vector<int64_t> reshape1_shape = {}) {
+  return [=](ModelTestBuilder& builder) -> void {
+    const std::vector<int64_t> input_shape{1, 4, 5, 12};
+    MakeTestInput<float>(builder, "input", TestInputDef<float>(input_shape, false, -0.5f, 0.5f));
+
+    std::string reshape1_input = "input";
+    if (add_head_transpose) {
+      builder.AddNode("HeadTranspose", "Transpose", {"input"}, {"head_out"}, kOnnxDomain,
+                      {builder.MakeIntsAttribute("perm", head_perm)});
+      reshape1_input = "head_out";
+    }
+
+    const std::vector<int64_t> intermediate_shape = !reshape1_shape.empty()
+                                                        ? reshape1_shape
+                                                    : collapse_unit_batch
+                                                        ? std::vector<int64_t>{4, 5, 3, 4}
+                                                        : std::vector<int64_t>{1, 4, 5, 3, 4};
+    builder.Make1DInitializer<int64_t>("shape1", intermediate_shape);
+    builder.AddNode("Reshape1", "Reshape", {reshape1_input, "shape1"}, {"reshape1_out"});
+    builder.AddNode("MiddleTranspose", "Transpose", {"reshape1_out"}, {"middle_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", middle_perm)});
+    builder.Make1DInitializer<int64_t>("shape2", reshape2_shape);
+    builder.AddNode("Reshape2", "Reshape", {"middle_out", "shape2"}, {"reshape2_out"});
+    builder.AddNode("TailTranspose", "Transpose", {"reshape2_out"}, {"output"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", tail_perm)});
+    builder.MakeOutput("output");
+
+    builder.MakeInitializer<float>("side_weight", {4, 4, 1, 1}, -1.0f, 1.0f);
+    builder.AddNode("SideConv", "Conv", {"input", "side_weight"}, {"side_output"});
+    builder.MakeOutput("side_output");
+  };
+}
+
 ProviderOptions GetProviderOptions() {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -96,11 +137,29 @@ ProviderOptions GetProviderOptions() {
   return provider_options;
 }
 
+void RunExplicitChannelShuffleTest(const std::filesystem::path& json_qnn_graph_dir,
+                                   GetTestModelFn model_builder,
+                                   ExpectedEPNodeAssignment expected_assignment,
+                                   size_t expected_channel_shuffle_count) {
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+  RunQnnModelTest(model_builder, provider_options, 13,
+                  EPVerificationParams{expected_assignment, ElementwiseAbsoluteVerifier(1e-2f)});
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle", expected_channel_shuffle_count);
+}
+
 }  // namespace
 
-TEST_F(QnnHTPBackendTests, ChannelShuffleFusion) {
+// Layout Transform and TransposeOptimizer absorb the leading transpose into
+// Reshape1, leaving the four-node pattern handled by TryFusionFromReshape.
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_FromReshape) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion";
+  const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion_FromReshape";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
@@ -115,6 +174,125 @@ TEST_F(QnnHTPBackendTests, ChannelShuffleFusion) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
+  AssertOpWithNameInQnnGraph(json_qnn_graph_dir, "ChannelShuffle", "_from_reshape");
+}
+
+// Regression test for NCHW input with H=1. An NHWC-first channel-layout check
+// misclassified this shape because W == H*W and emitted num_groups=1.
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_NchwHeightOne) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion_NchwHeightOne";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildTestCase(/*height=*/1, /*width=*/8),
+                  provider_options,
+                  /*opset_version=*/10,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
+}
+
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_NchwWidthOne) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion_NchwWidthOne";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildTestCase(/*height=*/8, /*width=*/1),
+                  provider_options,
+                  /*opset_version=*/10,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
+}
+
+// A generic shape-preserving RTRT chain must not be claimed as ChannelShuffle.
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_FromReshape_InvalidMiddlePerm) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion_FromReshape_InvalidMiddlePerm";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildTestCase(/*height=*/8, /*width=*/8, /*channel_shuffle_perm=*/{0, 1, 2, 3, 4}),
+                  provider_options,
+                  /*opset_version=*/10,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle", 0);
+}
+
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_CollapsedUnitBatch) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunExplicitChannelShuffleTest("ChannelShuffleFusion_CollapsedUnitBatch",
+                                BuildExplicitChannelShufflePattern(
+                                    /*collapse_unit_batch=*/true,
+                                    /*rank-4 middle_perm=*/{3, 2, 0, 1}),
+                                ExpectedEPNodeAssignment::All, 1);
+}
+
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_InvalidTailPerm_NotFused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunExplicitChannelShuffleTest("ChannelShuffleFusion_InvalidTailPerm_NotFused",
+                                BuildExplicitChannelShufflePattern(
+                                    /*collapse_unit_batch=*/false,
+                                    /*middle_perm=*/{0, 4, 3, 1, 2},
+                                    /*tail_perm=*/{0, 1, 2, 3}),
+                                ExpectedEPNodeAssignment::Some, 0);
+}
+
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_InconsistentBoundaryLayout_NotFused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunExplicitChannelShuffleTest("ChannelShuffleFusion_InconsistentBoundaryLayout_NotFused",
+                                BuildExplicitChannelShufflePattern(
+                                    /*collapse_unit_batch=*/false,
+                                    /*middle_perm=*/{0, 4, 3, 1, 2},
+                                    /*tail_perm=*/{0, 2, 3, 1},
+                                    /*reshape2_shape=*/{1, 12, 4, 5},
+                                    /*add_head_transpose=*/true),
+                                ExpectedEPNodeAssignment::Some, 0);
+}
+
+// A canceling boundary transpose pair is insufficient if it does not map the
+// NHWC channel axis to axis 1, which is the axis shuffled by the NCHW RTR core.
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_IdentityBoundaryTransposes_NotFused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunExplicitChannelShuffleTest("ChannelShuffleFusion_IdentityBoundaryTransposes_NotFused",
+                                BuildExplicitChannelShufflePattern(
+                                    /*collapse_unit_batch=*/false,
+                                    /*middle_perm=*/{0, 2, 1, 3, 4},
+                                    /*tail_perm=*/{0, 1, 2, 3},
+                                    /*reshape2_shape=*/{1, 4, 5, 12},
+                                    /*add_head_transpose=*/true,
+                                    /*head_perm=*/{0, 1, 2, 3},
+                                    /*reshape1_shape=*/{1, 2, 2, 5, 12}),
+                                ExpectedEPNodeAssignment::Some, 0);
+}
+
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion_BoundaryShapeMismatch_NotFused) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunExplicitChannelShuffleTest("ChannelShuffleFusion_BoundaryShapeMismatch_NotFused",
+                                BuildExplicitChannelShufflePattern(
+                                    /*collapse_unit_batch=*/false,
+                                    /*middle_perm=*/{0, 4, 3, 1, 2},
+                                    /*tail_perm=*/{0, 2, 3, 1},
+                                    /*reshape2_shape=*/{1, 6, 4, 10}),
+                                ExpectedEPNodeAssignment::Some, 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
