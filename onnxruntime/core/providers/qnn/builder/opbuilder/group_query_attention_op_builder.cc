@@ -312,10 +312,11 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
 
   const int32_t sliding_window_cache = node_helper.Get("sliding_window_cache", 0);
   if (sliding_window_cache != 0) {
+    const uint32_t sliding_window_cache_u32 = SafeInt<uint32_t>(sliding_window_cache);
     RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                  node_unit.Index(),
                                  node_unit.Name(),
-                                 SafeInt<uint32_t>(sliding_window_cache),
+                                 sliding_window_cache_u32,
                                  kQnnGqaParamSlidingWindowCache,
                                  param_names));
   }
