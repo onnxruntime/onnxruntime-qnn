@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 #include <gsl/gsl_util>
 #include "gtest/gtest.h"
@@ -534,6 +535,65 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvTestCase(
     // op_output -> Q -> DQ -> output
     AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(
         builder, "qdq_out", q_input_name, output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
+  };
+}
+
+// Like BuildQDQConvTestCase, but the output Q/DQ pair can use a different type than the input,
+// exercising the Conv precision-bridge Convert insertion.
+template <typename ActivationQType, typename WeightQType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQConvMixedDtypeTestCase(
+    const std::string& conv_op_type,
+    const TestInputDef<float>& input_def,
+    const TestInputDef<float>& weights_def,
+    const TestInputDef<float>& bias_def,
+    const std::vector<int64_t>& strides,
+    const std::vector<int64_t>& pads,
+    const std::vector<int64_t>& dilations,
+    std::optional<int64_t> group,
+    const std::string& auto_pad = "NOTSET") {
+  return [conv_op_type, input_def, weights_def, bias_def, strides, pads, dilations, group,
+          auto_pad](ModelTestBuilder& builder, std::vector<QuantParams<OutputQType>>& output_qparams) {
+    std::vector<std::string> conv_input_names;
+
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
+    conv_input_names.push_back(
+        AddQDQNodePair<ActivationQType>(builder, "qdq_input", "input", input_qparams.scale, input_qparams.zero_point));
+
+    MakeTestInput<float>(builder, "weights", weights_def);
+    // Signed weight types must be symmetric: QNN rejects a nonzero zero-point for a signed weight.
+    const bool weight_symmetric = std::is_signed<WeightQType>::value;
+    const QuantParams<WeightQType> weights_qparams =
+        GetTestInputQuantParams<WeightQType>(weights_def, weight_symmetric);
+    conv_input_names.push_back(
+        AddQDQNodePair<WeightQType>(builder, "qdq_weights", "weights", weights_qparams.scale,
+                                    weights_qparams.zero_point));
+
+    if (!bias_def.GetShape().empty()) {
+      const float bias_scale = input_qparams.scale * weights_qparams.scale;
+      conv_input_names.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale));
+    }
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", auto_pad));
+    if (group.has_value()) {
+      conv_attrs.push_back(builder.MakeScalarAttribute("group", group.value()));
+    }
+    if (!pads.empty() && auto_pad == "NOTSET") {
+      conv_attrs.push_back(builder.MakeIntsAttribute("pads", pads));
+    }
+    if (!strides.empty()) {
+      conv_attrs.push_back(builder.MakeIntsAttribute("strides", strides));
+    }
+    if (!dilations.empty()) {
+      conv_attrs.push_back(builder.MakeIntsAttribute("dilations", dilations));
+    }
+
+    builder.AddNode("Conv", conv_op_type, conv_input_names, {"conv_out"}, kOnnxDomain, conv_attrs);
+
+    // op_output -> Q(OutputQType) -> DQ -> output. OutputQType may differ from ActivationQType.
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(
+        builder, "qdq_out", "conv_out", output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
 
@@ -1494,6 +1554,91 @@ TEST_F(QnnHTPBackendTests, ConvU16U8_U8Output) {
 
 TEST_F(QnnHTPBackendTests, ConvU16U8_U8Output_1D) {
   RunConvU16ActivationU8OutputTest("1d", {1, 4, 6}, {3, 4, 2});
+}
+
+// Conv activation quantized u8, output quantized u16: exercises OrtConvNodeGroupSelector's
+// precision-bridge relaxation and ConvOpBuilder's Convert insertion (see conv_op_builder.cc).
+// The u16-in/u8-out direction is covered above by ConvU16U8_U8Output (narrowing-output path).
+TEST_F(QnnHTPBackendTests, Conv2D_U8In_U16Out_Mixed) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint8_t, uint8_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// HTP requires activation bitwidth >= weight bitwidth: a u8 activation feeding a u16 weight must be
+// upconverted to u16 (see conv_op_builder.cc's weight-bitwidth check). Output is also u16, so this is
+// the same act-to-output bridge as Conv2D_U8In_U16Out_Mixed, just weight-driven instead of output-driven.
+TEST_F(QnnHTPBackendTests, Conv2D_U8In_U16Weight_Mixed) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint8_t, uint16_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Signed int16 weight variant of Conv2D_U8In_U16Weight_Mixed: u8 activation, s16 weight, u16 output.
+TEST_F(QnnHTPBackendTests, Conv2D_U8In_S16Weight_U16Out_Mixed) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint8_t, int16_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// A u16 weight with a u8 declared output can't be satisfied without downconverting the weight, which
+// ConvOpBuilder never does; the node must fall back rather than form an invalid QDQ group.
+TEST_F(QnnHTPBackendTests, Conv2D_U16Weight_U8Out_Rejected) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint8_t, uint16_t, uint8_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::None);
 }
 
 // Tests QDQ Conv where activation and weight are per-tensor quantized but bias is a plain float

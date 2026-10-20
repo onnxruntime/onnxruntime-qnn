@@ -34,6 +34,8 @@
 #   --filter=<g1,g2,...>  Scope regen to these op groups (passed through).
 #   --repo-subpath=<p>    Artifactory path prefix. Default:
 #                         "ci/qnn-ep-test-store/snapshot-goldens".
+#   --golden-profile=<p>  Required execution profile. Published below the
+#                         repo subpath (for example, linux-x86_64-htp-simulator).
 #   --dry-run             Do everything except the jf upload; print the exact
 #                         jf commands. (Default when neither flag is given.)
 #   --publish             Actually upload. Requires JF_URL / JF_ACCESS_TOKEN /
@@ -56,10 +58,12 @@ build_dir=""
 golden_dir=""
 filter_groups=""
 repo_subpath="ci/qnn-ep-test-store/snapshot-goldens"
+golden_profile=""
 dry_run=false
 publish=false
 skip_regen=false
 mode_flag_given=false
+python_bin="${PYTHON_BIN:-python3}"
 
 for arg in "$@"; do
     case "${arg}" in
@@ -67,6 +71,7 @@ for arg in "$@"; do
         --golden-dir=*)   golden_dir="${arg#--golden-dir=}" ;;
         --filter=*)       filter_groups="${arg#--filter=}" ;;
         --repo-subpath=*) repo_subpath="${arg#--repo-subpath=}" ;;
+        --golden-profile=*) golden_profile="${arg#--golden-profile=}" ;;
         --dry-run)        dry_run=true;  mode_flag_given=true ;;
         --publish)        publish=true;  mode_flag_given=true ;;
         --skip-regen)     skip_regen=true ;;
@@ -81,6 +86,7 @@ publish them (+ a version-stamped manifest.json) to Artifactory.
   --golden-dir=<path>   Golden store root. Default: \$QNN_UT_SNAPSHOT_GOLDEN_DIR.
   --filter=<g1,g2,...>  Scope regen to these op groups (passthrough).
   --repo-subpath=<p>    Artifactory path prefix. Default: ci/qnn-ep-test-store/snapshot-goldens.
+  --golden-profile=<p>  Required execution profile under the repo subpath.
   --dry-run             Do everything except upload; print the jf commands.
   --publish             Actually upload. Requires JF_URL / JF_ACCESS_TOKEN /
                         BUILD_ARTIFACTORY_REPO.
@@ -99,6 +105,10 @@ done
 # ---------------------------------------------------------------------------
 if [ -z "${build_dir}" ]; then
     die "--build-dir is required. Run with --help for usage."
+fi
+
+if [[ ! "${golden_profile}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    die "--golden-profile is required and may contain only letters, digits, '.', '_', and '-'."
 fi
 
 if [ "${publish}" = true ] && [ "${dry_run}" = true ]; then
@@ -122,7 +132,7 @@ fi
 # ---------------------------------------------------------------------------
 # Early tool probes — fail before the expensive regen, not after.
 # ---------------------------------------------------------------------------
-for tool in python3 git zip; do
+for tool in "${python_bin}" git; do
     command -v "${tool}" &>/dev/null || die "Required tool not found in PATH: ${tool}"
 done
 
@@ -137,6 +147,7 @@ log_info "=== QNN EP Golden Publisher ==="
 log_info "build_dir    : ${build_dir}"
 log_info "golden_dir   : ${golden_dir}"
 log_info "repo_subpath : ${repo_subpath}"
+log_info "profile      : ${golden_profile}"
 if [ -n "${filter_groups}" ]; then
     log_info "filter       : ${filter_groups}"
 fi
@@ -186,13 +197,20 @@ fi
 build_dir_abs="$(realpath "${build_dir}")"
 bin_dir=""
 for cfg in RelWithDebInfo Release Debug; do
-    if [ -x "${build_dir_abs}/${cfg}/onnxruntime_provider_test" ]; then
-        bin_dir="${build_dir_abs}/${cfg}"
-        break
-    fi
+    for name in onnxruntime_provider_test onnxruntime_provider_test.exe; do
+        if [ -x "${build_dir_abs}/${cfg}/${name}" ]; then
+            bin_dir="${build_dir_abs}/${cfg}"
+            break 2
+        fi
+    done
 done
-if [ -z "${bin_dir}" ] && [ -x "${build_dir_abs}/onnxruntime_provider_test" ]; then
-    bin_dir="${build_dir_abs}"
+if [ -z "${bin_dir}" ]; then
+    for name in onnxruntime_provider_test onnxruntime_provider_test.exe; do
+        if [ -x "${build_dir_abs}/${name}" ]; then
+            bin_dir="${build_dir_abs}"
+            break
+        fi
+    done
 fi
 [ -n "${bin_dir}" ] || die "onnxruntime_provider_test not found under ${build_dir_abs}."
 
@@ -209,7 +227,7 @@ log_info "Accuracy report: ${accuracy_json}"
 # ---------------------------------------------------------------------------
 filter_script="${REPO_ROOT}/qcom/scripts/linux/filter_accuracy_pass_groups.py"
 filter_output=""
-if filter_output="$(python3 "${filter_script}" "${accuracy_json}")"; then
+if filter_output="$("${python_bin}" "${filter_script}" "${accuracy_json}")"; then
     :
 else
     filter_exit=$?
@@ -318,11 +336,13 @@ MANIFEST_UTC="${generated_utc}" \
 MANIFEST_ARCHIVE_ID="${archive_id}" \
 MANIFEST_COUNT="${golden_count}" \
 MANIFEST_GROUPS="$(IFS=,; printf '%s' "${pass_groups[*]}")" \
-python3 - "${staging}/manifest.json" <<'PYEOF'
+MANIFEST_PROFILE="${golden_profile}" \
+"${python_bin}" - "${staging}/manifest.json" <<'PYEOF'
 import json, os, sys
 
 groups = [g for g in os.environ["MANIFEST_GROUPS"].split(",") if g]
 manifest = {
+    "golden_profile": os.environ["MANIFEST_PROFILE"],
     "qairt_version": os.environ["MANIFEST_QAIRT"],
     "ort_version": os.environ["MANIFEST_ORT"],
     "git_sha": os.environ["MANIFEST_SHA"],
@@ -337,26 +357,33 @@ with open(sys.argv[1], "w") as f:
     f.write("\n")
 PYEOF
 
-log_info "manifest.json: qairt=${qairt_version} ort=${ort_version} sha=${git_sha} archive=${archive_id} groups=[${pass_groups[*]}] count=${golden_count}"
+log_info "manifest.json: profile=${golden_profile} qairt=${qairt_version} ort=${ort_version} sha=${git_sha} archive=${archive_id} groups=[${pass_groups[*]}] count=${golden_count}"
 
 # ---------------------------------------------------------------------------
 # Zip the staging tree. Archive root = manifest.json + tier subdirs.
 # ---------------------------------------------------------------------------
 zip_path="${staging}/goldens.zip"
-(
-    cd "${staging}"
-    # Exclude the zip itself in case of re-runs; -x is a no-op on first pass.
-    zip -r -q goldens.zip . -x goldens.zip
-)
+"${python_bin}" - "${staging}" "${zip_path}" <<PYEOF
+import sys
+import zipfile
+from pathlib import Path
+
+root = Path(sys.argv[1])
+archive_path = Path(sys.argv[2])
+files = sorted(path for path in root.rglob("*") if path.is_file() and path != archive_path)
+with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    for path in files:
+        archive.write(path, path.relative_to(root).as_posix())
+PYEOF
 log_info "Packaged: goldens.zip ($(du -h "${zip_path}" | cut -f1))"
 
 # ---------------------------------------------------------------------------
 # Upload: uniquely keyed archive first, then the mutable latest/ pointers.
 # ---------------------------------------------------------------------------
 if [ "${publish}" = true ]; then
-    dest_base="${BUILD_ARTIFACTORY_REPO}/${repo_subpath}"
+    dest_base="${BUILD_ARTIFACTORY_REPO}/${repo_subpath}/${golden_profile}"
 else
-    dest_base="<BUILD_ARTIFACTORY_REPO>/${repo_subpath}"
+    dest_base="<BUILD_ARTIFACTORY_REPO>/${repo_subpath}/${golden_profile}"
 fi
 archive_dir="${dest_base}/archive/${archive_id}"
 archive_manifest_dest="${archive_dir}/manifest.json"

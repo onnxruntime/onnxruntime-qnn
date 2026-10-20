@@ -162,16 +162,19 @@ TEST(QnnUnit_EpUtilsTest, Unary_AcceptsUint8) {
 
 TEST(QnnUnit_EpUtilsTest, Unary_RejectsTypeMismatch) {
   EpUtilsTestContext ctx;
-  // DQ input = UINT8, Q output = INT8 — types differ, so the check fails
+  // DQ input = UINT8, Q output = INT8 — types differ. Softmax isn't Convert-compatible
+  // (see IsConvertCompatibleUnaryOp), so the mismatch is rejected rather than bridged.
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
-  FakeNode main_node{"relu", "Relu", "", 13, {}, {&main_out}};
+  FakeNode main_node{"softmax", "Softmax", "", 13, {}, {&main_out}};
 
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
 
+  // The dtype-mismatch branch calls Ort::ConstNode(node).GetOperatorType(), which needs the global API.
+  OrtGlobalApiOverride global_guard(&ctx.api);
   OrtUnaryNodeGroupSelector sel;
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
                          {dq.AsNode()}, {q.AsNode()}));
@@ -235,7 +238,34 @@ TEST(QnnUnit_EpUtilsTest, Binary_AcceptsTwoUint8Dqs) {
 
 TEST(QnnUnit_EpUtilsTest, Binary_RejectsMixedTypes) {
   EpUtilsTestContext ctx;
-  // dq1 = UINT8, dq2 = INT8 — types mismatch
+  // dq1 = UINT8, dq2 = INT8 — types mismatch. Equal isn't Convert-compatible (see
+  // IsConvertCompatibleBinaryOp), so the mismatch is rejected rather than bridged.
+  FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
+  FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
+  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in2}, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeNode main_node{"equal", "Equal", "", 13, {}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  // The dtype-mismatch branch calls Ort::ConstNode(node).GetOperatorType(), which needs the global API.
+  OrtGlobalApiOverride global_guard(&ctx.api);
+  OrtBinaryNodeGroupSelector sel;
+  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+}
+
+// dq1 = UINT8, dq2 = INT8 — same bitwidth, differing signedness. Unlike Binary_RejectsMixedTypes,
+// Add IS Convert-compatible (see IsConvertCompatibleBinaryOp) and both types are convertible
+// fixed-point types, so the selector accepts the group; AlignBinaryInputPrecision (op-builder side)
+// leaves the inputs untouched since same-width signedness mismatches aren't Converted (see
+// mixed_precision_convert_utils.cc), and QNN op validation is the arbiter of whether Add accepts
+// the mismatched-signedness pair natively.
+TEST(QnnUnit_EpUtilsTest, Binary_AcceptsSameWidthSignednessMismatch) {
+  EpUtilsTestContext ctx;
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
   FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
@@ -247,9 +277,10 @@ TEST(QnnUnit_EpUtilsTest, Binary_RejectsMixedTypes) {
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
 
+  OrtGlobalApiOverride global_guard(&ctx.api);
   OrtBinaryNodeGroupSelector sel;
-  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
-                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+  EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                        {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
 // =============================================================================
@@ -687,6 +718,54 @@ TEST(QnnUnit_EpUtilsTest, MatMul_Accepts2DqWithQ) {
   OrtMatMulNodeGroupSelector sel;
   EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+}
+
+TEST(QnnUnit_EpUtilsTest, MatMul_ConvertBeforeOpGroupHonorsHtpTypeRules) {
+  using T = ONNXTensorElementDataType;
+  constexpr T u4 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4;
+  constexpr T u8 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+  constexpr T s8 = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+  constexpr T u16 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
+  constexpr T s16 = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16;
+
+  struct Case {
+    T activation;
+    T weight;
+    T output;
+    bool expected;
+  };
+  const Case cases[] = {
+      {u8, u8, u16, true},    // widening
+      {s8, s8, s16, true},    // widening to signed 16-bit with an int8 weight
+      {u8, s16, u16, true},   // 16-bit weight with an unsigned 16-bit output
+      {u8, u8, s8, true},     // same width, signedness only
+      {u8, u8, s16, false},   // signed 16-bit output needs an int8 weight
+      {u8, s16, s16, false},  // signed 16-bit output needs an int8 weight
+      {u8, u16, s8, false},   // weight wider than the output
+      {u16, u8, u8, false},   // narrowing: narrow-after-op path, which needs a Q scale the fake lacks
+      {u4, u8, u8, false},    // no 4-bit activation
+      {u8, u4, u16, false},   // no 4-bit weight
+  };
+
+  for (const Case& c : cases) {
+    EpUtilsTestContext ctx;
+    FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+    FakeValueInfo act_in{"a", c.activation, {4, 4}};
+    FakeValueInfo weight_in{"w", c.weight, {4, 4}};
+    FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&act_in}, {}};
+    FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&weight_in}, {}};
+
+    FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+    FakeNode main_node{"mm", "MatMul", "", 13, {&dummy, &dummy}, {&main_out}};
+
+    FakeValueInfo q_out{"z", c.output, {}};
+    FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+    OrtMatMulNodeGroupSelector sel;
+    EXPECT_EQ(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr, {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}),
+              c.expected)
+        << "activation=" << c.activation << " weight=" << c.weight << " output=" << c.output;
+  }
 }
 
 TEST(QnnUnit_EpUtilsTest, MatMul_RejectsNoQ) {

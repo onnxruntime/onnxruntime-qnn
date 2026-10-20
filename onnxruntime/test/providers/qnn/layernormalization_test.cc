@@ -152,13 +152,14 @@ static void RunLayerNormQDQTest(const TestInputDef<float>& input_def,
                        tolerance);
 }
 
-// Test that QNN HTP only supports axis = -1 (i.e., last dimension).
-TEST_F(QnnHTPBackendTests, LayerNorm1D_Axis0_Unsupported) {
+// axis=0 on rank-3 flattens exactly ([1,2,3] -> [6]), so the builder lowers it to a
+// single last-axis LayerNorm instead of falling back.
+TEST_F(QnnHTPBackendTests, LayerNorm1DAxis0Flattened) {
   RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, 0.0f, 10.0f),
                                         TestInputDef<float>({1, 2, 3}, true, 0.0f, 10.0f),
                                         TestInputDef<float>(),
-                                        {test::MakeAttribute("axis", static_cast<int64_t>(0))},  // Unsupported axis
-                                        ExpectedEPNodeAssignment::None);
+                                        {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                                        ExpectedEPNodeAssignment::All);
 }
 
 // Test accuracy of 8-bit QDQ LayerNorm with a static scale input.
@@ -321,6 +322,37 @@ TEST_F(QnnHTPBackendTests, LayerNorm_fp_standard_test) {
       TestInputDef<float>({3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
       TestInputDef<float>({3}, true, GetFloatDataInRange(-0.1f, 0.1f, 3)),
       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// Multi-axis trailing reduction (axis=1 on rank-4): flattened to a single last-axis
+// LayerNorm instead of falling back to CPU.
+TEST_F(QnnHTPBackendTests, LayerNormFpMultiAxisFlattened) {
+  RunLayerNormTest(
+      TestInputDef<float>({1, 2, 4, 1}, false, GetFloatDataInRange(-1.0f, 1.0f, 8)),
+      TestInputDef<float>({2, 4, 1}, true, GetFloatDataInRange(0.5f, 1.5f, 8)),
+      TestInputDef<float>(),  // No bias.
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// Multi-axis with bias: the bias flattens alongside scale.
+TEST_F(QnnHTPBackendTests, LayerNormFpMultiAxisFlattenedWithBias) {
+  RunLayerNormTest(
+      TestInputDef<float>({1, 2, 4, 1}, false, GetFloatDataInRange(-1.0f, 1.0f, 8)),
+      TestInputDef<float>({2, 4, 1}, true, GetFloatDataInRange(0.5f, 1.5f, 8)),
+      TestInputDef<float>({2, 4, 1}, true, GetFloatDataInRange(-0.1f, 0.1f, 8)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// Already-flat rank-2 input: no reshape nodes needed, LN writes directly out.
+TEST_F(QnnHTPBackendTests, LayerNormFpMultiAxisAlreadyFlat) {
+  RunLayerNormTest(
+      TestInputDef<float>({2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
+      TestInputDef<float>(),  // No bias.
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 

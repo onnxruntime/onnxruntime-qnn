@@ -44,6 +44,7 @@ build_dir=""
 filter_groups=""
 force_accuracy=false
 generate_goldens=false
+python_bin="${PYTHON_BIN:-python3}"
 
 for arg in "$@"; do
     case "${arg}" in
@@ -94,25 +95,33 @@ fi
 
 build_dir="$(realpath "${build_dir}")"
 
-# Auto-detect config subdir by searching for the test binary.
+# Auto-detect config subdir by searching for the test binary. Windows builds
+# use the same target with an .exe suffix.
 binary=""
 for cfg in RelWithDebInfo Release Debug; do
-    candidate="${build_dir}/${cfg}/onnxruntime_provider_test"
-    if [ -x "${candidate}" ]; then
-        binary="${candidate}"
-        config="${cfg}"
-        break
-    fi
+    for name in onnxruntime_provider_test onnxruntime_provider_test.exe; do
+        candidate="${build_dir}/${cfg}/${name}"
+        if [ -x "${candidate}" ]; then
+            binary="${candidate}"
+            config="${cfg}"
+            break 2
+        fi
+    done
 done
 
 # Also check if binary is directly in build_dir (user pointed to config dir).
-if [ -z "${binary}" ] && [ -x "${build_dir}/onnxruntime_provider_test" ]; then
-    binary="${build_dir}/onnxruntime_provider_test"
-    config=""
+if [ -z "${binary}" ]; then
+    for name in onnxruntime_provider_test onnxruntime_provider_test.exe; do
+        if [ -x "${build_dir}/${name}" ]; then
+            binary="${build_dir}/${name}"
+            config=""
+            break
+        fi
+    done
 fi
 
 if [ -z "${binary}" ]; then
-    die "onnxruntime_provider_test not found under ${build_dir}. Is this a coverage build?"
+    die "onnxruntime_provider_test not found under ${build_dir}."
 fi
 
 bin_dir="$(dirname "${binary}")"
@@ -121,20 +130,29 @@ run_provider_test() {
     (
         cd "${bin_dir}"
         export LD_LIBRARY_PATH="${bin_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-        ./onnxruntime_provider_test "$@"
+        "${binary}" "$@"
     )
 }
 
-# Verify this is a coverage build: probe for snapshot tests.
+to_provider_test_path() {
+    local path="$1"
+    if command -v cygpath &>/dev/null; then
+        cygpath -w "${path}"
+    else
+        printf "%s\n" "${path}"
+    fi
+}
+
+# Verify that the selected binary contains the snapshot test tier.
 snapshot_probe=$(run_provider_test --gtest_list_tests --gtest_filter="QnnSnapshot_*" 2>/dev/null || true)
 if [ -z "${snapshot_probe}" ]; then
-    die "No QnnSnapshot_* tests found in binary. This is not a coverage build (requires --enable-coverage)."
+    die "No QnnSnapshot_* tests found in binary. Ensure the selected build task enables QNN internal unit-test symbols."
 fi
 
 extract_snapshot_groups() {
     local snapshot_json="$1"
     local mode="${2:-all}"
-    python3 - "${snapshot_json}" "${mode}" <<'PY'
+    "${python_bin}" - "${snapshot_json}" "${mode}" <<'PY'
 import json
 import re
 import sys
@@ -203,7 +221,7 @@ PY
 
 extract_snapshot_groups_from_gtest_list() {
     local list_file="$1"
-    python3 - "${list_file}" <<'PY'
+    "${python_bin}" - "${list_file}" <<'PY'
 import re
 import sys
 
@@ -274,6 +292,10 @@ accuracy_json="${results_dir}/accuracy_results.json"
 snapshot_list="${results_dir}/snapshot_tests.txt"
 rm -f "${snapshot_json}" "${accuracy_json}" "${snapshot_list}"
 
+# Native Windows binaries do not understand Git Bash paths such as /c/work/....
+snapshot_json_arg="$(to_provider_test_path "${snapshot_json}")"
+accuracy_json_arg="$(to_provider_test_path "${accuracy_json}")"
+
 # ---------------------------------------------------------------------------
 # Pass 1: Snapshot tests
 # ---------------------------------------------------------------------------
@@ -287,7 +309,7 @@ fi
 snapshot_exit=0
 run_provider_test \
     --gtest_filter="${snapshot_filter}" \
-    --gtest_output="json:${snapshot_json}" || snapshot_exit=$?
+    --gtest_output="json:${snapshot_json_arg}" || snapshot_exit=$?
 
 # In update mode, unset so Pass 2 accuracy tests run normally (compare, don't write).
 if [ "${generate_goldens}" = true ]; then
@@ -393,7 +415,7 @@ log_info "Filter: ${accuracy_filter}"
 accuracy_exit=0
 run_provider_test \
     --gtest_filter="${accuracy_filter}" \
-    --gtest_output="json:${accuracy_json}" || accuracy_exit=$?
+    --gtest_output="json:${accuracy_json_arg}" || accuracy_exit=$?
 
 # ---------------------------------------------------------------------------
 # Final verdict

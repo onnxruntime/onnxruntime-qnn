@@ -37,7 +37,7 @@ QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
       graph_inputs_(graph_inputs),
       graph_outputs_(graph_outputs),
       model_settings_(model_settings),
-      api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
+      api_ptrs_(api_ptrs),
       tensor_name_overrides_(tensor_name_overrides),
       op_trace_collector_(op_trace_collector),
       is_post_layout_transform_(is_post_layout_transform) {
@@ -197,7 +197,7 @@ bool QnnModelWrapper::AddParamWrapper(QnnParamWrapper&& param_wrapper) {
   return true;
 }
 
-const QnnTensorWrapper& QnnModelWrapper::GetQnnTensorWrapper(const std::string& tensor_name) {
+const QnnTensorWrapper& QnnModelWrapper::GetQnnTensorWrapper(const std::string& tensor_name) const {
   auto map_iter = model_tensors_map_.find(tensor_name);
   if (map_iter != model_tensors_map_.end()) {
     return (map_iter->second);

@@ -224,7 +224,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status ReloadContextForSSR(const std::string& context_bin_filepath,
                                   int64_t max_spill_fill_size,
                                   Qnn_ContextHandle_t& new_context,
-                                  const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr));
+                                  const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch());
 
   // Builds the common context configs (priority + spill-fill) used by both binary-load paths.
   // first_group_handle: 0x0 for SSR (always a new group); GetQnnContext(0) for initial multi-
@@ -269,7 +269,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
       // Defaults to a no-callback dispatch so callers that have nothing to do with EPContext
       // encryption (e.g. compatibility probes) don't have to construct and pass a dummy.
-      const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr),
+      const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(),
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
       bool enable_htp_graph_splitting = false,

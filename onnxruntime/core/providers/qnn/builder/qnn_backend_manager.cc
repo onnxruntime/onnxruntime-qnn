@@ -1904,6 +1904,7 @@ Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
   for (uint32_t i = 0; i < graph_count; ++i) {
     if (graphs_info[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
       auto htp_graph_info = reinterpret_cast<QnnHtpSystemContext_GraphBlobInfo_t*>(graphs_info[i].graphInfoV3.graphBlobInfo);
+      RETURN_IF(htp_graph_info == nullptr, "Context binary HTP graph info is null.");
       if (htp_graph_info->version == QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_VERSION_V1) {
         auto spill_fill_buffer_size = htp_graph_info->contextBinaryGraphBlobInfoV1.spillFillBufferSize;
         max_spill_fill_buffer_size = spill_fill_buffer_size > max_spill_fill_buffer_size ? spill_fill_buffer_size : max_spill_fill_buffer_size;
@@ -2061,7 +2062,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     for (uint32_t i = 0; i < graph_count; ++i) {
       auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
       RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[i], context));
-      qnn_models.emplace(graphs_info[i].graphInfoV1.graphName, std::move(qnn_model));
+      std::string graph_name = qnn_model->Name();
+      qnn_models.emplace(std::move(graph_name), std::move(qnn_model));
     }
   }
 
@@ -2182,7 +2184,7 @@ Ort::Status QnnBackendManager::SetupBackend(
 
   bool enable_gpu_weight_sharing = false;
   if (share_ep_contexts && !load_from_cached_context) {
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if QNN_ARCH_ARM64
     enable_gpu_weight_sharing = true;
 #endif
   }

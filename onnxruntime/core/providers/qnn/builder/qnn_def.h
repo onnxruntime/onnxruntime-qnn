@@ -394,7 +394,9 @@ class QnnTensorWrapper {
     RETURN_IF(tensor_type == QNN_TENSOR_TYPE_STATIC,
               "QnnTensorWrapper::Init(const Qnn_Tensor_t&) does not support static initializers");
 
-    tensor_name_ = GetQnnTensorName(qnn_tensor);
+    const char* tensor_name = GetQnnTensorName(qnn_tensor);
+    RETURN_IF(tensor_name == nullptr, "Cached context tensor name is null");
+    tensor_name_ = tensor_name;
     client_buf_.clear();
 
     qnn_tensor_ = qnn_tensor;
@@ -406,6 +408,11 @@ class QnnTensorWrapper {
 
     uint32_t shape_rank = GetQnnTensorRank(qnn_tensor);
     uint32_t* shape_data = GetQnnTensorDims(qnn_tensor);
+    constexpr uint32_t kMaxCachedContextTensorRank = 32;
+    RETURN_IF(shape_rank > kMaxCachedContextTensorRank,
+              "Cached context tensor rank exceeds the supported limit");
+    RETURN_IF(shape_rank > 0 && shape_data == nullptr,
+              "Cached context tensor dimensions are null");
     dimensions_.assign(shape_data, shape_data + shape_rank);
     SetQnnTensorDim(qnn_tensor_, dimensions_);
 
