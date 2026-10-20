@@ -3,6 +3,7 @@
 
 import functools
 import operator
+import os
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -95,7 +96,7 @@ class DockerBuildAndTestTask(DockerRunTask):
         platform: str = "linux/aarch64",
     ) -> None:
         # deferred to avoid circular import
-        from ..tools import get_package_dir, get_tools_dir  # noqa:PLC0415
+        from ..tools import get_package_dir, get_tools_dir, get_uv_cache_dir  # noqa:PLC0415
 
         cmd = [
             str(DEFAULT_PYTHON_LINUX),
@@ -111,11 +112,16 @@ class DockerBuildAndTestTask(DockerRunTask):
         volumes_with_caches = dict({} if volumes is None else volumes)
         volumes_with_caches[get_package_dir()] = Path("/ort_caches/packages")
         volumes_with_caches[get_tools_dir()] = Path("/ort_caches/tools")
+        # Mirror build_and_test.py precedence: UV_CACHE_DIR beats ORT_BUILD_UV_CACHE_PATH.
+        effective_uv_cache = Path(os.environ["UV_CACHE_DIR"]) if "UV_CACHE_DIR" in os.environ else get_uv_cache_dir()
+        volumes_with_caches[effective_uv_cache] = Path("/ort_caches/uv")
 
         env: dict[str, str] = {
             "ORT_BUILD_PACKAGE_CACHE_PATH": "/ort_caches/packages",
             "ORT_BUILD_TOOLS_PATH": "/ort_caches/tools",
             "ORT_BUILD_PRUNE_PACKAGES": "0",
+            "ORT_BUILD_UV_CACHE_PATH": "/ort_caches/uv",
+            "UV_LINK_MODE": "copy",
         }
 
         if qairt_sdk_root is not None:

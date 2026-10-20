@@ -9,8 +9,6 @@ from typing import Literal
 from .tasks.build import TargetPyVersionT
 from .util import (
     REPO_ROOT,
-    is_host_arm64,
-    is_host_mac,
     is_host_windows,
     process_output,
     run_with_venv,
@@ -18,60 +16,6 @@ from .util import (
 )
 
 PACKAGE_MANAGER = REPO_ROOT / "qcom" / "scripts" / "all" / "package_manager.py"
-
-ORT_BUILD_UV_CACHE_PATH: Path = Path(
-    os.environ.get("ORT_BUILD_UV_CACHE_PATH", str((Path("~") / ".ort-uv-cache").expanduser()))
-)
-
-_UV_EXE: Path | None = None
-_UV_CACHE_PRUNED: bool = False
-
-
-def _uv_package_name() -> str:
-    if is_host_windows():
-        return "uv_windows_arm64" if is_host_arm64() else "uv_windows_x86_64"
-    if is_host_mac():
-        return "uv_macos_arm64" if is_host_arm64() else "uv_macos_x86_64"
-    return "uv_linux_aarch64" if is_host_arm64() else "uv_linux_x86_64"
-
-
-def is_managed_uv_ready() -> bool:
-    """Return True if the managed uv binary has already been set up for this process."""
-    return _UV_EXE is not None
-
-
-def get_uv_executable(bootstrap_venv: Path) -> Path:
-    """Return the path to the managed uv binary, installing it via PackageManager if needed.
-
-    On first call also prepends uv's bin directory to PATH and sets UV_CACHE_DIR.
-    """
-    global _UV_EXE
-    if _UV_EXE is not None:
-        return _UV_EXE
-
-    bin_dir = get_package_bin_dir(bootstrap_venv, _uv_package_name())
-    suffix = ".exe" if is_host_windows() else ""
-    uv_exe = bin_dir / f"uv{suffix}"
-
-    ORT_BUILD_UV_CACHE_PATH.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("UV_CACHE_DIR", str(ORT_BUILD_UV_CACHE_PATH))
-    path_sep = ";" if is_host_windows() else ":"
-    os.environ["PATH"] = str(bin_dir) + path_sep + os.environ.get("PATH", "")
-
-    _UV_EXE = uv_exe
-    return uv_exe
-
-
-def setup_managed_uv(bootstrap_venv: Path) -> None:
-    """Configure managed uv for this process: install it, set PATH/UV_CACHE_DIR, and prune cache.
-
-    Idempotent; the cache prune runs only once per process execution.
-    """
-    global _UV_CACHE_PRUNED
-    uv_exe = get_uv_executable(bootstrap_venv)
-    if not _UV_CACHE_PRUNED:
-        run_with_venv(None, [str(uv_exe), "cache", "prune"], check=False)
-        _UV_CACHE_PRUNED = True
 
 
 def get_model_zoo_root(package_manager_venv: Path | None) -> Path:
@@ -151,6 +95,17 @@ def get_tools_dir() -> Path:
     tools_dir = Path(os.getenv("ORT_BUILD_TOOLS_PATH", REPO_ROOT / "build" / tools_name))
     tools_dir.mkdir(parents=True, exist_ok=True)
     return tools_dir
+
+
+def get_uv_cache_dir() -> Path:
+    uv_cache_dir = Path(
+        os.environ.get(
+            "ORT_BUILD_UV_CACHE_PATH",
+            str((Path("~") / ".ort-uv-cache").expanduser()),
+        )
+    )
+    uv_cache_dir.mkdir(parents=True, exist_ok=True)
+    return uv_cache_dir
 
 
 def install_package(package_manager_venv: Path | None, package: str) -> None:

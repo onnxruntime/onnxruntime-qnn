@@ -5,6 +5,7 @@
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -51,6 +52,7 @@ from ep_build.tasks.python import (
     OrtWheelSmokeTestTask,
     RunLinterTask,
 )
+from ep_build.tools import get_uv_cache_dir
 from ep_build.typing import BuildConfigT, TargetPyVersionT
 from ep_build.util import (
     DEFAULT_PYTHON,
@@ -100,6 +102,7 @@ Environment variables
 
   ORT_BUILD_UV_CACHE_PATH
     If specified, use this directory for the uv package cache instead of ~/.ort-uv-cache.
+    UV_CACHE_DIR takes precedence over ORT_BUILD_UV_CACHE_PATH if both are set.
 
   ORT_NIGHTLY_BUILD
     If set to 1, instruct the ORT build to use a more verbose version string.
@@ -1651,6 +1654,8 @@ def build_and_test():
     qairt_sdk_root = get_qairt_sdk_root(args.qairt_sdk)
     docker_ccache_root = get_docker_ccache_root(args.docker_ccache_root)
 
+    os.environ.setdefault("UV_CACHE_DIR", str(get_uv_cache_dir()))
+
     plan = Plan()
 
     if len(args.task) > 0:
@@ -1691,6 +1696,9 @@ def build_and_test():
         print()
         plan.print_report()
         print()
+        uv_bin = args.venv_path / ("Scripts/uv.exe" if is_host_windows() else "bin/uv")
+        if uv_bin.exists():
+            subprocess.run([str(uv_bin), "cache", "prune", "--ci"], check=False)
         if caught:
             raise caught
 

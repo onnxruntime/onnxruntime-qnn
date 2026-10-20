@@ -10,7 +10,6 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from ..task import (
-    CallableTask,
     CompositeTask,
     ConditionalTask,
     NoOpTask,
@@ -26,9 +25,6 @@ from ..tools import (
     get_onnx_models_root,
     get_python_executable,
     get_qualcomm_device_cloud_sdk_root,
-    get_uv_executable,
-    is_managed_uv_ready,
-    setup_managed_uv,
 )
 from ..typing import TargetArchT
 from ..util import (
@@ -175,71 +171,42 @@ class CreateQdcVenvTask(CompositeTask):
 
 class CreateVenvTask(CompositeTask):
     def __init__(self, python_executable: Path, venv_path: Path) -> None:
-        # Scoped per-venv so it is created fresh in each execution environment (host vs Docker).
-        bootstrap_venv = venv_path.parent / (venv_path.name + "-bootstrap")
         super().__init__(
             group_name=f"Creating virtual environment at {venv_path}",
             tasks=[
-                # Phases 1+2 run at most once per process. Skip entirely if managed uv is already
-                # configured (e.g. a previous CreateVenvTask already ran in this process).
-                ConditionalTask(
-                    group_name=None,
-                    condition=is_managed_uv_ready,
-                    true_task=NoOpTask(),
-                    false_task=CompositeTask(
-                        group_name=None,
-                        tasks=[
-                            # Phase 1: bootstrap venv via system pip — the only direct pip usage in
-                            # the build system. Installs pyyaml/tqdm/certifi so package_manager.py
-                            # can run and download the managed uv binary.
-                            ConditionalTask(
-                                group_name=None,
-                                condition=bootstrap_venv.exists,
-                                true_task=NoOpTask(),
-                                false_task=CompositeTask(
-                                    group_name=None,
-                                    tasks=[
-                                        RunExecutablesTask(
-                                            group_name=None,
-                                            executables_and_args=[
-                                                [str(python_executable), "-m", "venv", str(bootstrap_venv)]
-                                            ],
-                                        ),
-                                        RunExecutablesWithVenvTask(
-                                            group_name=None,
-                                            venv=bootstrap_venv,
-                                            executables_and_args=[
-                                                ["python", "-m", "pip", "install", "--quiet", "--upgrade", "pip"],
-                                                ["python", "-m", "pip", "install", "--quiet", "pyyaml", "tqdm", "certifi"],
-                                            ],
-                                        ),
-                                    ],
-                                ),
-                            ),
-                            # Phase 2: install managed uv (once), set UV_CACHE_DIR/PATH, prune cache.
-                            CallableTask(
-                                group_name="Managed uv setup",
-                                fn=lambda: setup_managed_uv(bootstrap_venv),
-                            ),
-                        ],
-                    ),
-                ),
-                # Phase 3: create the requested venv using managed uv.
                 ConditionalTask(
                     group_name=None,
                     condition=venv_path.exists,
                     true_task=NoOpTask(),
-                    false_task=RunExecutablesTask(
+                    false_task=CompositeTask(
                         group_name=None,
-                        executables_and_args=lambda: [
-                            [
-                                str(get_uv_executable(bootstrap_venv)),
-                                "venv",
-                                "--seed",
-                                str(venv_path),
-                                "--python",
-                                str(python_executable),
-                            ]
+                        tasks=[
+                            RunExecutablesTask(
+                                group_name=None,
+                                executables_and_args=[
+                                    [
+                                        str(python_executable),
+                                        "-m",
+                                        "venv",
+                                        str(venv_path),
+                                    ],
+                                ],
+                            ),
+                            RunExecutablesWithVenvTask(
+                                group_name=None,
+                                venv=venv_path,
+                                executables_and_args=[
+                                    [
+                                        "python",
+                                        "-m",
+                                        "pip",
+                                        "install",
+                                        "pip",
+                                        "--upgrade",
+                                    ],
+                                    ["python", "-m", "pip", "install", "uv"],
+                                ],
+                            ),
                         ],
                     ),
                 ),

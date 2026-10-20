@@ -150,13 +150,12 @@ if [ -n "${target_py_version}" ]; then
   build_venv="${build_dir}/venv-${target_py_version}"
   if [ ! -d "${build_venv}" ]; then
     log_debug "Creating venv for build in ${build_venv}"
-    if command -v "python${target_py_version}" >/dev/null 2>&1; then
-      "python${target_py_version}" -m venv "${build_venv}"
-    elif command -v uv >/dev/null 2>&1; then
-      log_info "python${target_py_version} not found; using uv to provision interpreter."
+    if command -v uv >/dev/null 2>&1; then
       uv venv --seed --python "${target_py_version}" "${build_venv}"
+    elif command -v "python${target_py_version}" >/dev/null 2>&1; then
+      "python${target_py_version}" -m venv "${build_venv}"
     else
-      log_info "Neither python${target_py_version} nor uv found; bootstrapping uv into ${build_dir}/_uv_bootstrap."
+      log_info "Neither uv nor python${target_py_version} found; bootstrapping uv into ${build_dir}/_uv_bootstrap."
       uv_bootstrap_dir="${build_dir}/_uv_bootstrap"
       python3 -m pip install --quiet --target="${uv_bootstrap_dir}" uv
       # Prefer the console-script binary; fall back to module form if the wheel didn't ship one.
