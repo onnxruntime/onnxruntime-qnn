@@ -98,6 +98,9 @@ Environment variables
   ORT_BUILD_TOOLS_PATH
     If specified, use this directory for build-managed tools instead of build/tools.
 
+  ORT_BUILD_UV_CACHE_PATH
+    If specified, use this directory for the uv package cache instead of ~/.ort-uv-cache.
+
   ORT_NIGHTLY_BUILD
     If set to 1, instruct the ORT build to use a more verbose version string.
 

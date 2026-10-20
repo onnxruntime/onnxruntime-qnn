@@ -218,3 +218,31 @@ qualcomm_device_cloud_sdk:
   version: 0.4.1
   url: https://softwarecenter.qualcomm.com/api/download/software/tools/Qualcomm_Device_Cloud_SDK/All/{version}/qualcomm_device_cloud_sdk-{version}.zip
   sha256: 716a862ce64f9146078cd0b7b7ab18d2672520e068345accbb094e848cc22cfb
+uv_linux_x86_64: &uv_targz
+  version: 0.13.1
+  os_arch: x86_64-unknown-linux-gnu
+  url: https://github.com/astral-sh/uv/releases/download/{version}/uv-{os_arch}.tar.gz
+  sha256: eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
+  content_root: uv-{os_arch}
+uv_linux_aarch64:
+  <<: *uv_targz
+  os_arch: aarch64-unknown-linux-gnu
+  sha256: 9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14
+uv_windows_x86_64: &uv_zip
+  version: 0.13.1
+  os_arch: x86_64-pc-windows-msvc
+  url: https://github.com/astral-sh/uv/releases/download/{version}/uv-{os_arch}.zip
+  sha256: 3b2661a463a5baea7f5076ea2b25ab71d77f36a6c0d809e5350651792f80a672
+  content_root: uv-{os_arch}
+uv_windows_arm64:
+  <<: *uv_zip
+  os_arch: aarch64-pc-windows-msvc
+  sha256: ec7846a5939b4654afee24f2d82bf6fde71bd7a6952d7748f1135ab301dd0a49
+uv_macos_x86_64:
+  <<: *uv_targz
+  os_arch: x86_64-apple-darwin
+  sha256: bb7b805bdcf3d0bc8c74ceb94569e6b3e8aa35bd492acdbb9d46bf46d9d4ff6b
+uv_macos_arm64:
+  <<: *uv_targz
+  os_arch: aarch64-apple-darwin
+  sha256: cfe454573412ff7380d15fc7dae5997ab53ffce72fce0a78e91ddbc84001acd2

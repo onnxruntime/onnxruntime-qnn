@@ -49,6 +49,20 @@ class Task(ABC):
             end_group()
 
 
+class CallableTask(Task):
+    """Runs a Python callable as a task step."""
+
+    def __init__(self, group_name: str | None, fn: Callable[[], None]) -> None:
+        super().__init__(group_name)
+        self.__fn = fn
+
+    def does_work(self) -> bool:
+        return True
+
+    def run_task(self) -> None:
+        self.__fn()
+
+
 class CopyFileTask(Task):
     def __init__(
         self,
