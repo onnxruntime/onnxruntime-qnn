@@ -1610,11 +1610,13 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
   RETURN_IF(file_mapper_ == nullptr, "File mapper is unavailable.");
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV2_t> context_paramsv2_list;
+  std::vector<Qnn_ContextBinaryCallback_t> context_callbacks_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
   std::vector<ContextCreateAsyncCallbackInfo> callback_infos;
 
   context_params_list.reserve(context_bin_map.size());
   context_paramsv2_list.reserve(context_bin_map.size());
+  context_callbacks_list.reserve(context_bin_map.size());
   context_params_ptr_list.reserve(context_bin_map.size() + 1);
   callback_infos.reserve(context_bin_map.size());
 
@@ -1658,7 +1660,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     context_file_map_callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
 
     file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
-    async_context_binary_callbacks_.push_back(std::move(context_file_map_callbacks));
+    context_callbacks_list.push_back(std::move(context_file_map_callbacks));
 
     // Callbacks require QnnContext_ParamsV2_t which is new to QNN API 2.32
     QnnContext_ParamsV2_t context_params_v2 = {nullptr,
@@ -1667,7 +1669,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                nullptr,
                                                ContextCreateAsyncCallback,
                                                &callback_infos.back(),
-                                               &async_context_binary_callbacks_.back()};
+                                               &context_callbacks_list.back()};
 
     QnnContext_Params_t context_params = {QnnContext_ParamsVersion_t::QNN_CONTEXT_PARAMS_VERSION_2,
                                           {}};
@@ -1856,11 +1858,8 @@ Ort::Status QnnBackendManager::ReleaseContext() {
     ep_context_handle_map_.clear();
   }
 
-  if (false == context_created_) {
-    return Ort::Status();
-  }
-
-  // release QNN context handles
+  // Always clear owned handles because a partially failed setup may have registered
+  // contexts before context_created_ was set.
   contexts_.clear();
   context_map_.clear();
 
@@ -2150,7 +2149,7 @@ Ort::Status QnnBackendManager::SetupBackend(
       // then a new context must be created for the set of context bins
       bool context_exists = false;
       {
-        std::lock_guard<std::mutex> map_lock(ep_context_handle_map_mutex_);
+        std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
         context_exists = ep_context_handle_map_.find(context_bin_map.begin()->first) !=
                          ep_context_handle_map_.end();
       }
@@ -2163,7 +2162,7 @@ Ort::Status QnnBackendManager::SetupBackend(
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
 
       {
-        std::lock_guard<std::mutex> map_lock(ep_context_handle_map_mutex_);
+        std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
         for (auto& it : context_bin_map) {
           const auto& context_bin_filepath = it.first;
           const auto& ep_node_names = *it.second;

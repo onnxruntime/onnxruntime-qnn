@@ -12,7 +12,6 @@
 #include <dlfcn.h>
 #endif
 
-#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -59,7 +58,6 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
 // Forward declaration.
 class QnnModel;
 class QnnBackendSystemDlcPlugin;
-class QnnBackendManager;
 
 class QnnSerializerConfig {
  public:
@@ -777,9 +775,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   std::unique_ptr<FileMappingInterface> file_mapper_ = nullptr;
-  // QNN may retain callback descriptors after contextCreateFromBinaryListAsync returns.
-  // deque keeps descriptor addresses stable as new asynchronous requests are added.
-  std::deque<Qnn_ContextBinaryCallback_t> async_context_binary_callbacks_;
   // Notify params for file mapping must persist throughout lifetime of
   // QnnBackendManager for release of DMA data callback on destruction
   std::vector<std::unique_ptr<FileMappingCallbackInfo_t>> file_mapping_notify_params_;
