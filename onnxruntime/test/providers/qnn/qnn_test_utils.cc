@@ -256,7 +256,14 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                    c_api.HardwareDevice_Type(c_api.EpDevice_Device(ep_device)) == target_hw_device_type);
                          });
 
-  ASSERT_NE(it, ep_devices + num_devices);
+  if (it == ep_devices + num_devices) {
+    OrtStatus* unregister_status = c_api.UnregisterExecutionProviderLibrary(*ort_env, registration_name.c_str());
+    if (unregister_status != nullptr) {
+      c_api.ReleaseStatus(unregister_status);
+    }
+    FAIL() << "No " << target_hw_device_type << " device was advertised by " << registration_name;
+    return;
+  }
 
   registered_ep_device = RegisteredEpDeviceUniquePtr(*it, [registration_name](const OrtEpDevice* /*ep*/) {
     OrtStatus* status = Ort::GetApi().UnregisterExecutionProviderLibrary(*GetOrtEnv(), registration_name.c_str());
