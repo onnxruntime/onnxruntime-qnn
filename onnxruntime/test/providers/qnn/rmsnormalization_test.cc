@@ -207,8 +207,8 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale) {
 }
 
 // ONNX RMSNormalization allows `scale` to be any shape unidirectionally broadcastable to X, but
-// QNN's RmsNorm OpDef requires rank(gamma) == size(axes). The builder squeezes leading 1-dims to
-// bridge the two; the tests below cover the shapes that squeeze is responsible for.
+// QNN RmsNorm requires gamma to match the normalized dimensions. The builder squeezes leading 1-dims
+// to bridge the two; the tests below cover the shapes that squeeze is responsible for.
 //
 // The rank-3 scale shape comes from Pi05ActionExpert (tetracode issue #20549), which normalizes
 // X [1, 50, 1024] with a scale of shape [1, 1, 1024]. Dims are scaled down here for speed; the
