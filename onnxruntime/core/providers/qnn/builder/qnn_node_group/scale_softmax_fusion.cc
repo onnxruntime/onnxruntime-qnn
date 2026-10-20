@@ -44,25 +44,21 @@ const OrtTensorTypeAndShapeInfo* GetMulInputTensorInfo(const OrtValueInfo* value
   return tensor_info;
 }
 
-/// @brief Check whether a Mul input holds exactly one element and therefore acts as a scalar
+/// @brief Check whether a Mul input provably holds exactly one element and therefore acts as a scalar
 /// under ONNX (numpy-style) broadcasting: rank-0, or every dimension is 1 (e.g. shape [1]).
+/// Symbolic (unknown) dimensions are not provably single-element.
 /// @param tensor_info Shape info of the Mul input to inspect
+/// @param rank Number of dimensions of the Mul input
 /// @param ort_api ORT API interface
-/// @return true for single-element, false otherwise, or std::nullopt if the shape is unknown
-/// (e.g. symbolic dimensions) or cannot be queried.
-std::optional<bool> IsSingleElementInput(const OrtTensorTypeAndShapeInfo* tensor_info, const OrtApi& ort_api) {
-  size_t dims_count = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(tensor_info, &dims_count), ort_api, std::nullopt);
-  if (dims_count == 0) {
+/// @return true for single-element, false otherwise or if the shape cannot be queried.
+bool IsSingleElementInput(const OrtTensorTypeAndShapeInfo* tensor_info, size_t rank, const OrtApi& ort_api) {
+  if (rank == 0) {
     return true;
   }
 
-  std::vector<int64_t> dims(dims_count, -1);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensions(tensor_info, dims.data(), dims.size()), ort_api, std::nullopt);
+  std::vector<int64_t> dims(rank, -1);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensions(tensor_info, dims.data(), dims.size()), ort_api, false);
   for (int64_t dim : dims) {
-    if (dim < 0) {
-      return std::nullopt;
-    }
     if (dim != 1) {
       return false;
     }
@@ -71,10 +67,11 @@ std::optional<bool> IsSingleElementInput(const OrtTensorTypeAndShapeInfo* tensor
   return true;
 }
 
-/// @brief Get the index of the sole single-element scale input in the Mul node.
+/// @brief Get the index of the single-element scale input in the Mul node.
 /// @param mul Multiply node unit
 /// @param ort_api ORT API interface
-/// @return The scale input index (0 or 1) if exactly one input is single-element; otherwise std::nullopt.
+/// @return The scale input index (0 or 1) if an input is single-element (the lower-rank one if both are);
+/// otherwise std::nullopt.
 std::optional<size_t> GetMulScaleInputIndex(const OrtNodeUnit& mul, const OrtApi& ort_api) {
   // Get inputs of mul node
   size_t num_inputs = 0;
@@ -90,28 +87,30 @@ std::optional<size_t> GetMulScaleInputIndex(const OrtNodeUnit& mul, const OrtApi
     return std::nullopt;
   }
 
-  std::optional<bool> is_x_scale = IsSingleElementInput(x_tensor_info, ort_api);
-  std::optional<bool> is_y_scale = IsSingleElementInput(y_tensor_info, ort_api);
+  size_t x_rank = 0;
+  size_t y_rank = 0;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(x_tensor_info, &x_rank), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(y_tensor_info, &y_rank), ort_api, std::nullopt);
 
-  // ScaleSoftmax requires exactly one single-element scale input. The data input must not be
-  // provably single-element (otherwise the Mul output shape would not match the fused Softmax
-  // input shape), but its shape may be unknown (e.g. symbolic dimensions). An unknown shape can
-  // never be the constant scale: ExtractScalarValueFromMul below still requires a constant.
-  if (is_x_scale.value_or(false) == is_y_scale.value_or(false)) {
+  const bool is_x_single_element = IsSingleElementInput(x_tensor_info, x_rank, ort_api);
+  const bool is_y_single_element = IsSingleElementInput(y_tensor_info, y_rank, ort_api);
+  if (!is_x_single_element && !is_y_single_element) {
     return std::nullopt;
   }
 
-  const size_t scale_index = is_y_scale.value_or(false) ? 1U : 0U;
+  // If both inputs are single-element (e.g. data [1], scale []), the lower-rank one is the scale.
+  // Equal ranks are ambiguous.
+  if (is_x_single_element && is_y_single_element && x_rank == y_rank) {
+    return std::nullopt;
+  }
+
+  const size_t scale_index = (is_x_single_element && (!is_y_single_element || x_rank < y_rank)) ? 0U : 1U;
 
   // The scale must not have higher rank than the data input. Broadcast would otherwise prepend
   // 1-sized leading dimensions (e.g. Mul([4], [[s]]) -> [1, 4]), so the Mul output shape would
   // differ from the data (fused Softmax input) shape. Rank-0 scales are always safe.
-  size_t scale_rank = 0;
-  size_t data_rank = 0;
-  const OrtTensorTypeAndShapeInfo* scale_tensor_info = (scale_index == 0) ? x_tensor_info : y_tensor_info;
-  const OrtTensorTypeAndShapeInfo* data_tensor_info = (scale_index == 0) ? y_tensor_info : x_tensor_info;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(scale_tensor_info, &scale_rank), ort_api, std::nullopt);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(data_tensor_info, &data_rank), ort_api, std::nullopt);
+  const size_t scale_rank = (scale_index == 0) ? x_rank : y_rank;
+  const size_t data_rank = (scale_index == 0) ? y_rank : x_rank;
   if (scale_rank > data_rank) {
     return std::nullopt;
   }
@@ -129,7 +128,7 @@ std::optional<uint32_t> GetPositiveSoftmaxAxis(const OrtNodeUnit& mul, const Ort
   int64_t axis_value = softmax_attr_helper.Get("axis", (int64_t)-1);
 
   if (axis_value < 0) {
-    // Get the scalar input index
+    // Get the scale input index
     std::optional<size_t> input_scale_index = GetMulScaleInputIndex(mul, ort_api);
     if (!input_scale_index.has_value()) {
       return std::nullopt;
@@ -160,12 +159,12 @@ std::optional<uint32_t> GetPositiveSoftmaxAxis(const OrtNodeUnit& mul, const Ort
   return static_cast<uint32_t>(axis_value);
 }
 
-/// @brief Identify scalar input from mul node if present
+/// @brief Identify scale input from mul node if present
 /// @param qnn_model_wrapper QNN model wrapper
 /// @param mul Multiply node unit
 /// @param ort_api ORT API interface
-/// @return The scalar input float value if found, otherwise std::nullopt
-std::optional<float> ExtractScalarValueFromMul(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& mul, const OrtApi& ort_api) {
+/// @return The scale input float value if found, otherwise std::nullopt
+std::optional<float> ExtractScaleValueFromMul(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& mul, const OrtApi& ort_api) {
   std::optional<size_t> input_scale_index = GetMulScaleInputIndex(mul, ort_api);
   if (!input_scale_index.has_value()) {
     return std::nullopt;
@@ -179,26 +178,26 @@ std::optional<float> ExtractScalarValueFromMul(const QnnModelWrapper& qnn_model_
                              ort_api,
                              std::nullopt);
 
-  const OrtValueInfo* scalar_input = inputs[input_scale_index.value()];
+  const OrtValueInfo* scale_input = inputs[input_scale_index.value()];
 
-  // Get the name of the scalar input
-  const char* scalar_name = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoName(scalar_input, &scalar_name), ort_api, std::nullopt);
+  // Get the name of the scale input
+  const char* scale_name = nullptr;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoName(scale_input, &scale_name), ort_api, std::nullopt);
 
   // Check if it's a constant initializer
-  if (!qnn_model_wrapper.IsConstantInput(scalar_name)) {
+  if (!qnn_model_wrapper.IsConstantInput(scale_name)) {
     return std::nullopt;
   }
 
   // Get the constant tensor
-  const OrtValueInfo* scalar_tensor = qnn_model_wrapper.GetConstantTensor(scalar_name);
-  if (!scalar_tensor) {
+  const OrtValueInfo* scale_tensor = qnn_model_wrapper.GetConstantTensor(scale_name);
+  if (!scale_tensor) {
     return std::nullopt;
   }
 
   // Get the value
   const OrtValue* value = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetInitializerValue(scalar_tensor, &value), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetInitializerValue(scale_tensor, &value), ort_api, std::nullopt);
 
   // Check if it's a float tensor
   ONNXTensorElementDataType element_type;
@@ -234,7 +233,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
 
   std::optional<size_t> input_scale_index = GetMulScaleInputIndex(mul_node_unit, ort_api);
-  RETURN_IF(!input_scale_index.has_value(), "Failed to get scalar input index");
+  RETURN_IF(!input_scale_index.has_value(), "Failed to get scale input index");
 
   size_t input_other_index = 1U - input_scale_index.value();
   const OrtNodeUnitIODef& mul_input_other = mul_node_unit.Inputs()[input_other_index];
@@ -252,7 +251,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   {  // beta
     OrtNodeAttrHelper softmax_attr_helper(softmax_node_unit);
     float beta = softmax_attr_helper.Get("beta", 1.0f);
-    float scale = ExtractScalarValueFromMul(qnn_model_wrapper, mul_node_unit, ort_api).value_or(1.0f);
+    float scale = ExtractScaleValueFromMul(qnn_model_wrapper, mul_node_unit, ort_api).value_or(1.0f);
     RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, softmax_node_unit.Index(),
                                         softmax_node_unit.Name(), scale * beta,
                                         QNN_OP_SOFTMAX_PARAM_BETA, param_tensor_names));
@@ -300,11 +299,11 @@ std::optional<bool> IsSoftmaxAxisLast(QnnModelWrapper& qnn_model_wrapper,
                                       const OrtNodeUnit& mul,
                                       const OrtNodeUnit& softmax,
                                       const OrtApi& ort_api) {
-  const std::optional<size_t> scalar_input_index = GetMulScaleInputIndex(mul, ort_api);
-  if (!scalar_input_index.has_value()) return std::nullopt;
+  const std::optional<size_t> scale_input_index = GetMulScaleInputIndex(mul, ort_api);
+  if (!scale_input_index.has_value()) return std::nullopt;
 
-  const size_t non_scalar_input_index = 1U - scalar_input_index.value();
-  const OrtNodeUnitIODef& softmax_input = mul.Inputs()[non_scalar_input_index];
+  const size_t data_input_index = 1U - scale_input_index.value();
+  const OrtNodeUnitIODef& softmax_input = mul.Inputs()[data_input_index];
 
   TensorInfo input_info = {};
   if (Ort::Status status = qnn_model_wrapper.GetTensorInfo(softmax_input, input_info);
@@ -335,9 +334,9 @@ std::unique_ptr<IQnnNodeGroup> ScaleSoftmaxFusion::TryFusion(
   // Get the OrtApi interface
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
 
-  // Check if the mul node has a scalar input that can fold into the softmax's beta
-  std::optional<float> scalar = ExtractScalarValueFromMul(qnn_model_wrapper, mul_node_unit, ort_api);
-  if (!scalar.has_value()) {
+  // Check if the mul node has a scale input that can fold into the softmax's beta
+  std::optional<float> scale = ExtractScaleValueFromMul(qnn_model_wrapper, mul_node_unit, ort_api);
+  if (!scale.has_value()) {
     return nullptr;
   }
 
