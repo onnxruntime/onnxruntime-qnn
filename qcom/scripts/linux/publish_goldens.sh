@@ -160,7 +160,7 @@ fi
 # ---------------------------------------------------------------------------
 # Regenerate goldens + verify accuracy
 # ---------------------------------------------------------------------------
-runner="${REPO_ROOT}/qcom/scripts/linux/run_snapshot_accuracy.sh"
+runner="${REPO_ROOT}/qcom/scripts/all/run_snapshot_accuracy.sh"
 
 if [ "${skip_regen}" = true ]; then
     log_info "--- Skipping regen (--skip-regen); reusing existing goldens + results ---"

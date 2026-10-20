@@ -2,7 +2,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 #
-# Two-pass snapshot+accuracy test runner for QNN EP unit tests.
+# Platform-agnostic two-pass snapshot+accuracy runner for QNN EP unit tests.
 #
 # Pass 1: Run all snapshot tests (QnnSnapshot_<Op>_OpBuilder* + QnnSnapshot_<Op>_Session*).
 #          If all pass -> done (exit 0). Graph structure unchanged, so this

@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-"""Hermetic tests for the snapshot/accuracy runner."""
+"""Hermetic tests for the platform-agnostic snapshot/accuracy runner."""
 
 import json
 import os
