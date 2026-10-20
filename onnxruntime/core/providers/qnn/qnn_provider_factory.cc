@@ -15,6 +15,7 @@
 
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
+#include "onnxruntime_env_config_keys.h"
 #include "QnnCommon.h"
 
 #include "core/providers/qnn/ort_api.h"
@@ -249,7 +250,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
       std::unique_ptr<OrtKeyValuePairs, decltype(factory->ort_api.ReleaseKeyValuePairs)> entries(
           env_config, factory->ort_api.ReleaseKeyValuePairs);
       if (entries) {
-        const char* allow = factory->ort_api.GetKeyValue(entries.get(), "allow_virtual_devices");
+        const char* allow = factory->ort_api.GetKeyValue(entries.get(), kOrtEnvAllowVirtualDevices);
         allow_virtual_devices = allow != nullptr && std::strcmp(allow, "1") == 0;
       }
     }
