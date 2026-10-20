@@ -23,7 +23,7 @@ def test_converts_gtest_report_paths_for_windows_provider_binary(tmp_path: Path)
     bin_dir = build_dir / "Release"
     bin_dir.mkdir(parents=True)
 
-    provider = bin_dir / "onnxruntime_provider_test"
+    provider = bin_dir / "onnxruntime_provider_test.exe"
     write_executable(
         provider,
         f"""#!{sys.executable}

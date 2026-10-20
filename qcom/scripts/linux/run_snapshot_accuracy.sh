@@ -130,7 +130,7 @@ run_provider_test() {
     (
         cd "${bin_dir}"
         export LD_LIBRARY_PATH="${bin_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-        ./onnxruntime_provider_test "$@"
+        "${binary}" "$@"
     )
 }
 
