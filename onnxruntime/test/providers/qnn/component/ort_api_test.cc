@@ -18,7 +18,7 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 // Platform coverage:
-//   Linux x86-64 (coverage build): all sections.
+//   Linux x86-64 (internal-symbol test build): all sections.
 //   Windows: GetSessionConfigEntryOrDefault, OrtNodeAttrHelper (not-found),
 //            and OrtNodeUnit stub series only.
 

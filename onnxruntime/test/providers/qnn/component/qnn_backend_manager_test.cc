@@ -33,6 +33,8 @@
 #include <type_traits>
 #include <unordered_map>
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/ort_api.h"
@@ -766,7 +768,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, LoadCachedQnnContextFromBuffer_HTP_Invalid
   ASSERT_NE(manager, nullptr);
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-  qnn::EpContextIoDispatch dummy_io_dispatch(nullptr);
+  qnn::EpContextIoDispatch dummy_io_dispatch;
   auto setup_status = manager->SetupBackend(true, true, false, -1, false, nullptr, dummy_map);
   ASSERT_TRUE(setup_status.IsOK()) << "SetupBackend with QnnSystem failed: " << setup_status.GetErrorMessage();
 
@@ -896,7 +898,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingEnabled
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
   auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map,
-                                      qnn::EpContextIoDispatch(nullptr),
+                                      qnn::EpContextIoDispatch(),
                                       false /*extended_udma*/, false /*prepare_only*/,
                                       true /*enable_htp_graph_splitting*/);
   // Success or a structured QNN error are both acceptable on headless hosts;
@@ -911,7 +913,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingAndThre
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
   auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map,
-                                      qnn::EpContextIoDispatch(nullptr),
+                                      qnn::EpContextIoDispatch(),
                                       false /*extended_udma*/, false /*prepare_only*/,
                                       true /*enable_htp_graph_splitting*/,
                                       4 /*htp_graph_splitting_num_prepare_threads*/);

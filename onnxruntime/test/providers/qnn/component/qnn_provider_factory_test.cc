@@ -37,8 +37,12 @@
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
+
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "onnxruntime_config.h"
+#include "onnxruntime_ep_device_ep_metadata_keys.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
@@ -112,6 +116,10 @@ class FactoryStubContext {
   // per test before calling into factory code.
   std::unordered_map<const OrtHardwareDevice*, OrtHardwareDeviceType> device_type_map;
   std::unordered_map<const OrtHardwareDevice*, uint32_t> device_vendor_map;
+  std::unordered_map<std::string, std::string> env_config;
+
+  // Ordered log of (key, value) pairs passed to AddKeyValuePair (e.g., hw device metadata).
+  std::vector<std::pair<std::string, std::string>> added_kv_pairs;
 
   // Ordered log of every OrtHardwareDevice* passed to CreateEpDevice.
   std::vector<const OrtHardwareDevice*> created_ep_devices;
@@ -217,8 +225,18 @@ class FactoryStubContext {
     stub_ort_api.CreateKeyValuePairs = [](OrtKeyValuePairs** out) noexcept {
       *out = reinterpret_cast<OrtKeyValuePairs*>(kFakeToken);
     };
-    stub_ort_api.AddKeyValuePair = [](OrtKeyValuePairs*, const char*, const char*) noexcept {};
+    stub_ort_api.AddKeyValuePair = [](OrtKeyValuePairs*, const char* key, const char* value) noexcept {
+      if (auto* self = current_) {
+        self->added_kv_pairs.emplace_back(key ? key : "", value ? value : "");
+      }
+    };
     stub_ort_api.ReleaseKeyValuePairs = [](OrtKeyValuePairs*) noexcept {};
+    stub_ort_api.GetKeyValue = [](const OrtKeyValuePairs*, const char* key) noexcept -> const char* {
+      auto* self = current_;
+      if (self == nullptr || key == nullptr) return nullptr;
+      const auto it = self->env_config.find(key);
+      return it == self->env_config.end() ? nullptr : it->second.c_str();
+    };
 
     stub_ort_api.HardwareDevice_Type =
         [](const OrtHardwareDevice* dev) noexcept -> OrtHardwareDeviceType {
@@ -315,6 +333,10 @@ class FactoryStubContext {
   }
 
   void InstallOrtEpApiStubs() {
+    stub_ep_api.GetEnvConfigEntries = [](OrtKeyValuePairs** out) noexcept -> OrtStatus* {
+      *out = reinterpret_cast<OrtKeyValuePairs*>(kFakeToken);
+      return nullptr;
+    };
     stub_ep_api.CreateEpDevice =
         [](OrtEpFactory*, const OrtHardwareDevice* device,
            const OrtKeyValuePairs*, const OrtKeyValuePairs*,
@@ -804,6 +826,141 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_AddAllocatorInfoFails_Do
   EXPECT_EQ(ctx.add_allocator_info_calls, 1);
   EXPECT_EQ(ctx.release_ep_device_calls, 1);
   ctx.stub_ort_api.ReleaseStatus(status);
+}
+
+// ===========================================================================
+// Group 3b: GetSupportedDevicesImpl — x86/x64 cross-compile NPU synthesis.
+//
+// On x86/x64 hosts (no real Qualcomm NPU), GetSupportedDevicesImpl should
+// synthesize a virtual NPU OrtHardwareDevice for AOT cross-compilation.
+// ===========================================================================
+
+#if !QNN_ARCH_ARM64
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_AdvertisesVirtualNpu) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  ctx.env_config["allow_virtual_devices"] = "1";
+
+  // Pass no devices at all — no NPU in the input array.
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, nullptr, 0, ep_devices, 4, &num), nullptr);
+
+  // On x86, the cross-compile NPU synthesis should fire.
+  EXPECT_GE(num, 1u);
+  ASSERT_FALSE(ctx.created_ep_devices.empty());
+
+  // The synthesized device must have IsVirtual="1" metadata.
+  bool found_is_virtual = false;
+  for (const auto& kv : ctx.added_kv_pairs) {
+    if (kv.first == kOrtHardwareDevice_MetadataKey_IsVirtual && kv.second == "1") {
+      found_is_virtual = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found_is_virtual) << "Synthesized NPU on x86 must have IsVirtual=1 metadata.";
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_CpuDeviceUnaffected) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  ctx.env_config["allow_virtual_devices"] = "1";
+
+  // Pass only a CPU device — no NPU in the input array.
+  OrtHardwareDevice* cpu = MakeFakeHwDevice(30);
+  ctx.device_type_map[cpu] = OrtHardwareDeviceType_CPU;
+  ctx.device_vendor_map[cpu] = 0;
+
+  const OrtHardwareDevice* devices[] = {cpu};
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num), nullptr);
+
+  // Both CPU (from input) and synthesized virtual NPU (from cross-compile path).
+  EXPECT_EQ(num, 2u);
+  ASSERT_EQ(ctx.created_ep_devices.size(), 2u);
+  EXPECT_EQ(ctx.created_ep_devices[0], cpu);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHostWithoutOptIn_DoesNotAdvertiseVirtualNpu) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, nullptr, 0, ep_devices, 4, &num), nullptr);
+
+  EXPECT_EQ(num, 0u);
+  EXPECT_TRUE(ctx.created_ep_devices.empty());
+  EXPECT_TRUE(ctx.added_kv_pairs.empty());
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_ExplicitNpuNoDoubleSynthesis) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  // Pass an explicit Qualcomm NPU device on x86 — synthesis should NOT fire.
+  OrtHardwareDevice* npu = MakeFakeHwDevice(32);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+
+  const OrtHardwareDevice* devices[] = {npu};
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num), nullptr);
+
+  // Only the explicitly provided NPU — no virtual synthesis despite being on x86.
+  EXPECT_EQ(num, 1u);
+  ASSERT_EQ(ctx.created_ep_devices.size(), 1u);
+  EXPECT_EQ(ctx.created_ep_devices[0], npu);
+
+  // No IsVirtual metadata should have been added for the real NPU.
+  bool found_is_virtual = false;
+  for (const auto& kv : ctx.added_kv_pairs) {
+    if (kv.first == kOrtHardwareDevice_MetadataKey_IsVirtual) {
+      found_is_virtual = true;
+      break;
+    }
+  }
+  EXPECT_FALSE(found_is_virtual) << "Explicit NPU on x86 — no synthesis, no IsVirtual metadata.";
+}
+
+#endif  // !QNN_ARCH_ARM64
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_RealNpuPresent_NoSynthesis) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  // Pass a real Qualcomm NPU — synthesis should NOT fire.
+  OrtHardwareDevice* npu = MakeFakeHwDevice(31);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+
+  const OrtHardwareDevice* devices[] = {npu};
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num), nullptr);
+
+  // Only the real NPU, no synthesis.
+  EXPECT_EQ(num, 1u);
+  ASSERT_EQ(ctx.created_ep_devices.size(), 1u);
+  EXPECT_EQ(ctx.created_ep_devices[0], npu);
+
+  // No IsVirtual metadata should have been added.
+  bool found_is_virtual = false;
+  for (const auto& kv : ctx.added_kv_pairs) {
+    if (kv.first == kOrtHardwareDevice_MetadataKey_IsVirtual) {
+      found_is_virtual = true;
+      break;
+    }
+  }
+  EXPECT_FALSE(found_is_virtual) << "Real NPU present — no synthesis, no IsVirtual metadata.";
 }
 
 // ===========================================================================

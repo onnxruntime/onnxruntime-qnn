@@ -163,10 +163,17 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
 
     // 4. If the child is Q/DQ wrapper(s), skip through them and look at the next math child.
     // Example: DQ -> op -> Q -> DQ -> ...
+    // Only Q/DQ nodes inside a QDQGroup are skipped; a standalone one (e.g., a requantization) is a real op.
     while (potential_child != nullptr) {
       const std::string child_op = Ort::ConstNode(potential_child).GetOperatorType();
       if (child_op != QUANTIZE_LINEAR && child_op != DEQUANTIZE_LINEAR) {
         break;
+      }
+
+      const auto qdq_node_unit_it = node_unit_map.find(potential_child);
+      if (qdq_node_unit_it == node_unit_map.end() ||
+          qdq_node_unit_it->second->UnitType() != OrtNodeUnit::Type::QDQGroup) {
+        return nullptr;
       }
 
       const std::vector<Ort::ConstValueInfo> qdq_outputs = Ort::ConstNode(potential_child).GetOutputs();

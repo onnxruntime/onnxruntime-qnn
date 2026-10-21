@@ -4,10 +4,10 @@
 // Function-level unit tests for ParseCustomOpDomains, ParseOpPackages,
 // QnnUdoPlaceholderOp, and QnnUdoPlaceholderKernel.
 //
-// All tests are gated on QNN_EP_INTERNAL_SYMBOL_ACCESS: in coverage builds the test
-// binary is link-time bound to onnxruntime_providers_qnn.so, so all EP-internal symbols
-// (ParseOpPackages, ParseCustomOpDomains) are directly reachable. In non-coverage builds
-// the EP is loaded via dlopen and these symbols are not accessible from the test binary.
+// All tests are gated on QNN_EP_INTERNAL_SYMBOL_ACCESS. An internal-symbol test build
+// link-time binds the test binary to onnxruntime_providers_qnn.so, so EP-internal symbols
+// (ParseOpPackages, ParseCustomOpDomains) are directly reachable. In normal builds the
+// EP is loaded via dlopen and these symbols are not accessible from the test binary.
 
 #include "gtest/gtest.h"
 
@@ -17,6 +17,8 @@
 #include <fstream>
 #include <string>
 #include <vector>
+
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
 
 #include "core/providers/qnn/custom_op/qnn_custom_op.h"
 #include "core/providers/qnn/custom_op/qnn_custom_op_domain_parser.h"

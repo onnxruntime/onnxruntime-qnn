@@ -103,7 +103,7 @@ Every helper takes both maps and refuses a neighbor already in `qnn_node_group_m
 | Helper | Use |
 |---|---|
 | `GetOnlyChildOfType` | Strict downstream walk; child must be the parent's only consumer and a `SingleNode`. |
-| `GetChildNodeUnitAllowQdq` | Like above but skips through Q/DQ wrappers to the next math op. |
+| `GetChildNodeUnitAllowQdq` | Like above but skips through the NodeUnits' own Q/DQ wrappers to the next math op; a standalone Q/DQ (e.g., a requantization) in between returns `nullptr`. |
 | `GetParentOfType` / `GetParentOfInput` / `GetParentOfInputByName` | Upstream walks (no single-consumer check). |
 | `GetOnlyChildOfOutput` | Downstream walk keyed on a specific output IODef (no `SingleNode` check). |
 | `GetReduceAxes`, `GetInitializerDataAsInt64` | Read constant attrs/initializers. |

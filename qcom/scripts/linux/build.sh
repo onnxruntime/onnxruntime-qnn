@@ -13,21 +13,29 @@ function update_needed() {
   if [ ! -f "${1}/build.ninja" ]; then
     log_debug "${1}/build.ninja does not exist"
     echo "1"
-  elif [ -f "${qairt_sdk_file_path}" ]; then
-    if [ "$(cat ${qairt_sdk_file_path})" != "${2}" ]; then
-      log_debug "New QAIRT SDK detected"
-      echo "1"
-    else
-      log_debug "No update needed"
-    fi
-  else
+  elif [ ! -f "${qairt_sdk_file_path}" ]; then
     log_debug "No record of previous QAIRT SDK"
     echo "1"
+  elif [ "$(cat "${qairt_sdk_file_path}")" != "${2}" ]; then
+    log_debug "New QAIRT SDK detected"
+    echo "1"
+  elif [ ! -f "${qnn_build_mode_file_path}" ]; then
+    log_debug "No record of previous QNN build mode"
+    echo "1"
+  elif [ "$(cat "${qnn_build_mode_file_path}")" != "${3}" ]; then
+    log_debug "QNN coverage/internal-symbol build mode changed"
+    echo "1"
+  else
+    log_debug "No update needed"
   fi
 }
 
 function save_qairt_sdk_path() {
   echo "${1}" > "${qairt_sdk_file_path}"
+}
+
+function save_qnn_build_mode() {
+  echo "${1}" > "${qnn_build_mode_file_path}"
 }
 
 config="Release"
@@ -40,7 +48,9 @@ warnings_as_errors=1
 build_java=
 build_archive=
 enable_coverage=
+enable_qnn_internal_ut_symbols=
 enable_asan=
+build_dir_suffix=
 for i in "$@"; do
   case $i in
     --build-archive)
@@ -75,6 +85,14 @@ for i in "$@"; do
       enable_coverage=1
       shift
       ;;
+    --enable-qnn-internal-ut-symbols)
+      enable_qnn_internal_ut_symbols=1
+      shift
+      ;;
+    --build-dir-suffix=*)
+      build_dir_suffix="${i#*=}"
+      shift
+      ;;
     --ort-home=*)
       ort_prebuilt_root="${i#*=}"
       shift
@@ -107,10 +125,33 @@ done
 
 cmake_generator="Ninja"
 
+if [ -n "${build_dir_suffix}" ] && [[ ! "${build_dir_suffix}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  die "Invalid --build-dir-suffix: ${build_dir_suffix}"
+fi
+
+coverage_cmake_value=OFF
+if [ -n "${enable_coverage}" ]; then
+  coverage_cmake_value=ON
+fi
+internal_symbols_cmake_value=OFF
+# Preserve the existing coverage-build contract: coverage includes the QNN EP
+# component, snapshot, and accuracy tiers that require internal-symbol access.
+if [ -n "${enable_coverage}" ] || [ -n "${enable_qnn_internal_ut_symbols}" ]; then
+  internal_symbols_cmake_value=ON
+fi
+qnn_build_mode="coverage=${coverage_cmake_value};internal_symbols=${internal_symbols_cmake_value}"
+
 build_root="${REPO_ROOT}/build"
-build_dir="${build_root}/${target_platform}-${target_arch}"
+build_dir_name="${target_platform}-${target_arch}"
+if [ -n "${build_dir_suffix}" ]; then
+  build_dir_name+="-${build_dir_suffix}"
+fi
+build_dir="${build_root}/${build_dir_name}"
 
 qairt_sdk_file_path="${build_dir}/qairt-sdk-path-${config}.txt"
+# build.py reruns CMake only when --update is provided. Track the resolved mode
+# so switching coverage/internal-symbol settings cannot reuse a stale CMake cache.
+qnn_build_mode_file_path="${build_dir}/qnn-build-mode-${config}.txt"
 
 if [ -z "${qairt_sdk_root}" ]; then
     qairt_sdk_root="$(get_qairt_contentdir)"
@@ -129,9 +170,8 @@ PATH="${cmake_bindir}:$(get_ninja_bindir):${llvm_contentdir}/bin:${PATH}"
 mkdir -p "${build_dir}/${config}"
 
 build_is_dirty=
-if [ $(update_needed "${build_dir}/${config}" "${qairt_sdk_root}") ]; then
+if [ "$(update_needed "${build_dir}/${config}" "${qairt_sdk_root}" "${qnn_build_mode}")" ]; then
   build_is_dirty=1
-  save_qairt_sdk_path "${qairt_sdk_root}"
 fi
 
 common_args=(--cmake_generator "${cmake_generator}" \
@@ -334,12 +374,20 @@ else
       package_args+=(--wheel_name_suffix "qcom_internal" --nightly_build)
     fi
 
-    if [ -n "${enable_coverage}" ]; then
-      common_args+=(--cmake_extra_defines "ENABLE_COVERAGE:BOOL=ON")
-    fi
+    # Always set both values, including OFF, so a reused build directory cannot
+    # retain a previous coverage or internal-symbol configuration from CMakeCache.
+    common_args+=(--cmake_extra_defines
+                  "ENABLE_COVERAGE:BOOL=${coverage_cmake_value}"
+                  "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS:BOOL=${internal_symbols_cmake_value}")
 
     if [ -n "${enable_asan}" ]; then
       common_args+=(--enable_address_sanitizer)
+    fi
+
+    # Reconfiguration may change the cache even if the subsequent build fails.
+    # Keep the old mode invalid until the entire build succeeds.
+    if [ -n "${build_is_dirty}" ]; then
+      rm -f "${qnn_build_mode_file_path}"
     fi
 
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \
@@ -348,6 +396,13 @@ else
       "${qnn_args[@]}" \
       "${platform_args[@]}" \
       "${package_args[@]}"
+
+    # Record the resolved configuration only after CMake/build succeeds. A
+    # failed reconfigure must be retried rather than treated as cache-valid.
+    if [ -n "${build_is_dirty}" ]; then
+      save_qairt_sdk_path "${qairt_sdk_root}"
+      save_qnn_build_mode "${qnn_build_mode}"
+    fi
   fi
 
   if [ -n "${run_tests}" ]; then
