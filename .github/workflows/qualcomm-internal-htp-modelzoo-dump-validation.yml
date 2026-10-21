@@ -1,0 +1,68 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: HTP ModelZoo Graph Dump Validation
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - dev/yuhuchua/modelzoo-gating
+  workflow_dispatch:
+
+jobs:
+  validate-htp-modelzoo-dumps:
+    name: Validate HTP ModelZoo graph dumps (v73)
+    runs-on: [self-hosted, Windows, ARM64, Test]
+    env:
+      ORT_NIGHTLY_BUILD: "1"
+      ORT_MODEL_ZOO_QNN_GRAPH_GOLDEN_DIR: ${{ github.workspace }}\build\modelzoo_graph_dumps\v73
+    steps:
+      - uses: actions/checkout@v6
+      - name: Initialize submodules
+        shell: cmd
+        run: |
+          git config --global --add safe.directory "%GITHUB_WORKSPACE%"
+          git submodule update --init --recursive
+      - name: Build and run HTP ModelZoo dump validation
+        shell: cmd
+        run: >
+          python.exe qcom/build_and_test.py --target-py-version 3.12 --config Release
+          create_venv build_ort_windows_arm64 test_ort_windows_arm64_pyhtp --only
+      - name: Verify graph dump artifacts
+        if: ${{ success() }}
+        shell: powershell
+        run: |
+          $dumpRoot = $env:ORT_MODEL_ZOO_QNN_GRAPH_GOLDEN_DIR
+          $manifests = Get-ChildItem -LiteralPath $dumpRoot -Recurse -Filter qnn_graph_golden_manifest.json
+          if ($manifests.Count -eq 0) { throw "No QNN graph golden manifests were produced." }
+          $graphs = Get-ChildItem -LiteralPath $dumpRoot -Recurse -Filter *.json |
+            Where-Object { $_.Name -ne 'qnn_graph_golden_manifest.json' }
+          if ($graphs.Count -eq 0) { throw "No QNN graph JSON files were produced." }
+          Write-Host "[HTP ModelZoo dump] Produced $($graphs.Count) graph JSON file(s) and $($manifests.Count) manifest(s)."
+          $graphs | ForEach-Object {
+            $relativePath = $_.FullName.Substring($dumpRoot.Length).TrimStart('\\')
+            Write-Host "[HTP ModelZoo dump] JSON: $relativePath ($($_.Length) bytes)"
+          }
+          $sidecars = Get-ChildItem -LiteralPath $dumpRoot -Recurse -Filter *.golden_metadata.json
+          if ($sidecars.Count -ne 0) { throw "Golden metadata sidecars were not cleaned up." }
+          $tensorLogs = Get-ChildItem -LiteralPath $dumpRoot -Recurse -Filter *_tensor_log.json
+          if ($tensorLogs.Count -ne 0) { throw "Tensor logs were not cleaned up." }
+          $manifests | ForEach-Object {
+            $manifest = Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json
+            if ($manifest.target.backend -ne 'htp' -or $manifest.target.htp_arch -ne 'v73') {
+              throw "Unexpected target in $($_.FullName): $($manifest.target | ConvertTo-Json -Compress)"
+            }
+            Write-Host "[HTP ModelZoo dump] Manifest: $($_.FullName) (backend=$($manifest.target.backend), htp_arch=$($manifest.target.htp_arch), graphs=$($manifest.graphs.PSObject.Properties.Count))"
+          }
+          Write-Host "[HTP ModelZoo dump] Validation succeeded on Windows ARM64 HTP v73."
+      - name: Upload graph dump artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: htp-modelzoo-v73-graph-dumps
+          path: ${{ env.ORT_MODEL_ZOO_QNN_GRAPH_GOLDEN_DIR }}
+          if-no-files-found: warn
+          retention-days: 7
