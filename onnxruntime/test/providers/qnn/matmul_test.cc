@@ -805,11 +805,11 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_S16ActivationS8Output_StaticWeight) {
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8) {
-  RunDynamicInput1QuantErrorTest("low_error", 0.0f, 0.2f, QNN_DATATYPE_UFIXED_POINT_8);
+  RunDynamicInput1QuantErrorTest("low_error", 0.0f, 60.0f, QNN_DATATYPE_UFIXED_POINT_8);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_HighQuantErrorUsesSymmetricU16) {
-  RunDynamicInput1QuantErrorTest("high_error", 0.0f, 100.0f, QNN_DATATYPE_UFIXED_POINT_16);
+  RunDynamicInput1QuantErrorTest("high_error", 0.0f, 80.0f, QNN_DATATYPE_UFIXED_POINT_16);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16SymmetricDynamicInput1_PassesThrough) {
