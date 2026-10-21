@@ -366,7 +366,7 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_BFloat16Scale) {
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)
 
-// Tests for the `use_native_matmul` session config option on QLinearMatMul (AISW-202299).
+// Tests for the `use_native_matmul` session config option on QLinearMatMul.
 // When set to "1", the QNN EP routes static-weight QLinearMatMul to QNN_OP_MAT_MUL instead
 // of QNN_OP_FULLY_CONNECTED. The tests use the JSON graph dump to assert the exact op type.
 

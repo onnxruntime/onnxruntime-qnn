@@ -1294,7 +1294,7 @@ TEST_F(QnnGPUBackendTests, ReshapeGemmFusion) {
 
 #endif  // defined(_M_ARM64) GPU tests
 
-// Tests for the `use_native_matmul` session config option (AISW-202299).
+// Tests for the `use_native_matmul` session config option.
 // When set to "1", the QNN EP routes float32 Gemm to QNN_OP_MAT_MUL (with transpose params)
 // instead of QNN_OP_FULLY_CONNECTED. Each test sets the flag and uses the JSON graph dump to
 // assert the exact op type in the compiled QNN graph.
