@@ -150,6 +150,27 @@ jobs:
       upload_test_archive: true
       upload_wheel: true
 
+  # Keep this non-required shadow validation alongside the shipping Linux build until its
+  # test inventory and reliability are established. It exercises both QnnUnit_* and legacy
+  # tests against a Release build with QNN EP internal symbols and no coverage instrumentation.
+  build-and-test-linux-x86_64-internal-symbols:
+    if: ${{ inputs.do_all }}
+    needs: [archive-testdata, path-filter]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: x86_64
+      target_py_vsn: None
+      qnn_internal_ut_symbols: true
+      run_tests: true
+      build_test_same_runner: true
+      # This is validation-only; do not publish a non-shipping wheel or test archive.
+      upload_wheel: false
+      upload_test_archive: false
+
   build-and-test-linux-arm64:
     if: ${{ inputs.do_all }}
     needs: [archive-testdata, path-filter]

@@ -217,6 +217,33 @@ def test_internal_symbol_public_task_passes_required_build_flags(tmp_path: Path)
     assert "--build-dir-suffix=internal-symbols" in command
 
 
+def test_internal_symbol_test_task_uses_isolated_build_directory(tmp_path: Path) -> None:
+    task_library = TaskLibrary(
+        python_executable=Path(sys.executable),
+        venv_path=tmp_path / "venv",
+        config="Release",
+        target_py_version=None,
+        ort_prebuilt_root=None,
+        qairt_sdk_root=None,
+        docker_ccache_root=None,
+        build_nuget=False,
+        build_archive=False,
+        build_aar=False,
+    )
+    plan = Plan()
+    task_library.test_ort_linux_x86_64_internal_symbols(plan)
+
+    planned_tasks = []
+    plan.for_each(lambda step_id, task: planned_tasks.append((step_id, task)))
+    assert len(planned_tasks) == 1
+    step_id, task = planned_tasks[0]
+    assert step_id == "test_ort_linux_x86_64_internal_symbols"
+    command = task.executables_and_args[0]
+    assert "--mode=test" in command
+    assert "--enable-qnn-internal-ut-symbols" in command
+    assert "--build-dir-suffix=internal-symbols" in command
+
+
 def test_build_dir_suffix_uses_isolated_directory(build_repo: Path) -> None:
     result = run_build(build_repo, "internal", build_dir_suffix="internal-symbols")
     assert result.returncode == 0, result.stderr
