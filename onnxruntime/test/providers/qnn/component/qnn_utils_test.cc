@@ -8,8 +8,10 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -70,6 +72,142 @@ TEST(QnnUnit_UtilsTest, InvertPerm_OutOfRangeElementReturnsError) {
        }) {
     std::vector<int64_t> inverse(perm.size());
     EXPECT_FALSE(qnn::utils::InvertPerm(gsl::make_span(perm), gsl::make_span(inverse)).IsOK());
+  }
+}
+
+// =============================================================================
+// qnn::utils::NeedsHtpTransposeReshapeWorkaround
+// =============================================================================
+
+namespace {
+
+bool ReferenceTransposePreservesFlatOrder(const std::vector<uint32_t>& shape,
+                                          const std::vector<uint32_t>& perm) {
+  const size_t rank = shape.size();
+  std::vector<uint32_t> output_shape(rank);
+  for (size_t i = 0; i < rank; ++i) {
+    output_shape[i] = shape[perm[i]];
+  }
+
+  std::vector<size_t> input_strides(rank, 1);
+  for (size_t i = rank; i-- > 1;) {
+    input_strides[i - 1] = input_strides[i] * shape[i];
+  }
+
+  size_t num_elems = 1;
+  for (uint32_t dim : shape) {
+    num_elems *= dim;
+  }
+
+  for (size_t output_index = 0; output_index < num_elems; ++output_index) {
+    size_t remaining = output_index;
+    size_t input_index = 0;
+    for (size_t i = rank; i-- > 0;) {
+      const size_t coord = remaining % output_shape[i];
+      remaining /= output_shape[i];
+      input_index += coord * input_strides[perm[i]];
+    }
+    if (input_index != output_index) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool CheckNeedsHtpTransposeReshapeWorkaround(const std::vector<uint32_t>& input_shape,
+                                             const std::vector<uint32_t>& perm,
+                                             const std::vector<uint32_t>& output_shape) {
+  return qnn::utils::NeedsHtpTransposeReshapeWorkaround(gsl::make_span(input_shape),
+                                                        gsl::make_span(perm),
+                                                        gsl::make_span(output_shape));
+}
+
+}  // namespace
+
+TEST(QnnUnit_UtilsTest, NeedsHtpTransposeReshapeWorkaroundIssue1020Case) {
+  // [128, 1, 128] with perm [1, 0, 2] moves only the size-1 axis. HTP used to
+  // return the transposed data instead of the original flat order.
+  EXPECT_TRUE(CheckNeedsHtpTransposeReshapeWorkaround({128, 1, 128}, {1, 0, 2}, {1, 128, 128}));
+}
+
+TEST(QnnUnit_UtilsTest, NeedsHtpTransposeReshapeWorkaroundMovesUnitAxes) {
+  EXPECT_TRUE(CheckNeedsHtpTransposeReshapeWorkaround({1, 2, 1, 3}, {2, 0, 1, 3}, {1, 1, 2, 3}));
+  EXPECT_TRUE(CheckNeedsHtpTransposeReshapeWorkaround({2, 1, 3, 1}, {0, 2, 3, 1}, {2, 3, 1, 1}));
+  EXPECT_TRUE(CheckNeedsHtpTransposeReshapeWorkaround({2, 1, 3}, {0, 2, 1}, {2, 3, 1}));
+}
+
+TEST(QnnUnit_UtilsTest, NeedsHtpTransposeReshapeWorkaroundSkipsNoopPerms) {
+  // Identity and same-shape unit-only Transposes do not need the workaround.
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({2, 3}, {0, 1}, {2, 3}));
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({1}, {0}, {1}));
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({1, 2, 1}, {2, 1, 0}, {1, 2, 1}));
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({1, 1, 1}, {2, 0, 1}, {1, 1, 1}));
+}
+
+TEST(QnnUnit_UtilsTest, NeedsHtpTransposeReshapeWorkaroundKeepsNonUnitAxisOrder) {
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({2, 3}, {1, 0}, {3, 2}));
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({2, 1, 3}, {2, 0, 1}, {3, 2, 1}));
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({2, 1, 3, 1}, {3, 2, 1, 0}, {1, 3, 1, 2}));
+}
+
+TEST(QnnUnit_UtilsTest, NeedsHtpTransposeReshapeWorkaroundRejectsInvalidPermutation) {
+  // Duplicate axis.
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({2, 3}, {0, 0}, {2, 2}));
+  // Out-of-range axis.
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({2, 3}, {0, 2}, {2, 4}));
+  // Rank mismatch.
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({2, 3}, {0}, {2, 3}));
+}
+
+TEST(QnnUnit_UtilsTest, NeedsHtpTransposeReshapeWorkaroundRejectsMismatchedOutputShape) {
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({1, 2, 2}, {1, 0, 2}, {2, 2, 1}));
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({1, 2, 1}, {1, 0, 2}, {1, 1, 2}));
+}
+
+TEST(QnnUnit_UtilsTest, NeedsHtpTransposeReshapeWorkaroundRejectsZeroSizedDims) {
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({0, 3}, {1, 0}, {3, 0}));
+  EXPECT_FALSE(CheckNeedsHtpTransposeReshapeWorkaround({1, 0, 3}, {0, 2, 1}, {1, 3, 0}));
+}
+
+TEST(QnnUnit_UtilsTest, NeedsHtpTransposeReshapeWorkaroundMatchesFlatOrderExhaustively) {
+  for (size_t rank = 1; rank <= 5; ++rank) {
+    std::vector<uint32_t> perm(rank);
+    std::iota(perm.begin(), perm.end(), 0u);
+
+    std::vector<std::vector<uint32_t>> permutations;
+    do {
+      permutations.push_back(perm);
+    } while (std::next_permutation(perm.begin(), perm.end()));
+
+    std::vector<uint32_t> identity_perm(rank);
+    std::iota(identity_perm.begin(), identity_perm.end(), 0u);
+
+    size_t num_shapes = 1;
+    for (size_t i = 0; i < rank; ++i) {
+      num_shapes *= 3;
+    }
+
+    std::vector<uint32_t> shape(rank);
+    for (size_t shape_index = 0; shape_index < num_shapes; ++shape_index) {
+      size_t value = shape_index;
+      for (size_t i = 0; i < rank; ++i) {
+        shape[i] = static_cast<uint32_t>(1 + value % 3);
+        value /= 3;
+      }
+
+      for (const auto& candidate_perm : permutations) {
+        std::vector<uint32_t> output_shape(rank);
+        for (size_t i = 0; i < rank; ++i) {
+          output_shape[i] = shape[candidate_perm[i]];
+        }
+
+        const bool expected = candidate_perm != identity_perm && shape != output_shape &&
+                              ReferenceTransposePreservesFlatOrder(shape, candidate_perm);
+        EXPECT_EQ(CheckNeedsHtpTransposeReshapeWorkaround(shape, candidate_perm, output_shape), expected)
+            << "shape=" << ::testing::PrintToString(shape)
+            << " perm=" << ::testing::PrintToString(candidate_perm);
+      }
+    }
   }
 }
 

@@ -1089,6 +1089,16 @@ Ort::Status QnnModelWrapper::AddTransposeNode(size_t node_index,
   // we don't need this right now.
   RETURN_IF(quantize_param.IsPerChannel(),
             "Do not support inserted Transpose nodes with per-channel quantization");
+
+  if (utils::NeedsHtpTransposeReshapeWorkaround(input_shape, transpose_perm, output_shape)) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                ("Lowering Transpose node '" + output_name +
+                 "' to Reshape because its perm only reorders size-1 dimensions.")
+                    .c_str());
+    return AddReshapeNode(input_name, output_name, input_shape, output_shape, tensor_data_type,
+                          quantize_param, do_op_validation, is_for_input, is_for_output);
+  }
+
   // During GetCapability, upstream node groups that validate via ValidateQnnNode() do not
   // populate model_tensors_map_, so the input wrapper may be missing. Register a NATIVE
   // fallback; AddTensorWrapper is idempotent, so Compose-path registration still wins.

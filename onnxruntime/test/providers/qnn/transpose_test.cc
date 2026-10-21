@@ -3,8 +3,12 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <string>
 
+#include <gsl/util>
+
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
@@ -131,6 +135,41 @@ TEST_F(QnnHTPBackendTests, TransposeFloat32OnHTP) {
   RunTransposeNonQDQOnHTP<float>(TestInputDef<float>({1, 3, 224, 128}, false, 0, 10.0f),
                                  {test::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
                                  ExpectedEPNodeAssignment::All, 5e-3f);
+}
+
+// Regression test for https://github.com/onnxruntime/onnxruntime-qnn/issues/1020.
+// Moving only the size-1 axis preserves the flat element order, so the Transpose must
+// be lowered to a Reshape instead of running QNN_OP_TRANSPOSE on HTP.
+TEST_F(QnnHTPBackendTests, TransposeFloat32UnitDimPermLoweredToReshape) {
+  const std::filesystem::path json_qnn_graph_dir = "TransposeFloat32UnitDimPermLoweredToReshape";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() {
+    std::filesystem::remove_all(json_qnn_graph_dir);
+  });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildTransposeTestCase<float>(
+                      TestInputDef<float>({128, 1, 128}, false, 0.0f, 1.0f),
+                      {test::MakeAttribute("perm", std::vector<int64_t>{1, 0, 2})}),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(5e-3f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 0);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
+}
+
+// QDQ path for the same unit-dimension-only Transpose.
+TEST_F(QnnHTPBackendTests, TransposeQDQU8UnitDimPerm) {
+  RunTransposeQDQTest(TestInputDef<float>({128, 1, 128}, false, 0.0f, 1.0f),
+                      {test::MakeAttribute("perm", std::vector<int64_t>{1, 0, 2})},
+                      ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
