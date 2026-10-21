@@ -1539,10 +1539,8 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     auto res = CreateContextFromListAsyncWithCallback(configs_vec.data(), context_bin_map);
     if (!res.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, (res.GetErrorMessage() + ". Retrying with feature disabled.").c_str());
-      {
-        std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
-        ep_context_handle_map_.clear();
-      }
+      // TODO: Roll back only contexts created by this failed request. Do not clear all context
+      // mappings because this manager may contain contexts used by earlier sharing sessions.
     } else {
       return Ort::Status();
     }
