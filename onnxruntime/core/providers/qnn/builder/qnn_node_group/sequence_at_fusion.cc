@@ -328,81 +328,86 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   const std::string base = utils::UniqueNameGenerator().New(seq_construct_unit);
 
   // ------------------------------------------------------------------
-  // Validate mode: probe every QNN node that AddToModelBuilder emits.
-  // Validating only Gather would miss backends that accept Gather but
-  // reject Reshape, Concat, or the dynamic-position ops (Cast, Add,
-  // Less, Select) for the requested dtype.
+  // Validate mode: probe QNN for every dtype-sensitive op this fusion emits.
+  //
+  // Reshape and Concat are in the float32/float16 allowlist and are
+  // universally supported on HTP/GPU for those dtypes; probing them adds
+  // false-rejection risk with no practical benefit.
+  //
+  // Gather IS dtype-sensitive — probe it with actual element dtype and
+  // shapes from the model.  For dynamic positions, also probe Cast (int64
+  // only), ElementWiseAdd, ElementWiseLess, ElementWiseSelect so a backend
+  // that rejects those int32/bool ops is caught here rather than at graph
+  // finalization.
   // ------------------------------------------------------------------
   if (validate) {
-    const Qnn_DataType_t elem_dt = elem_info.qnn_data_type;
-
-    auto make_tw = [&](const std::string& suffix, Qnn_DataType_t dt,
-                       std::vector<uint32_t> shape) -> QnnTensorWrapper {
-      return QnnTensorWrapper(base + suffix, QNN_TENSOR_TYPE_NATIVE, dt,
-                              QnnQuantParamsWrapper(), std::move(shape));
-    };
-
-    // Probe 1: Reshape (elem_dtype) — emitted N+1 times.
+    // Probe 1: Gather — always emitted, element-dtype-sensitive.
     {
-      auto in  = make_tw("_vr_in",  elem_dt, {1u});
-      auto out = make_tw("_vr_out", elem_dt, {1u});
-      auto s = qmw.ValidateQnnNode(base + "_vr", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
-                                   {in.GetQnnTensor()}, {out.GetQnnTensor()}, {});
+      std::vector<uint32_t> stacked_shape;
+      stacked_shape.reserve(1 + elem_shape.size());
+      stacked_shape.push_back(static_cast<uint32_t>(N));
+      stacked_shape.insert(stacked_shape.end(), elem_shape.begin(), elem_shape.end());
+
+      std::vector<uint32_t> gather_out_shape;
+      gather_out_shape.push_back(1u);
+      gather_out_shape.insert(gather_out_shape.end(), elem_shape.begin(), elem_shape.end());
+
+      QnnTensorWrapper data_tw(base + "_validate_stacked",
+                               QNN_TENSOR_TYPE_NATIVE,
+                               elem_info.qnn_data_type,
+                               elem_info.quant_param.Copy(),
+                               std::vector<uint32_t>(stacked_shape));
+      QnnTensorWrapper idx_tw(base + "_validate_index",
+                              QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_INT_32,
+                              QnnQuantParamsWrapper(),
+                              std::vector<uint32_t>{1u});
+      const bool is_graph_output = qmw.IsGraphOutput(final_output.name);
+      const Qnn_TensorType_t out_type =
+          is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+      QnnTensorWrapper out_tw(base + "_validate_out",
+                              out_type,
+                              elem_info.qnn_data_type,
+                              elem_info.quant_param.Copy(),
+                              std::vector<uint32_t>(gather_out_shape));
+
+      Qnn_Scalar_t axis_scalar = QNN_SCALAR_INIT;
+      axis_scalar.dataType = QNN_DATATYPE_INT_32;
+      axis_scalar.int32Value = 0;
+      QnnParamWrapper axis_param(seq_construct_unit.Index(), seq_construct_unit.Name(),
+                                 QNN_OP_GATHER_PARAM_AXIS, axis_scalar);
+      auto s = qmw.ValidateQnnNode(base + "_validate_gather",
+                                   QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_GATHER,
+                                   {data_tw.GetQnnTensor(), idx_tw.GetQnnTensor()},
+                                   {out_tw.GetQnnTensor()},
+                                   {axis_param.GetQnnParam()});
       if (!s.IsOK()) return s;
     }
 
-    // Probe 2: Concat (elem_dtype, 2 inputs, axis=0) — always emitted.
-    {
-      auto in0 = make_tw("_vc0", elem_dt, {1u});
-      auto in1 = make_tw("_vc1", elem_dt, {1u});
-      auto out = make_tw("_vco", elem_dt, {2u});
-      Qnn_Scalar_t ax = QNN_SCALAR_INIT;
-      ax.dataType = QNN_DATATYPE_INT_32;
-      ax.int32Value = 0;
-      QnnParamWrapper axis_p(seq_construct_unit.Index(), seq_construct_unit.Name(),
-                             QNN_OP_CONCAT_PARAM_AXIS, ax);
-      auto s = qmw.ValidateQnnNode(base + "_vcat", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CONCAT,
-                                   {in0.GetQnnTensor(), in1.GetQnnTensor()},
-                                   {out.GetQnnTensor()}, {axis_p.GetQnnParam()});
-      if (!s.IsOK()) return s;
-    }
-
-    // Probe 3: Gather (elem_dtype, int32 index, axis=0) — always emitted.
-    {
-      auto data = make_tw("_vgd", elem_dt, {static_cast<uint32_t>(N), 1u});
-      auto idx  = make_tw("_vgi", QNN_DATATYPE_INT_32, {1u});
-      auto out  = make_tw("_vgo", elem_dt, {1u, 1u});
-      Qnn_Scalar_t ax = QNN_SCALAR_INIT;
-      ax.dataType = QNN_DATATYPE_INT_32;
-      ax.int32Value = 0;
-      QnnParamWrapper axis_p(seq_construct_unit.Index(), seq_construct_unit.Name(),
-                             QNN_OP_GATHER_PARAM_AXIS, ax);
-      auto s = qmw.ValidateQnnNode(base + "_vg", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_GATHER,
-                                   {data.GetQnnTensor(), idx.GetQnnTensor()},
-                                   {out.GetQnnTensor()}, {axis_p.GetQnnParam()});
-      if (!s.IsOK()) return s;
-    }
-
-    // Probes 4-7 (conditional): dynamic position path.
-    // Determine whether position is a static initializer to skip the dynamic nodes.
+    // Probes 2-5 (conditional): dynamic position path only.
     TensorInfo pos_info_v{};
     const bool pos_is_static = qmw.GetTensorInfo(pos_input, pos_info_v).IsOK() &&
                                pos_info_v.is_initializer;
     if (!pos_is_static) {
-      // Probe 4 (int64 dynamic only): Cast int64 → int32.
+      // Helper: minimal rank-1 NATIVE tensor.
+      auto probe_tw = [&](const std::string& suffix, Qnn_DataType_t dt) -> QnnTensorWrapper {
+        return QnnTensorWrapper(base + suffix, QNN_TENSOR_TYPE_NATIVE, dt,
+                                QnnQuantParamsWrapper(), std::vector<uint32_t>{1u});
+      };
+
+      // Probe 2 (int64 dynamic only): Cast int64 → int32.
       if (pos_info_v.qnn_data_type == QNN_DATATYPE_INT_64) {
-        auto in  = make_tw("_vcast_in",  QNN_DATATYPE_INT_64, {1u});
-        auto out = make_tw("_vcast_out", QNN_DATATYPE_INT_32, {1u});
+        auto in = probe_tw("_vcast_in", QNN_DATATYPE_INT_64);
+        auto out = probe_tw("_vcast_out", QNN_DATATYPE_INT_32);
         auto s = qmw.ValidateQnnNode(base + "_vcast", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
                                      {in.GetQnnTensor()}, {out.GetQnnTensor()}, {});
         if (!s.IsOK()) return s;
       }
 
-      // Probe 5: ElementWiseAdd (int32 + int32 → int32).
+      // Probe 3: ElementWiseAdd (int32 + int32 → int32).
       {
-        auto a   = make_tw("_vadd_a",   QNN_DATATYPE_INT_32, {1u});
-        auto b   = make_tw("_vadd_b",   QNN_DATATYPE_INT_32, {1u});
-        auto out = make_tw("_vadd_out", QNN_DATATYPE_INT_32, {1u});
+        auto a = probe_tw("_vadd_a", QNN_DATATYPE_INT_32);
+        auto b = probe_tw("_vadd_b", QNN_DATATYPE_INT_32);
+        auto out = probe_tw("_vadd_out", QNN_DATATYPE_INT_32);
         auto s = qmw.ValidateQnnNode(base + "_vadd", QNN_OP_PACKAGE_NAME_QTI_AISW,
                                      QNN_OP_ELEMENT_WISE_ADD,
                                      {a.GetQnnTensor(), b.GetQnnTensor()},
@@ -410,11 +415,11 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
         if (!s.IsOK()) return s;
       }
 
-      // Probe 6: ElementWiseLess (int32 < int32 → bool).
+      // Probe 4: ElementWiseLess (int32 < int32 → bool).
       {
-        auto a   = make_tw("_vless_a",   QNN_DATATYPE_INT_32, {1u});
-        auto b   = make_tw("_vless_b",   QNN_DATATYPE_INT_32, {1u});
-        auto out = make_tw("_vless_out", QNN_DATATYPE_BOOL_8, {1u});
+        auto a = probe_tw("_vless_a", QNN_DATATYPE_INT_32);
+        auto b = probe_tw("_vless_b", QNN_DATATYPE_INT_32);
+        auto out = probe_tw("_vless_out", QNN_DATATYPE_BOOL_8);
         auto s = qmw.ValidateQnnNode(base + "_vless", QNN_OP_PACKAGE_NAME_QTI_AISW,
                                      QNN_OP_ELEMENT_WISE_LESS,
                                      {a.GetQnnTensor(), b.GetQnnTensor()},
@@ -422,12 +427,12 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
         if (!s.IsOK()) return s;
       }
 
-      // Probe 7: ElementWiseSelect (bool, int32, int32 → int32).
+      // Probe 5: ElementWiseSelect (bool, int32, int32 → int32).
       {
-        auto cond = make_tw("_vsel_cond", QNN_DATATYPE_BOOL_8, {1u});
-        auto t    = make_tw("_vsel_t",    QNN_DATATYPE_INT_32, {1u});
-        auto f    = make_tw("_vsel_f",    QNN_DATATYPE_INT_32, {1u});
-        auto out  = make_tw("_vsel_out",  QNN_DATATYPE_INT_32, {1u});
+        auto cond = probe_tw("_vsel_cond", QNN_DATATYPE_BOOL_8);
+        auto t = probe_tw("_vsel_t", QNN_DATATYPE_INT_32);
+        auto f = probe_tw("_vsel_f", QNN_DATATYPE_INT_32);
+        auto out = probe_tw("_vsel_out", QNN_DATATYPE_INT_32);
         auto s = qmw.ValidateQnnNode(base + "_vsel", QNN_OP_PACKAGE_NAME_QTI_AISW,
                                      QNN_OP_ELEMENT_WISE_SELECT,
                                      {cond.GetQnnTensor(), t.GetQnnTensor(), f.GetQnnTensor()},

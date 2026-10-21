@@ -229,7 +229,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_DynamicPosition_Int64) {
 
   AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
-  AssertOpInQnnGraph(json_dir, "Cast", 1);     // int64 → int32 position cast
+  AssertOpInQnnGraph(json_dir, "Cast", 1);  // int64 → int32 position cast
   AssertOpInQnnGraph(json_dir, "Gather", 1);
   AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
   AssertOpInQnnGraph(json_dir, "ElementWiseLess", 1);
