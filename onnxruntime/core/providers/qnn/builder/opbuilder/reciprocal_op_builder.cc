@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
@@ -37,7 +38,10 @@ Ort::Status ReciprocalOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrappe
   const auto& outputs = node_unit.Outputs();
   RETURN_IF_NOT(outputs.size() == 1, "Reciprocal operator must have exactly 1 output.");
 
-  // Check input type is float for CPU.
+  // On the QNN CPU backend only float32 is accepted; other backends (HTP, GPU)
+  // are gated by the QNN SDK's own op-validation call inside
+  // ProcessAttributesAndOutputs (do_op_validation=true), which will return an
+  // error if the backend cannot handle the resulting ElementWiseDivide node.
   RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
   return Ort::Status();
