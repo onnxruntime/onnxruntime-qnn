@@ -59,9 +59,9 @@ jobs:
           - platform: Linux x86_64
             golden_profile: linux-x86_64-htp-simulator
             runner_labels: '["self-hosted", "X64", "Linux", "Build"]'
-            build_task: coverage_build_linux_x86_64
-            build_dir: build/linux-x86_64
-            build_config: RelWithDebInfo
+            build_task: build_ort_linux_x86_64_internal_symbols
+            build_dir: build/linux-x86_64-internal-symbols
+            build_config: Release
             python_executable: python3
           - platform: Windows x86_64
             golden_profile: windows-x86_64-htp-simulator

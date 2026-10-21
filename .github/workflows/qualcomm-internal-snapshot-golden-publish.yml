@@ -29,15 +29,15 @@ on:
       build_task:
         description: "build_and_test.py task that builds the snapshot/accuracy test binary."
         type: string
-        default: 'coverage_build_linux_x86_64'
+        default: 'build_ort_linux_x86_64_internal_symbols'
       build_dir:
         description: "Build root containing the snapshot/accuracy test binary."
         type: string
-        default: 'build/linux-x86_64'
+        default: 'build/linux-x86_64-internal-symbols'
       build_config:
         description: "Build configuration passed to build_and_test.py."
         type: string
-        default: 'RelWithDebInfo'
+        default: 'Release'
       python_executable:
         description: "Python executable available on the selected producer runner."
         type: string
@@ -81,10 +81,24 @@ jobs:
       - name: Initialize submodules
         run: git submodule update --init --recursive
 
+      - name: Clean selected build directory
+        env:
+          BUILD_DIR_INPUT: ${{ inputs.build_dir }}
+        run: |
+          if [[ ! "${BUILD_DIR_INPUT}" =~ ^build/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$ ]]; then
+            echo "Invalid build_dir: ${BUILD_DIR_INPUT}" >&2
+            exit 1
+          fi
+
+          # Self-hosted runners may retain outputs from an earlier producer run.
+          # The selected directory also owns this run's ephemeral golden store.
+          rm -rf -- "${BUILD_DIR_INPUT}"
+
       - name: Build snapshot/accuracy test binary
         run: |
-          # The platform-specific build task must compile the snapshot/accuracy
-          # tiers. publish_goldens.sh regenerates goldens and verifies accuracy.
+          # The selected build task must enable the snapshot/accuracy tiers through
+          # QNN EP internal-symbol access. Golden publishing does not require
+          # coverage instrumentation or report generation.
           "${PYTHON_BIN}" qcom/build_and_test.py \
             --config "${{ inputs.build_config }}" \
             "${{ inputs.build_task }}"

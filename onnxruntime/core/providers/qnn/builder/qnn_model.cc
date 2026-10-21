@@ -20,7 +20,7 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_ep_profiler.h"
-#include "core/providers/qnn/qnn_ep_utils.h"
+#include "core/providers/qnn/builder/qdq_node_group_selector.h"
 #include "core/providers/qnn/shared_context.h"
 #ifdef _WIN32
 #include "core/providers/qnn/qnn_external_resource_importer.h"

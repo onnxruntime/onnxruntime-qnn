@@ -50,6 +50,46 @@ GetTestModelFn BuildRank5ToRank4FloatTestCase(const std::vector<int64_t>& input_
   };
 }
 
+// Builds QDQ Reshape(rank-5) -> Transpose -> Reshape with a standalone U8 -> U16 requantization after the Transpose.
+GetTestModelFn BuildRank5ToRank4RequantTestCase() {
+  return [](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("rank5_to_rank4_fusion_requant_graph");
+
+    constexpr float kScaleU8 = 1.0f / 128.0f;
+    constexpr uint8_t kZeroPointU8 = 128;
+    constexpr float kScaleU16 = 1.0f / 32768.0f;
+    constexpr uint16_t kZeroPointU16 = 32768;
+
+    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 6, 5, 16}, false, -1.0f, 1.0f));
+
+    builder.MakeScalarInitializer<float>("add_const1", 0.0f);
+    builder.AddNode("add1", "Add", {"input", "add_const1"}, {"add1_out"}, kOnnxDomain);
+    const std::string reshape1_in = AddQDQNodePair<uint8_t>(builder, "qdq_reshape1_in", "add1_out",
+                                                            kScaleU8, kZeroPointU8);
+
+    builder.Make1DInitializer<int64_t>("reshape1_shape", {1, 6, 5, 4, 4});
+    builder.AddNode("reshape1", "Reshape", {reshape1_in, "reshape1_shape"}, {"reshape1_out"}, kOnnxDomain);
+    const std::string transpose_in = AddQDQNodePair<uint8_t>(builder, "qdq_reshape1_out", "reshape1_out",
+                                                             kScaleU8, kZeroPointU8);
+
+    builder.AddNode("transpose", "Transpose", {transpose_in}, {"transpose_out"}, kOnnxDomain,
+                    {test::MakeAttribute("perm", std::vector<int64_t>{0, 3, 1, 2, 4})});
+    const std::string requant_in = AddQDQNodePair<uint8_t>(builder, "qdq_transpose_out", "transpose_out",
+                                                           kScaleU8, kZeroPointU8);
+    const std::string reshape2_in = AddQDQNodePair<uint16_t>(builder, "qdq_requant", requant_in,
+                                                             kScaleU16, kZeroPointU16, /*use_ms_domain=*/true);
+
+    builder.Make1DInitializer<int64_t>("reshape2_shape", {4, 6, 5, 2, 2});
+    builder.AddNode("reshape2", "Reshape", {reshape2_in, "reshape2_shape"}, {"reshape2_out"}, kOnnxDomain);
+    const std::string post_add_in = AddQDQNodePair<uint16_t>(builder, "qdq_reshape2_out", "reshape2_out",
+                                                             kScaleU16, kZeroPointU16, /*use_ms_domain=*/true);
+
+    builder.MakeScalarInitializer<float>("add_const2", 0.0f);
+    builder.AddNode("add2", "Add", {post_add_in, "add_const2"}, {"output"}, kOnnxDomain);
+    builder.MakeOutput("output");
+  };
+}
+
 ProviderOptions GetProviderOptions() {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -228,6 +268,26 @@ TEST_F(QnnHTPBackendTests, Rank5ToRank4Fusion_Float_Rank4Intermediate_NoFusion) 
   // Rank5ToRank4Fusion did not fire; the rank-4 Transpose remains.
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 1);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 2);
+}
+
+// Negative: a standalone U8 -> U16 requantization between the Transpose and the second Reshape blocks the fusion.
+TEST_F(QnnHTPBackendTests, Rank5ToRank4FusionQdqRequantBoundaryNoFusion) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "Rank5ToRank4FusionQdqRequantBoundaryNoFusion";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildRank5ToRank4RequantTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertTensorShapeInQnnGraph(json_qnn_graph_dir, "qdq_transpose_out_q_out", {1, 4, 6, 5, 4});
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

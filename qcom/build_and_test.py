@@ -626,6 +626,25 @@ class TaskLibrary:
                 )
             )
 
+        @public_task("Build ONNX Runtime for x86_64 with QNN EP internal unit-test symbols")
+        @depends(["create_venv"])
+        def build_ort_linux_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Building ONNX Runtime for Linux on x86_64 with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "build",
+                    qnn_internal_ut_symbols=True,
+                    build_dir_suffix="internal-symbols",
+                )
+            )
+
     @task
     @depends(["docker_build_ubuntu_22_04_x86_64"])
     def build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
@@ -649,10 +668,9 @@ class TaskLibrary:
         @public_task("Coverage-instrumented build only, no report (Linux x86_64, RelWithDebInfo)")
         @depends(["create_venv"])
         def coverage_build_linux_x86_64(self, plan: Plan) -> str:
-            # The coverage binary is required for consumers that run the snapshot/
-            # accuracy tiers directly (e.g. publish_goldens.sh regenerates goldens
-            # and verifies accuracy in one pass). They only need the instrumented
-            # binary, not the HTML report, so this omits GenerateCoverageTask.
+            # Coverage reports require instrumentation and the internal-symbol test
+            # tier. Golden producers use build_ort_linux_x86_64_internal_symbols
+            # instead, avoiding instrumentation when no report is needed.
             return plan.add_step(
                 BuildEpLinuxTask(
                     "Building ONNX Runtime for Linux (RelWithDebInfo + coverage)",
@@ -665,6 +683,7 @@ class TaskLibrary:
                     self.__qairt_sdk_root,
                     "build",
                     extra_args=["--enable-coverage"],
+                    qnn_internal_ut_symbols=True,
                 )
             )
 
@@ -687,6 +706,7 @@ class TaskLibrary:
                             self.__qairt_sdk_root,
                             "build",
                             extra_args=["--enable-coverage"],
+                            qnn_internal_ut_symbols=True,
                         ),
                         GenerateCoverageTask(
                             "Generating HTML coverage report",

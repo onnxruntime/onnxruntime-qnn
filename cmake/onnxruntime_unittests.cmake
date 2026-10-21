@@ -407,7 +407,7 @@ block()
     # (i.e., the cmake conditions above hold), not whether any production source is
     # under #if. When the macro is off, direct-access tier test bodies
     # (component/, snapshot/, session_snapshot/) compile to empty translation units, so
-    # non-coverage builds do not see undefined references.
+    # builds without internal-symbol access do not see undefined references.
     # Coverage builds and explicit internal-symbol builds enable this gate.
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
   endif()

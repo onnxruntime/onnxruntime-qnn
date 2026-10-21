@@ -121,7 +121,7 @@ if [ -z "${binary}" ]; then
 fi
 
 if [ -z "${binary}" ]; then
-    die "onnxruntime_provider_test not found under ${build_dir}."
+    die "onnxruntime_provider_test not found under ${build_dir}. Build a QNN EP internal-symbol test binary first."
 fi
 
 bin_dir="$(dirname "${binary}")"
@@ -146,7 +146,7 @@ to_provider_test_path() {
 # Verify that the selected binary contains the snapshot test tier.
 snapshot_probe=$(run_provider_test --gtest_list_tests --gtest_filter="QnnSnapshot_*" 2>/dev/null || true)
 if [ -z "${snapshot_probe}" ]; then
-    die "No QnnSnapshot_* tests found in binary. Ensure the selected build task enables QNN internal unit-test symbols."
+    die "No QnnSnapshot_* tests found in binary. This requires a QNN EP internal-symbol test build."
 fi
 
 extract_snapshot_groups() {

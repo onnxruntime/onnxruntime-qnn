@@ -1075,6 +1075,9 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
 // Callback required for allocating file mapping resources
 static Qnn_ErrorHandle_t MapDmaDataCallback(Qnn_ContextBinaryDataRequest_t request,
                                             Qnn_ContextBinaryDmaDataResponse_t* response, void* notify_param) {
+  if (response == nullptr) {
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
   if (notify_param == nullptr) {
     ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: notify_param is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
@@ -1095,6 +1098,10 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
                                                 Qnn_ContextBinaryDmaDataResponse_t* response,
                                                 void* const mapped_base_ptr,
                                                 const size_t file_size) {
+  if (response == nullptr) {
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+
   if (!file_mapped_weights_enabled_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
                     "Attempting to map DMA data but file mapping has been disabled, possibly due to an error in a previous request.");
@@ -1128,14 +1135,21 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
+  std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
+  if (!rpcmem_library_ || !rpcmem_library_->Api().register_buf || !rpcmem_library_->Api().to_fd) {
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
+  }
+
   void* unaligned_data_ptr = static_cast<char*>(mapped_base_ptr) + request.offset;
   rpcmem_library_->Api().register_buf(unaligned_data_ptr, size, NULL,
                                       rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
 
+  // register_buf does not return a status. Treat the buffer as registered and add it to
+  // the registration list only after rpcmem_to_fd verifies the registration succeeded.
   auto fd = rpcmem_library_->Api().to_fd(unaligned_data_ptr);
   if (fd == -1) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to register DMA data mapping to RPCMEM");
-    return QNN_COMMON_ERROR_SYSTEM;
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
 
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, ("Created DMA data mapping with address: " + utils::PtrToString(unaligned_data_ptr)).c_str());
@@ -1185,6 +1199,18 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
+  std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
+  const auto mapping = std::find(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
+                                 std::make_pair(data_mem.dmaBuffer.data, static_cast<uint64_t>(data_mem.memSize)));
+  if (mapping == mapped_fastrpc_buffers_.end()) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR,
+                "DMA data release request does not match a registered mapping");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+  if (!rpcmem_library_ || !rpcmem_library_->Api().register_buf || !rpcmem_library_->Api().to_fd) {
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
+  }
+
   // Deregister file mapped data from NPU regardless of file_mapped_weights_enabled_
   // as there may be file mapped data registered to the NPU prior to any mapping error
   void* unaligned_data_ptr = data_mem.dmaBuffer.data;
@@ -1197,11 +1223,9 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
 
-  mapped_fastrpc_buffers_.erase(
-      std::remove_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(), [unaligned_data_ptr](const auto& p) {
-        return p.first == unaligned_data_ptr;
-      }),
-      mapped_fastrpc_buffers_.end());
+  // Erase only this registration. QNN may request the same range more than once and
+  // each successful registration has a corresponding release callback.
+  mapped_fastrpc_buffers_.erase(mapping);
   return QNN_SUCCESS;
 }
 #endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -3275,6 +3299,12 @@ Ort::Status QnnBackendManager::AddContextToDlc() {
 }
 
 void QnnBackendManager::DeallocateMappedDmaBuffers() {
+  std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
+  if (mapped_fastrpc_buffers_.empty() || !rpcmem_library_ ||
+      !rpcmem_library_->Api().register_buf || !rpcmem_library_->Api().to_fd) {
+    return;
+  }
+
   std::vector<std::pair<void*, uint64_t>> failed_deregisters;
   for (const auto& mem_info : mapped_fastrpc_buffers_) {
     auto ptr = mem_info.first;
