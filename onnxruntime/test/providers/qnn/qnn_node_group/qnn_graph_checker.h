@@ -6,9 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <cstdint>
 #include <string>
-#include <vector>
 
 namespace onnxruntime {
 namespace test {
@@ -28,14 +26,6 @@ void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
 // the compiled QNN graph JSON (root["graph"]["nodes"]).
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
                              const std::string& node_name);
-
-// Asserts that the tensor `tensor_name` in the compiled QNN graph JSON
-// (root["graph"]["tensors"][tensor_name]["dims"]) has shape == `expected_dims`.
-// Use to verify post-fusion ranks/shapes — e.g. that a Transpose's input/output
-// tensors are rank-4 after a rank-5-to-rank-4 fusion fired.
-void AssertTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
-                                 const std::string& tensor_name,
-                                 const std::vector<uint32_t>& expected_dims);
 
 }  // namespace test
 }  // namespace onnxruntime
