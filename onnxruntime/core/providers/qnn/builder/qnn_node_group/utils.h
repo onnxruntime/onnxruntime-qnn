@@ -160,6 +160,16 @@ inline void ComputeReshapePerm(const std::vector<int64_t>& input_shape,
 }
 
 /// <summary>
+/// Returns true if a shape provably describes exactly one element: rank 0, or every
+/// dimension is 1 (e.g. [1] or [1, 1]). Such a tensor acts as a scalar under ONNX
+/// (numpy-style) broadcasting. Symbolic (negative) dimensions are not provably
+/// single-element.
+/// </summary>
+inline bool IsSingleElementShape(const std::vector<int64_t>& shape) {
+  return std::all_of(shape.begin(), shape.end(), [](int64_t dim) { return dim == 1; });
+}
+
+/// <summary>
 /// Get the static shape of a tensor from its OrtValueInfo. Returns std::nullopt if the
 /// OrtValueInfo is null or if any underlying OrtApi call fails.
 /// </summary>
