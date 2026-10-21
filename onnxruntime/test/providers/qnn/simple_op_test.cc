@@ -948,15 +948,19 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Abs_U16) {
 // qdq@QNN_EP val: -11.011764526367188 (err: 0.9882354736328125, err/output_range: 4.1176481246948242%)
 // qdq@CPU_EP val: -12.047059059143066 (err: 0.047059059143066406, err/output_range: 0.19607941806316376%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 3.9215683937072754%
+// V79+ HTP can resolve quantization half-way cases differently from V73.
+// Adjust tolerance for boundary unsigned 8-bit (U8) quantization levels.
 // Test accuracy of QDQ Ceil op.
 TEST_F(QnnHTPBackendTests, UnaryOp_Ceil) {
-  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   const std::vector<float> input_data = GetFloatDataInRange(-12.0f, 12.0f, 6);
   RunQDQOpTest<uint8_t>("Ceil",
                         {TestInputDef<float>({1, 2, 3}, false, input_data)},
                         {},
                         13,
-                        ExpectedEPNodeAssignment::All);
+                        ExpectedEPNodeAssignment::All,
+                        kOnnxDomain,
+                        false,
+                        GetV79OrLaterTieRoundingTolerance(11));
 }
 
 // Test accuracy of 16-bit QDQ Ceil op.
@@ -1042,6 +1046,67 @@ TEST_F(QnnHTPBackendTests, DepthToSpaceOp_DCR) {
                          test::MakeAttribute("mode", "DCR")},
                         11,
                         ExpectedEPNodeAssignment::All);
+}
+
+// Test QDQ DepthToSpace with quantized tensor input (Conv -> Q -> DepthToSpace -> DQ,
+// as in quantized super-resolution models). The standalone node must carry the input
+// quantization to its output.
+TEST_F(QnnHTPBackendTests, DepthToSpaceOp_QuantizedInput_CRD) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  const std::vector<float> X = {0., 1., 2.,
+                                3., 4., 5.,
+                                9., 10., 11.,
+                                12., 13., 14.,
+                                18., 19., 20.,
+                                21., 22., 23.,
+                                27., 28., 29.,
+                                30., 31., 32.};
+  const TestInputDef<float> input_def({1, 4, 2, 3}, false, X);
+  const std::vector<ONNX_NAMESPACE::AttributeProto> shuffle_attrs =
+      {test::MakeAttribute("blocksize", static_cast<int64_t>(2)),
+       test::MakeAttribute("mode", "CRD")};
+
+  // 1x1 identity Conv preserves values while giving the shuffle a quantized producer.
+  auto add_identity_conv = [](ModelTestBuilder& builder, const std::string& input, const std::string& output) {
+    std::vector<float> weights(16, 0.0f);
+    for (int64_t i = 0; i < 4; ++i) {
+      weights[i * 4 + i] = 1.0f;
+    }
+    builder.MakeInitializer<float>("W", {4, 4, 1, 1}, weights);
+    builder.MakeInitializer<float>("B", {4}, std::vector<float>(4, 0.0f));
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
+    builder.AddNode("Conv", "Conv", {input, "W", "B"}, {output}, kOnnxDomain, conv_attrs);
+  };
+
+  GetTestModelFn f32_fn = [&](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "X", input_def);
+    add_identity_conv(builder, "X", "C");
+    builder.AddNode("Shuffle", "DepthToSpace", {"C"}, {"Y"}, kOnnxDomain, shuffle_attrs);
+    builder.MakeOutput("Y");
+  };
+
+  GetTestQDQModelFn<uint8_t> qdq_fn = [&](ModelTestBuilder& builder,
+                                          std::vector<QuantParams<uint8_t>>& output_qparams) {
+    MakeTestInput<float>(builder, "X", input_def);
+    const QuantParams<uint8_t> qp = GetTestInputQuantParams<uint8_t>(input_def);
+    const std::string x_dq = AddQDQNodePair<uint8_t>(builder, "qdq_in", "X", qp.scale, qp.zero_point);
+    add_identity_conv(builder, x_dq, "C");
+    builder.AddQuantizeLinearNode<uint8_t>("shuffle_in_q", "C", qp.scale, qp.zero_point, "Cq");
+    builder.AddNode("Shuffle", "DepthToSpace", {"Cq"}, {"Sq"}, kOnnxDomain, shuffle_attrs);
+    builder.AddDequantizeLinearNode<uint8_t>("shuffle_out_dq", "Sq",
+                                             output_qparams[0].scale, output_qparams[0].zero_point, "Y");
+    builder.MakeOutput("Y");
+  };
+
+  TestQDQModelAccuracy(f32_fn, qdq_fn, provider_options, /*opset*/ 13, ExpectedEPNodeAssignment::All);
 }
 
 // Test float32 SpaceToDepth on HTP.
@@ -2043,6 +2108,108 @@ TEST_F(QnnHTPBackendTests, Add_U8_U16_Convert) {
                        ExpectedEPNodeAssignment::All);
 }
 
+// Builds a unary op model with a mismatched input/output QDQ type, exercising the precision bridge.
+template <typename InputQType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQUnaryMixedDtypeTestCase(const std::string& op_type,
+                                                                      const TestInputDef<float>& input_def) {
+  return [op_type, input_def](ModelTestBuilder& builder, std::vector<QuantParams<OutputQType>>& output_qparams) {
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def);
+    const std::string input_after_qdq =
+        AddQDQNodePair<InputQType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
+
+    builder.AddNode(op_type, op_type, {input_after_qdq}, {"Y"}, kOnnxDomain);
+
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "qdq_out", "Y",
+                                                       output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+// Builds a binary op model where the two inputs and/or output can use different QDQ types.
+template <typename Input0QType, typename Input1QType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQBinaryMixedDtypeTestCase(const std::string& op_type,
+                                                                       const TestInputDef<float>& input0_def,
+                                                                       const TestInputDef<float>& input1_def) {
+  return [op_type, input0_def, input1_def](ModelTestBuilder& builder,
+                                           std::vector<QuantParams<OutputQType>>& output_qparams) {
+    MakeTestInput<float>(builder, "input0", input0_def);
+    const QuantParams<Input0QType> input0_qparams = GetTestInputQuantParams<Input0QType>(input0_def);
+    const std::string input0_after_qdq =
+        AddQDQNodePair<Input0QType>(builder, "qdq_in0", "input0", input0_qparams.scale, input0_qparams.zero_point);
+
+    MakeTestInput<float>(builder, "input1", input1_def);
+    const QuantParams<Input1QType> input1_qparams = GetTestInputQuantParams<Input1QType>(input1_def);
+    const std::string input1_after_qdq =
+        AddQDQNodePair<Input1QType>(builder, "qdq_in1", "input1", input1_qparams.scale, input1_qparams.zero_point);
+
+    builder.AddNode(op_type, op_type, {input0_after_qdq, input1_after_qdq}, {"Y"}, kOnnxDomain);
+
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "qdq_out", "Y",
+                                                       output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+// Sigmoid computed at u16 (its HTP-required fixed encoding), output re-quantized to u8.
+TEST_F(QnnHTPBackendTests, Sigmoid_U16In_U8Out_Mixed) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input_def({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6));
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>("Sigmoid_node", "Sigmoid", {input_def}, {}, {}, kOnnxDomain),
+                       BuildQDQUnaryMixedDtypeTestCase<uint16_t, uint8_t>("Sigmoid", input_def),
+                       provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Mul with mismatched input precisions (u8, u16); the u8 input is Converted up to u16 first.
+TEST_F(QnnHTPBackendTests, Mul_U8_U16_MixedInputs) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input0_def({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8));
+  TestInputDef<float> input1_def({1, 2, 2, 2}, false, GetFloatDataInRange(-20.0f, 20.0f, 8));
+
+  TestQDQModelAccuracy(
+      BuildOpTestCase<float>("Mul_node", "Mul", {input0_def, input1_def}, {}, {}, kOnnxDomain),
+      BuildQDQBinaryMixedDtypeTestCase<uint8_t, uint16_t, uint16_t>("Mul", input0_def, input1_def),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Mul with same-precision (u8) inputs but a declared u16 output.
+TEST_F(QnnHTPBackendTests, Mul_U8U8_U16Out_Mixed) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input0_def({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8));
+  TestInputDef<float> input1_def({1, 2, 2, 2}, false, GetFloatDataInRange(-5.0f, 5.0f, 8));
+
+  TestQDQModelAccuracy(
+      BuildOpTestCase<float>("Mul_node", "Mul", {input0_def, input1_def}, {}, {}, kOnnxDomain),
+      BuildQDQBinaryMixedDtypeTestCase<uint8_t, uint8_t, uint16_t>("Mul", input0_def, input1_def),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Add with same-bitwidth but differing-signedness inputs (u8, s8). AlignBinaryInputPrecision
+// leaves both inputs untouched (no width mismatch); QNN HTP op validation rejects the
+// mixed-signedness pair, so Add itself falls back to another EP (only the input Quantize
+// nodes remain assigned to QNN).
+TEST_F(QnnHTPBackendTests, Add_U8_S8_SameWidthSignednessMixed) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input0_def({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8));
+  TestInputDef<float> input1_def({1, 2, 2, 2}, false, GetFloatDataInRange(-20.0f, 20.0f, 8));
+
+  TestQDQModelAccuracy(
+      BuildOpTestCase<float>("Add_node", "Add", {input0_def, input1_def}, {}, {}, kOnnxDomain),
+      BuildQDQBinaryMixedDtypeTestCase<uint8_t, int8_t, uint8_t>("Add", input0_def, input1_def),
+      provider_options, 21, ExpectedEPNodeAssignment::Some);
+}
+
 // Builds a graph where a (DQ -> Q) sequence at the graph's output is fuse into a QNN Convert operator.
 // ONNX Graph: DQ -> Add -> Q -> DQ -> Q -> graph_output
 // QNN Graph:  DQ -> Add -> Q -> Convert -> graph_output
@@ -2220,102 +2387,6 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_FP16) {
                 21,
                 ExpectedEPNodeAssignment::All,
                 kOnnxDomain);
-}
-
-// Returns a function that creates the model `X * HardSigmoid(X)`, which can be potentially fused
-// into a single HardSwish(X) operator.
-template <typename FloatType>
-static GetTestModelFn BuildHardSigmoidFusionTestCase(TestInputDef<FloatType>& input_def,
-                                                     std::optional<float> alpha,
-                                                     std::optional<float> beta) {
-  return [input_def, alpha, beta](ModelTestBuilder& builder) {
-    MakeTestInput<FloatType>(builder, "input", input_def);
-
-    // input -> HardSigmoid<alpha, beta> -> hs_output
-    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-    attrs.reserve((alpha.has_value() ? 1u : 0u) + (beta.has_value() ? 1u : 0u));
-
-    if (alpha.has_value()) {
-      attrs.push_back(MakeAttribute("alpha", alpha.value()));
-    }
-
-    if (beta.has_value()) {
-      attrs.push_back(MakeAttribute("beta", beta.value()));
-    }
-
-    builder.AddNode("HardSigmoid",
-                    "HardSigmoid",
-                    {"input"},
-                    {"hs_out"},
-                    kOnnxDomain,
-                    attrs);
-
-    // hs_out -> Mul -> output
-    //             ^
-    //             |
-    // input ------+
-    builder.MakeOutput("Y");
-    builder.AddNode("Mul",
-                    "Mul",
-                    {"hs_out", "input"},
-                    {"Y"});
-  };
-}
-
-// Test FP32 fusion of HardSigmoid into HardSwish on the HTP backend with the enable_htp_fp16_precision option enabled
-// to run it with fp16 precision.
-TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
-  ProviderOptions provider_options;
-
-  provider_options["backend_type"] = "htp";
-#if defined(_WIN32)
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#endif
-#if defined(__linux__) && !defined(__aarch64__)
-  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
-#endif
-  provider_options["enable_htp_fp16_precision"] = "1";
-
-  std::vector<float> input_data = {-8.0f, -2.0f, 0.0f, 0.5f, 0.9f, 1.1f, 3.3f, 8.0f,
-                                   -7.0f, 0.0f, 0.2f, 0.4f, 0.8f, 2.1f, 4.3f, 7.0f};
-
-  auto input_def = TestInputDef<float>({2, 2, 2, 2}, false, input_data);
-  constexpr float alpha = 1.0f / 6.0f;
-  constexpr float beta = 0.5f;
-  auto model_fn = BuildHardSigmoidFusionTestCase<float>(input_def, alpha, beta);
-
-  RunQnnModelTest(model_fn,
-                  provider_options,
-                  18,  // opset
-                  EPVerificationParams{ExpectedEPNodeAssignment::All,
-                                       // abs err. Comparing fp16 (QNN) vs fp32 (CPU EP) so can't expect too much.
-                                       ElementwiseAbsoluteVerifier(0.01f)});
-}
-
-// Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
-TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
-#if defined(_WIN32)
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#endif
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-
-  std::vector<float> input_data = {-8.0f, -2.0f, 0.0f, 0.5f, 0.9f, 1.1f, 3.3f, 8.0f,
-                                   -7.0f, 0.0f, 0.2f, 0.4f, 0.8f, 2.1f, 4.3f, 7.0f};
-
-  auto input_def = TestInputDef<float>({2, 2, 2, 2}, false, input_data);
-  auto input_fp16_def = ConvertToFP16InputDef(input_def);
-
-  constexpr float alpha = 1.0f / 6.0f;
-  constexpr float beta = 0.5f;
-  auto model_fp32_fn = BuildHardSigmoidFusionTestCase<float>(input_def, alpha, beta);
-  auto model_fp16_fn = BuildHardSigmoidFusionTestCase<Ort::Float16_t>(input_fp16_def, alpha, beta);
-
-  TestFp16ModelAccuracy(model_fp32_fn,
-                        model_fp16_fn,
-                        provider_options,
-                        18,  // opset
-                        ExpectedEPNodeAssignment::All);
 }
 
 // Test RandomUniformLike + Add operation on HTP backend

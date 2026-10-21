@@ -48,15 +48,48 @@ function run_model_test() {
 
     log_info "-=-=-=- Running onnx/models ${suite} tests with the ABI-stable EP plugin -=-=-=-"
 
+    local runner_test_path="${test_path}"
+    local filtered_test_root=""
+    local filtered_test_path=""
+    if [ "${suite}" = "node" ]; then
+        # The upstream plugin runner takes a whole suite directory and has no
+        # per-case skip flag. Filter QNN-owned exclusions into a temporary copy.
+        # The filter requires a destination that does not yet exist. Keep the
+        # temporary parent separate from the destination passed to the filter.
+        filtered_test_root=$(mktemp -d -t qnn-model-tests.XXXXXX)
+        filtered_test_path="${filtered_test_root}/${suite}"
+        # Remove the temporary copy on either a normal return or an early
+        # script exit (including a filter failure or interruption).
+        trap 'if [ -n "${filtered_test_root}" ]; then rm -rf -- "${filtered_test_root}" || true; fi; trap - RETURN EXIT' RETURN EXIT
+        set +e
+        "${python_exe}" "${REPO_ROOT}/qcom/scripts/all/model_test_filter.py" \
+            --source "${test_path}" \
+            --destination "${filtered_test_path}" \
+            --suite "${suite}" \
+            --backend "${backend}" | tee "${model_log}"
+        filter_return_code=${PIPESTATUS[0]}
+        set -e
+        if [ ${filter_return_code} -ne 0 ]; then
+            errors=$(($errors+1))
+            return
+        fi
+        runner_test_path="${filtered_test_path}"
+    fi
+
     set +e
     "${build_dir}/onnxruntime_plugin_ep_onnx_test" \
         -j 1 \
         --plugin_ep_libs "qnn|libonnxruntime_providers_qnn.so" \
         --plugin_eps qnn \
         -i "backend_type|${backend}" \
-        "${test_path}" 2>&1 | tee "${model_log}"
+        "${runner_test_path}" 2>&1 | tee -a "${model_log}"
     test_return_code=$?
     set -e
+    if [ -n "${filtered_test_root}" ]; then
+        rm -rf -- "${filtered_test_root}" || log_warn "Failed to remove filtered model-test suite: ${filtered_test_root}"
+        filtered_test_root=""
+        trap - RETURN EXIT
+    fi
 
     if [ -f "${model_log}" ]; then
         "${python_exe}" "${REPO_ROOT}/qcom/scripts/all/model_test_log_to_junit_xml.py" \

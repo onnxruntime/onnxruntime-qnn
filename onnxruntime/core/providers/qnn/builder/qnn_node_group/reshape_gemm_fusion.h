@@ -17,10 +17,10 @@ namespace qnn {
 class QnnModelWrapper;
 
 /// <summary>
-/// Unified fusion class for Reshape-Gemm patterns:
-/// - 2-node: Reshape -> Gemm
-/// - 3-node: Reshape -> Gemm -> Reshape
-/// - 4-node: Reshape -> Gemm -> Reshape -> Reshape
+/// Unified fusion class for Reshape/Flatten-Gemm patterns:
+/// - 2-node: (Reshape | Flatten) -> Gemm
+/// - 3-node: (Reshape | Flatten) -> Gemm -> Reshape
+/// - 4-node: (Reshape | Flatten) -> Gemm -> Reshape -> Reshape
 ///
 /// All patterns fuse to QNN FullyConnected (+ optional output Reshape).
 /// </summary>

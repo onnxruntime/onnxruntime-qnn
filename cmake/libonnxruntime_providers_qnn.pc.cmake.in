@@ -8,6 +8,6 @@ includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@/@CMAKE_PROJECT_NAME@
 Name: @CMAKE_PROJECT_NAME@
 Description: ONNX runtime QNN execution provider
 URL: https://github.com/onnxruntime/onnxruntime-qnn
-Version: @ORT_VERSION@
+Version: @ORT_QNN_EP_VERSION@
 Libs: -L${libdir} -l@CMAKE_PROJECT_NAME@
 Cflags: -I${includedir}

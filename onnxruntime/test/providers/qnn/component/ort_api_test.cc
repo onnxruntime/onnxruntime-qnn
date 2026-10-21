@@ -18,7 +18,7 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 // Platform coverage:
-//   Linux x86-64 (coverage build): all sections.
+//   Linux x86-64 (internal-symbol test build): all sections.
 //   Windows: GetSessionConfigEntryOrDefault, OrtNodeAttrHelper (not-found),
 //            and OrtNodeUnit stub series only.
 
@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
+#include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -294,6 +295,7 @@ OrtNode* MakeAttrTestNode(const OrtModelEditorApi* ed,
 TEST(QnnUnit_OrtApiTest, OrtNodeAttrHelper_Get_KeyNotFound_ReturnsDefault) {
   const OrtModelEditorApi* ed = GetEditorApi();
   if (!ed) GTEST_SKIP() << "OrtModelEditorApi not available";
+  OrtGlobalApiOverride global_guard{&Ort::GetApi()};
 
   OrtNode* node = MakeAttrTestNode(ed, nullptr, 0);
   ASSERT_NE(node, nullptr);

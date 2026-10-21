@@ -64,10 +64,12 @@ std::unique_ptr<IQnnNodeGroup> HardSigmoidMulFusion::TryFusion(
   }
 
   // Input to HardSigmoid must also be the other input to the Mul.
+  // The Mul has two inputs: the HardSigmoid output and the original (root) input.
+  // Accept either ordering, i.e. Mul(root, hs_out) or Mul(hs_out, root).
   auto& hs_input_name = hardsigmoid_node_unit.Inputs()[0].name;
 
   const bool same_root_input = mul_node_unit->Inputs()[0].name == hs_input_name ||
-                               mul_node_unit->Inputs()[0].name == hs_input_name;
+                               mul_node_unit->Inputs()[1].name == hs_input_name;
 
   if (!same_root_input) {
     return nullptr;
@@ -118,8 +120,11 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_def, input_tensor));
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
 
-  std::vector<std::string> param_tensor_names;
-  AddHardSwishNeuronParams(qnn_model_wrapper, hardsigmoid_node_unit.Index(), node_name, param_tensor_names);
+  Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+  neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+  neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_HARD_SWISH;
+  QnnParamWrapper operation_param(hardsigmoid_node_unit.Index(), node_name,
+                                  QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
 
   if (validate) {
     RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
@@ -127,8 +132,11 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                                       QNN_OP_ELEMENT_WISE_NEURON,
                                                       {input_tensor.GetQnnTensor()},
                                                       {output_tensor.GetQnnTensor()},
-                                                      {}));
+                                                      {operation_param.GetQnnParam()}));
   } else {
+    const std::string operation_param_name = operation_param.GetParamTensorName();
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(operation_param)),
+                  "Failed to add HardSwish operation param.");
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add input");
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
@@ -136,7 +144,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                                   QNN_OP_ELEMENT_WISE_NEURON,
                                                   {input_def.name},
                                                   {output_def.name},
-                                                  std::move(param_tensor_names),
+                                                  {operation_param_name},
                                                   validate),
                   "Failed to add fused HardSwish node.");
   }

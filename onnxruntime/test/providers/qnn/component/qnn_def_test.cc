@@ -498,6 +498,40 @@ TEST(QnnUnit_DefTest, GetQnnTensorMemType_InvalidVersionThrows) {
 }
 
 // =============================================================================
+// QnnTensorWrapper::Init cached-context metadata validation
+// =============================================================================
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_Init_NullName_ReturnsError) {
+  Qnn_Tensor_t tensor = QNN_TENSOR_INIT;
+  qnn::SetQnnTensorType(tensor, QNN_TENSOR_TYPE_APP_WRITE);
+
+  qnn::QnnTensorWrapper wrapper;
+  EXPECT_FALSE(wrapper.Init(tensor).IsOK());
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_Init_RankAboveLimit_ReturnsError) {
+  Qnn_Tensor_t tensor = QNN_TENSOR_INIT;
+  qnn::SetQnnTensorType(tensor, QNN_TENSOR_TYPE_APP_WRITE);
+  qnn::SetQnnTensorName(tensor, "input");
+  std::vector<uint32_t> dims(33, 1);
+  qnn::SetQnnTensorDim(tensor, dims);
+
+  qnn::QnnTensorWrapper wrapper;
+  EXPECT_FALSE(wrapper.Init(tensor).IsOK());
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_Init_NullDimensions_ReturnsError) {
+  Qnn_Tensor_t tensor = QNN_TENSOR_INIT;
+  qnn::SetQnnTensorType(tensor, QNN_TENSOR_TYPE_APP_WRITE);
+  qnn::SetQnnTensorName(tensor, "input");
+  tensor.v1.rank = 1;
+  tensor.v1.dimensions = nullptr;
+
+  qnn::QnnTensorWrapper wrapper;
+  EXPECT_FALSE(wrapper.Init(tensor).IsOK());
+}
+
+// =============================================================================
 // CalcQnnTensorNumElems
 // =============================================================================
 

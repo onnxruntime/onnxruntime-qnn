@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 //
-// Function-level unit tests for qnn_ep_utils.cc.
+// Function-level unit tests for qdq_node_group_selector.cc.
 //
 // Tests the OrtNodeGroupSelector::Check() family using FakeGraph / FakeNode /
 // FakeValueInfo from qnn_fake_ort_graph.h — no real QNN backend required.
@@ -12,7 +12,7 @@
 
 #include <vector>
 
-#include "core/providers/qnn/qnn_ep_utils.h"
+#include "core/providers/qnn/builder/qdq_node_group_selector.h"
 #include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
@@ -20,7 +20,7 @@ using namespace onnxruntime::QDQ;
 using namespace onnxruntime::test;
 
 // =============================================================================
-// EpUtilsTestContext
+// QdqNodeGroupSelectorTestContext
 //
 // Installs FakeGraph stubs plus the two extras that CheckQDQNodes uses:
 //   - ValueInfo_IsGraphOutput  → always false (not a graph output)
@@ -30,10 +30,10 @@ using namespace onnxruntime::test;
 // false without them if the function pointer is null and crashes, so they
 // must always be installed.
 // =============================================================================
-struct EpUtilsTestContext {
+struct QdqNodeGroupSelectorTestContext {
   OrtApi api{};
 
-  EpUtilsTestContext() {
+  QdqNodeGroupSelectorTestContext() {
     InstallFakeGraphApiStubs(api);
     api.ValueInfo_IsGraphOutput = [](const OrtValueInfo*, bool* out) noexcept -> OrtStatus* {
       *out = false;
@@ -58,8 +58,8 @@ struct EpUtilsTestContext {
 //   3. Read dq_nodes[0]->inputs[0] element type; reject if absent
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, DropDQ_RejectsRedundantClipNode) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropDQ_RejectsRedundantClipNode) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode clip{"clip", "Clip", "", 13, {}, {}};
@@ -68,14 +68,14 @@ TEST(QnnUnit_EpUtilsTest, DropDQ_RejectsRedundantClipNode) {
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, clip.AsNode(), {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, DropDQ_RejectsEmptyDqNodes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropDQ_RejectsEmptyDqNodes) {
+  QdqNodeGroupSelectorTestContext ctx;
   OrtDropDQNodeGroupSelector sel;
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, nullptr, {}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, DropDQ_RejectsTwoDqNodes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropDQ_RejectsTwoDqNodes) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -84,8 +84,8 @@ TEST(QnnUnit_EpUtilsTest, DropDQ_RejectsTwoDqNodes) {
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, nullptr, {dq1.AsNode(), dq2.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, DropDQ_AcceptsUint8) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropDQ_AcceptsUint8) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
@@ -93,8 +93,8 @@ TEST(QnnUnit_EpUtilsTest, DropDQ_AcceptsUint8) {
   EXPECT_TRUE(sel.Check(nullptr, ctx.api, nullptr, nullptr, {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, DropDQ_AcceptsInt8) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropDQ_AcceptsInt8) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
@@ -102,8 +102,8 @@ TEST(QnnUnit_EpUtilsTest, DropDQ_AcceptsInt8) {
   EXPECT_TRUE(sel.Check(nullptr, ctx.api, nullptr, nullptr, {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, DropDQ_AcceptsInt16) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropDQ_AcceptsInt16) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
@@ -111,8 +111,8 @@ TEST(QnnUnit_EpUtilsTest, DropDQ_AcceptsInt16) {
   EXPECT_TRUE(sel.Check(nullptr, ctx.api, nullptr, nullptr, {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, DropDQ_AcceptsInt4) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropDQ_AcceptsInt4) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
@@ -134,8 +134,8 @@ TEST(QnnUnit_EpUtilsTest, DropDQ_AcceptsInt4) {
 //   - q_nodes.size() == 1 == num_outputs == total_consumers
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Unary_RejectsWrongDqCount) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Unary_RejectsWrongDqCount) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
   FakeNode main_node{"relu", "Relu", "", 13, {}, {&main_out}};
 
@@ -144,8 +144,8 @@ TEST(QnnUnit_EpUtilsTest, Unary_RejectsWrongDqCount) {
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr, {}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Unary_AcceptsUint8) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Unary_AcceptsUint8) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
@@ -160,25 +160,28 @@ TEST(QnnUnit_EpUtilsTest, Unary_AcceptsUint8) {
                         {dq.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Unary_RejectsTypeMismatch) {
-  EpUtilsTestContext ctx;
-  // DQ input = UINT8, Q output = INT8 — types differ, so the check fails
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Unary_RejectsTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
+  // DQ input = UINT8, Q output = INT8 — types differ. Softmax isn't Convert-compatible
+  // (see IsConvertCompatibleUnaryOp), so the mismatch is rejected rather than bridged.
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
-  FakeNode main_node{"relu", "Relu", "", 13, {}, {&main_out}};
+  FakeNode main_node{"softmax", "Softmax", "", 13, {}, {&main_out}};
 
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
 
+  // The dtype-mismatch branch calls Ort::ConstNode(node).GetOperatorType(), which needs the global API.
+  OrtGlobalApiOverride global_guard(&ctx.api);
   OrtUnaryNodeGroupSelector sel;
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
                          {dq.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Unary_AcceptsInt16) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Unary_AcceptsInt16) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
@@ -199,8 +202,8 @@ TEST(QnnUnit_EpUtilsTest, Unary_AcceptsInt16) {
 // Needs 2 DQ inputs. Both must have the same allowed type, plus 1 Q output.
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Binary_RejectsOnlyOneDq) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Binary_RejectsOnlyOneDq) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
@@ -215,8 +218,8 @@ TEST(QnnUnit_EpUtilsTest, Binary_RejectsOnlyOneDq) {
                          {dq.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Binary_AcceptsTwoUint8Dqs) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Binary_AcceptsTwoUint8Dqs) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
   FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
@@ -233,9 +236,36 @@ TEST(QnnUnit_EpUtilsTest, Binary_AcceptsTwoUint8Dqs) {
                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Binary_RejectsMixedTypes) {
-  EpUtilsTestContext ctx;
-  // dq1 = UINT8, dq2 = INT8 — types mismatch
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Binary_RejectsMixedTypes) {
+  QdqNodeGroupSelectorTestContext ctx;
+  // dq1 = UINT8, dq2 = INT8 — types mismatch. Equal isn't Convert-compatible (see
+  // IsConvertCompatibleBinaryOp), so the mismatch is rejected rather than bridged.
+  FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
+  FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
+  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in2}, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeNode main_node{"equal", "Equal", "", 13, {}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+  // The dtype-mismatch branch calls Ort::ConstNode(node).GetOperatorType(), which needs the global API.
+  OrtGlobalApiOverride global_guard(&ctx.api);
+  OrtBinaryNodeGroupSelector sel;
+  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+}
+
+// dq1 = UINT8, dq2 = INT8 — same bitwidth, differing signedness. Unlike Binary_RejectsMixedTypes,
+// Add IS Convert-compatible (see IsConvertCompatibleBinaryOp) and both types are convertible
+// fixed-point types, so the selector accepts the group; AlignBinaryInputPrecision (op-builder side)
+// leaves the inputs untouched since same-width signedness mismatches aren't Converted (see
+// mixed_precision_convert_utils.cc), and QNN op validation is the arbiter of whether Add accepts
+// the mismatched-signedness pair natively.
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Binary_AcceptsSameWidthSignednessMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
   FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
@@ -247,9 +277,10 @@ TEST(QnnUnit_EpUtilsTest, Binary_RejectsMixedTypes) {
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
 
+  OrtGlobalApiOverride global_guard(&ctx.api);
   OrtBinaryNodeGroupSelector sel;
-  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
-                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+  EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                        {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
 // =============================================================================
@@ -258,8 +289,8 @@ TEST(QnnUnit_EpUtilsTest, Binary_RejectsMixedTypes) {
 // 1 or 2 DQ inputs allowed; input/output types must match.
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Pad_RejectsThreeDqNodes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Pad_RejectsThreeDqNodes) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -276,8 +307,8 @@ TEST(QnnUnit_EpUtilsTest, Pad_RejectsThreeDqNodes) {
                          {dq1.AsNode(), dq2.AsNode(), dq3.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Pad_AcceptsOneDqMatchingType) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Pad_AcceptsOneDqMatchingType) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
@@ -292,8 +323,8 @@ TEST(QnnUnit_EpUtilsTest, Pad_AcceptsOneDqMatchingType) {
                         {dq.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Pad_RejectsOneDqMismatchedType) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Pad_RejectsOneDqMismatchedType) {
+  QdqNodeGroupSelectorTestContext ctx;
   // DQ input = UINT8, Q output = INT8 — mismatch
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -309,8 +340,8 @@ TEST(QnnUnit_EpUtilsTest, Pad_RejectsOneDqMismatchedType) {
                          {dq.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Pad_AcceptsTwoDqSameType) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Pad_AcceptsTwoDqSameType) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
   FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
@@ -327,8 +358,8 @@ TEST(QnnUnit_EpUtilsTest, Pad_AcceptsTwoDqSameType) {
                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Pad_RejectsTwoDqDifferentTypes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Pad_RejectsTwoDqDifferentTypes) {
+  QdqNodeGroupSelectorTestContext ctx;
   // dq1 = UINT8, dq2 = INT8 — mismatch
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
@@ -350,7 +381,7 @@ TEST(QnnUnit_EpUtilsTest, Pad_RejectsTwoDqDifferentTypes) {
 // OrtSelectors::RegisterSelector
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, RegisterSelector_IncreasesSize) {
+TEST(QnnUnit_QdqNodeGroupSelectorTest, RegisterSelector_IncreasesSize) {
   OrtSelectors selectors;
   EXPECT_EQ(selectors.SelectorsSet().size(), 0u);
   selectors.RegisterSelector({{"Relu", {1, 6, 13}}},
@@ -366,8 +397,8 @@ TEST(QnnUnit_EpUtilsTest, RegisterSelector_IncreasesSize) {
 // main_node.inputs.size() must equal dq_nodes.size().
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Variadic_Accepts2DqSameType) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_Accepts2DqSameType) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -385,8 +416,8 @@ TEST(QnnUnit_EpUtilsTest, Variadic_Accepts2DqSameType) {
                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Variadic_RejectsMixedDqTypes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_RejectsMixedDqTypes) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in1}, {}};
@@ -404,8 +435,8 @@ TEST(QnnUnit_EpUtilsTest, Variadic_RejectsMixedDqTypes) {
                          {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Variadic_AcceptsInt16) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_AcceptsInt16) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -429,8 +460,8 @@ TEST(QnnUnit_EpUtilsTest, Variadic_AcceptsInt16) {
 // main_node.outputs.size() must equal q_nodes.size() for CheckQDQNodes.
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Split_RejectsRedundantClipNode) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Split_RejectsRedundantClipNode) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode clip{"clip", "Clip", "", 13, {}, {}};
@@ -439,8 +470,8 @@ TEST(QnnUnit_EpUtilsTest, Split_RejectsRedundantClipNode) {
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, clip.AsNode(), {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Split_Accepts1DqWith2Q) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Split_Accepts1DqWith2Q) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 8}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -460,8 +491,8 @@ TEST(QnnUnit_EpUtilsTest, Split_Accepts1DqWith2Q) {
                         {dq.AsNode()}, {q1.AsNode(), q2.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Split_RejectsQTypeMismatch) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Split_RejectsQTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 8}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -480,8 +511,8 @@ TEST(QnnUnit_EpUtilsTest, Split_RejectsQTypeMismatch) {
                          {dq.AsNode()}, {q1.AsNode(), q2.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Split_AcceptsInt4) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Split_AcceptsInt4) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -524,8 +555,8 @@ struct ConvProducerGuard {
 // main_node.inputs.size() must equal dq_nodes.size() for CheckQDQNodes.
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Conv_Accepts2DqUint8) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Conv_Accepts2DqUint8) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode dq_wt{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -551,8 +582,8 @@ TEST(QnnUnit_EpUtilsTest, Conv_Accepts2DqUint8) {
                         {dq_data.AsNode(), dq_wt.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Conv_AcceptsInt8) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Conv_AcceptsInt8) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode dq_wt{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -578,8 +609,8 @@ TEST(QnnUnit_EpUtilsTest, Conv_AcceptsInt8) {
                         {dq_data.AsNode(), dq_wt.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Conv_Rejects3DqWithNonInt32Bias) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Conv_Rejects3DqWithNonInt32Bias) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeValueInfo dq_bias_in{"b", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {4}};  // wrong — must be INT32
@@ -600,8 +631,8 @@ TEST(QnnUnit_EpUtilsTest, Conv_Rejects3DqWithNonInt32Bias) {
 
 // Tests that Conv with quantized input, quantized weight, and a plain float bias
 // (no DQ node for bias) is accepted.
-TEST(QnnUnit_EpUtilsTest, Conv_AcceptsFloatBias) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Conv_AcceptsFloatBias) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode dq_wt{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -633,8 +664,8 @@ TEST(QnnUnit_EpUtilsTest, Conv_AcceptsFloatBias) {
 // Tests that Conv with a float (unquantized) activation input is rejected
 // when weight and bias are quantized. inputs[0] is not DQ-produced, so the
 // positional DQ check fails.
-TEST(QnnUnit_EpUtilsTest, Conv_RejectsFloatInputWithQuantWeight) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Conv_RejectsFloatInputWithQuantWeight) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_wt_in{"w", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeValueInfo dq_bias_in{"b", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, {}};
   FakeNode dq_wt{"dq1", "DequantizeLinear", "", 13, {&dq_wt_in}, {}};
@@ -671,8 +702,8 @@ TEST(QnnUnit_EpUtilsTest, Conv_RejectsFloatInputWithQuantWeight) {
 // 2 DQ inputs and a trailing Q required.
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, MatMul_Accepts2DqWithQ) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, MatMul_Accepts2DqWithQ) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {4, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -689,8 +720,56 @@ TEST(QnnUnit_EpUtilsTest, MatMul_Accepts2DqWithQ) {
                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, MatMul_RejectsNoQ) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, MatMul_ConvertBeforeOpGroupHonorsHtpTypeRules) {
+  using T = ONNXTensorElementDataType;
+  constexpr T u4 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4;
+  constexpr T u8 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+  constexpr T s8 = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+  constexpr T u16 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
+  constexpr T s16 = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16;
+
+  struct Case {
+    T activation;
+    T weight;
+    T output;
+    bool expected;
+  };
+  const Case cases[] = {
+      {u8, u8, u16, true},    // widening
+      {s8, s8, s16, true},    // widening to signed 16-bit with an int8 weight
+      {u8, s16, u16, true},   // 16-bit weight with an unsigned 16-bit output
+      {u8, u8, s8, true},     // same width, signedness only
+      {u8, u8, s16, false},   // signed 16-bit output needs an int8 weight
+      {u8, s16, s16, false},  // signed 16-bit output needs an int8 weight
+      {u8, u16, s8, false},   // weight wider than the output
+      {u16, u8, u8, false},   // narrowing: narrow-after-op path, which needs a Q scale the fake lacks
+      {u4, u8, u8, false},    // no 4-bit activation
+      {u8, u4, u16, false},   // no 4-bit weight
+  };
+
+  for (const Case& c : cases) {
+    QdqNodeGroupSelectorTestContext ctx;
+    FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+    FakeValueInfo act_in{"a", c.activation, {4, 4}};
+    FakeValueInfo weight_in{"w", c.weight, {4, 4}};
+    FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&act_in}, {}};
+    FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&weight_in}, {}};
+
+    FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+    FakeNode main_node{"mm", "MatMul", "", 13, {&dummy, &dummy}, {&main_out}};
+
+    FakeValueInfo q_out{"z", c.output, {}};
+    FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+
+    OrtMatMulNodeGroupSelector sel;
+    EXPECT_EQ(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr, {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}),
+              c.expected)
+        << "activation=" << c.activation << " weight=" << c.weight << " output=" << c.output;
+  }
+}
+
+TEST(QnnUnit_QdqNodeGroupSelectorTest, MatMul_RejectsNoQ) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {4, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -707,8 +786,8 @@ TEST(QnnUnit_EpUtilsTest, MatMul_RejectsNoQ) {
 // 2 DQ inputs, no Q output.  Both DQ types must match.
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, LogicalComparison_AcceptsMatchingTypes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, LogicalComparison_AcceptsMatchingTypes) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -723,8 +802,8 @@ TEST(QnnUnit_EpUtilsTest, LogicalComparison_AcceptsMatchingTypes) {
                          {dq1.AsNode(), dq2.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, LogicalComparison_RejectsMismatchedTypes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, LogicalComparison_RejectsMismatchedTypes) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {1, 4}};
@@ -744,8 +823,8 @@ TEST(QnnUnit_EpUtilsTest, LogicalComparison_RejectsMismatchedTypes) {
 // Happy path requires IsQDQPairSupported (reads scale OrtValue), skipped.
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, DropQDQ_RejectsRedundantClipNode) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_RejectsRedundantClipNode) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode clip{"clip", "Clip", "", 13, {}, {}};
@@ -754,8 +833,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_RejectsRedundantClipNode) {
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, clip.AsNode(), {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, DropQDQ_RejectsZeroDqNodes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_RejectsZeroDqNodes) {
+  QdqNodeGroupSelectorTestContext ctx;
   OrtDropQDQNodeGroupSelector sel;
   // CheckQDQNodes expects 1 DQ but gets 0 → false
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, nullptr, {}, {}));
@@ -765,8 +844,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_RejectsZeroDqNodes) {
 // CheckQDQNodes — produces_graph_output=true path
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, CheckQDQNodes_RejectsWhenOutputIsGraphOutput) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, CheckQDQNodes_RejectsWhenOutputIsGraphOutput) {
+  QdqNodeGroupSelectorTestContext ctx;
   // Override: any output IS a graph output
   ctx.api.ValueInfo_IsGraphOutput = [](const OrtValueInfo*, bool* out) noexcept -> OrtStatus* {
     *out = true;
@@ -791,8 +870,8 @@ TEST(QnnUnit_EpUtilsTest, CheckQDQNodes_RejectsWhenOutputIsGraphOutput) {
 // CheckQDQNodes — total_consumers != q_nodes.size() path
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, CheckQDQNodes_RejectsWhenConsumerCountExceedsQNodes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, CheckQDQNodes_RejectsWhenConsumerCountExceedsQNodes) {
+  QdqNodeGroupSelectorTestContext ctx;
   // Override: each output has 2 consumers, but only 1 Q node → mismatch
   ctx.api.ValueInfo_GetValueNumConsumers = [](const OrtValueInfo*, size_t* count) noexcept -> OrtStatus* {
     *count = 2;
@@ -817,8 +896,8 @@ TEST(QnnUnit_EpUtilsTest, CheckQDQNodes_RejectsWhenConsumerCountExceedsQNodes) {
 // OrtDropQDQNodeGroupSelector — type-mismatch path (reaches the type-equality check)
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, DropQDQ_RejectsTypeMismatchAfterCheckQDQNodes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_RejectsTypeMismatchAfterCheckQDQNodes) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -839,8 +918,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_RejectsTypeMismatchAfterCheckQDQNodes) {
 // OrtConvNodeGroupSelector — additional rejection paths
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Conv_RejectsInputOutputTypeMismatch) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Conv_RejectsInputOutputTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -856,8 +935,8 @@ TEST(QnnUnit_EpUtilsTest, Conv_RejectsInputOutputTypeMismatch) {
                          {dq_data.AsNode(), dq_wt.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Conv_RejectsInt8DataWithUint8Weight) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Conv_RejectsInt8DataWithUint8Weight) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_data_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeValueInfo dq_wt_in{"w", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};  // mismatch
@@ -877,8 +956,8 @@ TEST(QnnUnit_EpUtilsTest, Conv_RejectsInt8DataWithUint8Weight) {
 // OrtMatMulNodeGroupSelector — INT8 mismatch path
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, MatMul_RejectsInt8DataWithUint8Weight) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, MatMul_RejectsInt8DataWithUint8Weight) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_data_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeValueInfo dq_wt_in{"w", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};  // mismatch
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_data_in}, {}};
@@ -893,8 +972,8 @@ TEST(QnnUnit_EpUtilsTest, MatMul_RejectsInt8DataWithUint8Weight) {
 // OrtGemmNodeGroupSelector — INT8/Q-type mismatch
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Gemm_RejectsInt8AWithUint8B) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Gemm_RejectsInt8AWithUint8B) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_a_in{"a", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeValueInfo dq_b_in{"b", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};  // mismatch
@@ -909,8 +988,8 @@ TEST(QnnUnit_EpUtilsTest, Gemm_RejectsInt8AWithUint8B) {
                          {dq_a.AsNode(), dq_b.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Gemm_RejectsQOutputTypeMismatch) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Gemm_RejectsQOutputTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq_a{"dq_a", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -933,8 +1012,8 @@ TEST(QnnUnit_EpUtilsTest, Gemm_RejectsQOutputTypeMismatch) {
 // (is_empty_q_nodes_allowed=true → CheckQDQNodes passes with empty Q)
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsUint8NoQ) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Einsum_AcceptsUint8NoQ) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -945,8 +1024,8 @@ TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsUint8NoQ) {
                         {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsInt8) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Einsum_AcceptsInt8) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -957,8 +1036,8 @@ TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsInt8) {
                         {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsInt16) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Einsum_AcceptsInt16) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -969,8 +1048,8 @@ TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsInt16) {
                         {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Einsum_RejectsQOutputTypeMismatch) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Einsum_RejectsQOutputTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -988,8 +1067,8 @@ TEST(QnnUnit_EpUtilsTest, Einsum_RejectsQOutputTypeMismatch) {
 // OrtReciprocalNodeGroupSelector — same pattern as Einsum
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Reciprocal_AcceptsUint8NoQ) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Reciprocal_AcceptsUint8NoQ) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1000,8 +1079,8 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_AcceptsUint8NoQ) {
                         {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Reciprocal_AcceptsInt8) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Reciprocal_AcceptsInt8) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1016,8 +1095,8 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_AcceptsInt8) {
 // OrtWhereNodeGroupSelector — type mismatch paths
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, Where_RejectsDqTypeMismatch) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Where_RejectsDqTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};  // mismatch
@@ -1033,8 +1112,8 @@ TEST(QnnUnit_EpUtilsTest, Where_RejectsDqTypeMismatch) {
                          {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
-TEST(QnnUnit_EpUtilsTest, Where_AcceptsInt16) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Where_AcceptsInt16) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, {}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1053,8 +1132,8 @@ TEST(QnnUnit_EpUtilsTest, Where_AcceptsInt16) {
 // OrtInstanceAndLayerNormalizationNodeGroupSelector — type mismatch (private)
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, InstanceNorm_RejectsTypeMismatch) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, InstanceNorm_RejectsTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1074,8 +1153,8 @@ TEST(QnnUnit_EpUtilsTest, InstanceNorm_RejectsTypeMismatch) {
 // OrtBatchNormalizationNodeGroupSelector — too few DQ + INT8 mismatch
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsTooFewDq) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, BatchNorm_RejectsTooFewDq) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
 
@@ -1083,8 +1162,8 @@ TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsTooFewDq) {
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, nullptr, {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsInt8WithMixedScale) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, BatchNorm_RejectsInt8WithMixedScale) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_data_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeValueInfo dq_scale_in{"s", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};  // scale ≠ input type
@@ -1102,8 +1181,8 @@ TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsInt8WithMixedScale) {
 // OrtCumSumNodeGroupSelector — type mismatch (private)
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, CumSum_RejectsTypeMismatch) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, CumSum_RejectsTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1122,8 +1201,8 @@ TEST(QnnUnit_EpUtilsTest, CumSum_RejectsTypeMismatch) {
 // OrtScatterElementsNodeGroupSelector — type mismatch (private)
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, ScatterElements_RejectsMixedDqTypes) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, ScatterElements_RejectsMixedDqTypes) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in1{"x1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeValueInfo dq_in2{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};  // mismatch
@@ -1144,8 +1223,8 @@ TEST(QnnUnit_EpUtilsTest, ScatterElements_RejectsMixedDqTypes) {
 // OrtRMSNormalizationNodeGroupSelector — type mismatch (private)
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, RMSNorm_RejectsTypeMismatch) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, RMSNorm_RejectsTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1165,8 +1244,8 @@ TEST(QnnUnit_EpUtilsTest, RMSNorm_RejectsTypeMismatch) {
 // OrtTopKNodeGroupSelector — early exits + CanCreateNodeGroup path (private)
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, TopK_RejectsRedundantClipNode) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, TopK_RejectsRedundantClipNode) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeNode clip{"clip", "Clip", "", 13, {}, {}};
@@ -1177,18 +1256,18 @@ TEST(QnnUnit_EpUtilsTest, TopK_RejectsRedundantClipNode) {
                           {dq.AsNode()}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, TopK_RejectsWrongDqCount) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, TopK_RejectsWrongDqCount) {
+  QdqNodeGroupSelectorTestContext ctx;
   OrtTopKNodeGroupSelector sel;
   OrtNodeGroupSelector& base = sel;
   EXPECT_FALSE(base.Check(nullptr, ctx.api, nullptr, nullptr, {}, {}));
 }
 
-TEST(QnnUnit_EpUtilsTest, TopK_CoversCanCreateNodeGroupPath) {
+TEST(QnnUnit_QdqNodeGroupSelectorTest, TopK_CoversCanCreateNodeGroupPath) {
   // CanCreateNodeGroup is exercised here. IsQDQPairSupported will return false
   // (no scale initializer) so the final result is false, but the internal
   // CanCreateNodeGroup + type-check code paths are covered.
-  EpUtilsTestContext ctx;
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1236,8 +1315,8 @@ struct DropQdqScaleFixture {
 
 // IsQOrDQScalePositiveConstantScalar: positive float scale → returns true.
 // IsQDQPairSupported: same scale name → same_scale=true → returns true.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_PositiveScale_SameName_CheckReturnsTrue) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_PositiveScale_SameName_CheckReturnsTrue) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val = FakeOrtValue::MakeFloat(0.5f);
   f.q_scale_vi.initializer_value = &f.q_scale_val;
@@ -1248,8 +1327,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_PositiveScale_SameName_CheckReturnsTrue) {
 }
 
 // IsQOrDQScalePositiveConstantScalar: negative scale → returns false.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_NegativeScale_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_NegativeScale_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val = FakeOrtValue::MakeFloat(-0.5f);
   f.q_scale_vi.initializer_value = &f.q_scale_val;
@@ -1260,8 +1339,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_NegativeScale_CheckReturnsFalse) {
 }
 
 // IsQOrDQScalePositiveConstantScalar: zero scale → returns false.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_ZeroScale_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_ZeroScale_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val = FakeOrtValue::MakeFloat(0.0f);
   f.q_scale_vi.initializer_value = &f.q_scale_val;
@@ -1273,8 +1352,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_ZeroScale_CheckReturnsFalse) {
 
 // allow_nonpositive_scale=true: IsQOrDQScalePositiveConstantScalar is skipped;
 // IsQDQPairSupported (same name) returns true even for a negative scale.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_AllowNonpositiveScale_NegativeScaleOk) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_AllowNonpositiveScale_NegativeScaleOk) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val = FakeOrtValue::MakeFloat(-1.0f);
   f.q_scale_vi.initializer_value = &f.q_scale_val;
@@ -1286,8 +1365,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_AllowNonpositiveScale_NegativeScaleOk) {
 
 // IsQOrDQScalePositiveConstantScalar: scale not in graph.initializers →
 // GetConstantInitializer returns nullptr → returns false.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_ScaleNotInitializer_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_ScaleNotInitializer_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.graph.initializers = {};  // scale_vi absent from graph initializers
 
@@ -1297,8 +1376,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_ScaleNotInitializer_CheckReturnsFalse) {
 }
 
 // IsQDQPairSupported: different scale names, same float value → same_scale=true.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_DiffScaleName_SameValue_CheckReturnsTrue) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_DiffScaleName_SameValue_CheckReturnsTrue) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val = FakeOrtValue::MakeFloat(0.5f);
   f.dq_scale_val = FakeOrtValue::MakeFloat(0.5f);
@@ -1314,8 +1393,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_DiffScaleName_SameValue_CheckReturnsTrue) {
 }
 
 // IsQDQPairSupported: different scale names, different float values → false.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_DiffScaleName_DiffValue_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_DiffScaleName_DiffValue_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val = FakeOrtValue::MakeFloat(0.5f);
   f.dq_scale_val = FakeOrtValue::MakeFloat(1.0f);  // different value
@@ -1331,8 +1410,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_DiffScaleName_DiffValue_CheckReturnsFalse) {
 
 // IsQOrDQScalePositiveConstantScalar: Q node has < 2 inputs →
 // num_inputs < 2 guard fires → returns false.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_QNodeHasNoScaleInput_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_QNodeHasNoScaleInput_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   // Q node has only 1 input (no scale at index 1).
   f.q_node.inputs = {&f.main_out};
@@ -1344,8 +1423,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_QNodeHasNoScaleInput_CheckReturnsFalse) {
 
 // IsQOrDQScalePositiveConstantScalar: double-precision scale, positive →
 // element_type==DOUBLE path executed, returns true.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_DoubleScale_Positive_CheckReturnsTrue) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_DoubleScale_Positive_CheckReturnsTrue) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val = FakeOrtValue::MakeDouble(0.5);
   f.q_scale_vi.initializer_value = &f.q_scale_val;
@@ -1357,8 +1436,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_DoubleScale_Positive_CheckReturnsTrue) {
 
 // IsQOrDQScalePositiveConstantScalar: scale is INT32 type (neither float nor
 // double) → falls through to the final return false.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_IntTypeScale_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_IntTypeScale_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
   f.q_scale_vi.initializer_value = &f.q_scale_val;
@@ -1370,8 +1449,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_IntTypeScale_CheckReturnsFalse) {
 
 // IsQDQPairSupported: different scale names, Q=FLOAT vs DQ=DOUBLE →
 // q_element_type != dq_element_type → returns false.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_DiffScaleName_TypeMismatch_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_DiffScaleName_TypeMismatch_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val = FakeOrtValue::MakeFloat(0.5f);   // FLOAT
   f.dq_scale_val = FakeOrtValue::MakeDouble(0.5);  // DOUBLE
@@ -1387,8 +1466,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_DiffScaleName_TypeMismatch_CheckReturnsFalse) 
 
 // IsQDQPairSupported: different scale names, both DOUBLE, same value →
 // double-precision comparison path executed, same_scale=true → returns true.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_DiffScaleName_BothDouble_SameValue_CheckReturnsTrue) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_DiffScaleName_BothDouble_SameValue_CheckReturnsTrue) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val = FakeOrtValue::MakeDouble(0.5);
   f.dq_scale_val = FakeOrtValue::MakeDouble(0.5);
@@ -1411,8 +1490,8 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_DiffScaleName_BothDouble_SameValue_CheckReturn
 // =============================================================================
 
 // DropQDQ: dt_input or dt_output not has_value → returns false.
-TEST(QnnUnit_EpUtilsTest, DropQDQ_DQHasNoInputs_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropQDQ_DQHasNoInputs_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {}, {}};  // no inputs
@@ -1425,16 +1504,16 @@ TEST(QnnUnit_EpUtilsTest, DropQDQ_DQHasNoInputs_CheckReturnsFalse) {
 }
 
 // DropDQ: DQ node has no inputs → !dt_input.has_value() → returns false.
-TEST(QnnUnit_EpUtilsTest, DropDQ_DQHasNoInputs_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, DropDQ_DQHasNoInputs_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {}, {}};
   OrtDropDQNodeGroupSelector sel;
   EXPECT_FALSE(sel.Check(nullptr, ctx.api, nullptr, nullptr, {dq.AsNode()}, {}));
 }
 
 // Unary: DQ node has no inputs → !dt_input.has_value() → returns false.
-TEST(QnnUnit_EpUtilsTest, Unary_DQHasNoInputs_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Unary_DQHasNoInputs_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {}, {}};  // no inputs
@@ -1447,8 +1526,8 @@ TEST(QnnUnit_EpUtilsTest, Unary_DQHasNoInputs_CheckReturnsFalse) {
 }
 
 // Variadic: zero DQ nodes → CheckQDQNodes fails → returns false.
-TEST(QnnUnit_EpUtilsTest, Variadic_ZeroDqNodes_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_ZeroDqNodes_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   // Add node needs 2 inputs so num_dq_inputs=2; dq_nodes.size()=0 → mismatch → false.
   FakeValueInfo in1{"in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
   FakeValueInfo in2{"in2", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
@@ -1463,8 +1542,8 @@ TEST(QnnUnit_EpUtilsTest, Variadic_ZeroDqNodes_CheckReturnsFalse) {
 }
 
 // Variadic: DQ node has no inputs → !dt_input.has_value() → returns false.
-TEST(QnnUnit_EpUtilsTest, Variadic_DQHasNoInputs_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_DQHasNoInputs_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo in1{"in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
   FakeValueInfo in2{"in2", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
@@ -1480,8 +1559,8 @@ TEST(QnnUnit_EpUtilsTest, Variadic_DQHasNoInputs_CheckReturnsFalse) {
 }
 
 // Split: DQ node has no inputs → !dt_input.has_value() → returns false.
-TEST(QnnUnit_EpUtilsTest, Split_DQHasNoInputs_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Split_DQHasNoInputs_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {}, {}};  // no inputs
@@ -1495,8 +1574,8 @@ TEST(QnnUnit_EpUtilsTest, Split_DQHasNoInputs_CheckReturnsFalse) {
 
 // Split: req_equal_quant_params=true + Q and DQ have different scale values →
 // IsQDQPairSupported returns false → returns false.
-TEST(QnnUnit_EpUtilsTest, Split_ReqEqualQuant_DiffScaleValues_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Split_ReqEqualQuant_DiffScaleValues_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   DropQdqScaleFixture f;
   f.q_scale_val = FakeOrtValue::MakeFloat(0.5f);
   f.dq_scale_val = FakeOrtValue::MakeFloat(1.0f);  // different value
@@ -1511,8 +1590,8 @@ TEST(QnnUnit_EpUtilsTest, Split_ReqEqualQuant_DiffScaleValues_CheckReturnsFalse)
 }
 
 // Conv: first DQ node has no inputs → !dt_input.has_value() → returns false.
-TEST(QnnUnit_EpUtilsTest, Conv_FirstDQHasNoInputs_CheckReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Conv_FirstDQHasNoInputs_CheckReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_wt_in{"w", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {}, {}};  // no inputs
@@ -1535,8 +1614,8 @@ TEST(QnnUnit_EpUtilsTest, Conv_FirstDQHasNoInputs_CheckReturnsFalse) {
 // so the if(!versions.empty()) block is entered, covering L1808-1809.
 // =============================================================================
 
-TEST(QnnUnit_EpUtilsTest, GetOrtQDQSelections_MaxPoolVersionCheck_CoversVersionPath) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, GetOrtQDQSelections_MaxPoolVersionCheck_CoversVersionPath) {
+  QdqNodeGroupSelectorTestContext ctx;
   // MaxPool is registered with versions={12}. A MaxPool node with since_version=12
   // is within range → the version-check block is entered.
   FakeNode maxpool_node{"mp", "MaxPool", "", 12, {}, {}};
@@ -1560,8 +1639,8 @@ TEST(QnnUnit_EpUtilsTest, GetOrtQDQSelections_MaxPoolVersionCheck_CoversVersionP
 
 // OrtClipNodeGroupSelector: CheckQDQNodes fails when q_nodes is empty and
 // is_empty_q_nodes_allowed=false (the Clip default) → returns false.
-TEST(QnnUnit_EpUtilsTest, Clip_CheckQDQNodesFails_ReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Clip_CheckQDQNodesFails_ReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
@@ -1576,8 +1655,8 @@ TEST(QnnUnit_EpUtilsTest, Clip_CheckQDQNodesFails_ReturnsFalse) {
 
 // OrtClipNodeGroupSelector: data_producer is nullptr (ValueInfo_GetValueProducer
 // default stub returns nullptr) → returns false before dt_input check.
-TEST(QnnUnit_EpUtilsTest, Clip_NullProducer_ReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Clip_NullProducer_ReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo clip_in{"ci", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1595,8 +1674,8 @@ TEST(QnnUnit_EpUtilsTest, Clip_NullProducer_ReturnsFalse) {
 }
 
 // OrtBinaryNodeGroupSelector: first DQ has no inputs → !dt_input.has_value().
-TEST(QnnUnit_EpUtilsTest, Binary_FirstDQHasNoInputs_ReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Binary_FirstDQHasNoInputs_ReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq2_in{"x2", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {}, {}};  // no inputs
   FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq2_in}, {}};
@@ -1612,8 +1691,8 @@ TEST(QnnUnit_EpUtilsTest, Binary_FirstDQHasNoInputs_ReturnsFalse) {
 
 // OrtVariadicNodeGroupSelector: Q node has no outputs →
 // !dt_output.has_value() → returns false.
-TEST(QnnUnit_EpUtilsTest, Variadic_QHasNoOutputs_ReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_QHasNoOutputs_ReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo in1{"in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeValueInfo in2{"in2", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&in1}, {}};
@@ -1628,8 +1707,8 @@ TEST(QnnUnit_EpUtilsTest, Variadic_QHasNoOutputs_ReturnsFalse) {
 }
 
 // OrtEinsumNodeGroupSelector: 4-bit input accepted (no width gates).
-TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsInt4) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Einsum_AcceptsInt4) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1641,8 +1720,8 @@ TEST(QnnUnit_EpUtilsTest, Einsum_AcceptsInt4) {
 
 // OrtReciprocalNodeGroupSelector: 16-bit input accepted (no width gates).
 // main_node has 1 input so CheckQDQNodes passes (num_dq_inputs=1).
-TEST(QnnUnit_EpUtilsTest, Reciprocal_AcceptsInt16) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Reciprocal_AcceptsInt16) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1653,8 +1732,8 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_AcceptsInt16) {
 }
 
 // OrtReciprocalNodeGroupSelector: 4-bit input accepted (no width gates).
-TEST(QnnUnit_EpUtilsTest, Reciprocal_AcceptsInt4) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Reciprocal_AcceptsInt4) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1666,8 +1745,8 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_AcceptsInt4) {
 
 // OrtReciprocalNodeGroupSelector: Q node has no outputs →
 // !dt_output.has_value() → returns false.
-TEST(QnnUnit_EpUtilsTest, Reciprocal_QHasNoOutputs_ReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Reciprocal_QHasNoOutputs_ReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1681,8 +1760,8 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_QHasNoOutputs_ReturnsFalse) {
 
 // OrtReciprocalNodeGroupSelector: DQ UINT8 but Q output INT8 →
 // type mismatch → returns false.
-TEST(QnnUnit_EpUtilsTest, Reciprocal_QOutputTypeMismatch_ReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Reciprocal_QOutputTypeMismatch_ReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1697,8 +1776,8 @@ TEST(QnnUnit_EpUtilsTest, Reciprocal_QOutputTypeMismatch_ReturnsFalse) {
 
 // OrtMatMulNodeGroupSelector: first DQ has no inputs →
 // !dt_input.has_value() → returns false.
-TEST(QnnUnit_EpUtilsTest, MatMul_FirstDQHasNoInputs_ReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, MatMul_FirstDQHasNoInputs_ReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq2_in{"w", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {}, {}};  // no inputs
   FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq2_in}, {}};
@@ -1714,8 +1793,8 @@ TEST(QnnUnit_EpUtilsTest, MatMul_FirstDQHasNoInputs_ReturnsFalse) {
 
 // OrtVariadicNodeGroupSelector: second Q node has mismatched output type →
 // dt_o.value() != dt_output.value() → returns false.
-TEST(QnnUnit_EpUtilsTest, Variadic_SecondQTypeMismatch_ReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_SecondQTypeMismatch_ReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo in1{"in1", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeValueInfo in2{"in2", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&in1}, {}};
@@ -1735,8 +1814,8 @@ TEST(QnnUnit_EpUtilsTest, Variadic_SecondQTypeMismatch_ReturnsFalse) {
 
 // OrtMatMulNodeGroupSelector: QLinearMatMul path, CheckQDQNodes fails because
 // main_node has 0 inputs → num_dq_inputs=0 ≠ 2 → returns false.
-TEST(QnnUnit_EpUtilsTest, MatMul_QLinearCheckQDQNodesFails_ReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, MatMul_QLinearCheckQDQNodesFails_ReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq1_in{"a", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeValueInfo dq2_in{"b", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq1_in}, {}};
@@ -1753,13 +1832,13 @@ TEST(QnnUnit_EpUtilsTest, MatMul_QLinearCheckQDQNodesFails_ReturnsFalse) {
 
 // =============================================================================
 // Additional selector Check() branches — targeted coverage for
-// qnn_ep_utils.cc L736/1037/1065/1093/1192/1206/1267
+// qdq_node_group_selector.cc L736/1037/1065/1093/1192/1206/1267
 // =============================================================================
 
 // OrtGemmNodeGroupSelector: dq_nodes.size() < 2 → returns false.
 // CheckQDQNodes passes because is_empty_q_nodes_allowed=true and node has 1 input.
-TEST(QnnUnit_EpUtilsTest, Gemm_RejectsFewerThan2Dq) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Gemm_RejectsFewerThan2Dq) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"a", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq_a{"dq_a", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1773,8 +1852,8 @@ TEST(QnnUnit_EpUtilsTest, Gemm_RejectsFewerThan2Dq) {
 
 // OrtGemmNodeGroupSelector: UINT16 A and B accepted (no width gates), and with no
 // Q node and only 2 DQ nodes the selector is done → returns true.
-TEST(QnnUnit_EpUtilsTest, Gemm_AcceptsUint16) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Gemm_AcceptsUint16) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, {}};
   FakeNode dq_a{"dq_a", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1789,8 +1868,8 @@ TEST(QnnUnit_EpUtilsTest, Gemm_AcceptsUint16) {
 
 // OrtWhereNodeGroupSelector: CheckQDQNodes with num_dq_inputs=2 fails because
 // dq_nodes.size()=3 → returns false.
-TEST(QnnUnit_EpUtilsTest, Where_RejectsWrongDqCount) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Where_RejectsWrongDqCount) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1808,8 +1887,8 @@ TEST(QnnUnit_EpUtilsTest, Where_RejectsWrongDqCount) {
 
 // OrtBatchNormalizationNodeGroupSelector: CheckQDQNodes fails because
 // num_outputs (2) != q_nodes.size() (1) → returns false.
-TEST(QnnUnit_EpUtilsTest, BatchNorm_CheckQDQNodesFails_ReturnsFalse) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, BatchNorm_CheckQDQNodesFails_ReturnsFalse) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1827,8 +1906,8 @@ TEST(QnnUnit_EpUtilsTest, BatchNorm_CheckQDQNodesFails_ReturnsFalse) {
 
 // OrtBatchNormalizationNodeGroupSelector: !has_float_output path,
 // dt_output.value() != dt_input.value() → returns false.
-TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsInputOutputTypeMismatch) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, BatchNorm_RejectsInputOutputTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_data_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeValueInfo dq_scale_in{"s", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1846,8 +1925,8 @@ TEST(QnnUnit_EpUtilsTest, BatchNorm_RejectsInputOutputTypeMismatch) {
 
 // OrtTopKNodeGroupSelector: dt_input.value() != dt_output.value() → returns
 // false. Requires CanCreateNodeGroup to pass first.
-TEST(QnnUnit_EpUtilsTest, TopK_RejectsInputOutputTypeMismatch) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, TopK_RejectsInputOutputTypeMismatch) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq{"dq", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1883,8 +1962,8 @@ struct ClipProducerGuard {
 // (no width gates) → returns true.
 // Reaches the type check by installing a producer stub that returns the DQ node so
 // the producer==nullptr guard passes.
-TEST(QnnUnit_EpUtilsTest, Clip_AcceptsUint16) {
-  EpUtilsTestContext ctx;
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Clip_AcceptsUint16) {
+  QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, {}};
   FakeValueInfo clip_in{"ci", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};

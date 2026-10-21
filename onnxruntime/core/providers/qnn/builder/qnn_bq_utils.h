@@ -103,6 +103,9 @@ bool IsHTPSupportedNativeBQ(QnnHtpDevice_Arch_t htp_arch,
                             uint32_t output_channel,
                             gsl::span<const float> offsets);
 
+// Validate LPBQ's per-block int scale is within expected range (i.e., 1-16) which originates from AIMET algorithm.
+bool IsValidLPBQPerBlockIntScale(gsl::span<const uint8_t> per_block_int_scale);
+
 }  // namespace bq
 }  // namespace qnn
 }  // namespace onnxruntime

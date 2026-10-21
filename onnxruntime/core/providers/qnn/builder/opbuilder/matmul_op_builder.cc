@@ -9,6 +9,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/mixed_precision_convert_utils.h"
 #include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -19,12 +20,12 @@ namespace qnn {
 
 namespace {
 bool ShouldUseSymmetricU16ForMatMul(float input1_scale) {
-  constexpr float kMaximumValueQuantError = 0.1f;
+  constexpr float kMaximumValueQuantError = 0.15f;
 
   // Re-encoding U16 as U8 increases the value-domain quantization step from
   // input1_scale to input1_scale * 65535 / 255. A value can move
   // by at most half of that U8 step when it is rounded. Keep symmetric U16
-  // when that error exceeds the 10% value-domain budget.
+  // when that error exceeds the 15% value-domain budget.
   const float u8_half_step = input1_scale * 65535.0f / 255.0f / 2.0f;
   return u8_half_step > kMaximumValueQuantError;
 }
@@ -898,15 +899,19 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                      op_output_quant_param.Copy(),
                                                      op_output_shape, do_op_validation));
   } else {
-    QnnTensorWrapper op_output_tensor_wrapper(op_output_name, op_output_tensor_type, output_info.qnn_data_type,
-                                              op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(op_output_tensor_wrapper)),
-                  "Failed to add output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW, qnn_op_type,
-                                                  std::move(input_names), {op_output_name},
-                                                  std::move(param_tensor_names), do_op_validation),
-                  "Failed to add fused Matmul node.");
+    if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+      RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names,
+                                                                output_info.qnn_data_type, do_op_validation));
+    }
+    const Qnn_DataType_t activation_qnn_data_type =
+        qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+    RETURN_IF_ERROR(utils::AddOpWithQuantizedOutput(qnn_model_wrapper, utils::UniqueNameGenerator().New(node_unit),
+                                                    qnn_op_type, std::move(input_names),
+                                                    std::move(param_tensor_names), op_output_name,
+                                                    op_output_tensor_type, output_info.qnn_data_type,
+                                                    op_output_quant_param.Copy(),
+                                                    std::vector<uint32_t>(op_output_shape),
+                                                    activation_qnn_data_type, do_op_validation));
   }
 
   if (reshape_output) {

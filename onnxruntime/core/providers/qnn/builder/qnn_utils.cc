@@ -900,7 +900,7 @@ QnnJSONGraph::QnnJSONGraph() {
       {"model.cpp", "N/A"},
       {"model.bin", "N/A"},
       {"converter_command", ""},
-      {"copyright_str", "Copyright (c) Microsoft Corporation. All rights reserved."},
+      {"copyright_str", "Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries."},
       {"op_types", json::array()},
       {"Total parameters", ""},
       {"Total MACs per inference", ""},
@@ -1817,6 +1817,18 @@ Ort::Status TransposeFromCnhwToHwcn(std::vector<int64_t>&& original_input_shape_
 
 // Inserts a QNN Convert operator to convert from one quantization type (e.g., uint16) to another (e.g., uint8).
 // (OR) Convert from Asymmetric (e.g., UINT16) to Symmetric (e.g., INT16) quantization type
+Ort::Status DeriveScaleOffsetForDtype(Qnn_DataType_t from_dtype, int32_t from_offset, float from_scale,
+                                      Qnn_DataType_t to_dtype, bool to_symmetric,
+                                      float& to_scale, int32_t& to_offset) {
+  float qmin = 0.0f;
+  float qmax = 255.0f;
+  RETURN_IF_ERROR(qnn::utils::GetQminQmax(from_dtype, qmin, qmax));
+  const double value_min = qnn::utils::Dequantize(from_offset, from_scale, qmin);
+  const double value_max = qnn::utils::Dequantize(from_offset, from_scale, qmax);
+  return qnn::utils::GetQuantParams(static_cast<float>(value_min), static_cast<float>(value_max),
+                                    to_dtype, to_scale, to_offset, to_symmetric);
+}
+
 Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             const std::string& convert_input_name,
                             const std::string& convert_output_name,
@@ -1828,19 +1840,10 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             bool output_symmetric,
                             bool do_op_validation) {
   // Assume input is already handled.
-  float qmin = 0.0f;
-  float qmax = 255.0f;
-  RETURN_IF_ERROR(qnn::utils::GetQminQmax(input_qnn_data_type, qmin, qmax));
-  double value_min = qnn::utils::Dequantize(input_offset, input_scale, qmin);
-  double value_max = qnn::utils::Dequantize(input_offset, input_scale, qmax);
   float scale = 0.0f;
   int32_t offset = 0;
-  RETURN_IF_ERROR(qnn::utils::GetQuantParams(static_cast<float>(value_min),
-                                             static_cast<float>(value_max),
-                                             output_qnn_data_type,
-                                             scale,
-                                             offset,
-                                             output_symmetric));
+  RETURN_IF_ERROR(DeriveScaleOffsetForDtype(input_qnn_data_type, input_offset, input_scale,
+                                            output_qnn_data_type, output_symmetric, scale, offset));
 
   std::vector<uint32_t> output_shape_copy = output_shape;
   QnnTensorWrapper convert_output_tensorwrapper(convert_output_name,
@@ -1857,6 +1860,107 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                                                 {},
                                                 do_op_validation),
                 "Failed to add node.");
+  return Ort::Status();
+}
+
+// Every output level maps onto an intermediate level, so the Convert only drops the extra precision and the
+// result matches quantizing directly to the output encoding.
+static Ort::Status GetNarrowingIntermediateQuantParams(Qnn_DataType_t activation_qnn_data_type,
+                                                       Qnn_DataType_t output_qnn_data_type,
+                                                       const QnnQuantParamsWrapper& output_quant_param,
+                                                       QnnQuantParamsWrapper& intermediate_quant_param) {
+  RETURN_IF_NOT(output_quant_param.IsPerTensor(), "Narrowing output requires a per-tensor encoding");
+  const Qnn_ScaleOffset_t& out_encoding = output_quant_param.Get().scaleOffsetEncoding;
+
+  int64_t qmin_out = 0;
+  int64_t qmax_out = 0;
+  int64_t qmin_act = 0;
+  int64_t qmax_act = 0;
+  RETURN_IF_ERROR(GetQminQmax(output_qnn_data_type, qmin_out, qmax_out));
+  RETURN_IF_ERROR(GetQminQmax(activation_qnn_data_type, qmin_act, qmax_act));
+  const int64_t ratio = (qmax_act - qmin_act) / (qmax_out - qmin_out);  // 257 for 16-bit to 8-bit
+
+  // QNN encoding: real = scale * (q + offset).
+  const float scale = static_cast<float>(static_cast<double>(out_encoding.scale) / static_cast<double>(ratio));
+  const int64_t offset = (qmin_out + out_encoding.offset) * ratio - qmin_act;
+  intermediate_quant_param = QnnQuantParamsWrapper::PerTensor(scale, gsl::narrow<int32_t>(offset));
+  return Ort::Status();
+}
+
+Ort::Status AddOpWithQuantizedOutput(QnnModelWrapper& qnn_model_wrapper,
+                                     const std::string& node_name,
+                                     const std::string& op_type,
+                                     std::vector<std::string>&& input_names,
+                                     std::vector<std::string>&& param_tensor_names,
+                                     const std::string& output_name,
+                                     Qnn_TensorType_t output_tensor_type,
+                                     Qnn_DataType_t output_qnn_data_type,
+                                     QnnQuantParamsWrapper&& output_quant_param,
+                                     std::vector<uint32_t>&& output_shape,
+                                     Qnn_DataType_t activation_qnn_data_type,
+                                     bool do_op_validation) {
+  const bool is_float_act_quant_weight = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+                                         activation_qnn_data_type == QNN_DATATYPE_FLOAT_32 &&
+                                         input_names.size() > 1 &&
+                                         qnn_model_wrapper.GetQnnTensorWrapper(input_names[1])
+                                             .GetQnnQuantParams()
+                                             .IsQuantized();
+  if (is_float_act_quant_weight) {
+    for (auto& input_name : input_names) {
+      const auto& input_tensor = qnn_model_wrapper.GetQnnTensorWrapper(input_name);
+      if (input_tensor.GetTensorDataType() != QNN_DATATYPE_FLOAT_32) {
+        continue;
+      }
+      const std::string cast_output_name = UniqueNameGenerator().New(input_name, "_cast_fp16");
+      RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(UniqueNameGenerator().New(cast_output_name, QNN_OP_CAST),
+                                                    input_name, cast_output_name, QNN_TENSOR_TYPE_NATIVE,
+                                                    QNN_DATATYPE_FLOAT_16, QnnQuantParamsWrapper(),
+                                                    std::vector<uint32_t>(input_tensor.GetTensorDims()),
+                                                    do_op_validation));
+      input_name = cast_output_name;
+    }
+  }
+
+  std::string op_output_name = output_name;
+  if (is_float_act_quant_weight) {
+    op_output_name = UniqueNameGenerator().New(output_name, "_fp16");
+    QnnTensorWrapper fp16_tensorwrapper(op_output_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_16,
+                                        QnnQuantParamsWrapper(), std::vector<uint32_t>(output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_tensorwrapper)), "Failed to add tensor.");
+  } else if (IsNarrowingQuantOutput(activation_qnn_data_type, output_qnn_data_type)) {
+    QnnQuantParamsWrapper intermediate_quant_param;
+    RETURN_IF_ERROR(GetNarrowingIntermediateQuantParams(activation_qnn_data_type, output_qnn_data_type,
+                                                        output_quant_param, intermediate_quant_param));
+    op_output_name = UniqueNameGenerator().New(output_name, "_pre_convert");
+    QnnTensorWrapper intermediate_tensorwrapper(op_output_name, QNN_TENSOR_TYPE_NATIVE, activation_qnn_data_type,
+                                                std::move(intermediate_quant_param),
+                                                std::vector<uint32_t>(output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(intermediate_tensorwrapper)), "Failed to add tensor.");
+  }
+
+  QnnTensorWrapper output_tensorwrapper(output_name, output_tensor_type, output_qnn_data_type,
+                                        std::move(output_quant_param), std::move(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                op_type,
+                                                std::move(input_names),
+                                                {op_output_name},
+                                                std::move(param_tensor_names),
+                                                do_op_validation),
+                "Failed to add node.");
+
+  if (op_output_name != output_name) {
+    const char* op = is_float_act_quant_weight ? QNN_OP_CAST : QNN_OP_CONVERT;
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(UniqueNameGenerator().New(output_name, op),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  op,
+                                                  {op_output_name},
+                                                  {output_name},
+                                                  {},
+                                                  do_op_validation),
+                  "Failed to add output conversion node.");
+  }
   return Ort::Status();
 }
 

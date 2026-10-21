@@ -35,6 +35,10 @@ on:
         description: "If true, skip publishing artifacts (dry run)."
         type: boolean
         default: false
+      skip_android_builds:
+        description: "If true, skip building and uploading Android AAR/Maven artifacts."
+        type: boolean
+        default: false
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
@@ -47,7 +51,7 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       build_android_aarch64: false
-      build_android_aarch64_aar: true
+      build_android_aarch64_aar: ${{ !inputs.skip_android_builds }}
       build_linux_aarch64_oe_gcc11_2: false
       linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
       windows_target_archs: ${{ inputs.windows_target_archs }}
@@ -619,6 +623,7 @@ jobs:
     name: "Upload Android Maven artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
+    if: ${{ !inputs.skip_android_builds }}
 
     steps:
       - uses: actions/checkout@v6

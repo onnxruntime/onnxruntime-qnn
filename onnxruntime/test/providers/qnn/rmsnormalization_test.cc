@@ -207,8 +207,8 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale) {
 }
 
 // ONNX RMSNormalization allows `scale` to be any shape unidirectionally broadcastable to X, but
-// QNN's RmsNorm OpDef requires rank(gamma) == size(axes). The builder squeezes leading 1-dims to
-// bridge the two; the tests below cover the shapes that squeeze is responsible for.
+// QNN RmsNorm requires gamma to match the normalized dimensions. The builder squeezes leading 1-dims
+// to bridge the two; the tests below cover the shapes that squeeze is responsible for.
 //
 // The rank-3 scale shape comes from Pi05ActionExpert (tetracode issue #20549), which normalizes
 // X [1, 50, 1024] with a scale of shape [1, 1, 1024]. Dims are scaled down here for speed; the
@@ -269,17 +269,46 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank4Scale_LeadingOnes) {
 
 // FP32 model at FP16 precision: covers the FLOAT_32 ones-gamma that the FP16-model test does not.
 TEST_F(QnnHTPBackendTests, RMSNormBroadcastScale_FP32_StaticScale) {
-  RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
-                     TestInputDef<float>({2, 1, 8}, true, GetFloatDataInRange(0.9f, 1.1f, 16)),
-                     {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
-                     ExpectedEPNodeAssignment::All);
+  for (const auto& scale_shape : {std::vector<int64_t>{2, 1, 8}, std::vector<int64_t>{1}}) {
+    RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
+                       TestInputDef<float>(scale_shape, true, GetFloatDataInRange(0.9f, 1.1f, SizeOfShape(scale_shape))),
+                       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                       ExpectedEPNodeAssignment::All);
+  }
 }
 
 TEST_F(QnnHTPBackendTests, RMSNormBroadcastScale_FP32_DynamicScale) {
-  RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
-                     TestInputDef<float>({2, 1, 8}, false, GetFloatDataInRange(0.9f, 1.1f, 16)),
-                     {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+  for (const auto& scale_shape : {std::vector<int64_t>{2, 1, 8}, std::vector<int64_t>{1}}) {
+    RunRMSNormFp32Test(TestInputDef<float>({2, 4, 8}, false, GetFloatDataInRange(0.0f, 4.0f, 64)),
+                       TestInputDef<float>(scale_shape, false, GetFloatDataInRange(0.9f, 1.1f, SizeOfShape(scale_shape))),
+                       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                       ExpectedEPNodeAssignment::All);
+  }
+}
+
+TEST_F(QnnHTPBackendTests, RMSNorm_MultipleAxes) {
+  for (int64_t axis : {1, -2}) {
+    RunRMSNormFp32Test(TestInputDef<float>({2, 3, 4}, false, GetFloatDataInRange(-2.0f, 2.0f, 24)),
+                       TestInputDef<float>({2, 1, 4}, false, GetFloatDataInRange(0.5f, 1.5f, 8)),
+                       {test::MakeAttribute("axis", axis), test::MakeAttribute("epsilon", 0.1f)},
+                       ExpectedEPNodeAssignment::All);
+  }
+}
+
+TEST_F(QnnHTPBackendTests, RMSNorm_Rank5) {
+  RunRMSNormFp32Test(TestInputDef<float>({1, 2, 3, 4, 8}, false, GetFloatDataInRange(-2.0f, 2.0f, 192)),
+                     TestInputDef<float>({8}, true, GetFloatDataInRange(0.5f, 1.5f, 8)),
+                     {},
                      ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, RMSNorm_Decomposition_QuantizedNotSupported) {
+  for (int64_t axis : {1, -1}) {
+    RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({2, 3, 4}, false, 0.0f, 4.0f),
+                                        TestInputDef<float>({axis == 1 ? 4 : 1}, true, 0.5f, 1.5f),
+                                        {test::MakeAttribute("axis", axis)},
+                                        ExpectedEPNodeAssignment::None);
+  }
 }
 
 // Quantized squeeze: exercises the scale's quant params being carried onto the squeezed tensor and
@@ -299,7 +328,7 @@ TEST_F(QnnHTPBackendTests, RMSNorm_Rank3Scale_LeadingOnes_QDQ_DynamicScale) {
 }
 
 // axis=1 over X {2, 3, 4} normalizes 2 axes, so the scale squeezes to rank 2 rather than rank 1.
-// Uses the CPU backend because the HTP path requires the last axis only.
+// CPU uses the native multi-axis RMSNorm kernel.
 TEST_F(QnnCPUBackendTests, RMSNorm_Rank3Scale_LeadingOne_MultipleAxes) {
   RunRMSNormCpuTest(TestInputDef<float>({2, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 24)),
                     TestInputDef<float>({1, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 12)),

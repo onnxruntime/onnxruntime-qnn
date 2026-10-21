@@ -224,7 +224,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status ReloadContextForSSR(const std::string& context_bin_filepath,
                                   int64_t max_spill_fill_size,
                                   Qnn_ContextHandle_t& new_context,
-                                  const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr));
+                                  const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch());
 
   // Builds the common context configs (priority + spill-fill) used by both binary-load paths.
   // first_group_handle: 0x0 for SSR (always a new group); GetQnnContext(0) for initial multi-
@@ -269,7 +269,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
       // Defaults to a no-callback dispatch so callers that have nothing to do with EPContext
       // encryption (e.g. compatibility probes) don't have to construct and pass a dummy.
-      const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(nullptr),
+      const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch(),
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
       bool enable_htp_graph_splitting = false,
@@ -523,6 +523,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 #endif
 
+  // Callback function for QNN logging.
+  static void QnnLogging(const char* format, QnnLog_Level_t level, uint64_t timestamp, va_list argument_parameter);
+
   // Shared implementation for InitializeQnnLog / InitializeQnnValidatorLog.
   Ort::Status InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
                                      Qnn_LogHandle_t& log_handle,
@@ -698,6 +701,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void InitializeProfilingManager(const QnnBackendManagerConfig& config);
 
+  void DeallocateMappedDmaBuffers();
+
   // Checks if act_ver is >= min_ver. An act_ver of 0.0.0 is considered invalid.
   static bool MinVersionMet(const Qnn_Version_t& act_ver, const Qnn_Version_t& min_ver) {
     if (act_ver.major == 0 && act_ver.minor == 0 && act_ver.patch == 0) {
@@ -814,6 +819,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // File mapping.
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
+  std::mutex mapped_fastrpc_buffers_mutex_;
+  std::vector<std::pair<void*, uint64_t>> mapped_fastrpc_buffers_;
 
   // Backend plugin for system DLC APIs.
   bool system_dlc_created_ = false;

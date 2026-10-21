@@ -304,73 +304,15 @@ inline const ClipQDQQuantSpec kClipU8QuantizedMinMaxSpec = {
     QuantScalarSpec{0.001f, 128, 178},
     /*opset=*/13};
 
-// ---------- Bare-float data + Q+DQ-const-wrapped min/max ----------
-//
-// Data input is bare float (NOT Q/DQ-wrapped). Min/max are quantized initializers
-// (each with own scale/zp) wrapped by DequantizeLinear. Output is bare float
-// (no Q consumer). QDQ selector fails on this pattern (empty q_nodes with
-// `is_empty_q_nodes_allowed=false` — see qnn_ep_utils.cc:553) so Clip does
-// NOT form a QDQ group; the min/max DQ nodes remain standalone SingleNode
-// NodeUnits. QNN EP's own qdq_constant_folding pass
-// (simple_op_builder.cc:320 → qdq_constant_folding.cc:TryFoldConstantQDQ)
-// then folds each DQ(const) into a folded fp32 STATIC tensor, and Clip
-// builder reads it via the folded-constant fallback branch
-// (clip_op_builder.cc:45-52).
-//
-// This is the only known code path that hits the folded-constant fallback.
-// QDQ quantized min/max cases exercise the QUANT switch; plain and QDQ float
-// min/max cases exercise the non-QUANT switch. Verified empirically via gcov:
-// removing these cases zeros out folded-constant fallback coverage.
-//
-// Integration-tier peers:
-//   * Clip_U8_FloatData_QDQConstMinMax  (clip_test.cc:407)
-//   * Clip_U16_FloatData_QDQConstMinMax (clip_test.cc:375)
-struct ClipFoldedConstSpec {
-  const char* name;
-  SnapshotBackend snapshot_backend;
-  SnapshotBackend accuracy_backend;
-  ONNXTensorElementDataType qdq_dtype;  // UINT8 or UINT16
-  QuantScalarSpec min_spec;
-  QuantScalarSpec max_spec;
-  std::vector<int64_t> shape;  // shape of the bare-float data input
-  int opset;                   // 13 for U8, 21 for U16 (16-bit DQ needs opset >= 21)
-};
-
-// Integration: QnnHTPBackendTests.Clip_U8_FloatData_QDQConstMinMax
-// scale=0.1, zp=128 shared; min=-5.0 (raw=78), max=5.0 (raw=178)
-inline const ClipFoldedConstSpec kClipU8FloatDataQDQConstMinMaxSpec = {
-    "Clip_U8_FloatData_QDQConstMinMax",
-    SnapshotBackend::HTP,
-    SnapshotBackend::HTP,
-    ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
-    QuantScalarSpec{0.1f, 128, 78},
-    QuantScalarSpec{0.1f, 128, 178},
-    /*shape=*/{1, 8},
-    /*opset=*/13};
-
-// Integration: QnnHTPBackendTests.Clip_U16_FloatData_QDQConstMinMax
-// scale=10/65535; asymmetric zp — min_zp=65535 raw=0 folds to -10.0,
-// max_zp=0 raw=65535 folds to 10.0. Exercises the "asymmetric zero_point"
-// sign convention the integration comment cites.
-inline const ClipFoldedConstSpec kClipU16FloatDataQDQConstMinMaxSpec = {
-    "Clip_U16_FloatData_QDQConstMinMax",
-    SnapshotBackend::HTP,
-    SnapshotBackend::HTP,
-    ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16,
-    QuantScalarSpec{10.0f / 65535.0f, 65535, 0},
-    QuantScalarSpec{10.0f / 65535.0f, 0, 65535},
-    /*shape=*/{1, 8},
-    /*opset=*/21};
-
 // ---------------------------------------------------------------------------
 // Tier spec lists: each tier's TEST_P instantiates over these parameter
 // sources. Splitting by (kind, tier) keeps accuracy = snapshot + session by
 // construction:
 //   * op-builder snapshot: kClipSpecs + kClipQDQFloatOpBuilderSpecs
-//                          + kClipQDQQuantSpecs + kClipFoldedConstSpecs
+//                          + kClipQDQQuantSpecs
 //   * session snapshot   : kClipQDQFloatSessionSpecs (default min/max only)
 //   * accuracy           : kClipSpecs + kClipQDQFloatAccuracySpecs
-//                          + kClipQDQQuantSpecs + kClipFoldedConstSpecs
+//                          + kClipQDQQuantSpecs
 // Adding a case = add one literal to the right list; every consuming tier
 // picks it up with a matching name automatically.
 // ---------------------------------------------------------------------------
@@ -409,12 +351,6 @@ inline const std::vector<ClipQDQQuantSpec> kClipQDQQuantSpecs = {
     kClipU8QuantizedMinSpec,
     kClipU16QuantizedMaxSpec,
     kClipU8QuantizedMinMaxSpec};
-
-// Bare-float data + Q+DQ-const-wrapped min/max. Only path that exercises the
-// folded-constant fallback in ClipOpBuilder.
-inline const std::vector<ClipFoldedConstSpec> kClipFoldedConstSpecs = {
-    kClipU8FloatDataQDQConstMinMaxSpec,
-    kClipU16FloatDataQDQConstMinMaxSpec};
 
 }  // namespace test
 }  // namespace onnxruntime

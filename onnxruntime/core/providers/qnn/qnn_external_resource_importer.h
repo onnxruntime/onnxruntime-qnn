@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <shared_mutex>
 
 #include "core/providers/qnn/ort_api.h"
@@ -130,6 +131,7 @@ struct QnnExternalResourceImporterImpl : OrtExternalResourceImporterImpl {
   int device_id_;
   const OrtApi& ort_api_;
   const OrtEpApi& ep_api_;
+  std::mutex d3d12_device_mutex_;
   ComPtr<ID3D12Device> d3d12_device_;
 
   static InlinedHashSet<QnnExternalMemoryHandle*> mem_handle_registry_;

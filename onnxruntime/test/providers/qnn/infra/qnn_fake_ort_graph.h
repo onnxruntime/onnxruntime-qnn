@@ -37,6 +37,11 @@
 
 #include "core/providers/qnn/ort_api.h"
 
+#ifdef _WIN32
+extern "C" const OrtApi* ORT_API_CALL QnnUnit_SetOrtApiForTesting(const OrtApi* api) noexcept;
+extern "C" void ORT_API_CALL QnnUnit_RestoreOrtApiForTesting(const OrtApi* previous) noexcept;
+#endif
+
 namespace onnxruntime {
 namespace test {
 
@@ -455,7 +460,7 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
         reinterpret_cast<const OrtTensorTypeAndShapeInfo*>(v));
     return nullptr;
   };
-  // GetTensorMutableData: production code (qnn_ep_utils.cc) calls the mutable variant via api_ptrs_.
+  // GetTensorMutableData: production code (qdq_node_group_selector.cc) calls the mutable variant via api_ptrs_.
   api.GetTensorMutableData = [](OrtValue* v, void** out) noexcept -> OrtStatus* {
     auto* fov = reinterpret_cast<FakeOrtValue*>(v);
     *out = (fov->elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
@@ -570,13 +575,24 @@ class OrtGlobalApiOverride {
   explicit OrtGlobalApiOverride(const OrtApi* new_api) {
     original_ = OrtGetApiBase()->GetApi(ORT_API_VERSION);
     Ort::detail::Global::Api(new_api);
+#ifdef _WIN32
+    provider_original_ = QnnUnit_SetOrtApiForTesting(new_api);
+#endif
   }
-  ~OrtGlobalApiOverride() { Ort::detail::Global::Api(original_); }
+  ~OrtGlobalApiOverride() {
+#ifdef _WIN32
+    QnnUnit_RestoreOrtApiForTesting(provider_original_);
+#endif
+    Ort::detail::Global::Api(original_);
+  }
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OrtGlobalApiOverride);
 
  private:
   const OrtApi* original_ = nullptr;
+#ifdef _WIN32
+  const OrtApi* provider_original_ = nullptr;
+#endif
 };
 
 }  // namespace test
