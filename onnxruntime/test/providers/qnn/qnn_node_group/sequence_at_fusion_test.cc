@@ -113,8 +113,9 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_PositiveIndex) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
-  AssertOpInQnnGraph(json_dir, "Gather", 1);
+  AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
+  AssertOpInQnnGraph(json_dir, "Gather", 1);
 }
 
 // Negative index: N=3, position=-1 selects the last element.
@@ -134,8 +135,9 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_NegativeIndex) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
-  AssertOpInQnnGraph(json_dir, "Gather", 1);
+  AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
+  AssertOpInQnnGraph(json_dir, "Gather", 1);
 }
 
 // First boundary index with int32 position: N=4, position=0.
@@ -155,8 +157,9 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_FirstIndex_Int32) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
-  AssertOpInQnnGraph(json_dir, "Gather", 1);
+  AssertOpInQnnGraph(json_dir, "Reshape", 5);  // 4 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
+  AssertOpInQnnGraph(json_dir, "Gather", 1);
 }
 
 // Last boundary index with int32 position: N=4, position=3.
@@ -176,8 +179,9 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_LastIndex_Int32) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
-  AssertOpInQnnGraph(json_dir, "Gather", 1);
+  AssertOpInQnnGraph(json_dir, "Reshape", 5);  // 4 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
+  AssertOpInQnnGraph(json_dir, "Gather", 1);
 }
 
 // Dynamic (graph-input) position, int32: N=3, runtime position=1.
@@ -197,9 +201,38 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_DynamicPosition_Int32) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
-  AssertOpInQnnGraph(json_dir, "Gather", 1);
+  AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
+  AssertOpInQnnGraph(json_dir, "Gather", 1);
   // Normalization subgraph must be present for dynamic position.
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseLess", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseSelect", 1);
+}
+
+// Dynamic (graph-input) position, int64: exercises the Cast int64->int32 path.
+TEST_F(QnnHTPBackendTests, SequenceAtFusion_DynamicPosition_Int64) {
+  const std::filesystem::path json_dir = "SequenceAtFusion_DynamicPosition_Int64";
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  ProviderOptions opts = GetHTPProviderOptions();
+  opts["dump_json_qnn_graph"] = "1";
+  opts["json_qnn_graph_dir"] = json_dir.string();
+
+  RunQnnModelTest(
+      BuildSequenceAtTestCase<int64_t>({2, 3}, /*N=*/3, /*dynamic=*/true, /*pos=*/1LL),
+      opts,
+      /*opset=*/11,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
+
+  AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
+  AssertOpInQnnGraph(json_dir, "Concat", 1);
+  AssertOpInQnnGraph(json_dir, "Cast", 1);     // int64 → int32 position cast
+  AssertOpInQnnGraph(json_dir, "Gather", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseLess", 1);
   AssertOpInQnnGraph(json_dir, "ElementWiseSelect", 1);
 }
 
@@ -220,7 +253,11 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_DynamicNegativeIndex) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
+  AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseLess", 1);
   AssertOpInQnnGraph(json_dir, "ElementWiseSelect", 1);
 }
 
@@ -241,6 +278,8 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_Float16Elements) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  AssertOpInQnnGraph(json_dir, "Reshape", 3);  // 2 element + 1 output
+  AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
 }
 
@@ -261,6 +300,8 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_SingleElementSequence) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  AssertOpInQnnGraph(json_dir, "Reshape", 2);  // 1 element + 1 output
+  AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
 }
 
@@ -309,9 +350,21 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_PosFromInPartitionOp_ListedBeforeSeq
       build_fn, opts, /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
+  AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
+  // 2 ElementWiseAdd: one from the model's pos_add node, one from the
+  // fusion's normalization subgraph (pos + N).
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 2);
+  AssertOpInQnnGraph(json_dir, "ElementWiseLess", 1);
   AssertOpInQnnGraph(json_dir, "ElementWiseSelect", 1);  // dynamic pos normalization
 }
+
+// Note: out-of-range dynamic positions (pos < -N or pos >= N) are not tested.
+// ONNX SequenceAt declares such values to be caller-level undefined behavior;
+// the CPU EP reference implementation throws for them, so there is no valid
+// expected output to compare against and no meaningful test can be constructed
+// with the current RunQnnModelTest infrastructure.
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

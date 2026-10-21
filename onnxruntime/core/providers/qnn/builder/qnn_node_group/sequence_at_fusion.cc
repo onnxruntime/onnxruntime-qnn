@@ -3,7 +3,6 @@
 
 #include "core/providers/qnn/builder/qnn_node_group/sequence_at_fusion.h"
 
-#include <cassert>
 #include <gsl/gsl>
 #include <cstdint>
 #include <cstring>
@@ -36,28 +35,19 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          bool validate);
 
 // ---------------------------------------------------------------------------
-// Helper: check whether an ONNX element data type is within the documented
-// backend matrix for this fusion.
+// Helper: check whether an ONNX element data type is within the validated
+// set for this fusion.
 //
-// Allowlist (union of HTP and GPU Gather/Reshape/Concat tables):
-//   float32, float16, int8, uint8, int16, uint16, int32, int64, bool
-//
-// Excluded types fall back to CPU EP.  Using an allowlist (rather than a
-// denylist of string/complex) means that newly-added ONNX types (e.g. float8,
-// double, uint32, uint64) are safe-by-default-rejected until explicitly added.
+// Only types with passing HTP unit tests are listed here.  Other types that
+// are theoretically supported by the underlying QNN ops (int8, uint8, int16,
+// uint16, int32, int64, bool; GPU backend) should be added once test coverage
+// is in place.  Types absent from the allowlist fall back to CPU EP.
 // ---------------------------------------------------------------------------
 
 static bool IsElementTypeSupported(ONNXTensorElementDataType etype) {
   switch (etype) {
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:    // float32  — HTP + GPU
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:  // float16  — HTP + GPU
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:     //           HTP only
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:    //           HTP only
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:    //           HTP only
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:   //           HTP only
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:    //           HTP + GPU
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:    //           HTP + GPU
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:     //           HTP only
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:    // float32 — validated on HTP
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:  // float16 — validated on HTP
       return true;
     default:
       return false;
@@ -307,7 +297,9 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          bool validate) {
   const auto& sc_inputs = seq_construct_unit.Inputs();
   const size_t N = sc_inputs.size();
-  assert(N >= 1);
+  if (N < 1) {
+    return MAKE_EP_FAIL("SequenceAtFusion: SequenceConstruct has no inputs.");
+  }
 
   // Retrieve element shape from the first input.
   std::vector<uint32_t> elem_shape;
@@ -317,10 +309,14 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
 
   // SequenceAt inputs: [sequence (skipped), position].
   const auto& sa_inputs = seq_at_unit.Inputs();
-  assert(sa_inputs.size() >= 2);
+  if (sa_inputs.size() < 2) {
+    return MAKE_EP_FAIL("SequenceAtFusion: SequenceAt has fewer than 2 inputs.");
+  }
   const OrtNodeUnitIODef& pos_input = sa_inputs[1];
   const auto& sa_outputs = seq_at_unit.Outputs();
-  assert(!sa_outputs.empty());
+  if (sa_outputs.empty()) {
+    return MAKE_EP_FAIL("SequenceAtFusion: SequenceAt has no outputs.");
+  }
   const OrtNodeUnitIODef& final_output = sa_outputs[0];
 
   // Retrieve element data type info from first SC input.
@@ -332,59 +328,115 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   const std::string base = utils::UniqueNameGenerator().New(seq_construct_unit);
 
   // ------------------------------------------------------------------
-  // Validate mode: probe QNN with a minimal Gather node.
+  // Validate mode: probe every QNN node that AddToModelBuilder emits.
+  // Validating only Gather would miss backends that accept Gather but
+  // reject Reshape, Concat, or the dynamic-position ops (Cast, Add,
+  // Less, Select) for the requested dtype.
   // ------------------------------------------------------------------
   if (validate) {
-    std::vector<uint32_t> stacked_shape;
-    stacked_shape.reserve(1 + elem_shape.size());
-    stacked_shape.push_back(static_cast<uint32_t>(N));
-    stacked_shape.insert(stacked_shape.end(), elem_shape.begin(), elem_shape.end());
+    const Qnn_DataType_t elem_dt = elem_info.qnn_data_type;
 
-    // Stacked input tensor.
-    QnnTensorWrapper stacked_tensor(
-        base + "_validate_stacked",
-        QNN_TENSOR_TYPE_NATIVE,
-        elem_info.qnn_data_type,
-        elem_info.quant_param.Copy(),
-        std::vector<uint32_t>(stacked_shape));
+    auto make_tw = [&](const std::string& suffix, Qnn_DataType_t dt,
+                       std::vector<uint32_t> shape) -> QnnTensorWrapper {
+      return QnnTensorWrapper(base + suffix, QNN_TENSOR_TYPE_NATIVE, dt,
+                              QnnQuantParamsWrapper(), std::move(shape));
+    };
 
-    // Index tensor: scalar int32.
-    QnnTensorWrapper index_tensor(
-        base + "_validate_index",
-        QNN_TENSOR_TYPE_NATIVE,
-        QNN_DATATYPE_INT_32,
-        QnnQuantParamsWrapper(),
-        std::vector<uint32_t>{1u});  // rank-0 (scalar)
+    // Probe 1: Reshape (elem_dtype) — emitted N+1 times.
+    {
+      auto in  = make_tw("_vr_in",  elem_dt, {1u});
+      auto out = make_tw("_vr_out", elem_dt, {1u});
+      auto s = qmw.ValidateQnnNode(base + "_vr", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                                   {in.GetQnnTensor()}, {out.GetQnnTensor()}, {});
+      if (!s.IsOK()) return s;
+    }
 
-    // Gather(data=[N,d..], idx=[1], axis=0) produces output=[1,d..].
-    std::vector<uint32_t> gather_out_shape;
-    gather_out_shape.push_back(1u);
-    gather_out_shape.insert(gather_out_shape.end(), elem_shape.begin(), elem_shape.end());
+    // Probe 2: Concat (elem_dtype, 2 inputs, axis=0) — always emitted.
+    {
+      auto in0 = make_tw("_vc0", elem_dt, {1u});
+      auto in1 = make_tw("_vc1", elem_dt, {1u});
+      auto out = make_tw("_vco", elem_dt, {2u});
+      Qnn_Scalar_t ax = QNN_SCALAR_INIT;
+      ax.dataType = QNN_DATATYPE_INT_32;
+      ax.int32Value = 0;
+      QnnParamWrapper axis_p(seq_construct_unit.Index(), seq_construct_unit.Name(),
+                             QNN_OP_CONCAT_PARAM_AXIS, ax);
+      auto s = qmw.ValidateQnnNode(base + "_vcat", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CONCAT,
+                                   {in0.GetQnnTensor(), in1.GetQnnTensor()},
+                                   {out.GetQnnTensor()}, {axis_p.GetQnnParam()});
+      if (!s.IsOK()) return s;
+    }
 
-    bool is_graph_output = qmw.IsGraphOutput(final_output.name);
-    Qnn_TensorType_t out_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-    QnnTensorWrapper output_tensor(
-        base + "_validate_out",
-        out_type,
-        elem_info.qnn_data_type,
-        elem_info.quant_param.Copy(),
-        std::vector<uint32_t>(gather_out_shape));
+    // Probe 3: Gather (elem_dtype, int32 index, axis=0) — always emitted.
+    {
+      auto data = make_tw("_vgd", elem_dt, {static_cast<uint32_t>(N), 1u});
+      auto idx  = make_tw("_vgi", QNN_DATATYPE_INT_32, {1u});
+      auto out  = make_tw("_vgo", elem_dt, {1u, 1u});
+      Qnn_Scalar_t ax = QNN_SCALAR_INIT;
+      ax.dataType = QNN_DATATYPE_INT_32;
+      ax.int32Value = 0;
+      QnnParamWrapper axis_p(seq_construct_unit.Index(), seq_construct_unit.Name(),
+                             QNN_OP_GATHER_PARAM_AXIS, ax);
+      auto s = qmw.ValidateQnnNode(base + "_vg", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_GATHER,
+                                   {data.GetQnnTensor(), idx.GetQnnTensor()},
+                                   {out.GetQnnTensor()}, {axis_p.GetQnnParam()});
+      if (!s.IsOK()) return s;
+    }
 
-    Qnn_Scalar_t axis_scalar = QNN_SCALAR_INIT;
-    axis_scalar.dataType = QNN_DATATYPE_INT_32;
-    axis_scalar.int32Value = 0;
-    QnnParamWrapper axis_param(seq_construct_unit.Index(), seq_construct_unit.Name(),
-                               QNN_OP_GATHER_PARAM_AXIS, axis_scalar);
+    // Probes 4-7 (conditional): dynamic position path.
+    // Determine whether position is a static initializer to skip the dynamic nodes.
+    TensorInfo pos_info_v{};
+    const bool pos_is_static = qmw.GetTensorInfo(pos_input, pos_info_v).IsOK() &&
+                               pos_info_v.is_initializer;
+    if (!pos_is_static) {
+      // Probe 4 (int64 dynamic only): Cast int64 → int32.
+      if (pos_info_v.qnn_data_type == QNN_DATATYPE_INT_64) {
+        auto in  = make_tw("_vcast_in",  QNN_DATATYPE_INT_64, {1u});
+        auto out = make_tw("_vcast_out", QNN_DATATYPE_INT_32, {1u});
+        auto s = qmw.ValidateQnnNode(base + "_vcast", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+                                     {in.GetQnnTensor()}, {out.GetQnnTensor()}, {});
+        if (!s.IsOK()) return s;
+      }
 
-    auto validate_status = qmw.ValidateQnnNode(
-        base + "_validate_gather",
-        QNN_OP_PACKAGE_NAME_QTI_AISW,
-        QNN_OP_GATHER,
-        {stacked_tensor.GetQnnTensor(),
-         index_tensor.GetQnnTensor()},
-        {output_tensor.GetQnnTensor()},
-        {axis_param.GetQnnParam()});
-    return validate_status;
+      // Probe 5: ElementWiseAdd (int32 + int32 → int32).
+      {
+        auto a   = make_tw("_vadd_a",   QNN_DATATYPE_INT_32, {1u});
+        auto b   = make_tw("_vadd_b",   QNN_DATATYPE_INT_32, {1u});
+        auto out = make_tw("_vadd_out", QNN_DATATYPE_INT_32, {1u});
+        auto s = qmw.ValidateQnnNode(base + "_vadd", QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                     QNN_OP_ELEMENT_WISE_ADD,
+                                     {a.GetQnnTensor(), b.GetQnnTensor()},
+                                     {out.GetQnnTensor()}, {});
+        if (!s.IsOK()) return s;
+      }
+
+      // Probe 6: ElementWiseLess (int32 < int32 → bool).
+      {
+        auto a   = make_tw("_vless_a",   QNN_DATATYPE_INT_32, {1u});
+        auto b   = make_tw("_vless_b",   QNN_DATATYPE_INT_32, {1u});
+        auto out = make_tw("_vless_out", QNN_DATATYPE_BOOL_8, {1u});
+        auto s = qmw.ValidateQnnNode(base + "_vless", QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                     QNN_OP_ELEMENT_WISE_LESS,
+                                     {a.GetQnnTensor(), b.GetQnnTensor()},
+                                     {out.GetQnnTensor()}, {});
+        if (!s.IsOK()) return s;
+      }
+
+      // Probe 7: ElementWiseSelect (bool, int32, int32 → int32).
+      {
+        auto cond = make_tw("_vsel_cond", QNN_DATATYPE_BOOL_8, {1u});
+        auto t    = make_tw("_vsel_t",    QNN_DATATYPE_INT_32, {1u});
+        auto f    = make_tw("_vsel_f",    QNN_DATATYPE_INT_32, {1u});
+        auto out  = make_tw("_vsel_out",  QNN_DATATYPE_INT_32, {1u});
+        auto s = qmw.ValidateQnnNode(base + "_vsel", QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                     QNN_OP_ELEMENT_WISE_SELECT,
+                                     {cond.GetQnnTensor(), t.GetQnnTensor(), f.GetQnnTensor()},
+                                     {out.GetQnnTensor()}, {});
+        if (!s.IsOK()) return s;
+      }
+    }
+
+    return Ort::Status();
   }
 
   // ------------------------------------------------------------------
@@ -453,7 +505,8 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
       return MAKE_EP_FAIL("SequenceAtFusion: static position is out of range.");
     }
 
-    // Normalize: convert negative index to its positive equivalent.
+    // Static position was already validated to [-N, N-1] by TryFusion.
+    // Negative values in that range are normalized to their positive equivalent here.
     int32_t pos_val = static_cast<int32_t>(pos_val64);
     if (pos_val < 0) pos_val += static_cast<int32_t>(N);
 
@@ -489,10 +542,14 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
       pos32_name = pos_input.name;
     }
 
-    // Runtime normalization subgraph for negative indices:
+    // Runtime normalization subgraph for valid negative indices in [-N, -1]:
     //   pos_plus_N     = ElementWiseAdd(pos32, N)
     //   is_negative    = ElementWiseLess(pos32, 0)
     //   normalized_pos = ElementWiseSelect(is_negative, pos_plus_N, pos32)
+    // Note: ONNX SequenceAt requires the caller to supply a position in
+    // [-N, N-1]. Values outside that range (e.g. pos < -N or pos >= N) are
+    // undefined behavior per the ONNX spec; the normalization above does not
+    // clamp them, and QNN Gather behavior for such indices is unspecified.
     const std::string n_const_name = base + "_seq_len_N";
     const std::string zero_const_name = base + "_pos_zero";
     RETURN_IF_ERROR(AddInt32Const(n_const_name, static_cast<int32_t>(N)));

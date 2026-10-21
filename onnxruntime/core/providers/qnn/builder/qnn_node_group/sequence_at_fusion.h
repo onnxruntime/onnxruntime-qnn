@@ -5,9 +5,8 @@
 
 #include <array>
 #include <memory>
-#include <string>
+#include <string_view>
 #include <unordered_map>
-#include <vector>
 
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/ort_api.h"
@@ -30,8 +29,8 @@ class QnnModelWrapper;
 ///
 /// Constraints (TryFusion returns nullptr if any is violated):
 ///   - All N inputs of SequenceConstruct must be plain tensors with identical
-///     static shapes and an element type representable in QNN (no string /
-///     complex64 / complex128).
+///     static shapes and an element type with validated QNN support
+///     (currently float32 and float16 on HTP; other types fall back to CPU EP).
 ///   - The sequence output of SequenceConstruct must have exactly one
 ///     consumer, which must be SequenceAt.
 ///   - The position input of SequenceAt must be a scalar of dtype int32 or
