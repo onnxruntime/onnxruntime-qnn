@@ -409,6 +409,34 @@ class OrtWheelGpuModelTestTask(OrtWheelModelTestTask):
         )
 
 
+class OrtWheelHtpModelTestTask(OrtWheelModelTestTask):
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        target_arch: TargetArchT,
+        config: BuildConfigT,
+        py_version: TargetPyVersionT,
+    ) -> None:
+        super().__init__(
+            group_name,
+            venv,
+            target_arch,
+            config,
+            py_version,
+            [str(REPO_ROOT / "qcom" / "model_test" / "model_zoo_test.py")],
+            get_test_env=lambda: {
+                **os.environ,
+                "ORT_MODEL_ZOO_TEST_ROOTS": str(get_model_zoo_root(venv) / "winml-cert"),
+                "ORT_MODEL_ZOO_TEST_XFAILS": "",
+                "ORT_MODEL_ZOO_BACKEND": "htp",
+                "ORT_MODEL_ZOO_SNAPSHOT_DIR": os.getenv(
+                    "ORT_MODEL_ZOO_SNAPSHOT_DIR", str(REPO_ROOT / "build" / "modelzoo_snapshots")
+                ),
+            },
+        )
+
+
 class RunLinterTask(CompositeTask):
     def __init__(self, venv_path: Path, auto_fix: bool = False) -> None:
         lintrunner_cmd = [

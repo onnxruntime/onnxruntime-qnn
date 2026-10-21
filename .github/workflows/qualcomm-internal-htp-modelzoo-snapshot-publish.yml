@@ -1,0 +1,69 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal HTP ModelZoo Snapshot Publish
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs: &common_inputs
+      htp_arch:
+        description: "HTP device architecture used to generate the snapshots."
+        required: true
+        type: string
+      modelzoo_platform:
+        description: "ModelZoo test platform identity used in artifact paths."
+        required: true
+        type: string
+      repo_subpath:
+        description: "Artifactory path prefix under BUILD_ARTIFACTORY_REPO."
+        type: string
+        default: "ci/qnn-ep-test-store/modelzoo-snapshot-goldens"
+      dry_run:
+        description: "Package snapshots without updating Artifactory."
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs: *common_inputs
+
+jobs:
+  publish-modelzoo-snapshots:
+    name: "Publish HTP ModelZoo snapshots (${{ inputs.htp_arch }})"
+    runs-on: ["self-hosted", "Windows", "ARM64", "Test"]
+    env:
+      ORT_MODEL_ZOO_SNAPSHOT_DIR: "${{ github.workspace }}\\build\\modelzoo_snapshots\\${{ inputs.htp_arch }}"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Initialize submodules
+        run: git submodule update --init --recursive
+      - name: Set up JFrog CLI
+        if: ${{ !inputs.dry_run }}
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+      - name: Download ARM64 wheel
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "windows-arm64-py3.12-wheels"
+      - name: Export HTP ModelZoo snapshots
+        run: >
+          python.exe qcom/build_and_test.py --target-py-version 3.12 --config Release
+          create_venv test_ort_windows_arm64_pyhtp --only
+      - name: Publish snapshots
+        env:
+          BUILD_ARTIFACTORY_REPO: ${{ secrets.BUILD_ARTIFACTORY_REPO }}
+        run: >
+          python.exe qcom/scripts/windows/publish_modelzoo_snapshots.py
+          --snapshot-dir "${{ env.ORT_MODEL_ZOO_SNAPSHOT_DIR }}"
+          --wheel "${{ github.workspace }}\\build\\windows-arm64\\Release\\Release\\dist\\*.whl"
+          --modelzoo-platform "${{ inputs.modelzoo_platform }}"
+          --htp-arch "${{ inputs.htp_arch }}"
+          --repo-subpath "${{ inputs.repo_subpath }}"
+          --output-dir "${{ github.workspace }}\\build\\modelzoo_snapshot_publish"
+          ${{ inputs.dry_run && '--dry-run' || '--publish' }}
