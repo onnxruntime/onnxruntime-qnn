@@ -129,8 +129,8 @@ env:
   # Cross compilation on Windows adds a folder to the build directory.
   BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && format('{0}/{0}', inputs.build_config) || inputs.build_config }}"
 
-  # The internal-symbol build is intentionally isolated from the shipping Windows build directory.
-  BUILD_DIR_ARCH: "${{ inputs.target_os == 'windows' && inputs.qnn_internal_ut_symbols && format('{0}-internal-symbols', inputs.target_arch) || inputs.target_arch }}"
+  # Internal-symbol builds are intentionally isolated from shipping build directories.
+  BUILD_DIR_ARCH: "${{ inputs.qnn_internal_ut_symbols && format('{0}-internal-symbols', inputs.target_arch) || inputs.target_arch }}"
 
   TEST_ARCHIVE_EXT: "${{ inputs.target_os == 'linux' && 'tar.bz2' || 'zip' }}"
 

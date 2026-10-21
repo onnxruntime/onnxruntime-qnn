@@ -1185,6 +1185,25 @@ class TaskLibrary:
                 )
             )
 
+        @task
+        @depends(["build_ort_linux_x86_64_internal_symbols"])
+        def test_ort_linux_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Testing ONNX Runtime for Linux on x86_64 with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_ut_symbols=True,
+                    build_dir_suffix="internal-symbols",
+                )
+            )
+
     if is_host_linux() and is_host_x86_64():
 
         @task
