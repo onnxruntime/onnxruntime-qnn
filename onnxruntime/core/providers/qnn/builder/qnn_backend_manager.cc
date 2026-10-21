@@ -2149,7 +2149,7 @@ Ort::Status QnnBackendManager::SetupBackend(
       // then a new context must be created for the set of context bins
       bool context_exists = false;
       {
-        std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
+        std::lock_guard<std::mutex> map_lock(ep_context_handle_map_mutex_);
         context_exists = ep_context_handle_map_.find(context_bin_map.begin()->first) !=
                          ep_context_handle_map_.end();
       }
@@ -2162,7 +2162,7 @@ Ort::Status QnnBackendManager::SetupBackend(
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
 
       {
-        std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
+        std::lock_guard<std::mutex> map_lock(ep_context_handle_map_mutex_);
         for (auto& it : context_bin_map) {
           const auto& context_bin_filepath = it.first;
           const auto& ep_node_names = *it.second;
