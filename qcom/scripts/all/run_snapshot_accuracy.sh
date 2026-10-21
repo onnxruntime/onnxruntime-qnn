@@ -99,7 +99,7 @@ build_dir="$(realpath "${build_dir}")"
 # use the same target with an .exe suffix.
 binary=""
 for cfg in RelWithDebInfo Release Debug; do
-    for name in onnxruntime_provider_test onnxruntime_provider_test.exe; do
+    for name in onnxruntime_provider_test.exe onnxruntime_provider_test; do
         candidate="${build_dir}/${cfg}/${name}"
         if [ -x "${candidate}" ]; then
             binary="${candidate}"
@@ -111,7 +111,7 @@ done
 
 # Also check if binary is directly in build_dir (user pointed to config dir).
 if [ -z "${binary}" ]; then
-    for name in onnxruntime_provider_test onnxruntime_provider_test.exe; do
+    for name in onnxruntime_provider_test.exe onnxruntime_provider_test; do
         if [ -x "${build_dir}/${name}" ]; then
             binary="${build_dir}/${name}"
             config=""

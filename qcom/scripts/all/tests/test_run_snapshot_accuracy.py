@@ -42,9 +42,11 @@ if "--gtest_list_tests" in args:
 
 output_arg = next(arg for arg in args if arg.startswith("--gtest_output=json:"))
 output_path = output_arg.removeprefix("--gtest_output=json:")
-if not output_path.startswith("WIN::"):
+if output_path.startswith("WIN::"):
+    output_path = output_path.removeprefix("WIN::")
+elif sys.platform != "win32" or not Path(output_path).is_absolute():
     raise SystemExit(91)
-output_path = Path(output_path.removeprefix("WIN::"))
+output_path = Path(output_path)
 output_path.parent.mkdir(parents=True, exist_ok=True)
 suite = "QnnAcc_Clip_AccuracyTest" if any("QnnAcc_" in arg for arg in args) else "QnnSnapshot_Clip_OpBuilderTest"
 output_path.write_text(json.dumps({{"testsuites": [{{"name": suite, "failures": 0, "errors": 0}}]}}))
