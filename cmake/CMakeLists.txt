@@ -81,14 +81,14 @@ option(onnxruntime_DONT_VECTORIZE "Do not vectorize operations in Eigen" OFF)
 # QNN internal-symbol access is a separate test capability without instrumentation. The
 # QCOM Linux build wrapper enables both for coverage builds to preserve the existing suite.
 option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
-option(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS
-       "Build QNN EP with internal symbols exported for unit tests. Do not use for production binaries." OFF)
+option(onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS
+       "Build QNN EP with internal symbols exported for tests. Do not use for production binaries." OFF)
 
 # This mode must keep the QNN EP export/link configuration and its direct-access
 # test bodies in lockstep. It is consumed by both provider and unit-test targets.
-set(onnxruntime_qnn_internal_ut_symbols_enabled OFF)
-if(onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS)
-  set(onnxruntime_qnn_internal_ut_symbols_enabled ON)
+set(onnxruntime_qnn_internal_test_symbols_enabled OFF)
+if(onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS)
+  set(onnxruntime_qnn_internal_test_symbols_enabled ON)
 endif()
 
 option(onnxruntime_USE_FULL_PROTOBUF "Link to libprotobuf instead of libprotobuf-lite when this option is ON" OFF)

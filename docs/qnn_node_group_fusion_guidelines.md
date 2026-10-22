@@ -182,7 +182,7 @@ If `AddToModelBuilder` returns non-OK during Compile, the error is logged at ERR
 | `HardSigmoid` | `HardSigmoidMulFusion` | `x * HardSigmoid(x)` → QNN HardSwish |
 | `MatMul` | `LowPowerBlockQuantizedMatMulFusion` | `DQ→Q→MatMul(+DQ,DQ,Q)` LPBQ → QNN MatMul w/ LPBQ |
 | `Gemm` | `LowPowerBlockQuantizedGemmFusion`, then `ReshapeGemmFusionGroup::TryFusion4/3/2` | LPBQ FC; `[Reshape→]Gemm[→Reshape]` → QNN FullyConnected |
-| `Mul` | `ScaleSoftmaxFusion` | `Softmax(Mul(x, scalar))` → QNN Softmax(beta=scale) |
+| `Mul` | `ScaleSoftmaxFusion` | `Softmax(Mul(x, scale))` (single-element scale) → QNN Softmax(beta=scale) |
 | `Cast` | `CastLoneQFusion` | Orphaned `Cast→Q` |
 | `Erf` | `GeluFusion` | 3 GELU ONNX expansions/variants → QNN Gelu |
 | `ReduceMean` | `LayerNormFusion` | Full LayerNorm expansion → QNN LayerNorm |

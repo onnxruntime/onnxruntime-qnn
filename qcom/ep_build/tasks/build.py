@@ -86,7 +86,7 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         extra_args: Iterable[str] | None = None,
         env: Mapping[str, str] | None = None,
         build_archive: bool = False,
-        qnn_internal_ut_symbols: bool = False,
+        qnn_internal_test_symbols: bool = False,
         build_dir_suffix: str | None = None,
     ) -> None:
         cmd = [
@@ -109,8 +109,8 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         if build_archive:
             cmd.append("--build-archive")
 
-        if qnn_internal_ut_symbols:
-            cmd.append("--enable-qnn-internal-ut-symbols")
+        if qnn_internal_test_symbols:
+            cmd.append("--enable-qnn-internal-test-symbols")
 
         if build_dir_suffix is not None:
             cmd.append(f"--build-dir-suffix={build_dir_suffix}")
@@ -135,8 +135,8 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         build_as_x: bool = False,
         build_nuget: bool = False,
         build_archive: bool = False,
-        qnn_internal_ut_symbols: bool = False,
         use_qairt_api: bool = False,
+        qnn_internal_test_symbols: bool = False,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "windows" / "build.ps1"),
@@ -170,8 +170,8 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         if use_qairt_api:
             cmd.append("-UseQairtApi")
 
-        if qnn_internal_ut_symbols:
-            cmd.extend(["-QnnInternalUtSymbols", "1"])
+        if qnn_internal_test_symbols:
+            cmd.extend(["-QnnInternalTestSymbols", "1"])
 
         super().__init__(group_name, [cmd], env=ort_build_env_vars())
 

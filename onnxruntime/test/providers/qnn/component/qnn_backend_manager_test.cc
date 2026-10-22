@@ -38,7 +38,6 @@
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/ort_api.h"
-
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
 namespace onnxruntime {
