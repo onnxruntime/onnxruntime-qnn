@@ -186,6 +186,27 @@ jobs:
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       nightly_build: ${{ inputs.nightly_build }}
 
+  # Keep this non-required shadow validation alongside the shipping build until its
+  # test inventory and reliability are established. This uses a native ARM64 runner
+  # so the internal-symbol provider DLL runs against the Windows ARM64 HTP device.
+  build-and-test-windows-arm64-internal-symbols:
+    if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
+    needs: [archive-testdata, path-filter]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
+      nightly_build: ${{ inputs.nightly_build }}
+      target_arch: arm64
+      build_runner_arch: ARM64
+      test_runner_arch: arm64
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      qnn_internal_ut_symbols: true
+      run_tests: true
+      build_test_same_runner: true
+      # This is validation-only; do not publish a non-shipping wheel or test archive.
+      upload_wheel: false
+
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
     needs: [archive-testdata, path-filter]

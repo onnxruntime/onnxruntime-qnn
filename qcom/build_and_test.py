@@ -750,6 +750,25 @@ class TaskLibrary:
                 )
             )
 
+        @public_task("Build ONNX Runtime for ARM64 Windows with QNN EP internal unit-test symbols")
+        @depends(["create_venv"])
+        def build_ort_windows_arm64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Building ONNX Runtime for Windows on ARM64 with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "arm64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "build",
+                    build_nuget=False,
+                    build_archive=False,
+                    qnn_internal_ut_symbols=True,
+                )
+            )
+
     if is_host_windows():
 
         @public_task("Build ONNX Runtime for ARM64ec Windows")
@@ -1360,6 +1379,23 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
+                )
+            )
+
+        @task
+        @depends(["build_ort_windows_arm64_internal_symbols"])
+        def test_ort_windows_arm64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Testing ONNX Runtime for Windows on ARM64 with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "arm64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_ut_symbols=True,
                 )
             )
 

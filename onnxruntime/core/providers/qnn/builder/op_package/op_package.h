@@ -16,7 +16,7 @@ namespace qnn {
 struct OpPackage {
   std::string op_type;
   std::string path;
-  std::string interface;
+  std::string interface_provider;
   std::string target;
 };
 

@@ -452,7 +452,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status SetGlobalConfig();
 
   // Shared implementation for InitializeBackend / InitializeValidatorBackend.
-  Ort::Status InitializeBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
+  Ort::Status InitializeBackendCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                       Qnn_LogHandle_t log_handle,
                                       Qnn_BackendHandle_t& backend_handle,
                                       bool& initialized_flag,
@@ -466,7 +466,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // `allow_hw_device_enumeration` controls whether to honor `device_id_` and pass
   // platform-info configs to deviceCreate. The validator backend is a host-side shim
   // with no real hardware to enumerate, so it always passes false.
-  Ort::Status CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
+  Ort::Status CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                  Qnn_LogHandle_t log_handle,
                                  Qnn_DeviceHandle_t& device_handle,
                                  bool& device_created_flag,
@@ -481,7 +481,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status CreateValidatorDevice();
 
   // Shared implementation for ReleaseDevice / ReleaseValidatorDevice.
-  Ort::Status ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
+  Ort::Status ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                   Qnn_DeviceHandle_t& device_handle,
                                   bool& device_created_flag);
 
@@ -490,7 +490,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status ReleaseValidatorDevice();
 
   // Shared implementation for ShutdownBackend / ShutdownValidatorBackend.
-  Ort::Status ShutdownBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
+  Ort::Status ShutdownBackendCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                     Qnn_BackendHandle_t& backend_handle,
                                     bool& initialized_flag,
                                     const std::string& backend_label);
@@ -527,7 +527,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   static void QnnLogging(const char* format, QnnLog_Level_t level, uint64_t timestamp, va_list argument_parameter);
 
   // Shared implementation for InitializeQnnLog / InitializeQnnValidatorLog.
-  Ort::Status InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
+  Ort::Status InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                      Qnn_LogHandle_t& log_handle,
                                      const std::string& backend_label);
 
@@ -540,11 +540,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Shared implementation for TerminateQnnLog calls.
   // Resets log_handle to nullptr before returning, even on failure, so other threads
   // waiting on logger_recursive_mutex_ can observe the handle is gone.
-  Ort::Status TerminateQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
+  Ort::Status TerminateQnnLogCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                     Qnn_LogHandle_t& log_handle,
                                     const std::string& backend_label);
 
-  Ort::Status SetQnnLogLevelCommon(const QNN_INTERFACE_VER_TYPE& interface,
+  Ort::Status SetQnnLogLevelCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                    Qnn_LogHandle_t log_handle,
                                    QnnLog_Level_t qnn_log_level,
                                    const std::string& label);
@@ -583,7 +583,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                       Qnn_Version_t req_version,
                                       T** interface_provider);
 
-  bool IsDevicePropertySupported(const QNN_INTERFACE_VER_TYPE& interface);
+  bool IsDevicePropertySupported(const QNN_INTERFACE_VER_TYPE& qnn_interface);
 
   std::string GetBackendBuildId() {
     char* backend_build_id{nullptr};
@@ -621,7 +621,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       Qnn_ErrorHandle_t result = qnn_interface_.backendRegisterOpPackage(
           backend_handle_,
           op_package.path.c_str(),
-          op_package.interface.c_str(),
+          op_package.interface_provider.c_str(),
           op_package.target.c_str());
 
       if (result != QNN_SUCCESS) {
@@ -678,7 +678,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       RETURN_IF(QNN_SUCCESS != result,
                 ("Failed to register op package to backend. Error: " + QnnErrorHandleToString(result)).c_str());
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Successfully register the op package.");
-      std::string op_package_for_registration = op_package.interface;
+      std::string op_package_for_registration = op_package.interface_provider;
       std::string suffix = "InterfaceProvider";
       if (op_package_for_registration.size() >= suffix.size() &&
           op_package_for_registration.compare(op_package_for_registration.size() - suffix.size(), suffix.size(), suffix) == 0) {
