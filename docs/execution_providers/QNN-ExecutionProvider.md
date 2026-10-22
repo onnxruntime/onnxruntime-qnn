@@ -813,7 +813,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
 | `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
 | `Transpose → Reshape → Transpose` | `QNN_OP_RESHAPE` | Fires when the combined transformation reduces to a pure reshape (dimension-merging only, no reordering). Intermediate QDQ nodes are permitted. |
-| `Reshape → [Q → DQ]? → Transpose` | `QNN_OP_TRANSPOSE` or noop `QNN_OP_RESHAPE` | Fires when Reshape is equivalent to a permutation (same rank, non-1 dims in same relative order). Composes the reshape-implied perm with the Transpose perm; emits identity Reshape if composed perm is identity, or a single Transpose otherwise. |
+| `Reshape → [Q → DQ]? → Transpose` | `QNN_OP_TRANSPOSE` or `QNN_OP_RESHAPE` | Fires when Reshape is equivalent to a permutation (same rank, non-1 dims in same relative order). Composes the reshape-implied perm with the Transpose perm; emits a noop Reshape if the composed perm is identity, a Reshape if it only moves size-1 dimensions and changes shape, or a single Transpose otherwise. |
 
 ### Miscellaneous fusions
 

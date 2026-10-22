@@ -196,8 +196,9 @@ TEST_F(QnnHTPBackendTests, ReshapeTransposeFusion_NonTransposeEquivalentReshape_
                   EPVerificationParams{ExpectedEPNodeAssignment::All,
                                        ElementwiseAbsoluteVerifier(1e-2f)});
 
-  // Both original ops survive. The standalone Transpose moves only the size-1 axis, so the
-  // Transpose builder lowers it to a Reshape. The pair is still not fused (ranks differ).
+  // The pair is not fused. The standalone Transpose moves only the size-1 axis, so the
+  // Transpose builder lowers it to a Reshape; both original nodes remain in the compiled
+  // graph, now as two Reshapes.
   AssertOpInQnnGraph(dir, "Reshape", 2);
   AssertOpInQnnGraph(dir, "Transpose", 0);
   AssertTensorShapeInQnnGraph(dir, "reshape_out", {1, 16});

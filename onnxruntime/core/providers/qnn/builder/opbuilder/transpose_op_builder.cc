@@ -194,8 +194,8 @@ Ort::Status TransposeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   const QnnTensorWrapper& input_tensor_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
   const QnnQuantParamsWrapper& input_quant_param = input_tensor_wrapper.GetQnnQuantParams();
 
-  // Workaround for QNN HTP Transpose miscomputation (issue #1020). Keep Transpose when an
-  // int64 output cast or per-channel quantization prevents a faithful Reshape.
+  // Workaround for QNN HTP Transpose miscomputation (issue #1020). Keep the Transpose
+  // path when an int64 output cast must be emitted or the quantization is per-channel.
   if (!needs_int64_cast && !input_quant_param.IsPerChannel()) {
     std::vector<uint32_t> input_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape");
