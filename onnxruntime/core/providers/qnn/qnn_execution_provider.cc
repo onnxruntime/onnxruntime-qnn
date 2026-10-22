@@ -1059,7 +1059,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   htp_graph_configs_.enable_htp_matmul_lut = ParseBoolOption(ort_api,
                                                              session_options_,
                                                              FormatEPConfigKey("enable_htp_matmul_lut"),
-                                                             false,
+                                                             true,
                                                              logger_);
 #endif
 
