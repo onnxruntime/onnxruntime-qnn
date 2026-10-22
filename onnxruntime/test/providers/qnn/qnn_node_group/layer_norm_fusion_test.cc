@@ -228,6 +228,38 @@ GetTestModelFn BuildLayerNormFusionNoBetaTestCase(
   };
 }
 
+// Same chain as BuildLayerNormFusionTestCase but without Mul(gamma): Div feeds Add(beta) directly.
+// There is no beta-only fusion, so only the core is fused and Add(beta) stays a standalone op.
+GetTestModelFn BuildLayerNormFusionNoGammaTestCase(
+    const TestInputDef<float>& input_def,
+    const std::vector<int64_t>& axes,
+    float epsilon,
+    const std::vector<int64_t>& beta_shape,
+    const std::vector<float>& beta_values) {
+  return [=](ModelTestBuilder& builder) -> void {
+    MakeTestInput<float>(builder, "input", input_def);
+
+    builder.MakeInitializer<float>("beta", beta_shape, beta_values);
+    builder.MakeScalarInitializer<float>("pow_exp", 2.0f);
+    builder.MakeScalarInitializer<float>("eps", epsilon);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> rm_attrs;
+    rm_attrs.push_back(test::MakeAttribute("axes", axes));
+    rm_attrs.push_back(test::MakeAttribute("keepdims", static_cast<int64_t>(1)));
+
+    builder.AddNode("rm1", "ReduceMean", {"input"}, {"rm1_out"}, "", rm_attrs);
+    builder.AddNode("sub", "Sub", {"input", "rm1_out"}, {"sub_out"});
+    builder.AddNode("pow", "Pow", {"sub_out", "pow_exp"}, {"pow_out"});
+    builder.AddNode("rm2", "ReduceMean", {"pow_out"}, {"rm2_out"}, "", rm_attrs);
+    builder.AddNode("add_eps", "Add", {"rm2_out", "eps"}, {"add_eps_out"});
+    builder.AddNode("sqrt", "Sqrt", {"add_eps_out"}, {"sqrt_out"});
+    builder.AddNode("div", "Div", {"sub_out", "sqrt_out"}, {"div_out"});
+
+    builder.MakeOutput("output");
+    builder.AddNode("add_beta", "Add", {"div_out", "beta"}, {"output"});
+  };
+}
+
 // Asserts the shapes of the gamma (input 1) and beta (input 2) tensors read by the single fused QNN
 // LayerNorm in the dumped graph. Tensors are found through the LayerNorm node's input list rather than
 // by name: synthesized ones/zeros get generated names whose "_N" suffix depends on how many fusion
@@ -552,6 +584,74 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_GammaOnly_InvalidBetaShape) {
   AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
   AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
   ExpectLayerNormGammaBetaShapes(json_dir, {16}, {16});
+}
+
+// ---- No beta-only fusion ----------------------------------------------------
+
+// Div feeds Add(beta) directly, with no Mul(gamma). There is no beta-only candidate, so the fusion
+// falls back to core-only LayerNorm(x, ones, zeros) and Add(beta) remains a standalone op.
+TEST_F(QnnHTPBackendTests, LayerNormFusion_BetaOnly_NotFused_FallsBackToCoreOnly) {
+  const std::filesystem::path json_dir = "LayerNormFusion_BetaOnly_NotFused_FallsBackToCoreOnly";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  const int64_t C = 16;
+  RunAndDump(json_dir,
+             BuildLayerNormFusionNoGammaTestCase(TestInputDef<float>({1, 8, 16}, false, -2.0f, 2.0f),
+                                                 {-1}, 1e-5f, {C}, Ramp(static_cast<size_t>(C), -0.2f, 0.03f)),
+             1e-2f);
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
+  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 0);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 1);
+  // Both are synthesized (ones / zeros): beta was not folded.
+  ExpectLayerNormGammaBetaShapes(json_dir, {16}, {16});
+}
+
+// ---- Unsupported axes (negative tests) --------------------------------------
+// The fusion only handles axes that form a contiguous suffix ending at the last dim. Anything else
+// must be left unfused: the decomposed chain runs as-is and stays numerically correct.
+
+// axes=[0, 2] on [4, 8, 16]: ends at the last dim but skips axis 1 (not contiguous).
+TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_NonContiguousAxes) {
+  const std::filesystem::path json_dir = "LayerNormFusion_Skip_NonContiguousAxes";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  // gamma/beta {4, 1, 16} broadcast over the reduced dims, so the ONNX graph itself is valid.
+  RunAndDump(json_dir,
+             BuildLayerNormFusionTestCase(TestInputDef<float>({4, 8, 16}, false, -2.0f, 2.0f),
+                                          {0, 2}, 1e-5f,
+                                          {4, 1, 16}, Ramp(4 * 16, 0.5f, 0.05f),
+                                          {4, 1, 16}, Ramp(4 * 16, -0.2f, 0.03f)),
+             1e-2f);
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 0);
+  AssertOpInQnnGraph(json_dir, "ReduceMean", 2);
+}
+
+// axes=[0, 1] on [4, 8, 16]: contiguous but does not include the last dim (not trailing).
+TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_NonTrailingAxes) {
+  const std::filesystem::path json_dir = "LayerNormFusion_Skip_NonTrailingAxes";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  RunAndDump(json_dir,
+             BuildLayerNormFusionTestCase(TestInputDef<float>({4, 8, 16}, false, -2.0f, 2.0f),
+                                          {0, 1}, 1e-5f,
+                                          {4, 8, 1}, Ramp(4 * 8, 0.5f, 0.05f),
+                                          {4, 8, 1}, Ramp(4 * 8, -0.2f, 0.03f)),
+             1e-2f);
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 0);
+  AssertOpInQnnGraph(json_dir, "ReduceMean", 2);
 }
 
 // ---- Multi-axis fusion ------------------------------------------------------

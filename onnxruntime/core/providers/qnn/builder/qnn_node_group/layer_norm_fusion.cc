@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <gsl/gsl>
+#include <limits>
 #include <optional>
 #include <unordered_set>
 #include <utility>
@@ -529,14 +531,23 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   // flatten is exact. A single axis keeps the direct, reshape-free LayerNorm.
   const bool flatten = axes.size() > 1;
 
-  uint32_t norm_elems = 1;
+  // Element counts are accumulated in uint64_t and only narrowed to uint32_t (QNN's dim type) after a
+  // range check, so a large shape rejects the fusion instead of silently wrapping. Checking after every
+  // multiply keeps the running product <= UINT32_MAX, so the next (uint32_t-sized) factor cannot
+  // overflow 64 bits either.
+  constexpr uint64_t kMaxQnnDim = std::numeric_limits<uint32_t>::max();
+  uint64_t norm_elems_wide = 1;
   for (uint32_t ax : axes) {
-    norm_elems *= input_shape[ax];
+    norm_elems_wide *= input_shape[ax];
+    RETURN_IF(norm_elems_wide > kMaxQnnDim, "LayerNormFusion: flattened LayerNorm dimension exceeds uint32_t.");
   }
-  uint32_t prefix_elems = 1;
+  uint64_t prefix_elems_wide = 1;
   for (size_t i = 0; i < input_shape.size() - axes.size(); ++i) {
-    prefix_elems *= input_shape[i];
+    prefix_elems_wide *= input_shape[i];
+    RETURN_IF(prefix_elems_wide > kMaxQnnDim, "LayerNormFusion: flattened LayerNorm dimension exceeds uint32_t.");
   }
+  const uint32_t norm_elems = static_cast<uint32_t>(norm_elems_wide);
+  const uint32_t prefix_elems = static_cast<uint32_t>(prefix_elems_wide);
 
   // Shapes and names the QNN LayerNorm node actually sees.
   const std::vector<uint32_t> ln_io_shape =
