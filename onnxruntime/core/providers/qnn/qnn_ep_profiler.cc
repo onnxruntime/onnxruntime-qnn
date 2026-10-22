@@ -82,12 +82,22 @@ QnnEpProfiler::QnnEpProfiler(const OrtEpApi& ep_api,
                              const OrtApi& ort_api,
                              const Ort::Logger& logger,
                              QnnBackendProfilingManager& profiling_manager)
+    : QnnEpProfiler(ep_api, ort_api, logger, BackendCallbacks{
+          [&profiling_manager](const Ort::Logger& log) { return profiling_manager.AcquireOrtProfilingConsumer(log); },
+          [&profiling_manager]() { return profiling_manager.ReleaseOrtProfilingConsumer(); },
+          [&profiling_manager]() { return profiling_manager.AcquireProfileHandleLock(); },
+          [&profiling_manager](profile::ProfilingInfo& info, const Ort::Logger& log) {
+            return profiling_manager.ExtractBackendProfilingInfo(info, log);
+          }}) {}
+
+QnnEpProfiler::QnnEpProfiler(const OrtEpApi& ep_api, const OrtApi& ort_api,
+                             const Ort::Logger& logger, BackendCallbacks backend)
     : OrtEpProfilerImpl{},
       ep_api_(ep_api),
       ort_api_(ort_api),
       logger_(logger),
-      profiling_manager_(profiling_manager),
-      ort_profiling_consumer_(profiling_manager),
+      backend_(std::move(backend)),
+      ort_profiling_consumer_(backend_),
       lifetime_token_(std::make_shared<ProfilerLifetimeToken>()) {
   ort_version_supported = ORT_API_VERSION;
   Release = ReleaseImpl;
@@ -104,7 +114,7 @@ QnnEpProfiler::~QnnEpProfiler() {
 
 Ort::Status QnnEpProfiler::OrtProfilingConsumer::Activate(const Ort::Logger& logger) {
   if (!active_) {
-    RETURN_IF_ERROR(profiling_manager_.AcquireOrtProfilingConsumer(logger));
+    RETURN_IF_ERROR(backend_.acquire(logger));
     active_ = true;
   }
   return Ort::Status();
@@ -116,7 +126,7 @@ Ort::Status QnnEpProfiler::OrtProfilingConsumer::Reset() {
   }
 
   active_ = false;
-  return profiling_manager_.ReleaseOrtProfilingConsumer();
+  return backend_.release();
 }
 
 void QnnEpProfiler::AppendEvent(EventRecord record) {
@@ -132,7 +142,7 @@ void QnnEpProfiler::QueueExecuteProfilingExtraction(profile::ProfilingInfo profi
       // The caller already holds the same recursive lock through graphExecute. Retain an
       // additional ownership level until StopEvent drains this run's QAIRT events, preventing a
       // concurrent profiled run from appending events to this profiler's extraction.
-      event_start.profile_handle_lock = profiling_manager_.AcquireProfileHandleLock();
+      event_start.profile_handle_lock = backend_.lock();
     }
     event_start.pending_execute_extractions.push_back(std::move(profiling_info));
   }
@@ -140,7 +150,7 @@ void QnnEpProfiler::QueueExecuteProfilingExtraction(profile::ProfilingInfo profi
 
 Ort::Status QnnEpProfiler::DrainExecuteProfilingExtractions(std::vector<profile::ProfilingInfo> profiling_infos) {
   for (auto& profiling_info : profiling_infos) {
-    RETURN_IF_ERROR(profiling_manager_.ExtractBackendProfilingInfo(profiling_info, logger_));
+    RETURN_IF_ERROR(backend_.extract(profiling_info, logger_));
   }
   return Ort::Status();
 }

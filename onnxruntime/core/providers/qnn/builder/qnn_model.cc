@@ -260,6 +260,10 @@ const OrtNodeUnit& QnnModel::GetNodeUnit(const OrtNode* node,
 }
 
 Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
+#ifdef USE_QAIRT_API
+  if (qairt_backend_manager_) return ComposeQairtGraph(context);
+#endif
+
   utils::UniqueNameGenerator().Reset();
 
   RETURN_IF(context.onnx_input_names == nullptr, "onnx_input_names is required for ComposeGraph");
@@ -379,6 +383,10 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
 }
 
 Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
+#ifdef USE_QAIRT_API
+  if (qairt_backend_manager_) return FinalizeQairtGraph(logger);
+#endif
+
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "FinalizeGraphs started.");
 
   qnn::profile::ProfilingInfo profiling_info;
@@ -444,6 +452,10 @@ Ort::Status QnnModel::SetupQnnInputOutput(const Ort::Logger& logger) {
 
 Ort::Status QnnModel::ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs,
                                                const Ort::Logger& logger) {
+#ifdef USE_QAIRT_API
+  if (qairt_backend_manager_) return MAKE_EP_FAIL("QAIRT runtime graph configuration is not implemented.");
+#endif
+
   // Caches configs for re-application after an SSR event re-retrieves the graph handle.
   // Each call overwrites runtime_graph_configs_; RecoverFromSSR always re-applies the most
   // recently cached value. Normal usage calls this once at session creation, but correctness
@@ -556,6 +568,10 @@ Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& log
 }
 
 Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpContextIoDispatch& io_dispatch) {
+#ifdef USE_QAIRT_API
+  if (qairt_backend_manager_) return MAKE_EP_FAIL("QAIRT context recovery is not implemented.");
+#endif
+
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
               ("SSR recovery: reloading QNN context for graph: " + graph_info_->Name()).c_str());
 
@@ -799,6 +815,10 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                                    const Ort::Logger& logger,
                                    const qnn::EpContextIoDispatch& io_dispatch,
                                    QnnEpProfiler* ort_profiler) {
+#ifdef USE_QAIRT_API
+  if (qairt_backend_manager_) return ExecuteQairtGraph(context, logger, ort_profiler);
+#endif
+
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "QnnModel::ExecuteGraphs");
   size_t num_inputs;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetInputCount(context, &num_inputs));
@@ -889,7 +909,7 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
   size_t tensor_count = tensor_wrappers.size();
   if (tensor_count == 0) {
     RETURN_IF_NOT(is_input, "The count of graph outputs should be nonzero!");
-    RETURN_IF_NOT(IsGpuBackend(qnn_backend_manager_->GetQnnBackendType()),
+    RETURN_IF_NOT(IsGpuBackend(qnn_backend_type_),
                   "Having zero graph inputs is not supported on this backend.");
     qnn_tensor_infos.clear();
     return Ort::Status();

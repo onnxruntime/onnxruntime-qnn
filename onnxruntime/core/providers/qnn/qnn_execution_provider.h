@@ -40,6 +40,10 @@ class QnnEpFactory;
 namespace qnn {
 class QnnBackendManager;
 class GenieBackendManager;
+#ifdef USE_QAIRT_API
+class QairtBackendManager;
+class QairtProfilingManager;
+#endif
 }  // namespace qnn
 
 class QnnEp : public OrtEp, public ApiPtrs {
@@ -108,6 +112,16 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                    const OrtNode** fused_nodes,
                                    size_t count);
 
+  qnn::QnnBackendType GetSelectedBackendType() const;
+  OrtStatus* GetOnnxGraphCapability(const OrtGraph*, OrtEpGraphSupportInfo*, size_t, bool);
+#ifdef USE_QAIRT_API
+  OrtStatus* GetQairtCapability(const OrtGraph*, OrtEpGraphSupportInfo*, size_t);
+  OrtStatus* CompileQairtModels(const OrtGraph**, const OrtNode**, size_t, OrtNodeComputeInfo**, OrtNode**);
+  OrtStatus* OnQairtRunStart(const OrtRunOptions*);
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  OrtStatus* CreateQairtProfiler(OrtEpProfilerImpl**);
+#endif
+#endif
   OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                const size_t node_unit_size,
@@ -247,6 +261,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // QNN-related.
   std::shared_ptr<qnn::QnnBackendManager> qnn_backend_manager_;
+#ifdef USE_QAIRT_API
+  std::shared_ptr<qnn::QairtBackendManager> qairt_backend_manager_;
+  std::shared_ptr<qnn::QairtProfilingManager> qairt_profiling_manager_;
+  bool qairt_requires_shared_memory_ = false;
+  bool qairt_has_op_packages_ = false;
+#endif
   std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models_;
 
   // Configurations for HTP backend.

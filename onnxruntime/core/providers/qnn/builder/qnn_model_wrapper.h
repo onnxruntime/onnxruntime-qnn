@@ -22,6 +22,10 @@ namespace qnn {
 
 // Forward declarations
 class BF16ConversionGuard;
+#ifdef USE_QAIRT_API
+class IGraphEmitter;
+class QairtBackendManager;
+#endif
 class OpTraceCollector;
 // Prevent QnnBackendManager change triggering op builder rebuild on incremental build.
 class QnnBackendManager;
@@ -60,6 +64,14 @@ class QnnModelWrapper {
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
                   OpTraceCollector* op_trace_collector = nullptr,
                   bool is_post_layout_transform = false);
+#ifdef USE_QAIRT_API
+  QnnModelWrapper(const OrtGraph& ort_graph, const ApiPtrs& api_ptrs, const Ort::Logger& logger,
+                  QairtBackendManager& backend, const GraphInputOutputInfo& graph_inputs,
+                  const GraphInputOutputInfo& graph_outputs, const ModelSettings& model_settings,
+                  std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
+                  OpTraceCollector* op_trace_collector = nullptr, bool is_post_layout_transform = false,
+                  IGraphEmitter* graph_emitter = nullptr);
+#endif
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
   ~QnnModelWrapper() = default;
@@ -553,7 +565,11 @@ class QnnModelWrapper {
 
   const OrtGraph& ort_graph_;
   const Ort::Logger& logger_;
-  const QnnBackendManager& qnn_backend_manager_;
+  const QnnBackendManager* qnn_backend_manager_ = nullptr;
+#ifdef USE_QAIRT_API
+  QairtBackendManager* qairt_backend_manager_ = nullptr;
+  IGraphEmitter* graph_emitter_ = nullptr;
+#endif
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string graph_name_ = "";
   // QNN context that holds the QNN graph referenced by `graph_`

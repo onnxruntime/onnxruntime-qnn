@@ -75,9 +75,20 @@ TEST(QnnEP, TestDisableCPUFallback_BackendNotFound) {
     FAIL();  // Should not get here!
   } catch (const Ort::Exception& excpt) {
     ASSERT_EQ(excpt.GetOrtErrorCode(), ORT_FAIL);
+#ifdef USE_QAIRT_API
+    // QNN discovers this at partitioning; QAIRT can reject the missing library
+    // while constructing the EP. Both must prevent creation of a CPU-only session.
+    ASSERT_THAT(excpt.what(), testing::AnyOf(
+                                  testing::HasSubstr("This session contains graph nodes that are assigned to the default "
+                                                     "CPU EP, but fallback to CPU EP has been explicitly disabled by "
+                                                     "the user."),
+                                  testing::HasSubstr("QairtBackendManager: failed to load backend library `" +
+                                                     options["backend_path"] + "`")));
+#else
     ASSERT_THAT(excpt.what(), testing::HasSubstr("This session contains graph nodes that are assigned to the default "
                                                  "CPU EP, but fallback to CPU EP has been explicitly disabled by "
                                                  "the user."));
+#endif
   }
 }
 

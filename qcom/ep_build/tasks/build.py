@@ -136,6 +136,7 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         build_nuget: bool = False,
         build_archive: bool = False,
         qnn_internal_ut_symbols: bool = False,
+        use_qairt_api: bool = False,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "windows" / "build.ps1"),
@@ -165,6 +166,9 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
 
         if build_archive:
             cmd.extend(["-BuildArchive", "1"])
+
+        if use_qairt_api:
+            cmd.append("-UseQairtApi")
 
         if qnn_internal_ut_symbols:
             cmd.extend(["-QnnInternalUtSymbols", "1"])

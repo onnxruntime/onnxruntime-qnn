@@ -275,6 +275,12 @@ bool RunUnprofiledRelu(const char* backend_type, const std::filesystem::path* pr
          (provider_profile_path == nullptr || !std::filesystem::exists(*provider_profile_path));
 }
 
+#ifdef USE_QAIRT_API
+TEST(QairtArchitectureTests, HtpDirectSmokeWithoutQnnBackendLibraries) {
+  EXPECT_TRUE(RunUnprofiledRelu("htp"));
+}
+#endif
+
 #ifdef _WIN32
 
 // The QNN plugin defines this TraceLogging provider in qnn_telemetry.cc.

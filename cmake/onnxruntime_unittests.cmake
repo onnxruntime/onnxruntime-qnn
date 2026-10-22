@@ -362,6 +362,10 @@ block()
     ${onnxruntime_QNN_HOME}/include
     ${onnxruntime_QNN_HOME}/include/QNN)
   target_link_libraries(onnxruntime_provider_test PRIVATE qnn_sdk_headers_include)
+  if(onnxruntime_USE_QAIRT_API)
+    target_compile_definitions(onnxruntime_provider_test PRIVATE USE_QAIRT_API=1)
+    target_include_directories(onnxruntime_provider_test SYSTEM PRIVATE ${onnxruntime_QNN_HOME}/include/QAIRT)
+  endif()
 
   if(onnxruntime_USE_QNN)
     # genie_backend_manager.cc is recompiled here rather than linked from the EP DLL.
