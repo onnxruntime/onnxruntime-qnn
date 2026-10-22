@@ -66,7 +66,6 @@ jobs:
     # which selects the full tier below.
     if: ${{ needs.select-ci-tier.outputs.tier == 'sanity' && github.event.pull_request.draft == false }}
     uses: ./.github/workflows/qualcomm-internal-sanity.yml
-    secrets: inherit
 
   build-and-test-all:
     name: Build & Test
