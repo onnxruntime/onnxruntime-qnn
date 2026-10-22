@@ -1,0 +1,45 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: "[TEMP][DO NOT MERGE] Validate PR #977 Golden Producers"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  producer-dry-run:
+    name: "${{ matrix.platform }} golden producer dry-run"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            golden_profile: linux-x86_64-htp-simulator
+            runner_labels: '["self-hosted", "X64", "Linux", "Build"]'
+            build_task: build_ort_linux_x86_64_internal_symbols
+            build_dir: build/linux-x86_64-internal-symbols
+            build_config: Release
+            python_executable: python3
+          - platform: Windows x86_64
+            golden_profile: windows-x86_64-htp-simulator
+            runner_labels: '["self-hosted", "X64", "Windows", "Build"]'
+            build_task: build_ort_windows_x86_64_internal_symbols
+            build_dir: build/windows-x86_64-internal-symbols
+            build_config: Release
+            python_executable: python.exe
+    uses: ./.github/workflows/qualcomm-internal-snapshot-golden-publish.yml
+    secrets: inherit
+    with:
+      repo_subpath: ci/qnn-ep-test-store/snapshot-goldens-pr977-dryrun
+      golden_profile: ${{ matrix.golden_profile }}
+      runner_labels: ${{ matrix.runner_labels }}
+      build_task: ${{ matrix.build_task }}
+      build_dir: ${{ matrix.build_dir }}
+      build_config: ${{ matrix.build_config }}
+      python_executable: ${{ matrix.python_executable }}
+      dry_run: true
