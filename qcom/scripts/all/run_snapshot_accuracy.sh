@@ -95,11 +95,13 @@ fi
 
 build_dir="$(realpath "${build_dir}")"
 
-# Auto-detect config subdir by searching for the test binary. Windows builds
-# use the same target with an .exe suffix.
+# Auto-detect config subdir by searching for the test binary. Git Bash/MSYS may
+# resolve an extensionless executable probe to the .exe file, so prefer the
+# explicit Windows filename to keep the selected path unambiguous.
+binary_names=(onnxruntime_provider_test.exe onnxruntime_provider_test)
 binary=""
 for cfg in RelWithDebInfo Release Debug; do
-    for name in onnxruntime_provider_test.exe onnxruntime_provider_test; do
+    for name in "${binary_names[@]}"; do
         candidate="${build_dir}/${cfg}/${name}"
         if [ -x "${candidate}" ]; then
             binary="${candidate}"
@@ -111,7 +113,7 @@ done
 
 # Also check if binary is directly in build_dir (user pointed to config dir).
 if [ -z "${binary}" ]; then
-    for name in onnxruntime_provider_test.exe onnxruntime_provider_test; do
+    for name in "${binary_names[@]}"; do
         if [ -x "${build_dir}/${name}" ]; then
             binary="${build_dir}/${name}"
             config=""

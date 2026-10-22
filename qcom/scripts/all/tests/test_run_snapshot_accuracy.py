@@ -18,7 +18,7 @@ def write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def test_converts_gtest_report_paths_for_windows_provider_binary(tmp_path: Path) -> None:
+def test_prefers_windows_provider_binary_and_converts_gtest_report_paths(tmp_path: Path) -> None:
     build_dir = tmp_path / "build"
     bin_dir = build_dir / "Release"
     bin_dir.mkdir(parents=True)
@@ -52,6 +52,7 @@ suite = "QnnAcc_Clip_AccuracyTest" if any("QnnAcc_" in arg for arg in args) else
 output_path.write_text(json.dumps({{"testsuites": [{{"name": suite, "failures": 0, "errors": 0}}]}}))
 """,
     )
+    write_executable(bin_dir / "onnxruntime_provider_test", "#!/usr/bin/env bash\nexit 92\n")
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
