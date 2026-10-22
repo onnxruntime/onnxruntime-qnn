@@ -1,0 +1,34 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: "[TEMP][DO NOT MERGE] Validate Linux ARM64 Snapshot Golden Producer"
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without uploading to Artifactory"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  producer-validation:
+    name: "Linux ARM64 v68 snapshot golden producer (${{ inputs.dry_run && 'dry-run' || 'publish' }})"
+    uses: ./.github/workflows/qualcomm-internal-snapshot-golden-publish.yml
+    secrets: inherit
+    with:
+      # This isolated namespace is intentionally not the shipping snapshot-goldens
+      # store, and may be deleted after the publish validation completes.
+      repo_subpath: ci/qnn-ep-test-store/snapshot-goldens-validation
+      golden_profile: linux-arm64-htp-v68
+      runner_labels: '["self-hosted", "ARM64", "Linux", "Build"]'
+      build_task: build_ort_linux_aarch64_manylinux_2_34_internal_symbols
+      build_dir: build/linux-aarch64_manylinux_2_34-internal-symbols
+      build_config: Release
+      python_executable: python3
+      dry_run: ${{ inputs.dry_run }}
