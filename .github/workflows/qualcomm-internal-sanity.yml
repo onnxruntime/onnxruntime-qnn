@@ -5,18 +5,18 @@ name: Qualcomm Internal PR Sanity
 
 permissions:
   contents: read
-  checks: write
 
 on:
   workflow_call:
 
 jobs:
-  sanity-lint:
-    name: sanity-lint
+  sanity-checks:
+    name: sanity-checks
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Run Linting Tool
