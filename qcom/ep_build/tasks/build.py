@@ -86,6 +86,8 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         extra_args: Iterable[str] | None = None,
         env: Mapping[str, str] | None = None,
         build_archive: bool = False,
+        qnn_internal_ut_symbols: bool = False,
+        build_dir_suffix: str | None = None,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "linux" / "build.sh"),
@@ -106,6 +108,12 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
 
         if build_archive:
             cmd.append("--build-archive")
+
+        if qnn_internal_ut_symbols:
+            cmd.append("--enable-qnn-internal-ut-symbols")
+
+        if build_dir_suffix is not None:
+            cmd.append(f"--build-dir-suffix={build_dir_suffix}")
 
         if extra_args is not None:
             cmd.extend(extra_args)

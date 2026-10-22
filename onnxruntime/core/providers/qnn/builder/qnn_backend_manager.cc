@@ -35,7 +35,6 @@
 #include "core/providers/qnn/qnn_ep_profiler.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_telemetry.h"
-#include "core/providers/qnn/shared_context.h"
 #include "core/providers/qnn/qnn_external_resource_importer.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -1075,6 +1074,9 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
 // Callback required for allocating file mapping resources
 static Qnn_ErrorHandle_t MapDmaDataCallback(Qnn_ContextBinaryDataRequest_t request,
                                             Qnn_ContextBinaryDmaDataResponse_t* response, void* notify_param) {
+  if (response == nullptr) {
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
   if (notify_param == nullptr) {
     ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: notify_param is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
@@ -1095,6 +1097,10 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
                                                 Qnn_ContextBinaryDmaDataResponse_t* response,
                                                 void* const mapped_base_ptr,
                                                 const size_t file_size) {
+  if (response == nullptr) {
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+
   if (!file_mapped_weights_enabled_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
                     "Attempting to map DMA data but file mapping has been disabled, possibly due to an error in a previous request.");
@@ -1128,14 +1134,21 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
+  std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
+  if (!rpcmem_library_ || !rpcmem_library_->Api().register_buf || !rpcmem_library_->Api().to_fd) {
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
+  }
+
   void* unaligned_data_ptr = static_cast<char*>(mapped_base_ptr) + request.offset;
   rpcmem_library_->Api().register_buf(unaligned_data_ptr, size, NULL,
                                       rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
 
+  // register_buf does not return a status. Treat the buffer as registered and add it to
+  // the registration list only after rpcmem_to_fd verifies the registration succeeded.
   auto fd = rpcmem_library_->Api().to_fd(unaligned_data_ptr);
   if (fd == -1) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to register DMA data mapping to RPCMEM");
-    return QNN_COMMON_ERROR_SYSTEM;
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
 
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, ("Created DMA data mapping with address: " + utils::PtrToString(unaligned_data_ptr)).c_str());
@@ -1185,6 +1198,18 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
+  std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
+  const auto mapping = std::find(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
+                                 std::make_pair(data_mem.dmaBuffer.data, static_cast<uint64_t>(data_mem.memSize)));
+  if (mapping == mapped_fastrpc_buffers_.end()) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR,
+                "DMA data release request does not match a registered mapping");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+  if (!rpcmem_library_ || !rpcmem_library_->Api().register_buf || !rpcmem_library_->Api().to_fd) {
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
+  }
+
   // Deregister file mapped data from NPU regardless of file_mapped_weights_enabled_
   // as there may be file mapped data registered to the NPU prior to any mapping error
   void* unaligned_data_ptr = data_mem.dmaBuffer.data;
@@ -1197,49 +1222,67 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
 
-  mapped_fastrpc_buffers_.erase(
-      std::remove_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(), [unaligned_data_ptr](const auto& p) {
-        return p.first == unaligned_data_ptr;
-      }),
-      mapped_fastrpc_buffers_.end());
+  // Erase only this registration. QNN may request the same range more than once and
+  // each successful registration has a corresponding release callback.
+  mapped_fastrpc_buffers_.erase(mapping);
   return QNN_SUCCESS;
 }
 #endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
-// callback required to add context handles to class list
-// when using contextCreateFromBinaryListAsync()
+namespace {
+
+struct ContextCreateAsyncCallbackInfo {
+  // notify_param identifies the manager that initiated this specific request instead of resolving
+  // mutable process-wide shared state when the callback runs.
+  QnnBackendManager* backend_manager;
+  const std::vector<std::string>* ep_node_names;
+};
+
+// Per QnnContext.h, QnnContext_createFromBinaryListAsync blocks until every notification has fired,
+// so notify_param only needs to remain valid for the duration of that API call. The context handle
+// is consumed only for a successful CONTEXT_INIT notification; GRAPH_INIT notifications describe
+// individual graphs and may occur multiple times for one context binary.
 static void ContextCreateAsyncCallback(Qnn_ContextHandle_t context,
                                        Qnn_GraphHandle_t /* graph */,
                                        const char* /* graph_name */,
-                                       QnnContext_createFromBinaryAsyncNotifyType_t /* notify_type */,
+                                       QnnContext_createFromBinaryAsyncNotifyType_t notify_type,
                                        void* notify_param,
-                                       Qnn_ErrorHandle_t /* status */) {
-  auto qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
-
-  if (context) {
-    qnn_backend_manager->ProcessContextFromBinListAsync(context, notify_param);
-  }
-}
-
-void QnnBackendManager::ProcessContextFromBinListAsync(Qnn_ContextHandle_t context, void* notifyParam) {
-  std::ostringstream context_ss;
-  context_ss << context;
-
-  std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
-  if (!notifyParam) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_WARNING,
-                    ("No known node names associated with context handle: " + context_ss.str()).c_str());
+                                       Qnn_ErrorHandle_t status) {
+  if (notify_param == nullptr ||
+      notify_type != QNN_CONTEXT_NOTIFY_TYPE_CONTEXT_INIT ||
+      status != QNN_CONTEXT_NO_ERROR ||
+      context == nullptr) {
     return;
   }
 
-  std::vector<std::string>* ep_node_names = reinterpret_cast<std::vector<std::string>*>(notifyParam);
-  for (const auto& node_name : *ep_node_names) {
-    if (!(ep_context_handle_map_.emplace(node_name, context).second)) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_VERBOSE,
-                      ("Unable to map " + context_ss.str() + " to " + node_name).c_str());
+  const auto* callback_info = static_cast<const ContextCreateAsyncCallbackInfo*>(notify_param);
+  if (callback_info->backend_manager != nullptr && callback_info->ep_node_names != nullptr) {
+    callback_info->backend_manager->ProcessContextFromBinListAsync(context, *callback_info->ep_node_names);
+  }
+}
+
+}  // namespace
+
+void QnnBackendManager::ProcessContextFromBinListAsync(
+    Qnn_ContextHandle_t context,
+    gsl::span<const std::string> ep_node_names) {
+  std::ostringstream context_ss;
+  context_ss << context;
+
+  std::vector<std::string> unmapped_node_names;
+  {
+    std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
+    for (const auto& node_name : ep_node_names) {
+      if (!ep_context_handle_map_.emplace(node_name, context).second) {
+        unmapped_node_names.push_back(node_name);
+      }
     }
+  }
+
+  for (const auto& node_name : unmapped_node_names) {
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Unable to map " + context_ss.str() + " to " + node_name).c_str());
   }
 
   auto s = AddQnnContextHandle(context);
@@ -1520,6 +1563,8 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     auto res = CreateContextFromListAsyncWithCallback(configs_vec.data(), context_bin_map);
     if (!res.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, (res.GetErrorMessage() + ". Retrying with feature disabled.").c_str());
+      // TODO: Roll back only contexts created by this failed request. Do not clear all context
+      // mappings because this manager may contain contexts used by earlier sharing sessions.
     } else {
       return Ort::Status();
     }
@@ -1532,13 +1577,17 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
                                                           std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
                                                           const qnn::EpContextIoDispatch& io_dispatch) {
+  RETURN_IF(qnn_interface_.contextCreateFromBinaryListAsync == nullptr,
+            "Invalid function pointer for contextCreateFromBinaryListAsync.");
   std::vector<QnnContext_Params_t> context_params_list;
-  std::vector<QnnContext_ParamsV1_t> context_paramsv1_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
   std::vector<std::vector<char>> buffer_list;
+  std::vector<ContextCreateAsyncCallbackInfo> callback_infos;
 
   context_params_list.reserve(context_bin_map.size());
   context_params_ptr_list.reserve(context_bin_map.size() + 1);
+  buffer_list.reserve(context_bin_map.size());
+  callback_infos.reserve(context_bin_map.size());
 
   for (auto& it : context_bin_map) {
     auto context_bin_filepath = it.first;
@@ -1549,18 +1598,18 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
     size_t buffer_size = buffer.size();
     buffer_list.push_back(std::move(buffer));
 
+    callback_infos.push_back({this, it.second.get()});
     QnnContext_ParamsV1_t context_params_v1 = {nullptr,
                                                buffer_list.back().data(),
                                                buffer_size,
                                                nullptr,
                                                ContextCreateAsyncCallback,
-                                               it.second.get()};
+                                               &callback_infos.back()};
 
     QnnContext_Params_t context_params = {QnnContext_ParamsVersion_t::QNN_CONTEXT_PARAMS_VERSION_1,
                                           {context_params_v1}};
 
     context_params_list.push_back(std::move(context_params));
-    context_paramsv1_list.push_back(std::move(context_params_v1));
     context_params_ptr_list.push_back(&context_params_list.back());
   }
   context_params_ptr_list.push_back(nullptr);
@@ -1578,15 +1627,20 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
 Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnContext_Config_t** configs,
                                                                       std::unordered_map<std::string,
                                                                                          std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
+  RETURN_IF(qnn_interface_.contextCreateFromBinaryListAsync == nullptr,
+            "Invalid function pointer for contextCreateFromBinaryListAsync.");
+  RETURN_IF(file_mapper_ == nullptr, "File mapper is unavailable.");
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV2_t> context_paramsv2_list;
   std::vector<Qnn_ContextBinaryCallback_t> context_callbacks_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
+  std::vector<ContextCreateAsyncCallbackInfo> callback_infos;
 
   context_params_list.reserve(context_bin_map.size());
   context_paramsv2_list.reserve(context_bin_map.size());
   context_callbacks_list.reserve(context_bin_map.size());
   context_params_ptr_list.reserve(context_bin_map.size() + 1);
+  callback_infos.reserve(context_bin_map.size());
 
   for (auto& it : context_bin_map) {
     auto context_bin_filepath = it.first;
@@ -1618,6 +1672,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     }
 
     auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(buffer, buffer_size, this);
+    callback_infos.push_back({this, it.second.get()});
 
     Qnn_ContextBinaryCallback_t context_file_map_callbacks;
     context_file_map_callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
@@ -1635,7 +1690,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                buffer_size,
                                                nullptr,
                                                ContextCreateAsyncCallback,
-                                               it.second.get(),
+                                               &callback_infos.back(),
                                                &context_callbacks_list.back()};
 
     QnnContext_Params_t context_params = {QnnContext_ParamsVersion_t::QNN_CONTEXT_PARAMS_VERSION_2,
@@ -1820,14 +1875,15 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
 }
 
 Ort::Status QnnBackendManager::ReleaseContext() {
-  if (false == context_created_) {
-    return Ort::Status();
+  {
+    std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
+    ep_context_handle_map_.clear();
   }
 
-  // release QNN context handles
+  // Always clear owned handles because a partially failed setup may have registered
+  // contexts before context_created_ was set.
   contexts_.clear();
   context_map_.clear();
-  ep_context_handle_map_.clear();
 
   context_created_ = false;
   return Ort::Status();
@@ -1904,6 +1960,7 @@ Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
   for (uint32_t i = 0; i < graph_count; ++i) {
     if (graphs_info[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
       auto htp_graph_info = reinterpret_cast<QnnHtpSystemContext_GraphBlobInfo_t*>(graphs_info[i].graphInfoV3.graphBlobInfo);
+      RETURN_IF(htp_graph_info == nullptr, "Context binary HTP graph info is null.");
       if (htp_graph_info->version == QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_VERSION_V1) {
         auto spill_fill_buffer_size = htp_graph_info->contextBinaryGraphBlobInfoV1.spillFillBufferSize;
         max_spill_fill_buffer_size = spill_fill_buffer_size > max_spill_fill_buffer_size ? spill_fill_buffer_size : max_spill_fill_buffer_size;
@@ -2008,8 +2065,12 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   Qnn_ContextHandle_t context = nullptr;
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   if (htp_share_resource_optimization_ == 1) {
-    if (ep_context_handle_map_.find(node_name) != ep_context_handle_map_.end()) {
-      context = ep_context_handle_map_.at(node_name);
+    {
+      std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
+      auto context_it = ep_context_handle_map_.find(node_name);
+      if (context_it != ep_context_handle_map_.end()) {
+        context = context_it->second;
+      }
     }
     RETURN_IF(nullptr == context, ("Failed to retrieve context for " + node_name).c_str());
 
@@ -2061,7 +2122,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     for (uint32_t i = 0; i < graph_count; ++i) {
       auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
       RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[i], context));
-      qnn_models.emplace(graphs_info[i].graphInfoV1.graphName, std::move(qnn_model));
+      std::string graph_name = qnn_model->Name();
+      qnn_models.emplace(std::move(graph_name), std::move(qnn_model));
     }
   }
 
@@ -2109,8 +2171,13 @@ Ort::Status QnnBackendManager::SetupBackend(
     if (htp_share_resource_optimization_ == 1) {
       // If a context bin filepath has not been processed yet,
       // then a new context must be created for the set of context bins
-      auto first_mapping_it = ep_context_handle_map_.find(context_bin_map.begin()->first);
-      if (first_mapping_it == ep_context_handle_map_.end()) {
+      bool context_exists = false;
+      {
+        std::lock_guard<std::mutex> map_lock(ep_context_handle_map_mutex_);
+        context_exists = ep_context_handle_map_.find(context_bin_map.begin()->first) !=
+                         ep_context_handle_map_.end();
+      }
+      if (!context_exists) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
         return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
                                                            io_dispatch);
@@ -2118,13 +2185,16 @@ Ort::Status QnnBackendManager::SetupBackend(
 
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
 
-      for (auto& it : context_bin_map) {
-        auto context_bin_filepath = it.first;
-        auto ep_node_names = *(it.second);
+      {
+        std::lock_guard<std::mutex> map_lock(ep_context_handle_map_mutex_);
+        for (auto& it : context_bin_map) {
+          const auto& context_bin_filepath = it.first;
+          const auto& ep_node_names = *it.second;
 
-        auto context = ep_context_handle_map_.at(context_bin_filepath);
-        for (auto node_name : ep_node_names) {
-          ep_context_handle_map_.emplace(node_name, context);
+          auto context = ep_context_handle_map_.at(context_bin_filepath);
+          for (const auto& node_name : ep_node_names) {
+            ep_context_handle_map_.emplace(node_name, context);
+          }
         }
       }
     }
@@ -3273,6 +3343,12 @@ Ort::Status QnnBackendManager::AddContextToDlc() {
 }
 
 void QnnBackendManager::DeallocateMappedDmaBuffers() {
+  std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
+  if (mapped_fastrpc_buffers_.empty() || !rpcmem_library_ ||
+      !rpcmem_library_->Api().register_buf || !rpcmem_library_->Api().to_fd) {
+    return;
+  }
+
   std::vector<std::pair<void*, uint64_t>> failed_deregisters;
   for (const auto& mem_info : mapped_fastrpc_buffers_) {
     auto ptr = mem_info.first;

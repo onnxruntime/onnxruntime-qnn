@@ -234,11 +234,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                                                   "libQnnHtp.so"
 #endif
        )) {
-#if !defined(__aarch64__) && !defined(_M_ARM64)
-    target_hw_device_type = OrtHardwareDeviceType_CPU;
-#else
     target_hw_device_type = OrtHardwareDeviceType_NPU;
-#endif
   } else if ((ep_options.find("backend_type") != ep_options.end() && ep_options.at("backend_type") == "gpu") ||
              (ep_options.find("backend_path") != ep_options.end() && ep_options.at("backend_path") ==
 #if _WIN32
@@ -260,7 +256,14 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                                    c_api.HardwareDevice_Type(c_api.EpDevice_Device(ep_device)) == target_hw_device_type);
                          });
 
-  ASSERT_NE(it, ep_devices + num_devices);
+  if (it == ep_devices + num_devices) {
+    OrtStatus* unregister_status = c_api.UnregisterExecutionProviderLibrary(*ort_env, registration_name.c_str());
+    if (unregister_status != nullptr) {
+      c_api.ReleaseStatus(unregister_status);
+    }
+    FAIL() << "No " << target_hw_device_type << " device was advertised by " << registration_name;
+    return;
+  }
 
   registered_ep_device = RegisteredEpDeviceUniquePtr(*it, [registration_name](const OrtEpDevice* /*ep*/) {
     OrtStatus* status = Ort::GetApi().UnregisterExecutionProviderLibrary(*GetOrtEnv(), registration_name.c_str());

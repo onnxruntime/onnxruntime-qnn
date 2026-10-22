@@ -137,7 +137,7 @@
       # call EP-internal functions. --gc-sections is intentionally omitted for
       # compatibility with coverage-instrumented sections.
       target_link_options(onnxruntime_providers_qnn PRIVATE
-                          "LINKER:--version-script=${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script_coverage.lds"
+                          "LINKER:--version-script=${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script_internal_symbols.lds"
                           "LINKER:-rpath=\$ORIGIN"
       )
     else()

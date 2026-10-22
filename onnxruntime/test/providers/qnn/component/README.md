@@ -6,10 +6,10 @@ Tests in `onnxruntime/test/providers/qnn/` have historically been integration te
 
 The `component/` subdirectory is the **component tier** in the tier-based test layout:
 function-level and component-level white-box tests that target the internal logic of the
-QNN EP. No on-device hardware is required. The tier is enabled on builds that link the
-test binary directly against the shared QNN EP and export EP-internal symbols, such as
-the Linux x86-64 coverage build and the Windows x86-64 internal-symbol unit-test build.
-Until a build opts into that symbol access, these test bodies compile out through the
+QNN EP. No on-device hardware is required. The tier is enabled on internal-symbol test
+builds that link the test binary directly against the shared QNN EP and export EP-internal
+symbols. Coverage instrumentation is optional and is only needed for coverage reports.
+Until a build opts into internal-symbol access, these test bodies compile out through the
 `QNN_EP_INTERNAL_SYMBOL_ACCESS` guard. Tests that exercise op validation load the
 platform QNN HTP backend locally on the host (`libQnnHtp.so` on Linux, `QnnHtp.dll` on
 Windows; validation only, not graph execution); those tests are automatically skipped if
@@ -21,7 +21,9 @@ Shared test infrastructure (mocks, stub backends, the `OpBuilderTestContext` wra
 
 Because the QNN EP ships as a dynamically loaded plugin (`MODULE` library), its internal symbols are not normally accessible to external test binaries. The existing integration tests work around this by testing only through the public EP interface.
 
-This unit test infrastructure solves the problem through an **internal-symbol test build mode** that is enabled by the Linux x86-64 coverage build or the explicit `onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS` CMake option:
+This unit test infrastructure solves the problem through an **internal-symbol test build mode**
+enabled by the explicit `onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS` CMake option. Coverage
+builds also enable this mode:
 
 1. Rebuilds the EP as a `SHARED` library so the test binary can link against it directly.
 2. Exports internal symbols through the platform-specific test-build linker configuration.
@@ -38,8 +40,9 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 | `qnn_quant_params_wrapper_test.cc` | `QnnUnit_QuantParamsWrapperTest` | `builder/qnn_quant_params_wrapper.cc` |
 | `qnn_model_test.cc` | `QnnUnit_ModelTest` | `builder/qnn_model.cc` |
 | `qnn_utils_test.cc` | `QnnUnit_UtilsTest` | `builder/qnn_utils.cc` |
-| `qnn_ep_utils_test.cc` | `QnnUnit_EpUtilsTest` | `qnn_ep_utils.cc` |
+| `qdq_node_group_selector_test.cc` | `QnnUnit_QdqNodeGroupSelectorTest` | `qdq_node_group_selector.cc` |
 | `qnn_ep_profiler_test.cc` | `QnnUnit_EpProfilerTest` | `qnn_ep_profiler.cc` (ORT API v25+) |
+| `ep_context_io_dispatch_test.cc` | `QnnUnit_EpContextIoDispatchTest` | `builder/ep_context_io_dispatch.cc` |
 | `ort_api_test.cc` | `QnnUnit_OrtApiTest` | `ort_api.cc` |
 | `qnn_backend_manager_test.cc` | `QnnUnit_BackendManagerTest` (stub, no real lib) / `QnnUnit_BackendManagerHtpTest` (loads a real backend, skips when unavailable) | `builder/qnn_backend_manager.cc` |
 | `qnn_backend_system_dlc_plugin_test.cc` | `QnnUnit_BackendSystemDlcPluginTest` (stubbed QNN System API) / `QnnUnit_BackendSystemDlcPluginHtpTest` (loads a real backend + `libQnnSystem.so`, skips when unavailable) | `builder/qnn_backend_system_dlc_plugin.cc` |
@@ -65,8 +68,18 @@ logic here and put graph-structure / accuracy coverage in the sibling tiers.
 # Full coverage build, test, and HTML report
 python qcom/build_and_test.py coverage_linux_x86_64
 
-# Run only the unit tests after a coverage build
+# Run only the component-level tests after the coverage build.
 cd build/linux-x86_64/RelWithDebInfo
+./onnxruntime_provider_test --gtest_filter="QnnUnit_*"
+```
+
+```bash
+# Internal-symbol build without coverage instrumentation, for component,
+# snapshot, and accuracy tier validation.
+python qcom/build_and_test.py build_ort_linux_x86_64_internal_symbols
+
+# Run only the component-level tests after the internal-symbol build.
+cd build/linux-x86_64-internal-symbols/Release
 ./onnxruntime_provider_test --gtest_filter="QnnUnit_*"
 ```
 
