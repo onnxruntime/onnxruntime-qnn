@@ -190,6 +190,29 @@ jobs:
       build_test_same_runner: false
       test_runner_arch: arm64
 
+  # Keep this non-required shadow validation alongside the shipping build until its
+  # test inventory and reliability are established. It builds and tests on a native
+  # ARM64 runner so the internal-symbol QNN provider runs against the Linux HTP device.
+  build-and-test-linux-arm64-internal-symbols:
+    if: ${{ inputs.do_all }}
+    needs: [archive-testdata, path-filter]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: aarch64_manylinux_2_34
+      build_runner_arch: ARM64
+      test_runner_arch: arm64
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      qnn_internal_ut_symbols: true
+      run_tests: true
+      build_test_same_runner: true
+      # This is validation-only; do not publish a non-shipping wheel or test archive.
+      upload_wheel: false
+      upload_test_archive: false
+
   build-and-test-windows-arm64:
     if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
     needs: [archive-testdata, path-filter]

@@ -43,8 +43,12 @@ class BuildEpDockerTask(CompositeTask):
         inner_task: str = "_build_ort_linux_aarch64_manylinux_2_34",
         docker_tag: str = MANYLINUX_2_34_AARCH64_TAG,
         platform: str = "linux/aarch64",
+        build_dir_suffix: str | None = None,
     ) -> None:
-        dist_rel_dir = Path("build") / f"linux-{target_arch}" / config / "dist"
+        build_dir_name = f"linux-{target_arch}"
+        if build_dir_suffix is not None:
+            build_dir_name += f"-{build_dir_suffix}"
+        dist_rel_dir = Path("build") / build_dir_name / config / "dist"
 
         super().__init__(
             group_name,

@@ -278,6 +278,40 @@ class TaskLibrary:
 
     @implementation_detail
     @depends(["create_venv"])
+    def _build_ort_linux_aarch64_manylinux_2_34_internal_symbols(self, plan: Plan) -> str:
+        """In-container internal-symbol build steps for aarch64-manylinux_2_34."""
+        extra_args = [
+            "--qnn-arch-abi=aarch64-oe-linux-gcc11.2",
+        ]
+
+        env = os.environ.copy()
+        if self.__docker_ccache_root is not None:
+            ccache_dir = self.__docker_ccache_root / "linux-aarch64-manylinux_2_34"
+            env["CCACHE_DIR"] = str(ccache_dir)
+        else:
+            extra_args.append("--no-use-cache")
+
+        return plan.add_step(
+            BuildEpLinuxTask(
+                None,
+                self.__venv_path,
+                "linux",
+                "aarch64_manylinux_2_34",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "build",
+                extra_args=extra_args,
+                env=env,
+                build_archive=self.__build_archive,
+                qnn_internal_ut_symbols=True,
+                build_dir_suffix="internal-symbols",
+            )
+        )
+
+    @implementation_detail
+    @depends(["create_venv"])
     def _build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
         """In-container build steps for x86_64-ubuntu_22_04. Not to be used outside of Docker."""
         extra_args = []
@@ -571,6 +605,23 @@ class TaskLibrary:
                 self.__qairt_sdk_root,
                 self.__docker_ccache_root,
                 self.__build_archive,
+            ),
+        )
+
+    @public_task("Build ONNX Runtime for Linux ARM64 with QNN EP internal unit-test symbols")
+    @depends(["docker_build_manylinux_2_34_aarch64"])
+    def build_ort_linux_aarch64_manylinux_2_34_internal_symbols(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpDockerTask(
+                "Building ONNX Runtime for Linux on AArch64 manylinux_2_34 with QNN EP internal unit-test symbols",
+                "aarch64_manylinux_2_34",
+                self.__config,
+                self.__target_py_version,
+                self.__qairt_sdk_root,
+                self.__docker_ccache_root,
+                self.__build_archive,
+                inner_task="_build_ort_linux_aarch64_manylinux_2_34_internal_symbols",
+                build_dir_suffix="internal-symbols",
             ),
         )
 
@@ -1163,6 +1214,25 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
+                )
+            )
+
+        @task
+        @depends(["build_ort_linux_aarch64_manylinux_2_34_internal_symbols"])
+        def test_ort_linux_aarch64_manylinux_2_34_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Testing ONNX Runtime for ARM64 Linux with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "aarch64_manylinux_2_34",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_ut_symbols=True,
+                    build_dir_suffix="internal-symbols",
                 )
             )
 
