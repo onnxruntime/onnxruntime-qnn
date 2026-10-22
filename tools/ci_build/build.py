@@ -694,6 +694,9 @@ def build_python_wheel(
 
         args = [sys.executable, os.path.join(source_dir, "setup.py"), "bdist_wheel"]
 
+        if "aarch64" in str(build_dir) and platform.machine() != "aarch64":
+            args.append("--plat-name=manylinux_2_34_aarch64")
+
         # Any combination of the following arguments can be applied
         if nightly_build:
             args.append("--nightly_build")
