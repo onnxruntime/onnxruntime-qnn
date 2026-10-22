@@ -53,6 +53,8 @@ jobs:
       # The approved fork path runs from a temporary branch whose head is the
       # immutable reviewed commit, so the normal full matrix validates that SHA.
       do_all: true
+      # A native ARM64 build is required to produce and validate the Windows ARM64 Python wheel.
+      windows_arm64_runner_arch: ARM64
 
   coverage:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
