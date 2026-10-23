@@ -27,10 +27,26 @@ class QnnModelWrapper;
 ///                                  |                                               |
 ///                                  +-----------------------------------------------+
 ///
+/// The affine tail is optional. Tried in order of preference:
+///   - Full:       ... --> Div --> Mul(gamma) --> Add(beta)  ==>  LayerNorm(x, gamma, beta)
+///   - Gamma only: ... --> Div --> Mul(gamma)                ==>  LayerNorm(x, gamma, zeros)
+///   - Core only:  ... --> Div                               ==>  LayerNorm(x, ones,  zeros)
+/// Core-only fusion covers the case where the normalized tensor feeds several consumers (e.g. it is
+/// shared by multiple heads that each apply their own gamma/beta) or where gamma/beta have a shape
+/// QNN LayerNorm cannot express. Ops after the fused part are left untouched.
+///
+/// Scalar constants (Pow exponent, epsilon) may be float32 or float16 initializers.
+///
+/// QNN HTP LayerNorm normalizes only the last axis. A single trailing axis (axes=[-1]) maps directly
+/// to one LayerNorm. Several trailing axes are flattened into one:
+///   x [..., d1, d2] --> Reshape [P, d1*d2] --> LayerNorm(axis 1) --> Reshape [..., d1, d2]
+/// with gamma/beta collapsed to {d1*d2}.
 /// All NodeUnits must be of type SingleNode.
 /// </summary>
 class LayerNormFusion : public IQnnNodeGroup {
  public:
+  /// An empty gamma_input_name / beta_input_name means a ones / zeros tensor is synthesized.
+  /// The fused output is node_units.back()->Outputs()[0].
   LayerNormFusion(std::vector<const OrtNodeUnit*>&& node_units,
                   const OrtNodeUnit* target_node_unit,
                   float epsilon,
@@ -45,7 +61,21 @@ class LayerNormFusion : public IQnnNodeGroup {
   const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "LayerNormFusion"; }
 
-  static std::unique_ptr<IQnnNodeGroup> TryFusion(
+  // One entry point per affine-tail variant. They are registered longest-first in the fusion table
+  // (qnn_node_group.cc), so the first variant that matches and validates on QNN wins.
+  static std::unique_ptr<IQnnNodeGroup> TryFusionFull(
+      QnnModelWrapper& qnn_model_wrapper,
+      const OrtNodeUnit& reduce_mean_node_unit,
+      const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+      const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+      const Ort::Logger& logger);
+  static std::unique_ptr<IQnnNodeGroup> TryFusionGammaOnly(
+      QnnModelWrapper& qnn_model_wrapper,
+      const OrtNodeUnit& reduce_mean_node_unit,
+      const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+      const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+      const Ort::Logger& logger);
+  static std::unique_ptr<IQnnNodeGroup> TryFusionCoreOnly(
       QnnModelWrapper& qnn_model_wrapper,
       const OrtNodeUnit& reduce_mean_node_unit,
       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
@@ -53,6 +83,20 @@ class LayerNormFusion : public IQnnNodeGroup {
       const Ort::Logger& logger);
 
  private:
+  enum class Tail { kFull,
+                    kGammaOnly,
+                    kCoreOnly };
+
+  // Matches the decomposed core plus, for kFull / kGammaOnly, the required affine tail; returns
+  // nullptr if `tail` is not present or the resulting LayerNorm does not validate on QNN.
+  static std::unique_ptr<IQnnNodeGroup> TryFusionImpl(
+      QnnModelWrapper& qnn_model_wrapper,
+      const OrtNodeUnit& reduce_mean_node_unit,
+      const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+      const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+      const Ort::Logger& logger,
+      Tail tail);
+
   std::vector<const OrtNodeUnit*> node_units_;
   const OrtNodeUnit* target_node_unit_;
   float epsilon_;
