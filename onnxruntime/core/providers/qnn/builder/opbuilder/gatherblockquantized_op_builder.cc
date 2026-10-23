@@ -297,6 +297,7 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
 
     bool indices_are_valid = false;
     if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
+      // NormalizeIndicesBytes also casts the int64 values to int32 for QNN.
       indices_are_valid = utils::NormalizeIndicesBytes<int64_t>(
           onnx_indices_bytes, [gather_axis_dim](size_t) { return gather_axis_dim; },
           qnn_indices_bytes, has_negative_indices);
