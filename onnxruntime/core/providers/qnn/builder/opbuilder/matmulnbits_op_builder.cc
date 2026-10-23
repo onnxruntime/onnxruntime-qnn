@@ -526,10 +526,42 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
           }
         }
 
-        if (!used_lpbq) {
-          // Non-LPBQ block-quant path: native BQ (BLOCK) or BW_FLOAT_BLOCK, decided below.
+        bool used_bw_block_mapped = false;
+#ifdef QNN_W2A16_BW_BLOCK_MAPPED_AVAILABLE
+        // 2-bit standard-symmetric BW_BLOCK_MAPPED: keeps int16 activations natively (no DQ needed).
+        // Native W2A16 requires v81+, block size 32/64/128, and N a multiple of 32.
+        // Asymmetric 2-bit quantization continues to use the existing BW_FLOAT_BLOCK fallback.
+        if (bits == 2 && is_act_16bitquant && zp_is_symmetric &&
+            qnn_model_wrapper.GetHtpArch() >= QNN_HTP_DEVICE_ARCH_V81 &&
+            (block_size == 32 || block_size == 64 || block_size == 128) && N % 32 == 0) {
+          const std::vector<uint32_t> block_sizes = {1, 1, gsl::narrow_cast<uint32_t>(block_size), 1};
+          const std::vector<int32_t> per_block_int32_offset(total_blocks, 0);
+
+          // BW_BLOCK_MAPPED consumes the unpacked buffer as SFIXED_POINT_8. Recover the signed
+          // two's-complement values (-2/-1) that UnpackWeightData left masked as 0x02/0x03.
+          utils::SignExtendUnpackedSubByteData(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, weight_data);
+
+          // HTP Conv2d expects block scales in output-channel-major order [N,k_blocks],
+          // as in the ONNX initializer, even though the weights are transposed to [1,1,K,N].
+          // Transposing scales mixes the scale assignments between channels and blocks.
+          quantize_param = QnnQuantParamsWrapper::BwBlockMapped(per_block_float_scale,
+                                                                per_block_int32_offset,
+                                                                gsl::narrow_cast<uint32_t>(bits),
+                                                                block_sizes,
+                                                                QNN_QUANTIZATION_ENCODING_MAPPING_STANDARD_SYMMETRIC);
+          used_bw_block_mapped = true;
+          ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                      ("MatMulNBits weight encoding: BW_BLOCK_MAPPED (STANDARD_SYMMETRIC) for " + weight_tensor_name).c_str());
+        }
+#endif  // QNN_W2A16_BW_BLOCK_MAPPED_AVAILABLE
+
+        if (!used_lpbq && !used_bw_block_mapped) {
+          // Non-LPBQ, non-BW_BLOCK_MAPPED path: native BQ (BLOCK) or BW_FLOAT_BLOCK, decided below.
           const char* reason = !is_act_16bitquant ? "activation not 16-bit quantized"
-                               : bits != 4        ? "bits != 4 (LPBQ only supports INT4)"
+                               : bits == 2 && !zp_is_symmetric
+                                   ? "asymmetric 2-bit quantization uses BW_FLOAT_BLOCK"
+                               : bits == 2        ? "BW_BLOCK_MAPPED SDK, architecture, or shape requirements not met"
+                               : bits != 4        ? "unsupported bit-width for LPBQ"
                                : !zp_is_symmetric ? "zero-points not symmetric"
                                                   : "LPBQ conversion failed (enable_block_quant_weight_optimization=0)";
           ORT_CXX_LOG(logger,
@@ -707,9 +739,9 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
     std::vector<uint32_t> conv2d_output_shape = {output_info.shape[0], 1, output_info.shape[1], output_info.shape[2]};
 
     // Determine the Conv2D output data type from the registered weight tensor's quant encoding.
-    // Only BW_FLOAT_BLOCK forces the kernel to compute in FP16; LPBQ (BLOCKWISE_EXPANSION) and native BQ
-    // (BLOCK) both produce the actual output data type (e.g. uint16/int16 for QDQ models) directly.
-    // NOTE: IsBlockQuantized() is true for both BLOCK and BW_FLOAT_BLOCK, so match the encoding directly.
+    // Only BW_FLOAT_BLOCK forces the kernel to compute in FP16; LPBQ (BLOCKWISE_EXPANSION), native BQ
+    // (BLOCK), and BW_BLOCK_MAPPED all produce the actual output data type (e.g. uint16/int16) directly.
+    // NOTE: IsBlockQuantized() is true for several block-type quant params, so match the encoding directly.
     bool is_bw_float_block = false;
     if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1])) {
       const auto& weight_quant_params = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().Get();
