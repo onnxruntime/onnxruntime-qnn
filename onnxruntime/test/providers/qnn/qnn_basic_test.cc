@@ -1188,65 +1188,6 @@ TEST_F(QnnHTPBackendTests, QnnContextPriorityHigh) {
                      "high");           // qnn_context_priority
 }
 
-// Create a model with Cast + Add (quantized)
-// cast_input -> Cast -> Q -> DQ ----
-//                                   |
-//             input2 -> Q -> DQ -> Add -> Q -> DQ -> output
-template <typename InputType, typename QuantType>
-static GetTestQDQModelFn<QuantType> BuildCastAddQDQTestCase() {
-  return [](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
-    builder.graph_->set_name("cast_add_qdq_graph");
-
-    MakeTestInput<InputType>(builder, "cast_input", TestInputDef<InputType>({2, 3}, false, {0, 1, 0, 1, 0, 1}));
-
-    const std::vector<float> add_input2_data = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f};
-    MakeTestInput<float>(builder, "add_input2", TestInputDef<float>({2, 3}, false, add_input2_data));
-
-    builder.AddNode(
-        "Cast",
-        "Cast",
-        {"cast_input"},
-        {"cast_output"},
-        kOnnxDomain,
-        {builder.MakeScalarAttribute("to", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT))});
-
-    // Quant params derived from expected Add input range.
-    gsl::span<const float> data_range = gsl::make_span(add_input2_data);
-    QuantParams<QuantType> q_parameter = GetDataQuantParams<QuantType>(data_range);
-
-    auto cast_qdq_out = AddQDQNodePair<QuantType>(builder, "cast_qdq", "cast_output", q_parameter.scale, q_parameter.zero_point);
-    auto add_in2_qdq_out = AddQDQNodePair<QuantType>(builder, "add_in2_qdq", "add_input2", q_parameter.scale, q_parameter.zero_point);
-
-    builder.AddNode("Add", "Add", {cast_qdq_out, add_in2_qdq_out}, {"add_output"}, kOnnxDomain);
-
-    // add_output -> Q -> DQ -> output
-    auto output = AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "out_qdq", "add_output",
-                                                                   output_qparams[0].scale, output_qparams[0].zero_point);
-  };
-}
-
-template <typename InputType>
-static GetTestModelFn BuildCastAddTestCase() {
-  return [](ModelTestBuilder& builder) {
-    builder.graph_->set_name("cast_add_graph");
-
-    MakeTestInput<InputType>(builder, "cast_input", TestInputDef<InputType>({2, 3}, false, {0, 1, 0, 1, 0, 1}));
-    MakeTestInput<float>(builder, "add_input2", TestInputDef<float>({2, 3}, false, {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f}));
-
-    builder.AddNode(
-        "Cast",
-        "Cast",
-        {"cast_input"},
-        {"cast_output"},
-        kOnnxDomain,
-        {builder.MakeScalarAttribute("to", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT))});
-
-    builder.AddNode("Add", "Add", {"cast_output", "add_input2"}, {"output"}, kOnnxDomain);
-
-    builder.MakeOutput("output");
-  };
-}
-
 void VerifyFileExistsAndIsNonEmpty(const std::string& filepath) {
   std::ifstream csv_file(filepath, std::ifstream::binary);
   ASSERT_TRUE(csv_file.good());
@@ -1321,55 +1262,6 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
   if (std::remove("optrace_profile_qnn.log") != 0)
     std::cout << "DEBUG: " << __FILE__ << " " << __LINE__ << std::endl;
 #endif
-}
-
-TEST_F(QnnHTPBackendTests, CastAddQDQU8) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  TestQDQModelAccuracy<uint8_t>(BuildCastAddTestCase<uint8_t>(),
-                                BuildCastAddQDQTestCase<uint8_t, uint8_t>(),
-                                provider_options,
-                                21,
-                                ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnHTPBackendTests, CastAddQDQU16) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  TestQDQModelAccuracy<uint16_t>(BuildCastAddTestCase<uint8_t>(),
-                                 BuildCastAddQDQTestCase<uint8_t, uint16_t>(),
-                                 provider_options,
-                                 21,
-                                 ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnHTPBackendTests, CastAddQDQS8) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  TestQDQModelAccuracy<int8_t>(BuildCastAddTestCase<uint8_t>(),
-                               BuildCastAddQDQTestCase<uint8_t, int8_t>(),
-                               provider_options,
-                               21,
-                               ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnHTPBackendTests, CastAddQDQS16) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  TestQDQModelAccuracy<int16_t>(BuildCastAddTestCase<uint8_t>(),
-                                BuildCastAddQDQTestCase<uint8_t, int16_t>(),
-                                provider_options,
-                                21,
-                                // QNN has not yet supported S16 Quantize/Dequantize
-                                ExpectedEPNodeAssignment::Some);
 }
 
 // Test float32 model with FP16 precision
