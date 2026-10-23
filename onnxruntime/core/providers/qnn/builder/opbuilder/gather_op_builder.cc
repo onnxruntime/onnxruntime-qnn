@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include <cassert>
+#include <optional>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
@@ -18,6 +19,10 @@ namespace qnn {
 // 2.1) Gather with static int64 indices: negative indices get fixed and int64 gets reinterpreted as uint32
 //      in ProcessAttributesAndOutputs, and Cast is added if output is int64.
 // 3) Gather with rank mismatch: Gather -> Reshape -> (optional output cast).
+// 4) Gather on HTP with a raw (unquantized) narrow-int `data` input (UINT8/INT8/UINT16/INT16):
+//    re-tag the tensor as the equivalent QNN fixed-point type with an identity scale/offset
+//    (1.0f, 0) instead of a plain integer type, since HTP's Gather validator rejects raw
+//    narrow-int data but accepts quantized fixed-point data. See ProcessRawNarrowIntDataInput.
 
 class GatherOpBuilder : public BaseOpBuilder {
  public:
@@ -214,6 +219,61 @@ static Ort::Status ProcessIndicesInput(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
+// Returns the QNN fixed-point counterpart for `onnx_type` if it is one of the raw/unquantized
+// narrow-int types that QNN's HTP backend rejects as a Gather `data` input (UINT8/INT8/UINT16/
+// INT16), or std::nullopt otherwise. BOOL is handled separately via an explicit Cast node (see
+// needs_bool_cast below) since HTP's Gather does not support BOOL at all, quantized or not.
+static std::optional<Qnn_DataType_t> GetRawNarrowIntIdentityQuantType(ONNXTensorElementDataType onnx_type) {
+  switch (onnx_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+      return QNN_DATATYPE_UFIXED_POINT_8;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      return QNN_DATATYPE_SFIXED_POINT_8;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+      return QNN_DATATYPE_UFIXED_POINT_16;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
+      return QNN_DATATYPE_SFIXED_POINT_16;
+    default:
+      return std::nullopt;
+  }
+}
+
+// QNN HTP's Gather rejects a `data` input that is a raw (unquantized) narrow-int tensor -- it
+// only accepts float or a genuinely quantized fixed-point type. Some ONNX graphs store a lookup
+// table as raw narrow-int bytes and dequantize it manually after Gather (e.g. a token-embedding
+// table: Gather -> Cast(float) -> Mul(scale) -> Add(bias)) instead of using QDQ nodes. For these,
+// add the tensor with the equivalent QNN fixed-point type and an identity scale/offset (1.0f, 0)
+// instead of the plain integer type -- this only changes the QNN-visible type tag, not the
+// underlying bytes, since dequantizing with scale=1/offset=0 reproduces the original byte value.
+static Ort::Status ProcessRawNarrowIntDataInput(QnnModelWrapper& qnn_model_wrapper,
+                                                const OrtNodeUnitIODef& input0,
+                                                Qnn_DataType_t identity_quant_type,
+                                                std::vector<std::string>& input_names) {
+  const std::string& input0_name = input0.name;
+  if (qnn_model_wrapper.IsQnnTensorWrapperExist(input0_name)) {
+    input_names.push_back(input0_name);
+    return Ort::Status();
+  }
+
+  TensorInfo input0_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input0, input0_info));
+
+  std::vector<uint8_t> unpacked_tensor;
+  if (input0_info.is_initializer) {
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input0_info.initializer_tensor, unpacked_tensor));
+  }
+
+  QnnTensorWrapper input_tensorwrapper(input0_name,
+                                       qnn_model_wrapper.GetTensorType(input0_name),
+                                       identity_quant_type,
+                                       QnnQuantParamsWrapper::PerTensor(1.0f, 0),
+                                       std::move(input0_info.shape),
+                                       std::move(unpacked_tensor));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+  input_names.push_back(input0_name);
+  return Ort::Status();
+}
+
 Ort::Status GatherOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                            const OrtNodeUnit& node_unit,
                                            const Ort::Logger& logger,
@@ -221,7 +281,20 @@ Ort::Status GatherOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                            bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
   RETURN_IF(inputs.size() != 2, ("QNN EP: " + node_unit.OpType() + " operator must have two inputs").c_str());
-  RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
+
+  // Raw (unquantized) narrow-int `data` input on HTP: re-tag with an identity-quantized type
+  // instead of the plain integer type QNN's Gather validator rejects (see
+  // ProcessRawNarrowIntDataInput and GetRawNarrowIntIdentityQuantType above).
+  const std::optional<Qnn_DataType_t> raw_narrow_int_identity_type =
+      (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP && !inputs[0].quant_param.has_value())
+          ? GetRawNarrowIntIdentityQuantType(inputs[0].type)
+          : std::nullopt;
+  if (raw_narrow_int_identity_type.has_value()) {
+    RETURN_IF_ERROR(ProcessRawNarrowIntDataInput(qnn_model_wrapper, inputs[0], *raw_narrow_int_identity_type,
+                                                 input_names));
+  } else {
+    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
+  }
 
   // Gather/GatherElements on HTP BE don't support BOOL input. Add Cast node to convert BOOL to UINT8.
   const bool needs_bool_cast = (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
@@ -350,6 +423,19 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   ONNXTensorElementDataType gather_output_type = gather_output.type;
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
   RETURN_IF_ERROR(utils::GetQnnDataType(quantize_param.IsQuantized(), gather_output_type, qnn_data_type));
+
+  // Raw (unquantized) narrow-int `data` input on HTP: Gather's output has the same element type
+  // as `data` (it's a lookup, not a cast), so re-tag the output with the same identity-quantized
+  // type used for input0 in ProcessInputs, instead of the plain integer type.
+  const std::optional<Qnn_DataType_t> raw_narrow_int_identity_type =
+      (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
+       !node_unit.Inputs()[0].quant_param.has_value())
+          ? GetRawNarrowIntIdentityQuantType(node_unit.Inputs()[0].type)
+          : std::nullopt;
+  if (raw_narrow_int_identity_type.has_value()) {
+    qnn_data_type = *raw_narrow_int_identity_type;
+    quantize_param = QnnQuantParamsWrapper::PerTensor(1.0f, 0);
+  }
 
   if (!needs_bool_cast && quantize_param.IsPerTensor()) {
     // Make sure the output quantization parameters are equal to the input.
