@@ -1070,6 +1070,16 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_JsonGraphDirWithoutDumpEnabled_LogsWa
 }
 
 // ParseBoolOption: value is neither "0" nor "1" → logs VERBOSE "Invalid value"
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GoldenMetadataWithoutJsonGraphDump_LogsWarning) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("dump_qnn_graph_golden_metadata")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "dump_qnn_graph_golden_metadata requires dump_json_qnn_graph=1. Skipping golden metadata export.");
+}
+
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_BoolOptionInvalidValue_LogsVerbose) {
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
@@ -1404,9 +1414,14 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithoutContextCache_Throws) {
   // Comma-separated soc_model triggers multi-SoC path.
   ctx.session_config[EPKey("soc_model")] = "60,73";
   ctx.session_config[EPKey("htp_arch")] = "73,75";
+  ctx.session_config[EPKey("dump_json_qnn_graph")] = "1";
+  ctx.session_config[EPKey("dump_qnn_graph_golden_metadata")] = "1";
   // context_cache_enabled defaults to "0" → must throw.
   auto factory = MakeFactory(ctx);
   EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "dump_qnn_graph_golden_metadata does not support multi-SoC EP contexts. "
+               "Skipping golden metadata export.");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithShareEpContexts_Throws) {
