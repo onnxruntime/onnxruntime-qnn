@@ -2956,6 +2956,21 @@ TEST_F(QnnGPUBackendTests, import_memory_basic) {
   Ort::GetInteropApi().ImportMemory(importer, &input_desc, &input_mem);
   ASSERT_FALSE(input_mem == nullptr);
 
+  // Unsupported element types are invalid descriptors, not internal EP failures.
+  const std::array<int64_t, 1> invalid_shape = {1};
+  OrtExternalTensorDescriptor invalid_tensor_desc;
+  invalid_tensor_desc.version = ORT_API_VERSION;
+  invalid_tensor_desc.element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+  invalid_tensor_desc.shape = invalid_shape.data();
+  invalid_tensor_desc.rank = invalid_shape.size();
+  invalid_tensor_desc.offset_bytes = 0;
+  OrtValue* invalid_tensor = nullptr;
+  OrtStatus* status = Ort::GetInteropApi().CreateTensorFromMemory(
+      importer, input_mem, &invalid_tensor_desc, &invalid_tensor);
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(Ort::GetApi().GetErrorCode(status), ORT_INVALID_ARGUMENT);
+  Ort::GetApi().ReleaseStatus(status);
+
   // cleanup
   Ort::GetInteropApi().ReleaseExternalMemoryHandle(input_mem);
   Ort::GetInteropApi().ReleaseExternalResourceImporter(importer);
