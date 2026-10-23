@@ -61,7 +61,21 @@ class LayerNormFusion : public IQnnNodeGroup {
   const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "LayerNormFusion"; }
 
-  static std::unique_ptr<IQnnNodeGroup> TryFusion(
+  // One entry point per affine-tail variant. They are registered longest-first in the fusion table
+  // (qnn_node_group.cc), so the first variant that matches and validates on QNN wins.
+  static std::unique_ptr<IQnnNodeGroup> TryFusionFull(
+      QnnModelWrapper& qnn_model_wrapper,
+      const OrtNodeUnit& reduce_mean_node_unit,
+      const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+      const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+      const Ort::Logger& logger);
+  static std::unique_ptr<IQnnNodeGroup> TryFusionGammaOnly(
+      QnnModelWrapper& qnn_model_wrapper,
+      const OrtNodeUnit& reduce_mean_node_unit,
+      const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+      const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+      const Ort::Logger& logger);
+  static std::unique_ptr<IQnnNodeGroup> TryFusionCoreOnly(
       QnnModelWrapper& qnn_model_wrapper,
       const OrtNodeUnit& reduce_mean_node_unit,
       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
@@ -69,6 +83,20 @@ class LayerNormFusion : public IQnnNodeGroup {
       const Ort::Logger& logger);
 
  private:
+  enum class Tail { kFull,
+                    kGammaOnly,
+                    kCoreOnly };
+
+  // Matches the decomposed core plus, for kFull / kGammaOnly, the required affine tail; returns
+  // nullptr if `tail` is not present or the resulting LayerNorm does not validate on QNN.
+  static std::unique_ptr<IQnnNodeGroup> TryFusionImpl(
+      QnnModelWrapper& qnn_model_wrapper,
+      const OrtNodeUnit& reduce_mean_node_unit,
+      const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+      const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+      const Ort::Logger& logger,
+      Tail tail);
+
   std::vector<const OrtNodeUnit*> node_units_;
   const OrtNodeUnit* target_node_unit_;
   float epsilon_;

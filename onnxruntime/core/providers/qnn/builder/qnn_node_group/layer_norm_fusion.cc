@@ -53,12 +53,43 @@ static const OrtNodeUnitIODef* FindConstantInput(const QnnModelWrapper& qmw, con
   return nullptr;
 }
 
-std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
+std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusionFull(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& reduce_mean_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
+  return TryFusionImpl(qnn_model_wrapper, reduce_mean_node_unit, node_to_node_unit,
+                       node_unit_to_qnn_node_group, logger, Tail::kFull);
+}
+
+std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusionGammaOnly(
+    QnnModelWrapper& qnn_model_wrapper,
+    const OrtNodeUnit& reduce_mean_node_unit,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+    const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+    const Ort::Logger& logger) {
+  return TryFusionImpl(qnn_model_wrapper, reduce_mean_node_unit, node_to_node_unit,
+                       node_unit_to_qnn_node_group, logger, Tail::kGammaOnly);
+}
+
+std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusionCoreOnly(
+    QnnModelWrapper& qnn_model_wrapper,
+    const OrtNodeUnit& reduce_mean_node_unit,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+    const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+    const Ort::Logger& logger) {
+  return TryFusionImpl(qnn_model_wrapper, reduce_mean_node_unit, node_to_node_unit,
+                       node_unit_to_qnn_node_group, logger, Tail::kCoreOnly);
+}
+
+std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusionImpl(
+    QnnModelWrapper& qnn_model_wrapper,
+    const OrtNodeUnit& reduce_mean_node_unit,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+    const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+    const Ort::Logger& logger,
+    Tail tail) {
   // Must start with a ReduceMean SingleNode with keepdims=1.
   // keepdims=1 is required so that the mean output has the same rank as x,
   // allowing Sub(x, mean) to broadcast correctly.
@@ -248,9 +279,10 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   }
 
   // ---- Optional affine tail: Div → Mul(γ) → Add(β) ----
-  // Try the longest fusable tail first, then fall back to shorter ones. Each candidate is
-  // validated on QNN (which also checks gamma/beta shapes), so an unsupported gamma/beta
-  // simply degrades to a shorter fusion instead of rejecting LayerNorm altogether.
+  // Each variant has its own entry point (TryFusionFull / TryFusionGammaOnly / TryFusionCoreOnly),
+  // registered longest-first in qnn_node_group.cc. Each is validated on QNN (which also checks
+  // gamma/beta shapes), so an unsupported gamma/beta simply degrades to a shorter fusion instead of
+  // rejecting LayerNorm altogether.
   //   1. Full:       LayerNorm(x, γ, β)       — Div has a single Mul child with a constant,
   //                                             which has a single Add child with a constant.
   //   2. Gamma only: LayerNorm(x, γ, zeros)   — Add(β) missing / not fusable.
@@ -278,26 +310,52 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     }
   }
 
-  const std::vector<const OrtNodeUnit*> core_units = {
-      &reduce_mean_node_unit, sub_node_unit, pow_node_unit, reduce_mean2_node_unit,
-      add_eps_node_unit, sqrt_node_unit, div_node_unit};
   const OrtNodeUnitIODef& root_input = rm1_inputs[0];
 
-  struct Candidate {
-    const OrtNodeUnit* mul_gamma;
-    const OrtNodeUnitIODef* gamma;
-    const OrtNodeUnit* add_beta;
-    const OrtNodeUnitIODef* beta;
-    const char* kind;
-  };
-  std::vector<Candidate> candidates;
-  if (add_beta_node_unit != nullptr) {
-    candidates.push_back({mul_gamma_node_unit, gamma_input_def, add_beta_node_unit, beta_input_def, "full"});
+  // Build exactly the node units of the requested variant. The variants are tried in order
+  // (full -> gamma-only -> core-only) by the fusion table in qnn_node_group.cc, so a rejected
+  // variant falls through to the next entry point.
+  std::vector<const OrtNodeUnit*> node_units;
+  const OrtNodeUnitIODef* gamma = nullptr;
+  const OrtNodeUnitIODef* beta = nullptr;
+  const char* kind = nullptr;
+  switch (tail) {
+    case Tail::kFull:
+      if (add_beta_node_unit == nullptr) {
+        return nullptr;
+      }
+      node_units = {&reduce_mean_node_unit, sub_node_unit, pow_node_unit, reduce_mean2_node_unit,
+                    add_eps_node_unit, sqrt_node_unit, div_node_unit, mul_gamma_node_unit, add_beta_node_unit};
+      gamma = gamma_input_def;
+      beta = beta_input_def;
+      kind = "full";
+      break;
+    case Tail::kGammaOnly:
+      if (mul_gamma_node_unit == nullptr) {
+        return nullptr;
+      }
+      node_units = {&reduce_mean_node_unit, sub_node_unit, pow_node_unit, reduce_mean2_node_unit,
+                    add_eps_node_unit, sqrt_node_unit, div_node_unit, mul_gamma_node_unit};
+      gamma = gamma_input_def;
+      kind = "gamma-only";
+      break;
+    case Tail::kCoreOnly:
+      node_units = {&reduce_mean_node_unit, sub_node_unit, pow_node_unit, reduce_mean2_node_unit,
+                    add_eps_node_unit, sqrt_node_unit, div_node_unit};
+      kind = "core-only";
+      break;
   }
-  if (mul_gamma_node_unit != nullptr) {
-    candidates.push_back({mul_gamma_node_unit, gamma_input_def, nullptr, nullptr, "gamma-only"});
+  const OrtNodeUnitIODef& final_output = node_units.back()->Outputs()[0];
+
+  if (auto status = ValidateOnQnn(qnn_model_wrapper, node_units, root_input,
+                                  gamma, beta, final_output, epsilon, axes1);
+      !status.IsOK()) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                ("LayerNormFusion: " + std::string(kind) + " fusion rejected at " +
+                 reduce_mean_node_unit.Name() + ": " + status.GetErrorMessage())
+                    .c_str());
+    return nullptr;
   }
-  candidates.push_back({nullptr, nullptr, nullptr, nullptr, "core-only"});
 
   std::string shape_str;
   for (size_t i = 0; i < input_shape.size(); ++i) {
@@ -309,41 +367,21 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     if (i > 0) axes_str += ",";
     axes_str += std::to_string(axes1[i]);
   }
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+              ("LayerNormFusion: Fusing " + std::string(kind) + " LayerNorm starting at node: " +
+               reduce_mean_node_unit.Name() +
+               ", input_shape=" + shape_str +
+               ", epsilon=" + std::to_string(epsilon) +
+               ", axes=[" + axes_str + "]" +
+               (axes1.size() > 1 ? std::string(" (flattened to last axis)") : std::string()) +
+               ", gamma=" + (gamma ? gamma->name : std::string("<ones>")) +
+               ", beta=" + (beta ? beta->name : std::string("<zeros>")))
+                  .c_str());
 
-  for (const Candidate& c : candidates) {
-    std::vector<const OrtNodeUnit*> node_units = core_units;
-    if (c.mul_gamma) node_units.push_back(c.mul_gamma);
-    if (c.add_beta) node_units.push_back(c.add_beta);
-    const OrtNodeUnitIODef& final_output = node_units.back()->Outputs()[0];
-
-    if (auto status = ValidateOnQnn(qnn_model_wrapper, node_units, root_input,
-                                    c.gamma, c.beta, final_output, epsilon, axes1);
-        !status.IsOK()) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                  ("LayerNormFusion: " + std::string(c.kind) + " fusion rejected at " +
-                   reduce_mean_node_unit.Name() + ": " + status.GetErrorMessage())
-                      .c_str());
-      continue;
-    }
-
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                ("LayerNormFusion: Fusing " + std::string(c.kind) + " LayerNorm starting at node: " +
-                 reduce_mean_node_unit.Name() +
-                 ", input_shape=" + shape_str +
-                 ", epsilon=" + std::to_string(epsilon) +
-                 ", axes=[" + axes_str + "]" +
-                 (axes1.size() > 1 ? std::string(" (flattened to last axis)") : std::string()) +
-                 ", gamma=" + (c.gamma ? c.gamma->name : std::string("<ones>")) +
-                 ", beta=" + (c.beta ? c.beta->name : std::string("<zeros>")))
-                    .c_str());
-
-    return std::make_unique<LayerNormFusion>(std::move(node_units), &reduce_mean_node_unit,
-                                             epsilon, axes1,
-                                             c.gamma ? c.gamma->name : std::string(),
-                                             c.beta ? c.beta->name : std::string());
-  }
-
-  return nullptr;
+  return std::make_unique<LayerNormFusion>(std::move(node_units), &reduce_mean_node_unit,
+                                           epsilon, axes1,
+                                           gamma ? gamma->name : std::string(),
+                                           beta ? beta->name : std::string());
 }
 
 LayerNormFusion::LayerNormFusion(std::vector<const OrtNodeUnit*>&& node_units,
