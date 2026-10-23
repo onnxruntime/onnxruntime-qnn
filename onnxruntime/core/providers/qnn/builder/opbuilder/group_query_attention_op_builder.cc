@@ -91,8 +91,13 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
             "attention_bias requires QNN EP built with QAIRT SDK >= 2.53 (QNN API >= 2.42)");
 #endif  // QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
 
+  // head_sink (input 11) is supported by QNN GroupQueryAttention on GPU only.
+  const bool has_head_sink = num_inputs > 11 && inputs[11].Exists();
+  RETURN_IF(has_head_sink && !IsGpuBackend(backend_type),
+            "head_sink is only supported by QNN GroupQueryAttention on GPU");
+
   // Reject unsupported inputs when present, allowing empty trailing optional slots as the schema evolves.
-  for (size_t i = 11; i < num_inputs; ++i) {
+  for (size_t i = 12; i < num_inputs; ++i) {
     RETURN_IF(inputs[i].Exists(),
               ("Unsupported optional GroupQueryAttention input: " + inputs[i].name).c_str());
   }
@@ -174,19 +179,28 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
       7u,  // cos_cache
       8u,  // sin_cache
       9u,  // position_ids (cast to INT32 by the base pipeline)
-#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
-      // The extended HTP GQA op definition has 14 positional inputs. Include trailing optional
-      // inputs and represent absent ones with null tensors to satisfy its exact input count.
-      10u,           // QNN attention_bias <- ONNX attention_bias
-      std::nullopt,  // QNN head_sink: unsupported
+      // Trailing optional inputs. Absent ones are represented with null tensors so the QNN op
+      // receives the exact positional input count it expects.
+      10u,           // QNN attention_bias <- ONNX attention_bias (HTP only)
+      11u,           // QNN head_sink <- ONNX head_sink (GPU only)
       std::nullopt,  // QNN q_norm_weight: unsupported
       std::nullopt   // QNN k_norm_weight: unsupported
-#endif
   };
 
-  constexpr size_t kQnnTotalSeqLenIdx = 2;  // index of total_sequence_length in qnn_idx_to_onnx
-  const size_t qnn_input_count =
-      qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP ? std::size(qnn_idx_to_onnx) : 10u;
+  constexpr size_t kQnnTotalSeqLenIdx = 2;       // index of total_sequence_length in qnn_idx_to_onnx
+  constexpr size_t kQnnBaseInputCount = 10;      // query .. position_ids
+  constexpr size_t kQnnHeadSinkInputCount = 12;  // query .. head_sink
+  size_t qnn_input_count = kQnnBaseInputCount;
+  if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP) {
+#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+    // The extended HTP GQA op definition has 14 positional inputs.
+    qnn_input_count = std::size(qnn_idx_to_onnx);
+#endif
+  } else if (onnx_inputs.size() > 11 && onnx_inputs[11].Exists()) {
+    // GPU: pass the inputs through head_sink only when it is provided, so models without a head
+    // sink keep the 10-input form.
+    qnn_input_count = kQnnHeadSinkInputCount;
+  }
 
   for (size_t qnn_idx = 0; qnn_idx < qnn_input_count; ++qnn_idx) {
     const auto onnx_idx = qnn_idx_to_onnx[qnn_idx];
@@ -324,7 +338,18 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
       output_names.push_back(output_name);
 
       TensorInfo output_info = {};
-      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[output_idx], output_info));
+      // GPU: present_key/present_value share the past_key/past_value buffers, so take their
+      // data type, quantization and static shape from the corresponding past input.
+      if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()) && (output_idx == 1u || output_idx == 2u)) {
+        const size_t past_kv_qnn_idx = output_idx + 4u;
+        const auto& past_kv_wrapper =
+            qnn_model_wrapper.GetQnnTensorWrapper(input_names[past_kv_qnn_idx]);
+        output_info.qnn_data_type = past_kv_wrapper.GetTensorDataType();
+        output_info.quant_param = past_kv_wrapper.GetQnnQuantParams().Copy();
+        output_info.shape = past_kv_wrapper.GetTensorDims();
+      } else {
+        RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[output_idx], output_info));
+      }
 
       bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
       Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;

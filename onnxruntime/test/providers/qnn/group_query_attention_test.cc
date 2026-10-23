@@ -1111,6 +1111,8 @@ struct GpuPackedGqaCase {
   int32_t local_window_size{-1};
   int32_t sliding_window_cache{0};
   ExpectedEPNodeAssignment expected_ep_assignment{ExpectedEPNodeAssignment::All};
+  int32_t rotary_cache_length{0};  // 0: use total_seq_len
+  bool use_head_sink{false};
 };
 
 template <typename T>
@@ -1120,6 +1122,8 @@ static void RunGpuPackedGQATest(const GpuPackedGqaCase& test_case) {
                                2 * test_case.kv_num_heads * test_case.head_size;
   const std::vector<int64_t> seqlens_k_shape =
       test_case.use_2d_seqlens ? std::vector<int64_t>{batch_size, 1} : std::vector<int64_t>{batch_size};
+  const int32_t rotary_cache_length =
+      test_case.rotary_cache_length > 0 ? test_case.rotary_cache_length : test_case.total_seq_len;
 
   GqaTestConfig<T, int32_t> config{
       TestInputDef<T>({batch_size, test_case.sequence_length, packed_qkv_d},
@@ -1133,10 +1137,14 @@ static void RunGpuPackedGQATest(const GpuPackedGqaCase& test_case) {
   config.past_value_def.emplace(std::vector<int64_t>{batch_size, test_case.kv_num_heads,
                                                      test_case.total_seq_len, test_case.head_size},
                                 false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  config.cos_cache_def.emplace(std::vector<int64_t>{test_case.total_seq_len, test_case.head_size / 2},
+  config.cos_cache_def.emplace(std::vector<int64_t>{rotary_cache_length, test_case.head_size / 2},
                                true, static_cast<T>(-1.0f), static_cast<T>(1.0f));
-  config.sin_cache_def.emplace(std::vector<int64_t>{test_case.total_seq_len, test_case.head_size / 2},
+  config.sin_cache_def.emplace(std::vector<int64_t>{rotary_cache_length, test_case.head_size / 2},
                                true, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  if (test_case.use_head_sink) {
+    config.head_sink_def.emplace(std::vector<int64_t>{test_case.num_heads},
+                                 true, static_cast<T>(-0.1f), static_cast<T>(0.1f));
+  }
   config.do_rotary = 1;
   config.kv_num_heads = test_case.kv_num_heads;
   config.num_heads = test_case.num_heads;
@@ -1206,6 +1214,20 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_FP32) {
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_FP16) {
   RunGpuPackedGQATest<Ort::Float16_t>({32, 8, 64, 64, 1024, 0.125f});
+}
+
+TEST_F(QnnGPUBackendTests, GroupQueryAttention_GPT_OSS_AR1_HeadSink_FP16) {
+  GpuPackedGqaCase test_case{64, 8, 64, 1, 4096, 0.125f};
+  test_case.rotary_cache_length = 131072;
+  test_case.use_head_sink = true;
+  RunGpuPackedGQATest<Ort::Float16_t>(test_case);
+}
+
+TEST_F(QnnGPUBackendTests, GroupQueryAttention_GPT_OSS_AR128_HeadSink_FP16) {
+  GpuPackedGqaCase test_case{64, 8, 64, 128, 4096, 0.125f};
+  test_case.rotary_cache_length = 131072;
+  test_case.use_head_sink = true;
+  RunGpuPackedGQATest<Ort::Float16_t>(test_case);
 }
 
 #if defined(_WIN32)
