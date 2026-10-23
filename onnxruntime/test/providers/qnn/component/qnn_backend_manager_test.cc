@@ -449,14 +449,21 @@ class QnnUnit_BackendManagerHtpTest : public ::testing::Test {
   }
 
  private:
-  // Probe once: create an HTP manager and run SetupBackend. Cached for the process.
+  // Probe once with SetupBackend on platforms where repeated initialization is safe.
   static bool HtpAvailable() {
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    // The V68 ARM64 validation run crashes after this probe has initialized HTP
+    // and the first test initializes it again. The first test below is the real
+    // SetupBackend validation, so do not consume that initialization here.
+    return true;
+#else
     static const bool available = [] {
       StubApiEnv env;
       auto manager = MakeHTPManager(env.api_ptrs, env.logger);
       return manager != nullptr && SetupBackendHtp(*manager).IsOK();
     }();
     return available;
+#endif
   }
 };
 
