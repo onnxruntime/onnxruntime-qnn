@@ -179,6 +179,9 @@ TEST(QnnUnit_DataTransferTest, CanCopyOnlyQnnHostAccessibleCpuMemory) {
   EXPECT_FALSE(transfer->CanCopy(transfer, cpu, cpu));
   EXPECT_FALSE(transfer->CanCopy(transfer, cpu, other_shared));
   EXPECT_FALSE(transfer->CanCopy(transfer, gpu, qnn_shared));
+  EXPECT_FALSE(transfer->CanCopy(transfer, nullptr, qnn_shared));
+  EXPECT_FALSE(transfer->CanCopy(transfer, qnn_shared, nullptr));
+  EXPECT_FALSE(transfer->CanCopy(transfer, nullptr, nullptr));
   transfer->Release(transfer);
 }
 
@@ -188,6 +191,91 @@ TEST(QnnUnit_DataTransferTest, ZeroTensorsIsNoOp) {
   OrtDataTransferImpl* transfer = CreateDataTransfer(context);
 
   EXPECT_EQ(transfer->CopyTensors(transfer, nullptr, nullptr, nullptr, 0), nullptr);
+  transfer->Release(transfer);
+}
+
+TEST(QnnUnit_DataTransferTest, RejectsNullTensorInputs) {
+  DataTransferStubContext context;
+  UseDataTransferStubs use(context);
+  OrtDataTransferImpl* transfer = CreateDataTransfer(context);
+
+  const auto expect_invalid_argument = [&](const OrtValue** sources, OrtValue** destinations) {
+    OrtStatus* status = transfer->CopyTensors(transfer, sources, destinations, nullptr, 1);
+    ASSERT_NE(status, nullptr);
+    EXPECT_EQ(context.ort_api.GetErrorCode(status), ORT_INVALID_ARGUMENT);
+    context.ort_api.ReleaseStatus(status);
+  };
+
+  auto* value = MakeFakeOrtValue(20);
+  const OrtValue* sources[] = {value};
+  OrtValue* destinations[] = {value};
+  expect_invalid_argument(nullptr, destinations);
+  expect_invalid_argument(sources, nullptr);
+
+  sources[0] = nullptr;
+  expect_invalid_argument(sources, destinations);
+  sources[0] = value;
+  destinations[0] = nullptr;
+  expect_invalid_argument(sources, destinations);
+
+  transfer->Release(transfer);
+}
+
+TEST(QnnUnit_DataTransferTest, RejectsNullDataForNonEmptyTensor) {
+  DataTransferStubContext context;
+  UseDataTransferStubs use(context);
+  OrtDataTransferImpl* transfer = CreateDataTransfer(context);
+
+  std::vector<uint8_t> data(4, 0);
+  auto* source = MakeFakeOrtValue(20);
+  auto* destination = MakeFakeOrtValue(21);
+  context.tensors[source] = {
+      nullptr, data.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {4}};
+  context.tensors[destination] = {
+      data.data(), data.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {4}};
+  const OrtValue* sources[] = {source};
+  OrtValue* destinations[] = {destination};
+
+  OrtStatus* status = transfer->CopyTensors(transfer, sources, destinations, nullptr, 1);
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(context.ort_api.GetErrorCode(status), ORT_INVALID_ARGUMENT);
+  EXPECT_NE(std::string(context.ort_api.GetErrorMessage(status)).find("null tensor data"),
+            std::string::npos);
+  context.ort_api.ReleaseStatus(status);
+
+  transfer->Release(transfer);
+}
+
+TEST(QnnUnit_DataTransferTest, PropagatesOrtApiErrors) {
+  DataTransferStubContext context;
+  UseDataTransferStubs use(context);
+  OrtDataTransferImpl* transfer = CreateDataTransfer(context);
+
+  std::vector<uint8_t> data(4, 0);
+  auto* source = MakeFakeOrtValue(20);
+  auto* destination = MakeFakeOrtValue(21);
+  context.tensors[destination] = {
+      data.data(), data.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {4}};
+  const OrtValue* sources[] = {source};
+  OrtValue* destinations[] = {destination};
+
+  OrtStatus* status = transfer->CopyTensors(transfer, sources, destinations, nullptr, 1);
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(context.ort_api.GetErrorCode(status), ORT_INVALID_ARGUMENT);
+  EXPECT_STREQ(context.ort_api.GetErrorMessage(status), "unknown tensor");
+  context.ort_api.ReleaseStatus(status);
+
+  context.tensors[source] = {
+      data.data(), data.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {4}};
+  context.ort_api.GetTensorSizeInBytes = [](const OrtValue*, size_t*) noexcept -> OrtStatus* {
+    return DataTransferStubContext::current_->ort_api.CreateStatus(ORT_FAIL, "size failure");
+  };
+  status = transfer->CopyTensors(transfer, sources, destinations, nullptr, 1);
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(context.ort_api.GetErrorCode(status), ORT_FAIL);
+  EXPECT_STREQ(context.ort_api.GetErrorMessage(status), "size failure");
+  context.ort_api.ReleaseStatus(status);
+
   transfer->Release(transfer);
 }
 

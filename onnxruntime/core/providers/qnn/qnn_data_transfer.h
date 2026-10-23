@@ -18,9 +18,11 @@ inline constexpr uint32_t kQualcommPciVendorId = 0x5143;
 // Qualcomm vendor ID and HOST_ACCESSIBLE memory type. ORT still treats this
 // as a distinct memory device, so it needs an EP data transfer to stage
 // tensors between the default CPU allocator and QNN shared memory.
-struct QnnHostAccessibleDataTransfer final : OrtDataTransferImpl {
+class QnnHostAccessibleDataTransfer final : public OrtDataTransferImpl {
+ public:
   QnnHostAccessibleDataTransfer(const OrtApi& ort_api_in, const OrtEpApi& ep_api_in);
 
+ private:
   static bool IsQnnHostAccessibleMemory(const QnnHostAccessibleDataTransfer& impl,
                                         const OrtMemoryDevice* memory_device) noexcept;
   static bool IsDefaultCpuMemory(const QnnHostAccessibleDataTransfer& impl,
