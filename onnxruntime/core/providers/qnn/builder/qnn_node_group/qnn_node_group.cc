@@ -34,6 +34,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5_to_rank4.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/sequence_at_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/sequence_length_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/tanh_gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
@@ -115,11 +116,9 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
     {"Reshape", {SpaceToDepthFusion::TryFusion, ChannelShuffleFusion::TryFusionFromReshape, Rank6ToRank5Fusion::TryFusion, ReshapeTransposeFusion::TryFusion, Rank5ToRank4Fusion::TryFusion}},
     {"Concat", {SliceConcatSpaceToDepthFusion::TryFusion}},
-    {"SequenceConstruct", {SequenceAtFusion::TryFusion}},
+    {"SequenceConstruct", {SequenceAtFusion::TryFusion, SequenceLengthFusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
-
 void registerUDO(const std::string& node_type, const std::string& op_package) {
-  std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper & qnn_model_wrapper,
                                                const OrtNodeUnit& udo_node_unit,
                                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
                                                const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
