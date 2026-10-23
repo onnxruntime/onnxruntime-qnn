@@ -93,6 +93,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                      _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept;
   static OrtStatus* ORT_API_CALL GetDefaultMemoryDeviceImpl(
       _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept;
+  static OrtStatus* ORT_API_CALL GetMemoryDeviceByMemTypeImpl(
+      _In_ const OrtEp* this_ptr, _In_ OrtMemType mem_type,
+      _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept;
   static OrtStatus* ORT_API_CALL SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                        _In_reads_(num_options) const char* const* option_keys,
                                                        _In_reads_(num_options) const char* const* option_values,

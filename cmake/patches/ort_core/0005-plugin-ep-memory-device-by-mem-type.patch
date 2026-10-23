@@ -1,0 +1,94 @@
+--- a/include/onnxruntime/core/session/onnxruntime_c_api.h
++++ b/include/onnxruntime/core/session/onnxruntime_c_api.h
+@@ -40,7 +40,7 @@
+  *
+  * This value is used by some API functions to behave as this version of the header expects.
+  */
+-#define ORT_API_VERSION 29
++#define ORT_API_VERSION 30
+ 
+ #ifdef __cplusplus
+ extern "C" {
+--- a/include/onnxruntime/core/session/onnxruntime_ep_c_api.h
++++ b/include/onnxruntime/core/session/onnxruntime_ep_c_api.h
+@@ -2708,6 +2708,22 @@
+    * \since Version 1.29.
+    */
+   ORT_API2_STATUS(GetWeightlessSupport, _In_ const OrtEp* this_ptr, _Out_ OrtWeightlessSupport* support);
++
++  /** \brief Get the EP's memory device for a given OrtMemType.
++   *
++   * This is the plugin EP equivalent of IExecutionProvider::GetOrtDeviceByMemType(). Returning NULL uses the
++   * default mapping for that memory type.
++   *
++   * \param[in] this_ptr The OrtEp instance.
++   * \param[in] mem_type The memory type to resolve.
++   * \param[out] device Set to the corresponding OrtMemoryDevice, or NULL to use the default mapping.
++   *
++   * \note Implementation of this function is optional.
++   *
++   * \since Version 1.30.
++   */
++  ORT_API2_STATUS(GetMemoryDeviceByMemType, _In_ const OrtEp* this_ptr, _In_ OrtMemType mem_type,
++                  _Outptr_result_maybenull_ const OrtMemoryDevice** device);
+ };
+ 
+ /** \brief The function signature that ORT will call to create OrtEpFactory instances.
+--- a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h
++++ b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.h
+@@ -107,6 +107,8 @@
+ 
+   DataLayout GetPreferredLayout() const override;
+ 
++  OrtDevice GetOrtDeviceByMemType(OrtMemType mem_type) const override;
++
+   std::optional<bool> ShouldConvertDataLayoutForOp(std::string_view node_domain,
+                                                    std::string_view node_op_type,
+                                                    DataLayout target_data_layout) const override;
+--- a/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc
++++ b/onnxruntime/core/session/plugin_ep/ep_plugin_provider_interfaces.cc
+@@ -769,6 +769,18 @@
+   return data_layout_mapping->data_layout;
+ }
+ 
++OrtDevice PluginExecutionProvider::GetOrtDeviceByMemType(OrtMemType mem_type) const {
++  if (ort_ep_->ort_version_supported >= 30 && ort_ep_->GetMemoryDeviceByMemType != nullptr) {
++    const OrtMemoryDevice* memory_device = nullptr;
++    Ort::ThrowOnError(ort_ep_->GetMemoryDeviceByMemType(ort_ep_.get(), mem_type, &memory_device));
++    if (memory_device != nullptr) {
++      return *static_cast<const OrtDevice*>(memory_device);
++    }
++  }
++
++  return Base::GetOrtDeviceByMemType(mem_type);
++}
++
+ std::optional<bool> PluginExecutionProvider::ShouldConvertDataLayoutForOp(std::string_view node_domain,
+                                                                           std::string_view node_op_type,
+                                                                           DataLayout target_data_layout) const {
+--- a/onnxruntime/core/framework/allocation_planner.cc
++++ b/onnxruntime/core/framework/allocation_planner.cc
+@@ -737,15 +737,16 @@
+       const bool output_is_cpu = output_device.UsesCpuMemory();  // CPU or HOST_ACCESSIBLE memory
+       const bool suggested_is_cpu = suggested_device.UsesCpuMemory();
+       if (output_is_cpu && suggested_is_cpu) {
+-        // if both are CPU or both are HOST_ACCESSIBLE pick based on alignment.
+-        if ((output_device.Type() == OrtDevice::CPU && suggested_device.Type() == OrtDevice::CPU) ||
+-            (output_device.MemType() == OrtDevice::MemType::HOST_ACCESSIBLE &&
+-             suggested_device.MemType() == OrtDevice::MemType::HOST_ACCESSIBLE)) {
++        const bool output_is_host_accessible = output_device.MemType() == OrtDevice::MemType::HOST_ACCESSIBLE;
++        const bool suggested_is_host_accessible = suggested_device.MemType() == OrtDevice::MemType::HOST_ACCESSIBLE;
++
++        // If both are CPU or both are HOST_ACCESSIBLE, pick based on alignment.
++        if (output_is_host_accessible == suggested_is_host_accessible) {
+           return (output_device.GetAlignment() >= suggested_device.GetAlignment()) ? output_device : suggested_device;
+-        } else {
+-          // prefer host accessible memory device allocator as it most likely has the higher alignment requirement
+-          return (output_device.Type() != OrtDevice::CPU) ? output_device : suggested_device;
+         }
++
++        // Prefer HOST_ACCESSIBLE memory even when its OrtDevice type is CPU.
++        return output_is_host_accessible ? output_device : suggested_device;
+       } else {
+         return (output_is_cpu) ? output_device : suggested_device;
+       }

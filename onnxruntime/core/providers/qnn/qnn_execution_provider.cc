@@ -660,6 +660,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   OnRunEnd = OnRunEndImpl;
   CreateAllocator = CreateAllocatorImpl;
   GetDefaultMemoryDevice = GetDefaultMemoryDeviceImpl;
+  GetMemoryDeviceByMemType = GetMemoryDeviceByMemTypeImpl;
   SetDynamicOptions = SetDynamicOptionsImpl;
   GetCompiledModelCompatibilityInfo = GetCompiledModelCompatibilityInfoImpl;
 #if QNN_ORT_EP_PROFILING_API_ENABLED
@@ -3621,6 +3622,16 @@ OrtStatus* ORT_API_CALL QnnEp::GetDefaultMemoryDeviceImpl(
     _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept {
   const auto* ep = static_cast<const QnnEp*>(this_ptr);
   *device = qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)
+                ? ep->ep_api.MemoryInfo_GetMemoryDevice(ep->factory_.GetHostAccessibleMemoryInfo())
+                : nullptr;
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEp::GetMemoryDeviceByMemTypeImpl(
+    _In_ const OrtEp* this_ptr, _In_ OrtMemType mem_type,
+    _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept {
+  const auto* ep = static_cast<const QnnEp*>(this_ptr);
+  *device = mem_type == OrtMemTypeCPUInput && qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)
                 ? ep->ep_api.MemoryInfo_GetMemoryDevice(ep->factory_.GetHostAccessibleMemoryInfo())
                 : nullptr;
   return nullptr;
