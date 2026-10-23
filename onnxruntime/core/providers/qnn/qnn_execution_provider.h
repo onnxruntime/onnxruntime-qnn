@@ -304,6 +304,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
   qnn::QnnCompatibilityInfo compatibility_info_ = QNN_COMPATIBILITY_INFO_INIT;
   std::string compatibility_info_string_ = "";
 
+  // Compatibility validation happens before GetCapability can inspect the
+  // graph. If validation retained a backend prepared as a cached-context
+  // load, GetCapability releases it when the graph is not an EPContext model.
+  bool backend_setup_from_compatibility_check_ = false;
+
   // One-shot guard so the HNRD fallback warning emitted by WarnIfHnrdPathActive()
   // fires at most once per session, even when GetCapability is invoked multiple
   // times (e.g. initial pass + EPContext re-pass).
