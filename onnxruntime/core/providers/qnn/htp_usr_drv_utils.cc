@@ -415,8 +415,6 @@ Ort::Status IsHtpUsrDrvEnabled(const std::string& backend_lib_dir, const uint32_
   const std::string skel_lib_path = "libQnnHtp" + htp_arch_string + "Skel.so";
 #endif
 
-  // Don't necessarily need the try/catch here because the one above is sufficient
-  // for the Chromium sandbox, but doesn't hurt to have
   try {
     if (!std::filesystem::exists(backend_lib_dir_path / stub_lib_path) ||
         !std::filesystem::exists(backend_lib_dir_path / skel_lib_path)) {
