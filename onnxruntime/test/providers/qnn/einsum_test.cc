@@ -136,6 +136,20 @@ TEST_F(QnnCPUBackendTests, EinsumDifferentTermRanksFallback) {
       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::None);
 }
 
+// Keep the shorter terms above the common small-string-optimization threshold so
+// AddressSanitizer observes any cross-term read past size() if the rank guards regress.
+TEST_F(QnnCPUBackendTests, EinsumDifferentTermRanksHeapOobRegression) {
+  const std::vector<int64_t> shape0(18, 1);
+  const std::vector<int64_t> shape1(16, 1);
+  RunQnnEinsum<float>(
+      /*backend=*/kQnnBackendTypeCpu,
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, {1.0f}),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, {1.0f}),
+      /*equation=*/"abcdefghijklmnopqr,abcdefghijklmnop->abcdefghijklmnop",
+      /*tolerance=*/1e-4f,
+      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::None);
+}
+
 TEST_F(QnnCPUBackendTests, EinsumRank3MatMul) {
   const std::vector<int64_t> shape0{4, 5, 6};
   const std::vector<int64_t> shape1{4, 6, 5};

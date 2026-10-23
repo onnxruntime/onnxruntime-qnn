@@ -3,16 +3,40 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <array>
+#include <cstdint>
+#include <vector>
 #include <filesystem>
 
 #include <gsl/gsl_util>
 #include "gtest/gtest.h"
 
+#include "core/providers/qnn/builder/qnn_node_group/reshape_einsum_reshape_shape_utils.h"
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
+
+TEST(ReshapeEinsumReshapeShapeUtilsTest, RejectsNonRank6Input) {
+  for (size_t rank = 0; rank < qnn::kReshapeEinsumReshapeInputRank; ++rank) {
+    const std::vector<uint32_t> shape(rank, 1);
+    EXPECT_FALSE(qnn::DeriveReshapeEinsumReshapeShapes(shape).has_value()) << "rank=" << rank;
+  }
+
+  const std::vector<uint32_t> rank7_shape(7, 1);
+  EXPECT_FALSE(qnn::DeriveReshapeEinsumReshapeShapes(rank7_shape).has_value());
+}
+
+TEST(ReshapeEinsumReshapeShapeUtilsTest, DerivesAllFixedIndexShapes) {
+  const std::vector<uint32_t> shape{1, 32, 32, 2, 2, 8};
+  const auto derived = qnn::DeriveReshapeEinsumReshapeShapes(shape);
+  ASSERT_TRUE(derived.has_value());
+  EXPECT_EQ(derived->block_size, (std::array<uint32_t, 2>{2, 2}));
+  EXPECT_EQ(derived->reshape_input, (std::array<uint32_t, 4>{1, 32, 32, 32}));
+  EXPECT_EQ(derived->depth_to_space_output, (std::array<uint32_t, 4>{1, 64, 64, 8}));
+  EXPECT_EQ(derived->post_reshape_output, (std::array<uint32_t, 4>{1, 8, 64, 64}));
+}
 
 namespace {
 
