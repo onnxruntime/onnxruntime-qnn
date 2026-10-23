@@ -37,7 +37,7 @@ static const std::unordered_map<OrtHardwareDeviceType, std::string> kSupportedBa
     {OrtHardwareDeviceType_GPU, "gpu"},
 };
 
-constexpr const char* kGpuHardwareDeviceIdEnvConfigKey = "ep_factory.QNNExecutionProvider.qnn_gpu_hardware_device_id";
+constexpr const char* kQnnHardwareDeviceIdEnvConfigKey = "ep_factory.QNNExecutionProvider.qnn_hardware_device_id";
 constexpr const char* kQnnTargetArchitectureEnvConfigKey = "ep_factory.QNNExecutionProvider.qnn_target_architecture";
 
 // x86 advertises CPU always (HTP emulator); arm64 is opt-in via ORT_QNN_ENABLE_CPU_BACKEND (tests).
@@ -223,21 +223,21 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   const char* allow = entries ? factory->ort_api.GetKeyValue(entries.get(), kOrtEnvAllowVirtualDevices) : nullptr;
   const bool allow_virtual_devices = allow != nullptr && std::strcmp(allow, "1") == 0;
 
-  std::optional<uint32_t> synthesized_gpu_device_id;
-  const char* qnn_gpu_hardware_device_id = entries
-                                               ? factory->ort_api.GetKeyValue(
-                                                     entries.get(), kGpuHardwareDeviceIdEnvConfigKey)
-                                               : nullptr;
-  if (qnn_gpu_hardware_device_id != nullptr) {
+  std::optional<uint32_t> synthesized_device_id;
+  const char* qnn_hardware_device_id = entries
+                                           ? factory->ort_api.GetKeyValue(
+                                                 entries.get(), kQnnHardwareDeviceIdEnvConfigKey)
+                                           : nullptr;
+  if (qnn_hardware_device_id != nullptr) {
     uint32_t device_id = 0;
-    const Ort::Status parse_status = ParseDeviceId(qnn_gpu_hardware_device_id, device_id);
+    const Ort::Status parse_status = ParseDeviceId(qnn_hardware_device_id, device_id);
     if (parse_status.IsOK()) {
-      synthesized_gpu_device_id = device_id;
+      synthesized_device_id = device_id;
     } else if (OrtLoggingManager::HasDefaultLogger()) {
       RETURN_IF_NOT_NULL(factory->ort_api.Logger_LogMessage(
           OrtLoggingManager::GetDefaultLoggerPtr(),
           ORT_LOGGING_LEVEL_WARNING,
-          ("Failed to parse value of '" + std::string(kGpuHardwareDeviceIdEnvConfigKey) + "'").c_str(),
+          ("Failed to parse value of '" + std::string(kQnnHardwareDeviceIdEnvConfigKey) + "'").c_str(),
           ORT_FILE,
           __LINE__,
           __FUNCTION__));
@@ -313,20 +313,16 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     return nullptr;
   };
 
-  auto create_hw_device = [&factory, &synthesized_gpu_device_id](const OrtHardwareDeviceType device_type,
-                                                                 OrtHardwareDevice*& device,
-                                                                 const bool is_virtual = true) {
+  auto create_hw_device = [&factory, &synthesized_device_id](const OrtHardwareDeviceType device_type,
+                                                             OrtHardwareDevice*& device,
+                                                             const bool is_virtual = true) {
     OrtKeyValuePairs* hw_metadata = nullptr;
     factory->ort_api.CreateKeyValuePairs(&hw_metadata);
 
-    uint32_t device_id = 0;
     if (device_type == OrtHardwareDeviceType_NPU) {
       factory->ort_api.AddKeyValuePair(hw_metadata, "Description", "Qualcomm NPU");
     } else if (device_type == OrtHardwareDeviceType_GPU) {
       factory->ort_api.AddKeyValuePair(hw_metadata, "Description", "Qualcomm GPU");
-      if (synthesized_gpu_device_id.has_value()) {
-        device_id = synthesized_gpu_device_id.value();
-      }
     }
 
     if (is_virtual) {
@@ -335,7 +331,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
 
     OrtStatus* status = factory->ep_api.CreateHardwareDevice(device_type,
                                                              factory->vendor_id_,
-                                                             device_id,
+                                                             synthesized_device_id.value_or(0),
                                                              factory->vendor_.c_str(),
                                                              hw_metadata,
                                                              &device);
