@@ -278,6 +278,9 @@ class QnnModelWrapper {
                              bool is_for_input = true,
                              bool is_for_output = false);
 
+  // Adds a Transpose node. A non-identity, shape-changing perm that only reorders size-1
+  // dimensions is lowered to an equivalent Reshape to work around a QNN HTP miscomputation.
+  // See https://github.com/onnxruntime/onnxruntime-qnn/issues/1020.
   Ort::Status AddTransposeNode(size_t node_index,
                                const std::string& input_name,
                                const std::string& output_name,
