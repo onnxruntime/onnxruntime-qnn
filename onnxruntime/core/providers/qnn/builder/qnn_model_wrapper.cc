@@ -53,14 +53,11 @@ QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
 
 #ifdef USE_QAIRT_API
 QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph, const ApiPtrs& api_ptrs,
-    const Ort::Logger& logger, QairtBackendManager& backend, const GraphInputOutputInfo& graph_inputs,
-    const GraphInputOutputInfo& graph_outputs, const ModelSettings& model_settings,
-    std::unordered_map<std::string, std::string>* tensor_name_overrides,
-    OpTraceCollector* op_trace_collector, bool is_post_layout_transform, IGraphEmitter* graph_emitter)
-    : ort_graph_(ort_graph), logger_(logger), qairt_backend_manager_(&backend), graph_emitter_(graph_emitter),
-      graph_inputs_(graph_inputs), graph_outputs_(graph_outputs), model_settings_(model_settings),
-      api_ptrs_(api_ptrs), tensor_name_overrides_(tensor_name_overrides),
-      op_trace_collector_(op_trace_collector), is_post_layout_transform_(is_post_layout_transform) {}
+                                 const Ort::Logger& logger, QairtBackendManager& backend, const GraphInputOutputInfo& graph_inputs,
+                                 const GraphInputOutputInfo& graph_outputs, const ModelSettings& model_settings,
+                                 std::unordered_map<std::string, std::string>* tensor_name_overrides,
+                                 OpTraceCollector* op_trace_collector, bool is_post_layout_transform, IGraphEmitter* graph_emitter)
+    : ort_graph_(ort_graph), logger_(logger), qairt_backend_manager_(&backend), graph_emitter_(graph_emitter), graph_inputs_(graph_inputs), graph_outputs_(graph_outputs), model_settings_(model_settings), api_ptrs_(api_ptrs), tensor_name_overrides_(tensor_name_overrides), op_trace_collector_(op_trace_collector), is_post_layout_transform_(is_post_layout_transform) {}
 #endif
 
 QnnHtpDevice_Arch_t QnnModelWrapper::GetHtpArch() const {

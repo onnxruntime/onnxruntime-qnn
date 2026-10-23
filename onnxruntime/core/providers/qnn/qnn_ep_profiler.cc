@@ -82,13 +82,7 @@ QnnEpProfiler::QnnEpProfiler(const OrtEpApi& ep_api,
                              const OrtApi& ort_api,
                              const Ort::Logger& logger,
                              QnnBackendProfilingManager& profiling_manager)
-    : QnnEpProfiler(ep_api, ort_api, logger, BackendCallbacks{
-          [&profiling_manager](const Ort::Logger& log) { return profiling_manager.AcquireOrtProfilingConsumer(log); },
-          [&profiling_manager]() { return profiling_manager.ReleaseOrtProfilingConsumer(); },
-          [&profiling_manager]() { return profiling_manager.AcquireProfileHandleLock(); },
-          [&profiling_manager](profile::ProfilingInfo& info, const Ort::Logger& log) {
-            return profiling_manager.ExtractBackendProfilingInfo(info, log);
-          }}) {}
+    : QnnEpProfiler(ep_api, ort_api, logger, BackendCallbacks{[&profiling_manager](const Ort::Logger& log) { return profiling_manager.AcquireOrtProfilingConsumer(log); }, [&profiling_manager]() { return profiling_manager.ReleaseOrtProfilingConsumer(); }, [&profiling_manager]() { return profiling_manager.AcquireProfileHandleLock(); }, [&profiling_manager](profile::ProfilingInfo& info, const Ort::Logger& log) { return profiling_manager.ExtractBackendProfilingInfo(info, log); }}) {}
 
 QnnEpProfiler::QnnEpProfiler(const OrtEpApi& ep_api, const OrtApi& ort_api,
                              const Ort::Logger& logger, BackendCallbacks backend)

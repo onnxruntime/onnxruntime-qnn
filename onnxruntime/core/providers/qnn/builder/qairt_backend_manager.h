@@ -51,10 +51,10 @@ class QairtBackendManager final {
 
  private:
   Config config_;
-  std::unique_ptr<qairt::Api> api_;
-  std::shared_ptr<qairt::Log> log_;
-  std::shared_ptr<qairt::Backend> backend_;
-  std::shared_ptr<qairt::Context> context_;
+  std::unique_ptr<qairt::Api> qairt_api_;
+  std::shared_ptr<qairt::Log> qairt_log_;
+  std::shared_ptr<qairt::Backend> qairt_backend_;
+  std::shared_ptr<qairt::Context> qairt_context_;
 };
 }  // namespace onnxruntime::qnn
 #endif

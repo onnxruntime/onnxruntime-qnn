@@ -26,8 +26,8 @@ QairtGraphEmitter::QairtGraphEmitter(std::shared_ptr<QairtBackendManager> manage
 
 Ort::Status QairtGraphEmitter::RetrieveGraph(std::shared_ptr<qairt::Context> context, const std::string& name) {
   try {
-    current_graph_ = context->retrieveGraph(name.c_str());
-    context_ = std::move(context);
+    qairt_graph_ = context->retrieveGraph(name.c_str());
+    qairt_context_ = std::move(context);
     return Ort::Status();
   } catch (const std::exception& e) {
     return MAKE_EP_FAIL(e.what());
@@ -36,10 +36,10 @@ Ort::Status QairtGraphEmitter::RetrieveGraph(std::shared_ptr<qairt::Context> con
 
 Ort::Status QairtGraphEmitter::CreateGraph(const char* name) {
   try {
-    RETURN_IF(current_graph_, "A QAIRT emitter already owns a graph.");
-    context_ = manager_->GetContext();
+    RETURN_IF(qairt_graph_, "A QAIRT emitter already owns a graph.");
+    qairt_context_ = manager_->GetContext();
     auto config = manager_->GetApi().make<qairt::GraphConfiguration>();
-    current_graph_ = std::make_shared<qairt::Graph>(context_->createGraph(name, config));
+    qairt_graph_ = std::make_shared<qairt::Graph>(qairt_context_->createGraph(name, config));
     return Ort::Status();
   } catch (const std::exception& e) {
     return MAKE_EP_FAIL(e.what());
@@ -50,7 +50,7 @@ Ort::Status QairtGraphEmitter::CreateTensor(Qnn_Tensor_t& tensor) {
   try {
     qairt::Tensor qairt_tensor;
     QAIRT_RETURN_IF_ERROR(qairt_convert::FromQnnTensor(tensor, manager_->GetApi(), qairt_tensor));
-    current_graph_->createGraphTensor(qairt_tensor);
+    qairt_graph_->createGraphTensor(qairt_tensor);
     // Write back the assigned tensor ID so the caller can reference it later.
     uint32_t id = static_cast<uint32_t>(qairt_tensor.getId());
     SetQnnTensorID(tensor, id);
@@ -137,7 +137,7 @@ Ort::Status QairtGraphEmitter::AddNode(const Qnn_OpConfig_t& op) {
     }
     qairt_op.setOutputs(outputs);
 
-    current_graph_->addNode(qairt_op);
+    qairt_graph_->addNode(qairt_op);
   } catch (const qairt::Exception& e) {
     return MAKE_EP_FAIL(("QairtGraphEmitter::AddNode failed: " +
                          std::string(e.what()))
@@ -159,9 +159,9 @@ Ort::Status QairtGraphEmitter::ValidateOp(const Qnn_OpConfig_t& op) {
 Ort::Status QairtGraphEmitter::Finalize(qairt::Profile* profile) {
   try {
     if (profile)
-      current_graph_->finalize(*profile);
+      qairt_graph_->finalize(*profile);
     else
-      current_graph_->finalize();
+      qairt_graph_->finalize();
     return Ort::Status();
   } catch (const std::exception& e) {
     return MAKE_EP_FAIL(e.what());
@@ -179,7 +179,7 @@ Ort::Status QairtGraphEmitter::Execute(Qnn_Tensor_t* inputs, uint32_t n_inputs,
     for (uint32_t i = 0; i < n_outputs; ++i) {
       RETURN_IF_ERROR(qairt_convert::FromQnnTensor(outputs[i], manager_->GetApi(), out[i]));
     }
-    current_graph_->execute(in, out, profile);
+    qairt_graph_->execute(in, out, profile);
     for (uint32_t i = 0; i < n_outputs; ++i) {
       SetQnnTensorClientBufSize(outputs[i], out[i].getClientBuffer().getDataSize());
     }

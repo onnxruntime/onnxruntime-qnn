@@ -64,9 +64,7 @@ class QnnModel {
   Ort::Status LoadQairtGraph(QairtBackendManager::CachedGraph&& graph);
   QnnModel(std::shared_ptr<QairtBackendManager> backend, std::shared_ptr<QairtProfilingManager> profiler,
            const ApiPtrs& api_ptrs)
-      : qnn_backend_type_(backend->GetBackendType()), qairt_backend_manager_(std::move(backend)),
-        qairt_profiler_(std::move(profiler)),
-        qairt_graph_(std::make_unique<QairtGraphEmitter>(qairt_backend_manager_)), api_ptrs_(api_ptrs) {}
+      : qnn_backend_type_(backend->GetBackendType()), qairt_backend_manager_(std::move(backend)), qairt_profiler_(std::move(profiler)), qairt_graph_(std::make_unique<QairtGraphEmitter>(qairt_backend_manager_)), api_ptrs_(api_ptrs) {}
 #endif
 
   ~QnnModel() = default;

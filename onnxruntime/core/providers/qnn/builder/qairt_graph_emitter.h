@@ -26,8 +26,8 @@ class QairtGraphEmitter final : public IGraphEmitter {
  private:
   // Declaration order ensures tensors/graph/context are freed before the backend/API.
   std::shared_ptr<QairtBackendManager> manager_;
-  std::shared_ptr<qairt::Context> context_;
-  std::shared_ptr<qairt::Graph> current_graph_;
+  std::shared_ptr<qairt::Context> qairt_context_;
+  std::shared_ptr<qairt::Graph> qairt_graph_;
   std::unordered_map<uint32_t, qairt::Tensor> registered_tensors_;
 };
 }  // namespace onnxruntime::qnn

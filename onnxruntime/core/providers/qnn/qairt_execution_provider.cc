@@ -48,13 +48,14 @@ OrtStatus* QnnEp::GetQairtCapability(const OrtGraph* graph, OrtEpGraphSupportInf
   // rather than letting shared option parsing imply that the SDK applied them.
   const bool is_htp = qairt_backend_manager_->GetBackendType() == qnn::QnnBackendType::HTP;
   for (const auto& option : {std::pair<const char*, const char*>{"htp_arch", "0"},
-                            {"soc_model", "0"}, {"device_id", "0"},
-                            {"qnn_context_priority", "normal"},
-                            {"enable_htp_cross_device_prepare", "0"},
-                            {"htp_share_resource_optimization", "0"},
-                            {"num_graph_prepare_threads", "1"},
-                            {"enable_htp_matmul_lut", ""},
-                            {"disable_file_mapped_weights", "1"}}) {
+                             {"soc_model", "0"},
+                             {"device_id", "0"},
+                             {"qnn_context_priority", "normal"},
+                             {"enable_htp_cross_device_prepare", "0"},
+                             {"htp_share_resource_optimization", "0"},
+                             {"num_graph_prepare_threads", "1"},
+                             {"enable_htp_matmul_lut", ""},
+                             {"disable_file_mapped_weights", "1"}}) {
     if (!is_htp && (std::strcmp(option.first, "htp_arch") == 0 ||
                     std::strcmp(option.first, "soc_model") == 0)) {
       continue;

@@ -74,7 +74,7 @@ std::string QairtBackendManager::GetSystemLibraryPath() const {
   return (std::filesystem::path(config_.backend_lib_path).parent_path() / name).string();
 }
 std::string QairtBackendManager::GetSdkVersion() {
-  return api_->make<qairt::Info>().getBuildId();
+  return qairt_api_->make<qairt::Info>().getBuildId();
 }
 Ort::Status QairtBackendManager::LoadContext(std::vector<char>& buffer, std::vector<CachedGraph>& graphs, qairt::Profile* profile) {
   try {
@@ -83,13 +83,13 @@ Ort::Status QairtBackendManager::LoadContext(std::vector<char>& buffer, std::vec
     qairt::SystemApi system(system_path.c_str());
     auto system_context = system.make<qairt::SystemContext>();
     auto binary_info = system_context.getBinaryInfo(buffer.data(), buffer.size());
-    auto config = api_->make<qairt::ContextConfiguration>();
-    auto binary = api_->make<qairt::ContextBinaryBuffer>();
+    auto config = qairt_api_->make<qairt::ContextConfiguration>();
+    auto binary = qairt_api_->make<qairt::ContextBinaryBuffer>();
     binary.setData(buffer.data());
     binary.setSize(buffer.size());
     auto context = std::make_shared<qairt::Context>(profile
-                                                        ? backend_->createContextFromBinary({}, config, binary, {}, *profile)
-                                                        : backend_->createContextFromBinary({}, config, binary));
+                                                        ? qairt_backend_->createContextFromBinary({}, config, binary, {}, *profile)
+                                                        : qairt_backend_->createContextFromBinary({}, config, binary));
     std::vector<CachedGraph> loaded;
     for (auto& graph : binary_info.getGraphs()) {
       std::vector<QnnTensorWrapper> inputs, outputs;
