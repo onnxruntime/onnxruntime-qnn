@@ -83,34 +83,53 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
                  "' is not accessible; continuing without HTP extensions.")
                     .c_str());
   }
-  // Replace single backslashes with double backslashes for JSON
-  std::string escaped_extension_path;
-  for (char c : extension_path) {
-    if (c == '\\') {
-      escaped_extension_path += "\\\\";
-    } else {
-      escaped_extension_path += c;
+  // Build JSON config only when an extension file was found; nullptr means no overrides.
+  const char* config_str = nullptr;
+  std::string json_config;
+  if (!extension_path.empty()) {
+    std::string escaped_extension_path;
+    for (char c : extension_path) {
+      if (c == '\\') {
+        escaped_extension_path += "\\\\";
+      } else {
+        escaped_extension_path += c;
+      }
     }
+    json_config =
+        "{\n"
+        "    \"lm-executor\": {\n"
+        "        \"version\": 1,\n"
+        "        \"engine\": {\n"
+        "            \"version\": 1,\n"
+        "            \"backend\": {\n"
+        "                \"version\": 1,\n"
+        "                \"extensions\": \"" +
+        escaped_extension_path +
+        "\"\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}";
+    config_str = json_config.c_str();
   }
-  std::string json_config =
-      "{\n"
-      "    \"lm-executor\": {\n"
-      "        \"version\": 1,\n"
-      "        \"engine\": {\n"
-      "            \"version\": 1,\n"
-      "            \"backend\": {\n"
-      "                \"version\": 1,\n"
-      "                \"extensions\": \"" +
-      escaped_extension_path +
-      "\"\n"
-      "            }\n"
-      "        }\n"
-      "    }\n"
-      "}";
+
+  static constexpr const char* kUseCaseLmExecutor = "lm-executor";
+  static constexpr const char* kUseCaseDefault = "default";
+  const char* use_case = kUseCaseLmExecutor;
   GenieNodeConfig_Handle_t cfg = nullptr;
-  if (st->api->NodeConfig_createFromDlc(genie_dlc_handle, "default", json_config.c_str(), &cfg) != 0) {
-    return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating Node config from dlc");
+  Genie_Status_t create_status = st->api->NodeConfig_createFromDlc(genie_dlc_handle, kUseCaseLmExecutor, config_str, &cfg);
+  if (create_status == GENIE_STATUS_ERROR_INVALID_ARGUMENT) {
+    use_case = kUseCaseDefault;
+    create_status = st->api->NodeConfig_createFromDlc(genie_dlc_handle, kUseCaseDefault, config_str, &cfg);
   }
+  if (create_status != GENIE_STATUS_SUCCESS) {
+    return ep.ort_api.CreateStatus(ORT_EP_FAIL,
+                                   ("Error creating Node config from dlc, status: " +
+                                    std::to_string(create_status))
+                                       .c_str());
+  }
+  ORT_CXX_LOG(ep.logger_, ORT_LOGGING_LEVEL_VERBOSE,
+              (std::string("Genie: selected use case '") + use_case + "'").c_str());
   st->config = cfg;
 #endif  // GENIE_API_VERSION_MAJOR > 1 || GENIE_API_VERSION_MINOR >= 17
 
