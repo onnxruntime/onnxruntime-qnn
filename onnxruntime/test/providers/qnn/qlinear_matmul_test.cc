@@ -372,7 +372,7 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_BFloat16Scale) {
 
 // Rank-2 static weight: verify the QNN graph emits MatMul (not FullyConnected) when the
 // use_native_matmul flag is set.
-TEST_F(QnnCPUBackendTests, QLinearMatMulDisableFC_2D_StaticWeight) {
+TEST_F(QnnHTPBackendTests, QLinearMatMulDisableFC_2D_StaticWeight) {
   namespace fs = std::filesystem;
 
   const fs::path graph_dir = fs::temp_directory_path() / "QLinearMatMulDisableFC_2D_StaticWeight";
@@ -381,7 +381,7 @@ TEST_F(QnnCPUBackendTests, QLinearMatMulDisableFC_2D_StaticWeight) {
   auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
 
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["use_native_matmul"] = "1";
   provider_options["dump_json_qnn_graph"] = "1";
@@ -402,7 +402,7 @@ TEST_F(QnnCPUBackendTests, QLinearMatMulDisableFC_2D_StaticWeight) {
 }
 
 // Regression guard: without the flag, the default behaviour (FullyConnected) is preserved.
-TEST_F(QnnCPUBackendTests, QLinearMatMulDefaultUsesFC) {
+TEST_F(QnnHTPBackendTests, QLinearMatMulDefaultUsesFC) {
   namespace fs = std::filesystem;
 
   const fs::path graph_dir = fs::temp_directory_path() / "QLinearMatMulDefaultUsesFC";
@@ -411,7 +411,7 @@ TEST_F(QnnCPUBackendTests, QLinearMatMulDefaultUsesFC) {
   auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
 
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   // use_native_matmul is intentionally NOT set; default is false (FullyConnected).
   provider_options["dump_json_qnn_graph"] = "1";

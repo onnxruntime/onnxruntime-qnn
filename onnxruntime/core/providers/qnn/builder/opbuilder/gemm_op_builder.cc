@@ -152,11 +152,14 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   // for Input A, B, C: 1 -- need transpose, 0 -- not needed
   std::vector<int64_t> input_trans_flag(3, 0);
-  input_trans_flag.at(0) = node_helper.Get("transA", (int64_t)0);
-  auto transB = node_helper.Get("transB", (int64_t)0);
   const bool use_matmul_path = qnn_model_wrapper.GetModelSettings().use_native_matmul;
+  const int64_t transA = node_helper.Get("transA", (int64_t)0);
+  auto transB = node_helper.Get("transB", (int64_t)0);
   // FC path needs weight in [N,K]; MatMul path keeps weight in [K,N] and expresses the
   // transpose via QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1 instead of a host-side data transpose.
+  // Similarly, transA is handled by QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0 on the MatMul path;
+  // suppress host-side data transposition for input A when use_native_matmul is set.
+  input_trans_flag.at(0) = (!use_matmul_path && transA != 0) ? 1 : 0;
   input_trans_flag.at(1) = (!use_matmul_path && transB == 0) ? 1 : 0;
   for (size_t input_i = 0; input_i < inputs.size(); ++input_i) {
     // beta=0.0: C has no effect on the output — skip it so FC receives only (A, B)
@@ -555,10 +558,14 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   // as-is (no reshape), so the FC + Add path follows without an extra check.
   const bool is_native_bias = node_unit.Inputs().size() == 3 &&
                               qnn_model_wrapper.GetTensorType(node_unit.Inputs()[2].name) == QNN_TENSOR_TYPE_NATIVE;
-  const bool requires_fc_add_decomposition = RequiresFcAddDecomposition(node_unit, is_native_bias);
-
   const bool use_matmul = qnn_model_wrapper.GetModelSettings().use_native_matmul;
   const int64_t trans_a_out = node_helper.Get("transA", static_cast<int64_t>(0));
+  // QNN_OP_MAT_MUL does not accept a bias input; when the native MatMul path is active and a bias
+  // is present (beta != 0), always decompose into MatMul + ElementWiseAdd regardless of bias shape.
+  const float beta_out = node_helper.Get("beta", 1.0f);
+  const bool has_bias = node_unit.Inputs().size() == 3 && beta_out != 0.0f;
+  const bool requires_fc_add_decomposition = RequiresFcAddDecomposition(node_unit, is_native_bias) ||
+                                             (use_matmul && has_bias);
 
   if (requires_fc_add_decomposition) {
     // Gemm input and output must be at least rank 2 for the FC + Add decomposition.

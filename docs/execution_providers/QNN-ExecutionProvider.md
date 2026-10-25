@@ -246,8 +246,8 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 
 |`"use_native_matmul"`|Description|
 |---|---|
-|`"0"`|Default. MatMul and Gemm operators are translated to QNN FullyConnected (weight transposed from [K,N] to [N,K] at session creation time).|
-|`"1"`|Enabled. MatMul and Gemm operators are lowered to native QNN MatMul, eliminating host-side weight transposition. Reduces session creation time and peak host memory for large GenAI/MoE models.|
+|`"0"`|Default. MatMul, Gemm, and QLinearMatMul operators are translated to QNN FullyConnected (weight transposed from [K,N] to [N,K] at session creation time).|
+|`"1"`|Enabled. MatMul, Gemm, and QLinearMatMul operators are lowered to native QNN MatMul, eliminating host-side weight transposition. Reduces session creation time and peak host memory for large GenAI/MoE models.|
 
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
