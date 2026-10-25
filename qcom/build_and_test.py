@@ -5,6 +5,7 @@
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -51,6 +52,7 @@ from ep_build.tasks.python import (
     OrtWheelSmokeTestTask,
     RunLinterTask,
 )
+from ep_build.tools import get_uv_cache_dir
 from ep_build.typing import BuildConfigT, TargetPyVersionT
 from ep_build.util import (
     DEFAULT_PYTHON,
@@ -97,6 +99,10 @@ Environment variables
 
   ORT_BUILD_TOOLS_PATH
     If specified, use this directory for build-managed tools instead of build/tools.
+
+  ORT_BUILD_UV_CACHE_PATH
+    If specified, use this directory for the uv package cache instead of ~/.ort-uv-cache.
+    UV_CACHE_DIR takes precedence over ORT_BUILD_UV_CACHE_PATH if both are set.
 
   ORT_NIGHTLY_BUILD
     If set to 1, instruct the ORT build to use a more verbose version string.
@@ -626,12 +632,12 @@ class TaskLibrary:
                 )
             )
 
-        @public_task("Build ONNX Runtime for x86_64 with QNN EP internal unit-test symbols")
+        @public_task("Build ONNX Runtime for x86_64 with QNN EP internal test symbols")
         @depends(["create_venv"])
         def build_ort_linux_x86_64_internal_symbols(self, plan: Plan) -> str:
             return plan.add_step(
                 BuildEpLinuxTask(
-                    "Building ONNX Runtime for Linux on x86_64 with QNN EP internal unit-test symbols",
+                    "Building ONNX Runtime for Linux on x86_64 with QNN EP internal test symbols",
                     self.__venv_path,
                     "linux",
                     "x86_64",
@@ -640,7 +646,7 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
-                    qnn_internal_ut_symbols=True,
+                    qnn_internal_test_symbols=True,
                     build_dir_suffix="internal-symbols",
                 )
             )
@@ -683,7 +689,7 @@ class TaskLibrary:
                     self.__qairt_sdk_root,
                     "build",
                     extra_args=["--enable-coverage"],
-                    qnn_internal_ut_symbols=True,
+                    qnn_internal_test_symbols=True,
                 )
             )
 
@@ -706,7 +712,7 @@ class TaskLibrary:
                             self.__qairt_sdk_root,
                             "build",
                             extra_args=["--enable-coverage"],
-                            qnn_internal_ut_symbols=True,
+                            qnn_internal_test_symbols=True,
                         ),
                         GenerateCoverageTask(
                             "Generating HTML coverage report",
@@ -839,12 +845,12 @@ class TaskLibrary:
                 )
             )
 
-        @public_task("Build ONNX Runtime for x86_64 with QNN EP internal unit-test symbols")
+        @public_task("Build ONNX Runtime for x86_64 with QNN EP internal test symbols")
         @depends(["create_venv"])
         def build_ort_windows_x86_64_internal_symbols(self, plan: Plan) -> str:
             return plan.add_step(
                 BuildEpWindowsTask(
-                    "Building ONNX Runtime for Windows on x86_64 with QNN EP internal unit-test symbols",
+                    "Building ONNX Runtime for Windows on x86_64 with QNN EP internal test symbols",
                     self.__venv_path,
                     "x86_64",
                     self.__config,
@@ -854,7 +860,7 @@ class TaskLibrary:
                     "build",
                     build_nuget=False,
                     build_archive=False,
-                    qnn_internal_ut_symbols=True,
+                    qnn_internal_test_symbols=True,
                 )
             )
 
@@ -1495,6 +1501,23 @@ class TaskLibrary:
                 )
             )
 
+        @task
+        @depends(["build_ort_windows_x86_64_internal_symbols"])
+        def test_ort_windows_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Testing ONNX Runtime for Windows on x86_64 with QNN EP internal test symbols",
+                    self.__venv_path,
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_test_symbols=True,
+                )
+            )
+
 
 def get_docker_ccache_root(root_from_args: Path | None) -> Path | None:
     ccache_root: Path | None = None
@@ -1668,6 +1691,8 @@ def build_and_test():
     qairt_sdk_root = get_qairt_sdk_root(args.qairt_sdk)
     docker_ccache_root = get_docker_ccache_root(args.docker_ccache_root)
 
+    os.environ.setdefault("UV_CACHE_DIR", str(get_uv_cache_dir()))
+
     plan = Plan()
 
     if len(args.task) > 0:
@@ -1708,6 +1733,9 @@ def build_and_test():
         print()
         plan.print_report()
         print()
+        uv_bin = args.venv_path / ("Scripts/uv.exe" if is_host_windows() else "bin/uv")
+        if uv_bin.exists():
+            subprocess.run([str(uv_bin), "cache", "prune", "--ci"], check=False)
         if caught:
             raise caught
 

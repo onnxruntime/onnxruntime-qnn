@@ -784,7 +784,8 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             float input_scale,
                             const std::vector<uint32_t>& output_shape,
                             bool output_symmetric,
-                            bool do_op_validation);
+                            bool do_op_validation,
+                            Qnn_TensorType_t output_tensor_type = QNN_TENSOR_TYPE_NATIVE);
 
 // Adds `output_name` and the op producing it. HTP Conv/MatMul/FullyConnected only emit their activation's
 // datatype, so a 16-bit activation with an 8-bit output is built as the op into a 16-bit intermediate
@@ -1064,6 +1065,20 @@ std::string PtrToString(const void* const ptr);
 Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
                                       gsl::span<const float> scales,
                                       std::vector<uint8_t>& fp16_bytes);
+
+// Processes a bias tensor for quantized ops (LPBQ Conv2D, etc.).
+// Handles: INT32 quantized (check/requantize if mismatch), float (quantize).
+// Sets was_handled=true if the bias was added to input_names.
+// Sets was_handled=false if the bias should be processed normally by the caller
+// (e.g., non-initializer, or activation/weight not quantized).
+Ort::Status ProcessBiasForQuantizedOp(QnnModelWrapper& qnn_model_wrapper,
+                                      const Ort::Logger& logger,
+                                      const OrtNodeUnit& node_unit,
+                                      const OrtNodeUnitIODef& bias_def,
+                                      const QnnQuantParamsWrapper& act_quant_param,
+                                      const QnnQuantParamsWrapper& weight_quant_param,
+                                      std::vector<std::string>& input_names,
+                                      bool& was_handled);
 
 }  // namespace utils
 }  // namespace qnn

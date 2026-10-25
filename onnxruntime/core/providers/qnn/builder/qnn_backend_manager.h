@@ -384,12 +384,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   QnnSerializerConfig* GetQnnSerializerConfig();
 
-  // Handler to be called upon successful context creation via contextCreateFromBinaryListAsync()
-  // This handler is expected to be called in the callback ContextCreateAsyncCallback() in the .cc file
-  // Takes in the context and the notifyParam objects received by the callback function
-  // notifyParam is expected to be a pointer to a vector of node names associated with that context handle
-  // For each node name, a mapping to the context handle will be created
-  void ProcessContextFromBinListAsync(Qnn_ContextHandle_t handle, void* notifyParam);
+  // Handler called for a successful context initialization notification.
+  void ProcessContextFromBinListAsync(Qnn_ContextHandle_t handle,
+                                      gsl::span<const std::string> ep_node_names);
 
   // Sets the context priority to the given value, if valid
   Ort::Status SetContextPriority(ContextPriority context_priority);

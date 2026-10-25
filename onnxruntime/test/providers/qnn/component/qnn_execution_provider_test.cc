@@ -319,10 +319,10 @@ class QnnUnit_ExecutionProviderTest : public ::testing::Test {
   void SetUp() override {
     // Reset the SharedContext singleton's shared QnnBackendManager so that
     // tests that modify it don't interfere with each other.
-    SharedContext::GetInstance().ResetSharedQnnBackendManager();
+    ResetSharedBackendManagerForTest();
   }
   void TearDown() override {
-    SharedContext::GetInstance().ResetSharedQnnBackendManager();
+    ResetSharedBackendManagerForTest();
   }
 };
 
@@ -707,9 +707,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SharedBackendManagerWithDifferentAllo
   // The host-only test cannot load RPCMEM to create a real HTP_SHARED owner.
   // Set the shared manager's mode directly to emulate an existing opted-in
   // session before constructing a second session that requests NONE.
-  auto shared_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
-  ASSERT_NE(shared_manager, nullptr);
-  shared_manager->SetQnnAllocatorType(qnn::QnnAllocatorType::HTP_SHARED);
+  ASSERT_TRUE(SetSharedBackendManagerAllocatorForTest(qnn::QnnAllocatorType::HTP_SHARED));
 
   EpStubContext consumer_ctx;
   consumer_ctx.session_config[EPKey("htp_share_resource_optimization")] = "1";

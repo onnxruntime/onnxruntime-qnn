@@ -44,7 +44,7 @@
     list(APPEND onnxruntime_providers_qnn_all_srcs "${ONNXRUNTIME_ROOT}/core/providers/qnn/onnxruntime_providers_qnn.rc")
   endif()
 
-  if(onnxruntime_qnn_internal_ut_symbols_enabled)
+  if(onnxruntime_qnn_internal_test_symbols_enabled)
     if(WIN32)
       list(APPEND onnxruntime_providers_qnn_all_srcs
            "${ONNXRUNTIME_ROOT}/test/providers/qnn/component/qnn_ort_api_test_bridge.cc")
@@ -132,7 +132,7 @@
 
   # Set linker flags for function(s) exported by EP DLL
   if(UNIX)
-    if(onnxruntime_qnn_internal_ut_symbols_enabled)
+    if(onnxruntime_qnn_internal_test_symbols_enabled)
       # Internal-symbol test build: export all symbols so the test binary can
       # call EP-internal functions. --gc-sections is intentionally omitted for
       # compatibility with coverage-instrumented sections.
@@ -148,7 +148,7 @@
       )
     endif()
   elseif(WIN32)
-    if(onnxruntime_qnn_internal_ut_symbols_enabled)
+    if(onnxruntime_qnn_internal_test_symbols_enabled)
       set_target_properties(onnxruntime_providers_qnn PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
     else()
       set_property(TARGET onnxruntime_providers_qnn APPEND_STRING PROPERTY LINK_FLAGS

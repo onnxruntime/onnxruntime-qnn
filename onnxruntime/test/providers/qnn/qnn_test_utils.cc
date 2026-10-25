@@ -649,15 +649,16 @@ std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
                                  const std::string& name,
                                  const TestInputDef<float>& bias_def,
                                  float bias_scale,
-                                 bool use_contrib_qdq) {
+                                 bool use_contrib_qdq,
+                                 int32_t bias_zero_point) {
   // Bias must be int32 to be detected as a QDQ node unit.
   // We must quantize the data.
   if (bias_def.IsRandomData()) {
     // Create random initializer def that is quantized to int32
     const auto& rand_info = bias_def.GetRandomDataInfo();
     TestInputDef<int32_t> bias_int32_def(bias_def.GetShape(), bias_def.IsInitializer(),
-                                         static_cast<int32_t>(rand_info.min / bias_scale),
-                                         static_cast<int32_t>(rand_info.max / bias_scale));
+                                         static_cast<int32_t>(rand_info.min / bias_scale) + bias_zero_point,
+                                         static_cast<int32_t>(rand_info.max / bias_scale) + bias_zero_point);
     MakeTestInput(builder, name, bias_int32_def);
   } else {
     QNN_ASSERT(bias_def.IsRawData());
@@ -667,7 +668,7 @@ std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
 
     std::vector<int32_t> bias_int32_raw(num_elems);
     for (size_t i = 0; i < num_elems; i++) {
-      bias_int32_raw[i] = static_cast<int32_t>(bias_f32_raw[i] / bias_scale);
+      bias_int32_raw[i] = static_cast<int32_t>(bias_f32_raw[i] / bias_scale) + bias_zero_point;
     }
 
     TestInputDef<int32_t> bias_int32_def(bias_def.GetShape(), bias_def.IsInitializer(), bias_int32_raw);
@@ -678,7 +679,7 @@ std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
       name + "_dq",
       name.c_str(),
       bias_scale,
-      0,
+      bias_zero_point,
       (name + "_dq_out").c_str(),
       use_contrib_qdq);
   return name + "_dq_out";

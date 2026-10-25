@@ -1258,6 +1258,38 @@ TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerTensor_RoundTrip) {
   EXPECT_EQ(out_vals[1], -20);
 }
 
+TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerTensor_ChangesScaleAndOffset) {
+  // QNN convention: real_value = (quantized_value + offset) * scale.
+  // 15 -> (15 - 5) * 0.2 = 2.0 -> 2.0 / 0.1 - 0 = 20.
+  const std::vector<int32_t> int32_vals = {15};
+  std::vector<uint8_t> bias_data(int32_vals.size() * sizeof(int32_t));
+  std::memcpy(bias_data.data(), int32_vals.data(), bias_data.size());
+
+  const std::vector<uint32_t> bias_shape = {1};
+  const std::vector<float> current_scales = {0.2f};
+  const std::vector<int32_t> current_offsets = {-5};
+  const std::vector<float> weights_scales = {0.5f};
+  constexpr float activation_scale = 0.2f;  // new_scale = 0.5 * 0.2 = 0.1
+
+  std::vector<uint8_t> requantized;
+  std::vector<float> new_scales;
+  std::vector<int32_t> new_offsets;
+  Ort::Status st = qnn::utils::RequantizeBiasTensor(
+      bias_data, bias_shape, current_scales, current_offsets,
+      weights_scales, activation_scale, QNN_DATATYPE_SFIXED_POINT_32,
+      requantized, new_scales, new_offsets);
+
+  ASSERT_TRUE(st.IsOK());
+  ASSERT_EQ(new_scales.size(), 1u);
+  ASSERT_EQ(new_offsets.size(), 1u);
+  EXPECT_FLOAT_EQ(new_scales[0], 0.1f);
+  EXPECT_EQ(new_offsets[0], 0);
+
+  std::vector<int32_t> out_vals(1);
+  std::memcpy(out_vals.data(), requantized.data(), requantized.size());
+  EXPECT_EQ(out_vals[0], 20);
+}
+
 TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerChannel_ScalesUpdated) {
   std::vector<int32_t> int32_vals = {5, -10};
   std::vector<uint8_t> bias_data(int32_vals.size() * sizeof(int32_t));
@@ -1286,6 +1318,41 @@ TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerChannel_ScalesUpdated) {
   std::memcpy(out_vals.data(), requantized.data(), requantized.size());
   EXPECT_EQ(out_vals[0], 5);
   EXPECT_EQ(out_vals[1], -10);
+}
+
+TEST(QnnUnit_UtilsTest, RequantizeBiasTensor_PerChannel_ChangesScaleAndOffset) {
+  // Channel 0: (15 - 5) * 0.2 = 2.0, then 2.0 / 0.1 - 0 = 20.
+  // Channel 1: (-4 + 2) * 0.5 = -1.0, then -1.0 / 0.25 - 0 = -4.
+  const std::vector<int32_t> int32_vals = {15, -4};
+  std::vector<uint8_t> bias_data(int32_vals.size() * sizeof(int32_t));
+  std::memcpy(bias_data.data(), int32_vals.data(), bias_data.size());
+
+  const std::vector<uint32_t> bias_shape = {2};
+  const std::vector<float> current_scales = {0.2f, 0.5f};
+  const std::vector<int32_t> current_offsets = {-5, 2};
+  const std::vector<float> weights_scales = {0.5f, 1.25f};
+  constexpr float activation_scale = 0.2f;  // new_scales = {0.1, 0.25}
+
+  std::vector<uint8_t> requantized;
+  std::vector<float> new_scales;
+  std::vector<int32_t> new_offsets;
+  Ort::Status st = qnn::utils::RequantizeBiasTensor(
+      bias_data, bias_shape, current_scales, current_offsets,
+      weights_scales, activation_scale, QNN_DATATYPE_SFIXED_POINT_32,
+      requantized, new_scales, new_offsets, /*axis=*/0LL);
+
+  ASSERT_TRUE(st.IsOK());
+  ASSERT_EQ(new_scales.size(), 2u);
+  ASSERT_EQ(new_offsets.size(), 2u);
+  EXPECT_FLOAT_EQ(new_scales[0], 0.1f);
+  EXPECT_FLOAT_EQ(new_scales[1], 0.25f);
+  EXPECT_EQ(new_offsets[0], 0);
+  EXPECT_EQ(new_offsets[1], 0);
+
+  std::vector<int32_t> out_vals(2);
+  std::memcpy(out_vals.data(), requantized.data(), requantized.size());
+  EXPECT_EQ(out_vals[0], 20);
+  EXPECT_EQ(out_vals[1], -4);
 }
 
 // =============================================================================

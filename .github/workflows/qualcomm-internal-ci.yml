@@ -41,12 +41,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  select-ci-tier:
+    name: Select CI tier
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.tier.outputs.tier }}
+    steps:
+      - name: Select CI tier
+        id: tier
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] && \
+             [ "${{ github.event.pull_request.head.repo.fork }}" = "true" ]; then
+            echo "tier=sanity" >> "${GITHUB_OUTPUT}"
+          else
+            echo "tier=full" >> "${GITHUB_OUTPUT}"
+          fi
+
+  sanity:
+    name: Sanity
+    needs: select-ci-tier
+    # Fork PRs get quick maintainer-approved feedback first. A maintainer's
+    # /approve-ci comment dispatches the reviewed SHA through workflow_dispatch,
+    # which selects the full tier below.
+    if: ${{ needs.select-ci-tier.outputs.tier == 'sanity' && github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/qualcomm-internal-sanity.yml
+
   build-and-test-all:
     name: Build & Test
+    needs: select-ci-tier
     # Draft PRs don't auto-trigger CI: push to a draft runs nothing. CI fires when the PR is
     # marked ready-for-review, or on manual workflow_dispatch. Drafts can't merge, so skipping
     # their (required) checks blocks nothing. Non-PR events (push/merge_group/dispatch) always run.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    if: ${{ needs.select-ci-tier.outputs.tier == 'full' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test.yml
     secrets: inherit
     with:
@@ -55,12 +82,14 @@ jobs:
       do_all: true
 
   coverage:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
+    needs: select-ci-tier
+    if: ${{ needs.select-ci-tier.outputs.tier == 'full' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)) }}
     uses: ./.github/workflows/qualcomm-internal-coverage.yml
     secrets: inherit
 
   asan:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
+    needs: select-ci-tier
+    if: ${{ needs.select-ci-tier.outputs.tier == 'full' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)) }}
     uses: ./.github/workflows/qualcomm-internal-asan.yml
     secrets: inherit
 

@@ -49,6 +49,34 @@ GetTestModelFn BuildTestCaseScalar(
   };
 }
 
+GetTestModelFn BuildTestCaseSingleElementScale(
+    const TestInputDef<float>& input_def,
+    const std::vector<int64_t>& scale_dims,
+    float scale_value,
+    bool use_constant) {
+  return [=](ModelTestBuilder& builder) -> void {
+    MakeTestInput<float>(builder, "input", input_def);
+    if (use_constant) {
+      onnx::TensorProto scale_value_proto;
+      scale_value_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+      for (int64_t dim : scale_dims) {
+        scale_value_proto.add_dims(dim);
+      }
+      builder.SetRawDataInTensorProto(scale_value_proto, reinterpret_cast<const char*>(&scale_value), sizeof(float));
+      ONNX_NAMESPACE::AttributeProto scale_attr;
+      scale_attr.set_name("value");
+      scale_attr.set_type(ONNX_NAMESPACE::AttributeProto_AttributeType_TENSOR);
+      *scale_attr.mutable_t() = scale_value_proto;
+      builder.AddNode("constant_node", "Constant", {}, {"scale"}, "", {scale_attr});
+    } else {
+      builder.MakeInitializer<float>("scale", scale_dims, std::vector<float>{scale_value});
+    }
+    builder.AddNode("mul", "Mul", {"input", "scale"}, {"mul_output"});
+    builder.MakeOutput("softmax_output");
+    builder.AddNode("softmax", "Softmax", {"mul_output"}, {"softmax_output"});
+  };
+}
+
 GetTestModelFn BuildTestCaseNoScalar(const TestInputDef<float>& input_def1, const TestInputDef<float>& input_def2) {
   return [&input_def1, input_def2](ModelTestBuilder& builder) -> void {
     MakeTestInput<float>(builder, "input", input_def1);
@@ -174,6 +202,96 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
   AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
+}
+
+TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSingleElementInitializer) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSingleElementInitializer";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
+  RunQnnModelTest(BuildTestCaseSingleElementScale(input_def, /*scale_dims=*/{1}, 0.125f,
+                                                  /*use_constant=*/false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
+}
+
+TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSingleElementConstant) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSingleElementConstant";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
+  RunQnnModelTest(BuildTestCaseSingleElementScale(input_def, /*scale_dims=*/{1, 1}, 0.125f,
+                                                  /*use_constant=*/true),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
+}
+
+TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarScaleSingleElementData) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarScaleSingleElementData";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  // Both inputs are single-element: the rank-0 input is the scale, the [1] input is the data.
+  auto input_def = TestInputDef<float>({1}, false, -0.5f, 0.5f);
+  RunQnnModelTest(BuildTestCaseScalar(input_def, 0.125f, /*use_constant=*/false, /*reverse_input_order=*/false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
+}
+
+TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipHigherRankScale) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSkipHigherRankScale";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  // The [1, 1] scale has higher rank than the 1D data input, so fusing it would change the
+  // Mul output shape ([1, 5] vs [5]). The fusion must be skipped.
+  auto input_def = TestInputDef<float>({5}, false, -0.5f, 0.5f);
+  RunQnnModelTest(BuildTestCaseSingleElementScale(input_def, /*scale_dims=*/{1, 1}, 0.125f,
+                                                  /*use_constant=*/false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 1);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {

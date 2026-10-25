@@ -217,7 +217,7 @@ fi
 accuracy_json="${bin_dir}/snapshot_accuracy_results/accuracy_results.json"
 if [ ! -f "${accuracy_json}" ]; then
     die "Accuracy report not found: ${accuracy_json}. The accuracy tier must run to \
-prove which groups pass (is QNN_EP_ACCURACY_UT enabled?). Refusing to publish \
+prove which groups pass (is QNN_EP_ENABLE_ACCURACY_TESTS enabled?). Refusing to publish \
 goldens with no pass evidence."
 fi
 log_info "Accuracy report: ${accuracy_json}"
