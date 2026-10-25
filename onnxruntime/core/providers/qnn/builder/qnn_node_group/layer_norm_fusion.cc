@@ -34,41 +34,6 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          gsl::span<const uint32_t> axes,
                                          bool validate);
 
-static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
-                                                   const std::string& input_name) {
-  if (!qmw.IsConstantInput(input_name)) {
-    return std::nullopt;
-  }
-
-  const OrtValueInfo* value_info = qmw.GetConstantTensor(input_name);
-  if (!value_info) {
-    return std::nullopt;
-  }
-
-  Ort::ConstValueInfo ort_value_info(value_info);
-  Ort::ConstValue ort_value;
-  if (!ort_value_info.GetInitializer(ort_value).IsOK()) {
-    return std::nullopt;
-  }
-
-  auto type_info = ort_value_info.TypeInfo();
-  auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
-  if (tensor_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-    return std::nullopt;
-  }
-
-  if (tensor_info.GetElementCount() != 1) {
-    return std::nullopt;
-  }
-
-  const float* data = ort_value.GetTensorData<float>();
-  if (!data) {
-    return std::nullopt;
-  }
-
-  return *data;
-}
-
 std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& reduce_mean_node_unit,
@@ -123,6 +88,9 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     if (sub_node_outputs.size() != 1) {
       return nullptr;
     }
+    if (sub_node_outputs[0].IsGraphOutput()) {
+      return nullptr;
+    }
     const auto consumers = sub_node_outputs[0].GetConsumers();
     if (consumers.size() != 2) {
       return nullptr;
@@ -158,7 +126,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   if (pow_inputs.size() < 2) {
     return nullptr;
   }
-  const std::optional<float> pow_exp = GetConstantFloatScalar(qnn_model_wrapper, pow_inputs[1].name);
+  const std::optional<float> pow_exp = GetScalarConstantValue(qnn_model_wrapper, pow_inputs[1].name);
   if (!pow_exp.has_value() || pow_exp.value() != 2.0f) {
     return nullptr;
   }
@@ -196,19 +164,16 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   if (!qnn_model_wrapper.GetOnnxShape(rm1_inputs[0].shape, input_shape)) {
     return nullptr;
   }
-  const size_t input_rank = input_shape.size();
 
-  // Axes must be a contiguous trailing suffix ending at the last dimension.
-  // e.g. {1,2} on rank-3 is valid; {0,2} or {0,1} on rank-3 are not.
-  if (axes1.empty() || axes1.back() != static_cast<uint32_t>(input_rank - 1)) {
+  // Axes must be a non-empty contiguous block of dimensions.
+  // Non-trailing axes (e.g. axis=1 on NCHW) are handled in CreateOrValidateOnQnn
+  // by wrapping the LayerNorm with Transpose nodes to move the axis to the end.
+  if (axes1.empty()) {
     return nullptr;
   }
-  {
-    const uint32_t M = static_cast<uint32_t>(axes1.size());
-    for (uint32_t i = 0; i < M; ++i) {
-      if (axes1[i] != static_cast<uint32_t>(input_rank) - M + i) {
-        return nullptr;
-      }
+  for (size_t i = 1; i < axes1.size(); ++i) {
+    if (axes1[i] != axes1[i - 1] + 1) {
+      return nullptr;  // non-contiguous axes not supported
     }
   }
 
@@ -228,7 +193,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   }
   std::optional<float> epsilon_opt;
   for (const auto& inp : add_eps_inputs) {
-    auto val = GetConstantFloatScalar(qnn_model_wrapper, inp.name);
+    auto val = GetScalarConstantValue(qnn_model_wrapper, inp.name);
     if (val.has_value()) {
       epsilon_opt = val;
       break;
@@ -322,12 +287,16 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
 
   std::string shape_str;
   for (size_t i = 0; i < input_shape.size(); ++i) {
-    if (i > 0) shape_str += "x";
+    if (i > 0) {
+      shape_str += "x";
+    }
     shape_str += std::to_string(input_shape[i]);
   }
   std::string axes_str;
   for (size_t i = 0; i < axes1.size(); ++i) {
-    if (i > 0) axes_str += ",";
+    if (i > 0) {
+      axes_str += ",";
+    }
     axes_str += std::to_string(axes1[i]);
   }
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
@@ -475,6 +444,63 @@ static Ort::Status ValidateAndSqueezeScaleShape(
   return Ort::Status();
 }
 
+// Returns true if the axes form a contiguous trailing suffix of [0, rank).
+// e.g. axes={2,3} on rank-4 is trailing; axes={1} on rank-4 is non-trailing.
+static bool AreAxesTrailing(gsl::span<const uint32_t> axes, size_t rank) {
+  if (axes.empty() || rank == 0) {
+    return false;
+  }
+  const size_t M = axes.size();
+  if (M > rank) {
+    return false;
+  }
+  for (size_t i = 0; i < M; ++i) {
+    if (axes[i] != static_cast<uint32_t>(rank - M + i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Builds a permutation that moves `axes` to the trailing positions of a rank-R tensor.
+// Non-axes dims appear first in their original order, then axes dims in their original order.
+// e.g. rank=4, axes={1} => perm={0,2,3,1}; axes={0,1} => perm={2,3,0,1}.
+static std::vector<uint32_t> BuildPreTransposePerm(size_t rank,
+                                                   gsl::span<const uint32_t> axes) {
+  std::vector<uint32_t> perm;
+  perm.reserve(rank);
+  std::unordered_set<uint32_t> axes_set(axes.begin(), axes.end());
+  for (uint32_t i = 0; i < static_cast<uint32_t>(rank); ++i) {
+    if (!axes_set.count(i)) {
+      perm.push_back(i);
+    }
+  }
+  for (uint32_t a : axes) {
+    perm.push_back(a);
+  }
+  return perm;
+}
+
+// Returns the inverse of a permutation.
+static std::vector<uint32_t> InversePerm(const std::vector<uint32_t>& perm) {
+  std::vector<uint32_t> inv(perm.size());
+  for (size_t i = 0; i < perm.size(); ++i) {
+    inv[perm[i]] = static_cast<uint32_t>(i);
+  }
+  return inv;
+}
+
+// Applies a permutation to a shape vector.
+static std::vector<uint32_t> ApplyPerm(const std::vector<uint32_t>& shape,
+                                       const std::vector<uint32_t>& perm) {
+  std::vector<uint32_t> out;
+  out.reserve(perm.size());
+  for (uint32_t p : perm) {
+    out.push_back(shape[p]);
+  }
+  return out;
+}
+
 static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          gsl::span<const OrtNodeUnit* const> node_units,
                                          const OrtNodeUnitIODef& root_input,
@@ -487,8 +513,6 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   const std::string node_name = utils::UniqueNameGenerator().New(*node_units[0]);
 
   QnnTensorWrapper input_tensor;
-  QnnTensorWrapper gamma_tensor;
-  QnnTensorWrapper beta_tensor;
   QnnTensorWrapper output_tensor;
 
   RETURN_IF_ERROR(qmw.MakeTensorWrapper(root_input, input_tensor));
@@ -499,7 +523,40 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   // The validated shape is then squeezed to 1D for QNN.
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qmw.GetOnnxShape(root_input.shape, input_shape), "Cannot get input shape.");
+  const size_t rank = input_shape.size();
 
+  // QNN LayerNorm on HTP only supports trailing axes. When the ONNX axes are non-trailing,
+  // wrap the op with a pre-Transpose (moves axes to the end) and a post-Transpose (restores layout).
+  const bool needs_transpose = !AreAxesTrailing(axes, rank);
+  std::vector<uint32_t> pre_perm;   // ONNX layout -> transposed layout
+  std::vector<uint32_t> post_perm;  // transposed layout -> ONNX layout (inverse of pre_perm)
+  std::vector<uint32_t> transposed_shape;
+  std::vector<uint32_t> trailing_axes;
+
+  if (needs_transpose) {
+    pre_perm = BuildPreTransposePerm(rank, axes);
+    post_perm = InversePerm(pre_perm);
+    transposed_shape = ApplyPerm(input_shape, pre_perm);
+    // After pre-transpose the normalized dims are always the last axes.size() dims.
+    const size_t M = axes.size();
+    for (size_t i = 0; i < M; ++i) {
+      trailing_axes.push_back(static_cast<uint32_t>(rank - M + i));
+    }
+  } else {
+    trailing_axes.assign(axes.begin(), axes.end());
+  }
+
+  const std::vector<uint32_t>& ln_input_shape = needs_transpose ? transposed_shape : input_shape;
+
+  TensorInfo input_info = {};
+  RETURN_IF_ERROR(qmw.GetTensorInfo(root_input, input_info));
+
+  QnnTensorWrapper gamma_tensor;
+  QnnTensorWrapper beta_tensor;
+
+  // Gamma/beta are always in ONNX layout and describe only the normalized dims — they are
+  // never transposed. Validate against the original ONNX input_shape and original axes,
+  // then squeeze to 1D for QNN (QNN LayerNorm expects 1D scale and bias).
   {
     TensorInfo gamma_info = {};
     RETURN_IF_ERROR(qmw.GetTensorInfo(gamma_input, gamma_info));
@@ -517,26 +574,58 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
     RETURN_IF_ERROR(qmw.MakeTensorWrapper(beta_info, beta_input.name, beta_tensor));
   }
 
+  // Build the QNN tensor that feeds into LayerNorm (after optional pre-transpose).
+  // For validation we need a wrapper with the transposed shape; for create we add real nodes.
+  std::string ln_input_name = root_input.name;
+  std::string ln_output_name = final_output.name;
+
+  if (needs_transpose) {
+    ln_input_name = node_name + "_pre_tp_out";
+    ln_output_name = node_name + "_ln_out";
+  }
+
+  // Build wrappers for the (possibly transposed) LN input/output.
+  QnnTensorWrapper ln_input_tensor(ln_input_name,
+                                   QNN_TENSOR_TYPE_NATIVE,
+                                   input_info.qnn_data_type,
+                                   input_info.quant_param.Copy(),
+                                   std::vector<uint32_t>(ln_input_shape));
+
+  TensorInfo output_info = {};
+  RETURN_IF_ERROR(qmw.GetTensorInfo(final_output, output_info));
+  // ln_output has the same shape as ln_input (LayerNorm is shape-preserving).
+  QnnTensorWrapper ln_output_tensor(ln_output_name,
+                                    QNN_TENSOR_TYPE_NATIVE,
+                                    output_info.qnn_data_type,
+                                    output_info.quant_param.Copy(),
+                                    std::vector<uint32_t>(ln_input_shape));
+
   Qnn_Scalar_t epsilon_scalar = QNN_SCALAR_INIT;
   epsilon_scalar.dataType = QNN_DATATYPE_FLOAT_32;
   epsilon_scalar.floatValue = epsilon;
   QnnParamWrapper epsilon_param(node_units[0]->Index(), node_units[0]->Name(),
                                 QNN_OP_LAYER_NORM_PARAM_EPSILON, epsilon_scalar);
 
-  std::vector<uint32_t> axes_vec(axes.begin(), axes.end());
-  std::vector<uint32_t> axes_shape{static_cast<uint32_t>(axes_vec.size())};
+  std::vector<uint32_t> trailing_axes_copy = trailing_axes;
+  std::vector<uint32_t> axes_shape{static_cast<uint32_t>(trailing_axes_copy.size())};
   QnnParamWrapper axes_param(node_units[0]->Index(), node_units[0]->Name(),
                              QNN_OP_LAYER_NORM_PARAM_AXES,
-                             std::move(axes_shape), std::move(axes_vec));
+                             std::move(axes_shape), std::move(trailing_axes_copy));
 
   if (validate) {
+    // Validate only the LayerNorm node. ln_input_tensor already has the correct
+    // (post-transpose) shape and trailing_axes are set accordingly.
+    // Transpose nodes are not validated here for the same reason the create path
+    // uses do_op_validation=false for them: the IR backend cannot validate
+    // Transpose nodes independently. LayerNorm validation is sufficient to catch
+    // unsupported dtypes or axis configurations.
     return qmw.ValidateQnnNode(node_name,
                                QNN_OP_PACKAGE_NAME_QTI_AISW,
                                QNN_OP_LAYER_NORM,
-                               {input_tensor.GetQnnTensor(),
+                               {ln_input_tensor.GetQnnTensor(),
                                 gamma_tensor.GetQnnTensor(),
                                 beta_tensor.GetQnnTensor()},
-                               {output_tensor.GetQnnTensor()},
+                               {ln_output_tensor.GetQnnTensor()},
                                {epsilon_param.GetQnnParam(), axes_param.GetQnnParam()});
   }
 
@@ -546,27 +635,87 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   const std::string axes_param_name = axes_param.GetParamTensorName();
   RETURN_IF_NOT(qmw.AddParamWrapper(std::move(axes_param)), "Failed to add axes param.");
 
-  if (!qmw.IsQnnTensorWrapperExist(root_input.name)) {
-    RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(input_tensor)), "Failed to add input tensor.");
+  if (needs_transpose) {
+    // Pre-transpose: root_input -> ln_input_name  (perm = pre_perm)
+    if (!qmw.IsQnnTensorWrapperExist(root_input.name)) {
+      RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(input_tensor)), "Failed to add input tensor.");
+    }
+    RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(ln_input_tensor)), "Failed to add pre-transpose output tensor.");
+    {
+      std::vector<uint32_t> perm_dim{static_cast<uint32_t>(pre_perm.size())};
+      QnnParamWrapper pre_tp_param(node_units[0]->Index(), node_units[0]->Name(),
+                                   QNN_OP_TRANSPOSE_PARAM_PERM,
+                                   std::move(perm_dim), std::vector<uint32_t>(pre_perm));
+      std::string pre_tp_param_name = pre_tp_param.GetParamTensorName();
+      RETURN_IF_NOT(qmw.AddParamWrapper(std::move(pre_tp_param)), "Failed to add pre-transpose perm param.");
+      RETURN_IF_NOT(qmw.CreateQnnNode(utils::UniqueNameGenerator().New(ln_input_name, QNN_OP_TRANSPOSE),
+                                      QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                      QNN_OP_TRANSPOSE,
+                                      {root_input.name},
+                                      {ln_input_name},
+                                      {pre_tp_param_name},
+                                      /*do_op_validation=*/false),
+                    "Failed to create pre-transpose node for LayerNorm.");
+    }
+
+    // LayerNorm node: ln_input_name -> ln_output_name
+    RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(ln_output_tensor)), "Failed to add LayerNorm output tensor.");
+  } else {
+    if (!qmw.IsQnnTensorWrapperExist(root_input.name)) {
+      RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(input_tensor)), "Failed to add input tensor.");
+    }
   }
+
   if (!qmw.IsQnnTensorWrapperExist(gamma_input.name)) {
     RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(gamma_tensor)), "Failed to add gamma tensor.");
   }
   if (!qmw.IsQnnTensorWrapperExist(beta_input.name)) {
     RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(beta_tensor)), "Failed to add beta tensor.");
   }
-  if (!qmw.IsQnnTensorWrapperExist(final_output.name)) {
-    RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(output_tensor)), "Failed to add output tensor.");
+
+  if (!needs_transpose) {
+    if (!qmw.IsQnnTensorWrapperExist(final_output.name)) {
+      RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(output_tensor)), "Failed to add output tensor.");
+    }
   }
 
   RETURN_IF_NOT(qmw.CreateQnnNode(node_name,
                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                   QNN_OP_LAYER_NORM,
-                                  {root_input.name, gamma_input.name, beta_input.name},
-                                  {final_output.name},
+                                  {ln_input_name, gamma_input.name, beta_input.name},
+                                  {ln_output_name},
                                   {epsilon_param_name, axes_param_name},
-                                  validate),
+                                  /*do_op_validation=*/false),
                 "Failed to create fused LayerNorm node.");
+
+  if (needs_transpose) {
+    // Post-transpose: ln_output_name -> final_output.name  (perm = post_perm)
+    const bool is_graph_output = qmw.IsGraphOutput(final_output.name);
+    const Qnn_TensorType_t final_tensor_type =
+        is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    QnnTensorWrapper final_out_tensor(final_output.name,
+                                      final_tensor_type,
+                                      output_info.qnn_data_type,
+                                      output_info.quant_param.Copy(),
+                                      std::vector<uint32_t>(input_shape));
+    RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(final_out_tensor)), "Failed to add post-transpose output tensor.");
+    {
+      std::vector<uint32_t> perm_dim{static_cast<uint32_t>(post_perm.size())};
+      QnnParamWrapper post_tp_param(node_units[0]->Index(), node_units[0]->Name(),
+                                    QNN_OP_TRANSPOSE_PARAM_PERM,
+                                    std::move(perm_dim), std::vector<uint32_t>(post_perm));
+      std::string post_tp_param_name = post_tp_param.GetParamTensorName();
+      RETURN_IF_NOT(qmw.AddParamWrapper(std::move(post_tp_param)), "Failed to add post-transpose perm param.");
+      RETURN_IF_NOT(qmw.CreateQnnNode(utils::UniqueNameGenerator().New(final_output.name, QNN_OP_TRANSPOSE),
+                                      QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                      QNN_OP_TRANSPOSE,
+                                      {ln_output_name},
+                                      {final_output.name},
+                                      {post_tp_param_name},
+                                      /*do_op_validation=*/false),
+                    "Failed to create post-transpose node for LayerNorm.");
+    }
+  }
 
   return Ort::Status();
 }
