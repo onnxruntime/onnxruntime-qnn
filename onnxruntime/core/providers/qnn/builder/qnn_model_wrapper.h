@@ -4,6 +4,7 @@
 #pragma once
 
 #include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -22,8 +23,9 @@ namespace qnn {
 
 // Forward declarations
 class BF16ConversionGuard;
-#ifdef USE_QAIRT_API
 class IGraphEmitter;
+class QnnGraphEmitter;
+#ifdef USE_QAIRT_API
 class QairtBackendManager;
 #endif
 class OpTraceCollector;
@@ -63,7 +65,8 @@ class QnnModelWrapper {
                   const ModelSettings& model_settings,
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
                   OpTraceCollector* op_trace_collector = nullptr,
-                  bool is_post_layout_transform = false);
+                  bool is_post_layout_transform = false,
+                  IGraphEmitter* graph_emitter = nullptr);
 #ifdef USE_QAIRT_API
   QnnModelWrapper(const OrtGraph& ort_graph, const ApiPtrs& api_ptrs, const Ort::Logger& logger,
                   QairtBackendManager& backend, const GraphInputOutputInfo& graph_inputs,
@@ -74,7 +77,7 @@ class QnnModelWrapper {
 #endif
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
-  ~QnnModelWrapper() = default;
+  ~QnnModelWrapper();
 
   const ModelSettings& GetModelSettings() const { return model_settings_; }
 
@@ -566,9 +569,11 @@ class QnnModelWrapper {
   const OrtGraph& ort_graph_;
   const Ort::Logger& logger_;
   const QnnBackendManager* qnn_backend_manager_ = nullptr;
+  std::unique_ptr<IGraphEmitter> owned_graph_emitter_;
+  IGraphEmitter* graph_emitter_ = nullptr;
+  QnnGraphEmitter* qnn_graph_emitter_ = nullptr;
 #ifdef USE_QAIRT_API
   QairtBackendManager* qairt_backend_manager_ = nullptr;
-  IGraphEmitter* graph_emitter_ = nullptr;
 #endif
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string graph_name_ = "";
