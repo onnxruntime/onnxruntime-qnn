@@ -28,8 +28,12 @@ Ort::Status ReadContext(const OrtNode* node, const std::filesystem::path& model_
   } else {
     const auto relative = std::filesystem::path(payload).lexically_normal();
     RETURN_IF(payload.empty() || relative.has_root_path(), "EPContext requires a relative binary path.");
-    for (const auto& component : relative) RETURN_IF(component == "..", "EPContext path escapes the model directory.");
-    if (io.HasReadCallback()) return io.Read(payload, bytes);
+    for (const auto& component : relative) {
+      RETURN_IF(component == "..", "EPContext path escapes the model directory.");
+    }
+    if (io.HasReadCallback()) {
+      return io.Read(payload, bytes);
+    }
     std::ifstream file(model_path.parent_path() / relative, std::ios::binary | std::ios::ate);
     RETURN_IF(!file, "Cannot open EPContext binary.");
     const auto size = file.tellg();
@@ -68,8 +72,9 @@ OrtStatus* QnnEp::GetQairtCapability(const OrtGraph* graph, OrtEpGraphSupportInf
     }
   }
   RETURN_IF_NOT_OK(qairt_backend_manager_->Setup());
-  if (qnn::GraphHasDlcContextNode(graph, ort_api))
+  if (qnn::GraphHasDlcContextNode(graph, ort_api)) {
     return ort_api.CreateStatus(ORT_EP_FAIL, "QAIRT sessions do not support the Genie DLC execution pathway.");
+  }
   if (is_htp &&
       (htp_graph_configs_.enable_htp_monolithic_lstm || htp_graph_configs_.enable_htp_fp16_precision ||
        htp_graph_configs_.enable_htp_fp16_clamp_overflow || htp_graph_configs_.vtcm_size_in_mb > 0 ||
@@ -100,8 +105,9 @@ OrtStatus* QnnEp::CompileQairtModels(const OrtGraph** graphs, const OrtNode** fu
     if (enable_framework_op_trace_) {
       auto trace_path = qnn::DeriveTracePathFromContextModel(ContextPath(graphs[0], ort_api, context_cache_path_cfg_));
       qnn::OpTraceLookup lookup;
-      if (qnn::LoadTraceLookupFromFile(trace_path, lookup, logger_))
+      if (qnn::LoadTraceLookupFromFile(trace_path, lookup, logger_)) {
         qairt_profiling_manager_->MergeOpTraceLookup(std::move(lookup));
+      }
     }
     std::vector<int> main_positions;
     RETURN_IF_NOT_OK(qnn::GetMainContextNode(graphs, count, ort_api, main_positions));
@@ -123,8 +129,9 @@ OrtStatus* QnnEp::CompileQairtModels(const OrtGraph** graphs, const OrtNode** fu
       RETURN_IF_NOT_OK(qairt_profiling_manager_->Complete(scope));
       for (auto& entry : loaded) {
         auto name = entry.info->Name();
-        if (!cached.emplace(name, std::move(entry)).second)
+        if (!cached.emplace(name, std::move(entry)).second) {
           return ort_api.CreateStatus(ORT_INVALID_GRAPH, "Duplicate QAIRT context graph name.");
+        }
       }
     }
     for (size_t i = 0; i < count; ++i) {
@@ -132,7 +139,9 @@ OrtStatus* QnnEp::CompileQairtModels(const OrtGraph** graphs, const OrtNode** fu
       RETURN_IF_NOT_NULL(ort_api.Graph_GetNodes(graphs[i], &node, 1));
       auto name = Ort::ConstNode(node).GetName();
       auto entry = cached.find(name);
-      if (entry == cached.end()) return ort_api.CreateStatus(ORT_INVALID_GRAPH, "QAIRT context graph was not found.");
+      if (entry == cached.end()) {
+        return ort_api.CreateStatus(ORT_INVALID_GRAPH, "QAIRT context graph was not found.");
+      }
       auto model = std::make_unique<qnn::QnnModel>(qairt_backend_manager_, qairt_profiling_manager_, static_cast<const ApiPtrs&>(*this));
       RETURN_IF_NOT_OK(model->LoadQairtGraph(std::move(entry->second)));
       cached.erase(entry);
@@ -145,7 +154,9 @@ OrtStatus* QnnEp::CompileQairtModels(const OrtGraph** graphs, const OrtNode** fu
     }
     return nullptr;
   }
-  if (!onnx_graph_io_names_) return ort_api.CreateStatus(ORT_EP_FAIL, "Missing ONNX graph I/O names.");
+  if (!onnx_graph_io_names_) {
+    return ort_api.CreateStatus(ORT_EP_FAIL, "Missing ONNX graph I/O names.");
+  }
   for (size_t i = 0; i < count; ++i) {
     const auto name = Ort::ConstNode(fused_nodes[i]).GetName();
     auto model = std::make_unique<qnn::QnnModel>(qairt_backend_manager_, qairt_profiling_manager_,
@@ -153,9 +164,12 @@ OrtStatus* QnnEp::CompileQairtModels(const OrtGraph** graphs, const OrtNode** fu
     qnn::QnnModelContext context{*graphs[i], *fused_nodes[i], logger_,
                                  &onnx_graph_io_names_->first, &onnx_graph_io_names_->second, &model_settings_,
                                  nullptr, &tensor_name_overrides_, std::string{}};
-    if (enable_framework_op_trace_) context.op_trace_output = op_trace_builder_.NewSubgraphSlot();
-    if (dump_json_qnn_graph_) context.json_qnn_graph_path =
-                                  (std::filesystem::path(json_qnn_graph_dir_) / (name + ".json")).string();
+    if (enable_framework_op_trace_) {
+      context.op_trace_output = op_trace_builder_.NewSubgraphSlot();
+    }
+    if (dump_json_qnn_graph_) {
+      context.json_qnn_graph_path = (std::filesystem::path(json_qnn_graph_dir_) / (name + ".json")).string();
+    }
     RETURN_IF_NOT_OK(model->ComposeGraph(context));
     RETURN_IF_NOT_OK(model->FinalizeGraphs(logger_));
     RETURN_IF_NOT_OK(model->SetupQnnInputOutput(logger_));
@@ -185,8 +199,9 @@ OrtStatus* QnnEp::CompileQairtModels(const OrtGraph** graphs, const OrtNode** fu
 OrtStatus* QnnEp::OnQairtRunStart(const OrtRunOptions* options) {
   for (const char* key : {kOrtRunOptionsConfigQnnLoraConfig, kOrtRunOptionsConfigQnnPerfMode,
                           kOrtRunOptionsConfigQnnPerfModePostRun, kOrtRunOptionsConfigQnnRpcControlLatency}) {
-    if (ort_api.GetRunConfigEntry(options, key))
+    if (ort_api.GetRunConfigEntry(options, key)) {
       return ort_api.CreateStatus(ORT_EP_FAIL, "QAIRT runtime LoRA and power overrides require backend-extension support.");
+    }
   }
   return nullptr;
 }

@@ -88,9 +88,15 @@ static std::optional<qnn::QnnBackendType> InferBackendTypeFromPath(const std::st
   const std::string filename = std::filesystem::path(backend_path).filename().string();
 
 #ifdef USE_QAIRT_API
-  if (filename == MakeSharedLibraryPath("QairtCpu")) return qnn::QnnBackendType::CPU;
-  if (filename == MakeSharedLibraryPath("QairtGpu")) return qnn::QnnBackendType::GPU;
-  if (filename == MakeSharedLibraryPath("QairtHtp")) return qnn::QnnBackendType::HTP;
+  if (filename == MakeSharedLibraryPath("QairtCpu")) {
+    return qnn::QnnBackendType::CPU;
+  }
+  if (filename == MakeSharedLibraryPath("QairtGpu")) {
+    return qnn::QnnBackendType::GPU;
+  }
+  if (filename == MakeSharedLibraryPath("QairtHtp")) {
+    return qnn::QnnBackendType::HTP;
+  }
 #endif
   if (filename == kDefaultCpuBackendPath) {
     return qnn::QnnBackendType::CPU;
@@ -103,6 +109,37 @@ static std::optional<qnn::QnnBackendType> InferBackendTypeFromPath(const std::st
   }
   return std::nullopt;
 }
+
+#ifdef USE_QAIRT_API
+struct QairtBackendSelection {
+  std::string library_path;
+  qnn::QnnBackendType backend_type;
+};
+
+static std::optional<QairtBackendSelection> ResolveQairtBackend(const std::string& backend_path) {
+  const auto backend_type = InferBackendTypeFromPath(backend_path);
+  if (!backend_type.has_value()) {
+    return std::nullopt;
+  }
+
+  std::filesystem::path qairt_path(backend_path);
+  switch (*backend_type) {
+    case qnn::QnnBackendType::CPU:
+      qairt_path.replace_filename(MakeSharedLibraryPath("QairtCpu"));
+      break;
+    case qnn::QnnBackendType::GPU:
+      qairt_path.replace_filename(MakeSharedLibraryPath("QairtGpu"));
+      break;
+    case qnn::QnnBackendType::HTP:
+      qairt_path.replace_filename(MakeSharedLibraryPath("QairtHtp"));
+      break;
+    default:
+      return std::nullopt;
+  }
+
+  return QairtBackendSelection{qairt_path.string(), *backend_type};
+}
+#endif
 // Strictly parses an integer without throwing or modifying `out` on failure.
 // std::from_chars rejects leading whitespace and reports overflow for the target type.
 template <typename T>
@@ -1555,16 +1592,16 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
 
 #ifdef USE_QAIRT_API
   const auto backend_filename = std::filesystem::path(backend_path).filename().string();
-  const bool use_qairt = !qnn_serializer_config && backend_filename != kDefaultIrBackendPath &&
-                         backend_filename != kDefaultSaverBackendPath && backend_filename != MakeSharedLibraryPath("QnnMockSSR");
-  if (use_qairt) {
-    std::filesystem::path path(backend_path);
-    if (backend_filename == kDefaultHtpBackendPath) path.replace_filename(MakeSharedLibraryPath("QairtHtp"));
-    if (backend_filename == kDefaultCpuBackendPath) path.replace_filename(MakeSharedLibraryPath("QairtCpu"));
-    if (backend_filename == kDefaultGpuBackendPath) path.replace_filename(MakeSharedLibraryPath("QairtGpu"));
-    auto type = InferBackendTypeFromPath(backend_path).value_or(qnn::QnnBackendType::HTP);
+  const bool requires_qnn_backend = qnn_serializer_config || backend_filename == kDefaultIrBackendPath ||
+                                    backend_filename == kDefaultSaverBackendPath ||
+                                    backend_filename == MakeSharedLibraryPath("QnnMockSSR");
+  const auto qairt_selection = requires_qnn_backend ? std::nullopt : ResolveQairtBackend(backend_path);
+  if (qairt_selection.has_value()) {
     qairt_backend_manager_ = std::make_shared<qnn::QairtBackendManager>(
-        qnn::QairtBackendManager::Config{path.string(), type, htp_arch, soc_model});
+        qnn::QairtBackendManager::Config{qairt_selection->library_path,
+                                         qairt_selection->backend_type,
+                                         htp_arch,
+                                         soc_model});
     qairt_profiling_manager_ = std::make_shared<qnn::QairtProfilingManager>(
         qairt_backend_manager_, profiling_level, profiling_file_path, enable_framework_op_trace_);
     // Unsupported session requests are checked before creating any SDK resources.
@@ -1811,7 +1848,9 @@ OrtStatus* ORT_API_CALL QnnEp::CreateProfilerImpl(OrtEp* this_ptr,
   *profiler = nullptr;
   auto* ep = static_cast<QnnEp*>(this_ptr);
 #ifdef USE_QAIRT_API
-  if (ep->qairt_backend_manager_) return ep->CreateQairtProfiler(profiler);
+  if (ep->qairt_backend_manager_) {
+    return ep->CreateQairtProfiler(profiler);
+  }
 #endif
   if (!ep->qnn_backend_manager_) {
     return nullptr;
@@ -2307,7 +2346,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   auto post_lt_marker = gsl::finally([ep] { ep->is_post_layout_transform_ = true; });
 
 #ifdef USE_QAIRT_API
-  if (ep->qairt_backend_manager_) return ep->GetQairtCapability(graph, graph_support_info, num_nodes_in_graph);
+  if (ep->qairt_backend_manager_) {
+    return ep->GetQairtCapability(graph, graph_support_info, num_nodes_in_graph);
+  }
 #endif
 
   // Genie Pathway
@@ -3175,23 +3216,10 @@ OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
 }
 
 void QnnEp::AppendSingleSocTrace() {
-#ifdef USE_QAIRT_API
-  if (qairt_backend_manager_) {
-    if (qairt_backend_manager_->GetBackendType() == qnn::QnnBackendType::HTP) {
-      op_trace_builder_.AppendSoc(qairt_backend_manager_->GetHtpArch(), qairt_backend_manager_->GetSocModel(),
-                                  device_id_);
-    } else {
-      op_trace_builder_.AppendSoc(QNN_HTP_DEVICE_ARCH_NONE, QNN_SOC_MODEL_UNKNOWN, device_id_);
-    }
-    return;
-  }
-#endif
-
+  const auto backend_info = GetSelectedBackendInfo();
   // Single-SoC path: encode from live backend state.
-  if (qnn::IsNpuBackend(qnn_backend_manager_->GetQnnBackendType())) {
-    op_trace_builder_.AppendSoc(qnn_backend_manager_->GetHtpArch(),
-                                qnn_backend_manager_->GetSocModel(),
-                                device_id_);
+  if (qnn::IsNpuBackend(backend_info.backend_type)) {
+    op_trace_builder_.AppendSoc(backend_info.htp_arch, backend_info.soc_model, device_id_);
   } else {
     // Non-NPU backends have no arch/soc_model; pass the QNN "unknown" sentinels.
     op_trace_builder_.AppendSoc(QNN_HTP_DEVICE_ARCH_NONE, QNN_SOC_MODEL_UNKNOWN, device_id_);
@@ -3205,11 +3233,21 @@ void QnnEp::AppendMultiSocTraces() {
   }
 }
 
-qnn::QnnBackendType QnnEp::GetSelectedBackendType() const {
+QnnEp::SelectedBackendInfo QnnEp::GetSelectedBackendInfo() const {
 #ifdef USE_QAIRT_API
-  if (qairt_backend_manager_) return qairt_backend_manager_->GetBackendType();
+  if (qairt_backend_manager_) {
+    return {qairt_backend_manager_->GetBackendType(),
+            qairt_backend_manager_->GetHtpArch(),
+            qairt_backend_manager_->GetSocModel()};
+  }
 #endif
-  return qnn_backend_manager_->GetQnnBackendType();
+  return {qnn_backend_manager_->GetQnnBackendType(),
+          qnn_backend_manager_->GetHtpArch(),
+          qnn_backend_manager_->GetSocModel()};
+}
+
+qnn::QnnBackendType QnnEp::GetSelectedBackendType() const {
+  return GetSelectedBackendInfo().backend_type;
 }
 
 void QnnEp::WriteFrameworkOpTrace(const OrtGraph* primary_graph) {
@@ -3228,7 +3266,9 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 #ifdef USE_QAIRT_API
-  if (ep->qairt_backend_manager_) return ep->CompileQairtModels(graphs, fused_nodes, count, node_compute_infos, ep_context_nodes);
+  if (ep->qairt_backend_manager_) {
+    return ep->CompileQairtModels(graphs, fused_nodes, count, node_compute_infos, ep_context_nodes);
+  }
 #endif
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
@@ -3584,7 +3624,9 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
 OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const ::OrtRunOptions* run_options) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 #ifdef USE_QAIRT_API
-  if (ep->qairt_backend_manager_) return ep->OnQairtRunStart(run_options);
+  if (ep->qairt_backend_manager_) {
+    return ep->OnQairtRunStart(run_options);
+  }
 #endif
 
   if (ep->prepare_only_) {
@@ -3623,7 +3665,9 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
                                             _In_ bool /*sync_stream*/) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 #ifdef USE_QAIRT_API
-  if (ep->qairt_backend_manager_) return nullptr;
+  if (ep->qairt_backend_manager_) {
+    return nullptr;
+  }
 #endif
 
   if (ep->prepare_only_) {
@@ -3722,7 +3766,10 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                      _In_ size_t num_options) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 #ifdef USE_QAIRT_API
-  if (ep->qairt_backend_manager_) return num_options ? ep->ort_api.CreateStatus(ORT_EP_FAIL, "QAIRT dynamic options require backend-extension support.") : nullptr;
+  if (ep->qairt_backend_manager_) {
+    return num_options ? ep->ort_api.CreateStatus(ORT_EP_FAIL, "QAIRT dynamic options require backend-extension support.")
+                       : nullptr;
+  }
 #endif
 
   if (ep->prepare_only_) {
@@ -3793,7 +3840,9 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
 const char* ORT_API_CALL QnnEp::GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp* this_ptr,
                                                                       _In_ const OrtGraph* /*graph*/) noexcept {
 #ifdef USE_QAIRT_API
-  if (static_cast<QnnEp*>(this_ptr)->qairt_backend_manager_) return "";
+  if (static_cast<QnnEp*>(this_ptr)->qairt_backend_manager_) {
+    return "";
+  }
 #endif
 
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
@@ -3880,9 +3929,22 @@ OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevic
 #ifdef USE_QAIRT_API
   if (qairt_backend_manager_) {
     auto status = qairt_backend_manager_->Setup();
+    OrtDeviceEpIncompatibilityReason reason = OrtDeviceEpIncompatibility_NONE;
+    if (!status.IsOK()) {
+      const std::string_view error_message = status.GetErrorMessage();
+      if (error_message.find("Unable to load QAIRT backend") != std::string_view::npos) {
+        reason = OrtDeviceEpIncompatibility_MISSING_DEPENDENCY;
+      } else if (error_message.find("Failed to initialize QAIRT backend") != std::string_view::npos) {
+        reason = OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE;
+      } else {
+        reason = OrtDeviceEpIncompatibility_UNKNOWN;
+      }
+    }
+    const int32_t error_code = status.IsOK() ? static_cast<int32_t>(ORT_OK)
+                                             : static_cast<int32_t>(status.GetErrorCode());
     return ep_api.DeviceEpIncompatibilityDetails_SetDetails(details,
-                                                            status.IsOK() ? OrtDeviceEpIncompatibility_NONE : OrtDeviceEpIncompatibility_UNKNOWN,
-                                                            status.IsOK() ? 0 : QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED,
+                                                            reason,
+                                                            error_code,
                                                             status.IsOK() ? nullptr : status.GetErrorMessage().c_str());
   }
 #endif

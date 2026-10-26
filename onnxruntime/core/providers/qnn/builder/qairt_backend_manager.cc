@@ -13,9 +13,18 @@ QairtBackendManager::QairtBackendManager(Config config) : config_(std::move(conf
 QairtBackendManager::~QairtBackendManager() = default;
 
 Ort::Status QairtBackendManager::Setup() {
-  if (qairt_backend_) return Ort::Status();
+  if (qairt_backend_) {
+    return Ort::Status();
+  }
+
+  std::unique_ptr<qairt::Api> api;
   try {
-    auto api = std::make_unique<qairt::Api>(config_.backend_lib_path.c_str());
+    api = std::make_unique<qairt::Api>(config_.backend_lib_path.c_str());
+  } catch (const std::exception& e) {
+    return MAKE_EP_FAIL(("Unable to load QAIRT backend " + config_.backend_lib_path + ": " + e.what()).c_str());
+  }
+
+  try {
     auto log = api->makeShared<qairt::Log>(static_cast<QairtLog_CallbackFn_t>(nullptr), QAIRT_LOG_LEVEL_WARN);
     auto backend = api->makeShared<qairt::Backend>(*log);
     qairt_api_ = std::move(api);
@@ -23,7 +32,7 @@ Ort::Status QairtBackendManager::Setup() {
     qairt_backend_ = std::move(backend);
     return Ort::Status();
   } catch (const std::exception& e) {
-    return MAKE_EP_FAIL(("QAIRT backend setup failed for " + config_.backend_lib_path + ": " + e.what()).c_str());
+    return MAKE_EP_FAIL(("Failed to initialize QAIRT backend " + config_.backend_lib_path + ": " + e.what()).c_str());
   }
 }
 qairt::Api& QairtBackendManager::GetApi() { return *qairt_api_; }

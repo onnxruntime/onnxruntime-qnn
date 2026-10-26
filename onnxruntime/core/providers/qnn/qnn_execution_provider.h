@@ -112,6 +112,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                    const OrtNode** fused_nodes,
                                    size_t count);
 
+  struct SelectedBackendInfo {
+    qnn::QnnBackendType backend_type;
+    QnnHtpDevice_Arch_t htp_arch;
+    uint32_t soc_model;
+  };
+  SelectedBackendInfo GetSelectedBackendInfo() const;
   qnn::QnnBackendType GetSelectedBackendType() const;
   OrtStatus* GetOnnxGraphCapability(const OrtGraph*, OrtEpGraphSupportInfo*, size_t, bool);
 #ifdef USE_QAIRT_API
