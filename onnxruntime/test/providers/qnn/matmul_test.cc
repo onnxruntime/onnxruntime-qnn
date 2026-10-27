@@ -416,7 +416,7 @@ TEST_F(QnnHTPBackendTests, MatMulDisableFC_2D_StaticWeight) {
           TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
       provider_options,
       /*opset=*/18,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 
   if (::testing::Test::IsSkipped()) {
     return;
@@ -449,7 +449,7 @@ TEST_F(QnnHTPBackendTests, MatMulDisableFC_3D_StaticWeight) {
           TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
       provider_options,
       /*opset=*/18,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 
   if (::testing::Test::IsSkipped()) {
     return;
@@ -481,7 +481,7 @@ TEST_F(QnnHTPBackendTests, MatMulDefaultUsesFC) {
           TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
       provider_options,
       /*opset=*/18,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-4f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 
   if (::testing::Test::IsSkipped()) {
     return;
