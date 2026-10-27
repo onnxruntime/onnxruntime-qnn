@@ -12,13 +12,9 @@
 
 #include "QnnInterface.h"
 
+#include "core/providers/qnn/builder/backend_manager_interface.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/graph_emitter_interface.h"
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
-#include "core/providers/qnn/builder/qnn_graph_emitter.h"
-#ifdef USE_QAIRT_API
-#include "core/providers/qnn/builder/qairt_backend_manager.h"
-#endif
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -29,7 +25,7 @@ namespace qnn {
 QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
                                  const ApiPtrs& api_ptrs,
                                  const Ort::Logger& logger,
-                                 const QnnBackendManager& qnn_backend_manager,
+                                 IBackendManager& backend_manager,
                                  const GraphInputOutputInfo& graph_inputs,
                                  const GraphInputOutputInfo& graph_outputs,
                                  const ModelSettings& model_settings,
@@ -39,7 +35,7 @@ QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
                                  IGraphEmitter* graph_emitter)
     : ort_graph_(ort_graph),
       logger_(logger),
-      qnn_backend_manager_(&qnn_backend_manager),
+      backend_manager_(&backend_manager),
       graph_emitter_(graph_emitter),
       graph_inputs_(graph_inputs),
       graph_outputs_(graph_outputs),
@@ -49,39 +45,20 @@ QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
       op_trace_collector_(op_trace_collector),
       is_post_layout_transform_(is_post_layout_transform) {
   if (graph_emitter_ == nullptr) {
-    owned_graph_emitter_ = std::make_unique<QnnGraphEmitter>(qnn_backend_manager);
+    owned_graph_emitter_ = backend_manager.CreateGraphEmitter();
     graph_emitter_ = owned_graph_emitter_.get();
   }
-  qnn_graph_emitter_ = static_cast<QnnGraphEmitter*>(graph_emitter_);
-  // Invariant: validator interface and handle must both be set or both be null.
-  // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
-  assert((qnn_backend_manager_->GetQnnValidatorBackendHandle() == nullptr) ==
-         (qnn_backend_manager_->GetQnnValidatorInterface().backendValidateOpConfig == nullptr));
+  assert(graph_emitter_ != nullptr);
 }
 
 QnnModelWrapper::~QnnModelWrapper() = default;
 
-#ifdef USE_QAIRT_API
-QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph, const ApiPtrs& api_ptrs,
-                                 const Ort::Logger& logger, QairtBackendManager& backend, const GraphInputOutputInfo& graph_inputs,
-                                 const GraphInputOutputInfo& graph_outputs, const ModelSettings& model_settings,
-                                 std::unordered_map<std::string, std::string>* tensor_name_overrides,
-                                 OpTraceCollector* op_trace_collector, bool is_post_layout_transform, IGraphEmitter* graph_emitter)
-    : ort_graph_(ort_graph), logger_(logger), qairt_backend_manager_(&backend), graph_emitter_(graph_emitter), graph_inputs_(graph_inputs), graph_outputs_(graph_outputs), model_settings_(model_settings), api_ptrs_(api_ptrs), tensor_name_overrides_(tensor_name_overrides), op_trace_collector_(op_trace_collector), is_post_layout_transform_(is_post_layout_transform) {}
-#endif
-
 QnnHtpDevice_Arch_t QnnModelWrapper::GetHtpArch() const {
-#ifdef USE_QAIRT_API
-  if (qairt_backend_manager_) return qairt_backend_manager_->GetHtpArch();
-#endif
-  return qnn_backend_manager_->GetHtpArch();
+  return backend_manager_->GetHtpArch();
 }
 
 QnnBackendType QnnModelWrapper::GetQnnBackendType() const {
-#ifdef USE_QAIRT_API
-  if (qairt_backend_manager_) return qairt_backend_manager_->GetBackendType();
-#endif
-  return qnn_backend_manager_->GetQnnBackendType();
+  return backend_manager_->GetBackendType();
 }
 
 bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
@@ -92,19 +69,17 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Graph" + graph_name + " already initialized.").c_str());
     return false;
   }
-  if (qnn_graph_emitter_ != nullptr) {
-    qnn_graph_emitter_->SetCreateInfo(context, graph_configs);
+  auto status = graph_emitter_->InitializeGraph(context, graph_configs);
+  if (!status.IsOK()) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
+    return false;
   }
-  auto status = graph_emitter_->CreateGraph(graph_name.c_str());
+  status = graph_emitter_->CreateGraph(graph_name.c_str());
   if (!status.IsOK()) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
     return false;
   }
   graph_name_ = graph_name;
-  if (qnn_graph_emitter_ != nullptr) {
-    graph_ = qnn_graph_emitter_->Graph();
-    graph_context_ = qnn_graph_emitter_->Context();
-  }
   return true;
 }
 
@@ -243,7 +218,6 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
       }
       std::string error_string;
       const bool rt = it->second.CreateQnnGraphTensor(*graph_emitter_,
-                                                      graph_,
                                                       qnn_node_name,
                                                       qnn_tensor_id_map_,
                                                       error_string);
@@ -274,7 +248,6 @@ bool QnnModelWrapper::CreateQnnParamTensors(const std::string& qnn_node_name,
     if (!do_op_validation) {
       std::string error_string;
       const bool rt = it->second.CreateQnnGraphParam(*graph_emitter_,
-                                                     graph_,
                                                      qnn_node_name,
                                                      qnn_tensor_id_map_,
                                                      error_string);
@@ -707,7 +680,6 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
 
       std::string error;
       const bool ok = it->second.CreateQnnGraphTensor(*graph_emitter_,
-                                                      graph_,
                                                       io_type,
                                                       qnn_tensor_id_map_,
                                                       error);
@@ -778,7 +750,7 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     std::string error_msg;
-    const bool rt = op_config_wrapper.CreateQnnGraphOp(*graph_emitter_, graph_, error_msg);
+    const bool rt = op_config_wrapper.CreateQnnGraphOp(*graph_emitter_, error_msg);
     if (!rt) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_msg.c_str());
       return false;

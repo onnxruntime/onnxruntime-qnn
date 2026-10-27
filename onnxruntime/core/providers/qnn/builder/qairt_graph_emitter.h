@@ -26,6 +26,8 @@ class QairtGraphEmitter final : public IGraphEmitter {
   explicit QairtGraphEmitter(std::shared_ptr<QairtBackendManager> manager);
   ~QairtGraphEmitter() override = default;
   Ort::Status RetrieveGraph(std::shared_ptr<qairt::Context> context, const std::string& name);
+  Ort::Status InitializeGraph(Qnn_ContextHandle_t context,
+                              const QnnGraph_Config_t** graph_configs) override;
   Ort::Status CreateGraph(const char* name) override;
   Ort::Status CreateTensor(Qnn_Tensor_t& tensor) override;
   Ort::Status AddNode(const Qnn_OpConfig_t& op) override;

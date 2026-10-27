@@ -10,7 +10,7 @@
 #include <fstream>
 namespace onnxruntime::qnn {
 Ort::Status QnnModel::LoadQairtGraph(QairtBackendManager::CachedGraph&& graph) {
-  RETURN_IF_ERROR(qairt_graph_->RetrieveGraph(std::move(graph.context), graph.info->Name()));
+  RETURN_IF_ERROR(QairtGraph().RetrieveGraph(std::move(graph.context), graph.info->Name()));
   graph_info_ = std::move(graph.info);
   return Ort::Status();
 }
@@ -56,7 +56,7 @@ Ort::Status QnnModel::ComposeQairtGraph(const QnnModelContext& context) {
                                                       *context.model_settings,
                                                       context.tensor_name_overrides,
                                                       trace_collector.get(),
-                                                      /*is_post_layout_transform=*/true, qairt_graph_.get());
+                                                      /*is_post_layout_transform=*/true, graph_emitter_.get());
 
   QairtProfilingManager::Scope scope;
   QnnEpProfiler* profiler = nullptr;
@@ -132,7 +132,7 @@ Ort::Status QnnModel::FinalizeQairtGraph(const Ort::Logger&) {
 #endif
   RETURN_IF_ERROR(qairt_profiler_->Begin(scope, graph_info_->Name(), OrtProfilingOperation::FINALIZE, profiler));
   const QairtGraphProfile graph_profile(scope.profile);
-  RETURN_IF_ERROR(qairt_graph_->Finalize(&graph_profile));
+  RETURN_IF_ERROR(graph_emitter_->Finalize(&graph_profile));
   return qairt_profiler_->Complete(scope);
 }
 Ort::Status QnnModel::ExecuteQairtGraph(OrtKernelContext* context, const Ort::Logger& logger, QnnEpProfiler* profiler) {
@@ -258,9 +258,9 @@ Ort::Status QnnModel::ExecuteQairtGraph(OrtKernelContext* context, const Ort::Lo
   RETURN_IF_ERROR(qairt_profiler_->Begin(scope, graph_info_->Name(), OrtProfilingOperation::EXECUTE, profiler));
   const QairtGraphProfile graph_profile(scope.profile);
   GraphExecutionResult execution_result;
-  RETURN_IF_ERROR(qairt_graph_->Execute(qnn_inputs.data(), static_cast<uint32_t>(qnn_inputs.size()),
-                                        qnn_outputs.data(), static_cast<uint32_t>(qnn_outputs.size()),
-                                        &graph_profile, execution_result));
+  RETURN_IF_ERROR(graph_emitter_->Execute(qnn_inputs.data(), static_cast<uint32_t>(qnn_inputs.size()),
+                                          qnn_outputs.data(), static_cast<uint32_t>(qnn_outputs.size()),
+                                          &graph_profile, execution_result));
   return qairt_profiler_->Complete(scope);
 }
 }  // namespace onnxruntime::qnn

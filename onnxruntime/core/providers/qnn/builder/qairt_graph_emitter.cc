@@ -24,6 +24,16 @@ namespace qnn {
 QairtGraphEmitter::QairtGraphEmitter(std::shared_ptr<QairtBackendManager> manager)
     : manager_(std::move(manager)) {}
 
+Ort::Status QairtGraphEmitter::InitializeGraph(Qnn_ContextHandle_t context,
+                                               const QnnGraph_Config_t** graph_configs) {
+  ORT_UNUSED_PARAMETER(context);
+  ORT_UNUSED_PARAMETER(graph_configs);
+  qairt_context_ = manager_->GetContext();
+  qairt_graph_.reset();
+  registered_tensors_.clear();
+  return Ort::Status();
+}
+
 Ort::Status QairtGraphEmitter::RetrieveGraph(std::shared_ptr<qairt::Context> context, const std::string& name) {
   try {
     qairt_graph_ = context->retrieveGraph(name.c_str());
@@ -37,7 +47,9 @@ Ort::Status QairtGraphEmitter::RetrieveGraph(std::shared_ptr<qairt::Context> con
 Ort::Status QairtGraphEmitter::CreateGraph(const char* name) {
   try {
     RETURN_IF(qairt_graph_, "A QAIRT emitter already owns a graph.");
-    qairt_context_ = manager_->GetContext();
+    if (!qairt_context_) {
+      qairt_context_ = manager_->GetContext();
+    }
     auto config = manager_->GetApi().make<qairt::GraphConfiguration>();
     qairt_graph_ = std::make_shared<qairt::Graph>(qairt_context_->createGraph(name, config));
     return Ort::Status();

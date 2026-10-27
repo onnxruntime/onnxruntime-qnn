@@ -292,7 +292,6 @@ bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
 
 // IGraphEmitter overload — routes through the abstract emitter interface.
 bool CreateTensorInQnnGraph(IGraphEmitter& emitter,
-                            const Qnn_GraphHandle_t& graph,
                             const std::string& node_name,
                             const std::string& tensor_name,
                             Qnn_Tensor_t& qnn_tensor,
@@ -495,11 +494,10 @@ class QnnTensorWrapper {
 
   // IGraphEmitter overload.
   bool CreateQnnGraphTensor(IGraphEmitter& emitter,
-                            const Qnn_GraphHandle_t& graph,
                             const std::string& node_name,
                             std::unordered_map<std::string, uint32_t>& tensors_created_table,
                             std::string& error_msg) {
-    return CreateTensorInQnnGraph(emitter, graph, node_name, GetResolvedTensorName(),
+    return CreateTensorInQnnGraph(emitter, node_name, GetResolvedTensorName(),
                                   qnn_tensor_, tensors_created_table, error_msg);
   }
 
@@ -622,7 +620,6 @@ class QnnParamWrapper {
 
   // IGraphEmitter overload.
   bool CreateQnnGraphParam(IGraphEmitter& emitter,
-                           const Qnn_GraphHandle_t& graph,
                            const std::string& node_name,
                            std::unordered_map<std::string, uint32_t>& tensors_created_table,
                            std::string& error_msg);
@@ -723,7 +720,6 @@ class QnnOpConfigWrapper {
 
   // IGraphEmitter overload.
   bool QnnGraphOpValidation(IGraphEmitter& emitter,
-                            const Qnn_BackendHandle_t& backend_handle,
                             std::string& error_msg);
 
   bool CreateQnnGraphOp(const QNN_INTERFACE_VER_TYPE& qnn_interface,
@@ -732,7 +728,6 @@ class QnnOpConfigWrapper {
 
   // IGraphEmitter overload.
   bool CreateQnnGraphOp(IGraphEmitter& emitter,
-                        const Qnn_GraphHandle_t& graph,
                         std::string& error_msg);
 
  private:

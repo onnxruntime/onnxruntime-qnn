@@ -31,7 +31,8 @@ class QnnGraphEmitter final : public IGraphEmitter {
   explicit QnnGraphEmitter(const QnnBackendManager& manager);
   ~QnnGraphEmitter() override = default;
 
-  void SetCreateInfo(Qnn_ContextHandle_t context, const QnnGraph_Config_t** graph_configs);
+  Ort::Status InitializeGraph(Qnn_ContextHandle_t context,
+                              const QnnGraph_Config_t** graph_configs) override;
 
   Ort::Status CreateGraph(const char* name) override;
   Ort::Status CreateTensor(Qnn_Tensor_t& tensor) override;

@@ -7,6 +7,7 @@
 #include "HTP/QnnHtpDevice.h"
 #include <string>
 #include <vector>
+#include "core/providers/qnn/builder/backend_manager_interface.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 
 namespace qairt {
@@ -19,7 +20,8 @@ class Profile;
 namespace onnxruntime::qnn {
 
 // Owns only QAIRT C++ objects. No QNN function table or C backend handles.
-class QairtBackendManager final {
+class QairtBackendManager final : public IBackendManager,
+                                  public std::enable_shared_from_this<QairtBackendManager> {
  public:
   struct Config {
     std::string backend_lib_path;
@@ -45,9 +47,11 @@ class QairtBackendManager final {
   qairt::Api& GetApi();
   qairt::Backend& GetBackend();
   std::shared_ptr<qairt::Context> GetContext();
-  QnnBackendType GetBackendType() const { return config_.backend_type; }
-  QnnHtpDevice_Arch_t GetHtpArch() const { return config_.htp_arch; }
-  uint32_t GetSocModel() const { return config_.soc_model; }
+  BackendRuntimeKind GetRuntimeKind() const override { return BackendRuntimeKind::Qairt; }
+  QnnBackendType GetBackendType() const override { return config_.backend_type; }
+  QnnHtpDevice_Arch_t GetHtpArch() const override { return config_.htp_arch; }
+  uint32_t GetSocModel() const override { return config_.soc_model; }
+  std::unique_ptr<IGraphEmitter> CreateGraphEmitter() override;
 
  private:
   Config config_;

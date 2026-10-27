@@ -630,7 +630,6 @@ bool QnnOpConfigWrapper::CreateQnnGraphOp(const QNN_INTERFACE_VER_TYPE& qnn_inte
 
 // IGraphEmitter overload: routes tensor creation through the abstract emitter.
 bool CreateTensorInQnnGraph(IGraphEmitter& emitter,
-                            const Qnn_GraphHandle_t& /*graph*/,
                             const std::string& node_name,
                             const std::string& tensor_name,
                             Qnn_Tensor_t& qnn_tensor,
@@ -689,7 +688,6 @@ bool CreateTensorInQnnGraph(IGraphEmitter& emitter,
 
 // IGraphEmitter overload: routes op validation through the abstract emitter.
 bool QnnOpConfigWrapper::QnnGraphOpValidation(IGraphEmitter& emitter,
-                                              const Qnn_BackendHandle_t& /*backend_handle*/,
                                               std::string& error_msg) {
   Ort::Status s = emitter.ValidateOp(op_config_);
   if (!s.IsOK()) {
@@ -704,7 +702,6 @@ bool QnnOpConfigWrapper::QnnGraphOpValidation(IGraphEmitter& emitter,
 
 // IGraphEmitter overload: routes graphAddNode through the abstract emitter.
 bool QnnOpConfigWrapper::CreateQnnGraphOp(IGraphEmitter& emitter,
-                                          const Qnn_GraphHandle_t& /*graph*/,
                                           std::string& error_msg) {
   Ort::Status s = emitter.AddNode(op_config_);
   if (!s.IsOK()) {
@@ -719,14 +716,13 @@ bool QnnOpConfigWrapper::CreateQnnGraphOp(IGraphEmitter& emitter,
 
 // IGraphEmitter overload for QnnParamWrapper::CreateQnnGraphParam.
 bool QnnParamWrapper::CreateQnnGraphParam(IGraphEmitter& emitter,
-                                          const Qnn_GraphHandle_t& graph,
                                           const std::string& node_name,
                                           std::unordered_map<std::string, uint32_t>& tensors_created_table,
                                           std::string& error_msg) {
   std::stringstream ss;
   switch (qnn_param_.paramType) {
     case QNN_PARAMTYPE_TENSOR: {
-      return CreateTensorInQnnGraph(emitter, graph, node_name, tensor_name_,
+      return CreateTensorInQnnGraph(emitter, node_name, tensor_name_,
                                     qnn_param_.tensorParam, tensors_created_table, error_msg);
     }
     case QNN_PARAMTYPE_SCALAR: {

@@ -3,6 +3,7 @@
 // Licensed under the MIT License.
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/qnn_graph_emitter.h"
 
 #include <filesystem>
 #include <fstream>
@@ -51,6 +52,10 @@ static_assert(QNN_API_VERSION_MAJOR > 2 ||
 
 namespace onnxruntime {
 namespace qnn {
+
+std::unique_ptr<IGraphEmitter> QnnBackendManager::CreateGraphEmitter() {
+  return std::make_unique<QnnGraphEmitter>(*this);
+}
 
 void QnnBackendManager::InitializeProfilingManager(const QnnBackendManagerConfig& config) {
   profiling_manager_ = std::make_unique<QnnBackendProfilingManager>(

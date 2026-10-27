@@ -57,16 +57,22 @@ class QnnModel {
   QnnModel(QnnBackendManager* qnn_backend_manager,
            const ApiPtrs& api_ptrs)
       : qnn_backend_manager_(qnn_backend_manager),
-        qnn_graph_(std::make_unique<QnnGraphEmitter>(*qnn_backend_manager)),
+        backend_manager_(qnn_backend_manager),
+        graph_emitter_(qnn_backend_manager->CreateGraphEmitter()),
         api_ptrs_(api_ptrs) {
-    qnn_backend_type_ = qnn_backend_manager_->GetQnnBackendType();
+    qnn_backend_type_ = backend_manager_->GetBackendType();
   }
 
 #ifdef USE_QAIRT_API
   Ort::Status LoadQairtGraph(QairtBackendManager::CachedGraph&& graph);
   QnnModel(std::shared_ptr<QairtBackendManager> backend, std::shared_ptr<QairtProfilingManager> profiler,
            const ApiPtrs& api_ptrs)
-      : qnn_backend_type_(backend->GetBackendType()), qairt_backend_manager_(std::move(backend)), qairt_profiler_(std::move(profiler)), qairt_graph_(std::make_unique<QairtGraphEmitter>(qairt_backend_manager_)), api_ptrs_(api_ptrs) {}
+      : qnn_backend_type_(backend->GetBackendType()),
+        qairt_backend_manager_(std::move(backend)),
+        qairt_profiler_(std::move(profiler)),
+        backend_manager_(qairt_backend_manager_.get()),
+        graph_emitter_(qairt_backend_manager_->CreateGraphEmitter()),
+        api_ptrs_(api_ptrs) {}
 #endif
 
   ~QnnModel() = default;
@@ -224,9 +230,13 @@ class QnnModel {
   }
 
  private:
+  QnnGraphEmitter& QnnGraph() { return static_cast<QnnGraphEmitter&>(*graph_emitter_); }
+#ifdef USE_QAIRT_API
+  QairtGraphEmitter& QairtGraph() { return static_cast<QairtGraphEmitter&>(*graph_emitter_); }
+#endif
+
   std::unique_ptr<GraphInfo> graph_info_;
   QnnBackendManager* qnn_backend_manager_ = nullptr;
-  std::unique_ptr<QnnGraphEmitter> qnn_graph_;
   GraphInputOutputInfo graph_inputs_;
   GraphInputOutputInfo graph_outputs_;
   std::vector<QnnTensorInfo> qnn_input_infos_;
@@ -239,9 +249,10 @@ class QnnModel {
   Ort::Status ExecuteQairtGraph(OrtKernelContext* context, const Ort::Logger& logger, QnnEpProfiler* profiler);
   std::shared_ptr<QairtBackendManager> qairt_backend_manager_;
   std::shared_ptr<QairtProfilingManager> qairt_profiler_;
-  std::unique_ptr<QairtGraphEmitter> qairt_graph_;
 
 #endif
+  IBackendManager* backend_manager_ = nullptr;
+  std::unique_ptr<IGraphEmitter> graph_emitter_;
   // Mutex acquired during graph execution to support multi-threaded inference of a single session.
   std::mutex graph_exec_mutex_;
   const ApiPtrs api_ptrs_;

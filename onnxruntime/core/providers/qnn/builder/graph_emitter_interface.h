@@ -4,6 +4,7 @@
 
 #include <cstdint>
 
+#include "QnnGraph.h"
 #include "QnnTypes.h"
 #include "core/providers/qnn/ort_api.h"
 
@@ -28,6 +29,8 @@ class IGraphEmitter {
  public:
   virtual ~IGraphEmitter() = default;
 
+  virtual Ort::Status InitializeGraph(Qnn_ContextHandle_t context,
+                                      const QnnGraph_Config_t** graph_configs) = 0;
   virtual Ort::Status CreateGraph(const char* name) = 0;
   virtual Ort::Status CreateTensor(Qnn_Tensor_t& tensor) = 0;
   virtual Ort::Status AddNode(const Qnn_OpConfig_t& op) = 0;

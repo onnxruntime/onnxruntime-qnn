@@ -1602,6 +1602,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                          qairt_selection->backend_type,
                                          htp_arch,
                                          soc_model});
+    backend_manager_ = qairt_backend_manager_;
     qairt_profiling_manager_ = std::make_shared<qnn::QairtProfilingManager>(
         qairt_backend_manager_, profiling_level, profiling_file_path, enable_framework_op_trace_);
     // Unsupported session requests are checked before creating any SDK resources.
@@ -1641,6 +1642,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                        enable_htp_cross_device_prepare},
           static_cast<const ApiPtrs&>(*this), logger_);
     }
+    backend_manager_ = qnn_backend_manager_;
 
     // Initialize compatibility manager with backend manager.
     qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
@@ -1953,33 +1955,16 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   qnn::GraphInputOutputInfo model_outputs;
   init_input_output_info(model_outputs.names, model_outputs.indices, graph_outputs);
 
-  std::unique_ptr<qnn::QnnModelWrapper> wrapper;
-#ifdef USE_QAIRT_API
-  if (qairt_backend_manager_) {
-    wrapper = std::make_unique<qnn::QnnModelWrapper>(*graph,
-                                                     static_cast<const ApiPtrs&>(*this),
-                                                     logger_,
-                                                     *qairt_backend_manager_,
-                                                     model_inputs,
-                                                     model_outputs,
-                                                     model_settings_,
-                                                     &tensor_name_overrides_,
-                                                     /*op_trace_collector=*/nullptr,
-                                                     /*is_post_layout_transform=*/is_post_layout_transform_);
-  } else
-#endif
-  {
-    wrapper = std::make_unique<qnn::QnnModelWrapper>(*graph,
-                                                     static_cast<const ApiPtrs&>(*this),
-                                                     logger_,
-                                                     *qnn_backend_manager_,
-                                                     model_inputs,
-                                                     model_outputs,
-                                                     model_settings_,
-                                                     &tensor_name_overrides_,
-                                                     /*op_trace_collector=*/nullptr,
-                                                     /*is_post_layout_transform=*/is_post_layout_transform_);
-  }
+  auto wrapper = std::make_unique<qnn::QnnModelWrapper>(*graph,
+                                                        static_cast<const ApiPtrs&>(*this),
+                                                        logger_,
+                                                        *backend_manager_,
+                                                        model_inputs,
+                                                        model_outputs,
+                                                        model_settings_,
+                                                        &tensor_name_overrides_,
+                                                        /*op_trace_collector=*/nullptr,
+                                                        /*is_post_layout_transform=*/is_post_layout_transform_);
   auto& qnn_model_wrapper = *wrapper;
 
   std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
@@ -3234,16 +3219,9 @@ void QnnEp::AppendMultiSocTraces() {
 }
 
 QnnEp::SelectedBackendInfo QnnEp::GetSelectedBackendInfo() const {
-#ifdef USE_QAIRT_API
-  if (qairt_backend_manager_) {
-    return {qairt_backend_manager_->GetBackendType(),
-            qairt_backend_manager_->GetHtpArch(),
-            qairt_backend_manager_->GetSocModel()};
-  }
-#endif
-  return {qnn_backend_manager_->GetQnnBackendType(),
-          qnn_backend_manager_->GetHtpArch(),
-          qnn_backend_manager_->GetSocModel()};
+  return {backend_manager_->GetBackendType(),
+          backend_manager_->GetHtpArch(),
+          backend_manager_->GetSocModel()};
 }
 
 qnn::QnnBackendType QnnEp::GetSelectedBackendType() const {

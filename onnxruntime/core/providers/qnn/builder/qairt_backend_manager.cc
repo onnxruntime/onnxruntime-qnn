@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 #ifdef USE_QAIRT_API
 #include "core/providers/qnn/builder/qairt_backend_manager.h"
+#include "core/providers/qnn/builder/qairt_graph_emitter.h"
 #include "core/providers/qnn/builder/qairt_type_convert.h"
 #include "QairtCpp/QairtApi.hpp"
 #include "QairtCpp/QairtBackend.hpp"
@@ -11,6 +12,10 @@
 namespace onnxruntime::qnn {
 QairtBackendManager::QairtBackendManager(Config config) : config_(std::move(config)) {}
 QairtBackendManager::~QairtBackendManager() = default;
+
+std::unique_ptr<IGraphEmitter> QairtBackendManager::CreateGraphEmitter() {
+  return std::make_unique<QairtGraphEmitter>(shared_from_this());
+}
 
 Ort::Status QairtBackendManager::Setup() {
   if (qairt_backend_) {

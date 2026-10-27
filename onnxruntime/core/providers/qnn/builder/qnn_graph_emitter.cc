@@ -10,12 +10,14 @@ namespace onnxruntime::qnn {
 
 QnnGraphEmitter::QnnGraphEmitter(const QnnBackendManager& manager) : manager_(manager) {}
 
-void QnnGraphEmitter::SetCreateInfo(Qnn_ContextHandle_t context,
-                                    const QnnGraph_Config_t** graph_configs) {
+Ort::Status QnnGraphEmitter::InitializeGraph(Qnn_ContextHandle_t context,
+                                             const QnnGraph_Config_t** graph_configs) {
+  RETURN_IF(context == nullptr, "Invalid QNN context.");
   context_ = context;
   graph_configs_ = graph_configs;
   graph_ = nullptr;
   name_.clear();
+  return Ort::Status();
 }
 
 Ort::Status QnnGraphEmitter::CreateGraph(const char* name) {
@@ -107,6 +109,8 @@ Ort::Status QnnGraphEmitter::Execute(Qnn_Tensor_t* inputs, uint32_t num_inputs,
 Ort::Status QnnGraphEmitter::SetConfig(const QnnGraph_Config_t** graph_configs) {
   RETURN_IF(graph_ == nullptr, "QNN graph is not initialized.");
   const auto& qnn_interface = manager_.GetQnnInterface();
+  RETURN_IF(qnn_interface.graphSetConfig == nullptr,
+            "Invalid function pointer for graphSetConfig; cannot apply runtime graph configs.");
   const auto status = qnn_interface.graphSetConfig(graph_, graph_configs);
   RETURN_IF(status != QNN_GRAPH_NO_ERROR,
             ("Failed to set QNN graph configuration. " + utils::FormatQnnError(qnn_interface, status)).c_str());

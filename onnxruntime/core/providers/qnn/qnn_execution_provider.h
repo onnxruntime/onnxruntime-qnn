@@ -38,6 +38,7 @@ class QnnEpFactory;
 
 // Forward declaration for QnnBackendManager, GenieBackendManager
 namespace qnn {
+class IBackendManager;
 class QnnBackendManager;
 class GenieBackendManager;
 #ifdef USE_QAIRT_API
@@ -266,6 +267,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::unordered_map<uint64_t, int> model_metadef_id_;
 
   // QNN-related.
+  std::shared_ptr<qnn::IBackendManager> backend_manager_;
   std::shared_ptr<qnn::QnnBackendManager> qnn_backend_manager_;
 #ifdef USE_QAIRT_API
   std::shared_ptr<qnn::QairtBackendManager> qairt_backend_manager_;
