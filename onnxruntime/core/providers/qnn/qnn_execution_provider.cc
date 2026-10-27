@@ -3355,6 +3355,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                 "prepare_only mode: context saved. Releasing QNN device resources.");
     ep->qnn_models_.clear();
+    // Both pointers share ownership of the selected QNN manager.
+    ep->backend_manager_.reset();
     ep->qnn_backend_manager_.reset();
   }
 

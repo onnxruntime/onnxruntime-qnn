@@ -28,15 +28,23 @@ Ort::Status QairtGraphEmitter::InitializeGraph(Qnn_ContextHandle_t context,
                                                const QnnGraph_Config_t** graph_configs) {
   ORT_UNUSED_PARAMETER(context);
   ORT_UNUSED_PARAMETER(graph_configs);
-  qairt_context_ = manager_->GetContext();
-  qairt_graph_.reset();
-  registered_tensors_.clear();
-  return Ort::Status();
+  try {
+    qairt_context_ = manager_->GetContext();
+    RETURN_IF(qairt_context_ == nullptr, "QAIRT context is not initialized.");
+    qairt_graph_.reset();
+    registered_tensors_.clear();
+    return Ort::Status();
+  } catch (const std::exception& e) {
+    return MAKE_EP_FAIL(e.what());
+  }
 }
 
 Ort::Status QairtGraphEmitter::RetrieveGraph(std::shared_ptr<qairt::Context> context, const std::string& name) {
+  RETURN_IF(context == nullptr, "QAIRT context is not initialized.");
+  RETURN_IF(name.empty(), "Empty QAIRT graph name.");
   try {
     qairt_graph_ = context->retrieveGraph(name.c_str());
+    RETURN_IF(qairt_graph_ == nullptr, ("Failed to retrieve QAIRT graph: " + name).c_str());
     qairt_context_ = std::move(context);
     return Ort::Status();
   } catch (const std::exception& e) {
@@ -45,11 +53,13 @@ Ort::Status QairtGraphEmitter::RetrieveGraph(std::shared_ptr<qairt::Context> con
 }
 
 Ort::Status QairtGraphEmitter::CreateGraph(const char* name) {
+  RETURN_IF(name == nullptr || name[0] == '\0', "Empty QAIRT graph name.");
   try {
     RETURN_IF(qairt_graph_, "A QAIRT emitter already owns a graph.");
     if (!qairt_context_) {
       qairt_context_ = manager_->GetContext();
     }
+    RETURN_IF(qairt_context_ == nullptr, "QAIRT context is not initialized.");
     auto config = manager_->GetApi().make<qairt::GraphConfiguration>();
     qairt_graph_ = std::make_shared<qairt::Graph>(qairt_context_->createGraph(name, config));
     return Ort::Status();
@@ -59,6 +69,7 @@ Ort::Status QairtGraphEmitter::CreateGraph(const char* name) {
 }
 
 Ort::Status QairtGraphEmitter::CreateTensor(Qnn_Tensor_t& tensor) {
+  RETURN_IF(qairt_graph_ == nullptr, "QAIRT graph is not initialized.");
   try {
     qairt::Tensor qairt_tensor;
     QAIRT_RETURN_IF_ERROR(qairt_convert::FromQnnTensor(tensor, manager_->GetApi(), qairt_tensor));
@@ -83,6 +94,7 @@ Ort::Status QairtGraphEmitter::CreateTensor(Qnn_Tensor_t& tensor) {
 }
 
 Ort::Status QairtGraphEmitter::AddNode(const Qnn_OpConfig_t& op) {
+  RETURN_IF(qairt_graph_ == nullptr, "QAIRT graph is not initialized.");
   try {
     qairt::OpConfig qairt_op = manager_->GetApi().make<qairt::OpConfig>();
     const auto& v1 = op.v1;
@@ -169,6 +181,7 @@ Ort::Status QairtGraphEmitter::ValidateOp(const Qnn_OpConfig_t& op) {
 }
 
 Ort::Status QairtGraphEmitter::Finalize(const IGraphProfile* profile) {
+  RETURN_IF(qairt_graph_ == nullptr, "QAIRT graph is not initialized.");
   try {
     RETURN_IF(profile != nullptr && profile->RuntimeKind() != GraphRuntimeKind::Qairt,
               "QAIRT graph received a profile for a different runtime.");
@@ -190,6 +203,7 @@ Ort::Status QairtGraphEmitter::Execute(Qnn_Tensor_t* inputs, uint32_t n_inputs,
                                        Qnn_Tensor_t* outputs, uint32_t n_outputs,
                                        const IGraphProfile* profile,
                                        GraphExecutionResult& result) {
+  RETURN_IF(qairt_graph_ == nullptr, "QAIRT graph is not initialized.");
   try {
     ORT_UNUSED_PARAMETER(result);
     RETURN_IF(profile != nullptr && profile->RuntimeKind() != GraphRuntimeKind::Qairt,
