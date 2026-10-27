@@ -156,12 +156,18 @@ Ort::Status QairtGraphEmitter::ValidateOp(const Qnn_OpConfig_t& op) {
   return manager_->ValidateOp(op);
 }
 
-Ort::Status QairtGraphEmitter::Finalize(qairt::Profile* profile) {
+Ort::Status QairtGraphEmitter::Finalize(const IGraphProfile* profile) {
   try {
-    if (profile)
-      qairt_graph_->finalize(*profile);
-    else
+    RETURN_IF(profile != nullptr && profile->RuntimeKind() != GraphRuntimeKind::Qairt,
+              "QAIRT graph received a profile for a different runtime.");
+    const auto qairt_profile = profile == nullptr
+                                   ? std::shared_ptr<qairt::Profile>{}
+                                   : static_cast<const QairtGraphProfile*>(profile)->Profile();
+    if (qairt_profile) {
+      qairt_graph_->finalize(*qairt_profile);
+    } else {
       qairt_graph_->finalize();
+    }
     return Ort::Status();
   } catch (const std::exception& e) {
     return MAKE_EP_FAIL(e.what());
@@ -170,8 +176,15 @@ Ort::Status QairtGraphEmitter::Finalize(qairt::Profile* profile) {
 
 Ort::Status QairtGraphEmitter::Execute(Qnn_Tensor_t* inputs, uint32_t n_inputs,
                                        Qnn_Tensor_t* outputs, uint32_t n_outputs,
-                                       std::shared_ptr<qairt::Profile> profile) {
+                                       const IGraphProfile* profile,
+                                       GraphExecutionResult& result) {
   try {
+    ORT_UNUSED_PARAMETER(result);
+    RETURN_IF(profile != nullptr && profile->RuntimeKind() != GraphRuntimeKind::Qairt,
+              "QAIRT graph received a profile for a different runtime.");
+    const auto qairt_profile = profile == nullptr
+                                   ? std::shared_ptr<qairt::Profile>{}
+                                   : static_cast<const QairtGraphProfile*>(profile)->Profile();
     std::vector<qairt::Tensor> in(n_inputs), out(n_outputs);
     for (uint32_t i = 0; i < n_inputs; ++i) {
       RETURN_IF_ERROR(qairt_convert::FromQnnTensor(inputs[i], manager_->GetApi(), in[i]));
@@ -179,7 +192,7 @@ Ort::Status QairtGraphEmitter::Execute(Qnn_Tensor_t* inputs, uint32_t n_inputs,
     for (uint32_t i = 0; i < n_outputs; ++i) {
       RETURN_IF_ERROR(qairt_convert::FromQnnTensor(outputs[i], manager_->GetApi(), out[i]));
     }
-    qairt_graph_->execute(in, out, profile);
+    qairt_graph_->execute(in, out, qairt_profile);
     for (uint32_t i = 0; i < n_outputs; ++i) {
       SetQnnTensorClientBufSize(outputs[i], out[i].getClientBuffer().getDataSize());
     }

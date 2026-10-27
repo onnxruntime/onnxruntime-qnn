@@ -407,7 +407,8 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
       ProfilingMethodType::FINALIZE,
       profiling_scope));
 
-  Ort::Status finalize_status = qnn_graph_->Finalize(profiling_scope.Handle());
+  const QnnGraphProfile graph_profile(profiling_scope.Handle());
+  Ort::Status finalize_status = qnn_graph_->Finalize(&graph_profile);
 
   profiling_scope.Complete(profiling_info);
 
@@ -766,12 +767,15 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 
   RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
 
-  execute_status = qnn_graph_->Execute(qnn_inputs.data(),
-                                       static_cast<uint32_t>(qnn_inputs.size()),
-                                       qnn_outputs.data(),
-                                       static_cast<uint32_t>(qnn_outputs.size()),
-                                       profile_backend_handle,
-                                       nullptr);
+  const QnnGraphProfile graph_profile(profile_backend_handle);
+  GraphExecutionResult execution_result;
+  RETURN_IF_ERROR(qnn_graph_->Execute(qnn_inputs.data(),
+                                      static_cast<uint32_t>(qnn_inputs.size()),
+                                      qnn_outputs.data(),
+                                      static_cast<uint32_t>(qnn_outputs.size()),
+                                      &graph_profile,
+                                      execution_result));
+  execute_status = static_cast<Qnn_ErrorHandle_t>(execution_result.native_error_code);
 
   profiling_scope.Complete(profiling_info);
 

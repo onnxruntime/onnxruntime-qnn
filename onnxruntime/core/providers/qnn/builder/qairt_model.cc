@@ -131,7 +131,8 @@ Ort::Status QnnModel::FinalizeQairtGraph(const Ort::Logger&) {
   profiler = QnnEpProfiler::Current();
 #endif
   RETURN_IF_ERROR(qairt_profiler_->Begin(scope, graph_info_->Name(), OrtProfilingOperation::FINALIZE, profiler));
-  RETURN_IF_ERROR(qairt_graph_->Finalize(scope.profile.get()));
+  const QairtGraphProfile graph_profile(scope.profile);
+  RETURN_IF_ERROR(qairt_graph_->Finalize(&graph_profile));
   return qairt_profiler_->Complete(scope);
 }
 Ort::Status QnnModel::ExecuteQairtGraph(OrtKernelContext* context, const Ort::Logger& logger, QnnEpProfiler* profiler) {
@@ -255,8 +256,11 @@ Ort::Status QnnModel::ExecuteQairtGraph(OrtKernelContext* context, const Ort::Lo
 
   QairtProfilingManager::Scope scope;
   RETURN_IF_ERROR(qairt_profiler_->Begin(scope, graph_info_->Name(), OrtProfilingOperation::EXECUTE, profiler));
+  const QairtGraphProfile graph_profile(scope.profile);
+  GraphExecutionResult execution_result;
   RETURN_IF_ERROR(qairt_graph_->Execute(qnn_inputs.data(), static_cast<uint32_t>(qnn_inputs.size()),
-                                        qnn_outputs.data(), static_cast<uint32_t>(qnn_outputs.size()), scope.profile));
+                                        qnn_outputs.data(), static_cast<uint32_t>(qnn_outputs.size()),
+                                        &graph_profile, execution_result));
   return qairt_profiler_->Complete(scope);
 }
 }  // namespace onnxruntime::qnn

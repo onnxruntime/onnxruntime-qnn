@@ -75,22 +75,33 @@ Ort::Status QnnGraphEmitter::RetrieveGraph(Qnn_ContextHandle_t context, const st
   return Ort::Status();
 }
 
-Ort::Status QnnGraphEmitter::Finalize(Qnn_ProfileHandle_t profile) {
+Ort::Status QnnGraphEmitter::Finalize(const IGraphProfile* profile) {
   RETURN_IF(graph_ == nullptr, "QNN graph is not initialized.");
+  RETURN_IF(profile != nullptr && profile->RuntimeKind() != GraphRuntimeKind::Qnn,
+            "QNN graph received a profile for a different runtime.");
+  const auto profile_handle = profile == nullptr
+                                  ? nullptr
+                                  : static_cast<const QnnGraphProfile*>(profile)->Handle();
   const auto& qnn_interface = manager_.GetQnnInterface();
-  const auto status = qnn_interface.graphFinalize(graph_, profile, nullptr);
+  const auto status = qnn_interface.graphFinalize(graph_, profile_handle, nullptr);
   RETURN_IF(status != QNN_GRAPH_NO_ERROR,
             ("Failed to finalize QNN graph. " + utils::FormatQnnError(qnn_interface, status)).c_str());
   return Ort::Status();
 }
 
-Qnn_ErrorHandle_t QnnGraphEmitter::Execute(Qnn_Tensor_t* inputs, uint32_t num_inputs,
-                                           Qnn_Tensor_t* outputs, uint32_t num_outputs,
-                                           Qnn_ProfileHandle_t profile, Qnn_SignalHandle_t signal) const {
-  if (graph_ == nullptr) {
-    return QNN_COMMON_ERROR_INVALID_ARGUMENT;
-  }
-  return manager_.GetQnnInterface().graphExecute(graph_, inputs, num_inputs, outputs, num_outputs, profile, signal);
+Ort::Status QnnGraphEmitter::Execute(Qnn_Tensor_t* inputs, uint32_t num_inputs,
+                                     Qnn_Tensor_t* outputs, uint32_t num_outputs,
+                                     const IGraphProfile* profile,
+                                     GraphExecutionResult& result) {
+  RETURN_IF(graph_ == nullptr, "QNN graph is not initialized.");
+  RETURN_IF(profile != nullptr && profile->RuntimeKind() != GraphRuntimeKind::Qnn,
+            "QNN graph received a profile for a different runtime.");
+  const auto profile_handle = profile == nullptr
+                                  ? nullptr
+                                  : static_cast<const QnnGraphProfile*>(profile)->Handle();
+  result.native_error_code = manager_.GetQnnInterface().graphExecute(
+      graph_, inputs, num_inputs, outputs, num_outputs, profile_handle, nullptr);
+  return Ort::Status();
 }
 
 Ort::Status QnnGraphEmitter::SetConfig(const QnnGraph_Config_t** graph_configs) {
