@@ -33,9 +33,30 @@
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
-source "${REPO_ROOT}/qcom/scripts/linux/common.sh"
+set -euo pipefail
+if [ "${BASH_VERSINFO:-0}" -gt 3 ]; then
+    shopt -s inherit_errexit
+fi
+if [ -n "${ORT_BUILD_XTRACE:-}" ]; then
+    set -x
+fi
 
-set_strict_mode
+log_info() {
+    printf "%s\n" "$*" >&2
+}
+
+log_warn() {
+    printf "WARNING: %s\n" "$*" >&2
+}
+
+log_err() {
+    printf "ERROR: %s\n" "$*" >&2
+}
+
+die() {
+    log_err "$*"
+    exit 1
+}
 
 # ---------------------------------------------------------------------------
 # Parse arguments
