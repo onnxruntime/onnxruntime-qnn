@@ -34,10 +34,10 @@ struct QMoETestParams {
   int64_t block_size{32};
 };
 
-// Quantizes a single expert's [K, N] row-major weight matrix into the packed uint8 blob (N x
-// K_blocks x blob_size, symmetric zp=8) + float32 scales (N x K_blocks) that
-// QnnQuantParamsWrapper::BwBlockMapped()/AddQMoEWeight() expect, matching the same blockwise
-// scheme used by MatMulNBits (see matmulnbits_test.cc's QuantizeDequantize<bits>).
+// Quantizes a single expert's [K, N] row-major weight matrix into the packed uint8 blob
+// (N x K_blocks x blob_size, symmetric zp=8) and float32 scales (N x K_blocks) expected by QMoE.
+// The scales are explicit QMoE inputs; the packed weight tensor does not require QNN quantization
+// metadata. The packing matches MatMulNBits (see matmulnbits_test.cc's QuantizeDequantize<bits>).
 template <int bits>
 static void QuantizeExpertSlice(const float* raw_vals,  // [K, N] row-major
                                 uint8_t* quant_vals,    // [N, K_blocks, blob_size] packed

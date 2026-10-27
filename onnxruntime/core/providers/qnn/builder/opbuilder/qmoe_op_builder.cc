@@ -3,8 +3,6 @@
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -21,54 +19,6 @@ constexpr char kNormalizeRoutingWeights[] = "normalize_routing_weights";
 constexpr char kUseSparseMixer[] = "use_sparse_mixer";
 constexpr char kActivationAlpha[] = "activation_alpha";
 constexpr char kActivationBeta[] = "activation_beta";
-
-Ort::Status AddQMoEWeight(QnnModelWrapper& qnn_model_wrapper,
-                          const OrtNodeUnitIODef& weight,
-                          const OrtNodeUnitIODef& scale,
-                          uint32_t block_size,
-                          uint32_t bits,
-                          const Ort::Logger& logger) {
-  if (qnn_model_wrapper.IsQnnTensorWrapperExist(weight.name)) {
-    return Ort::Status();
-  }
-  const OrtValueInfo* weight_proto = qnn_model_wrapper.GetConstantTensor(weight.name);
-  const OrtValueInfo* scale_proto = qnn_model_wrapper.GetConstantTensor(scale.name);
-  RETURN_IF_NOT(weight_proto != nullptr && scale_proto != nullptr, "QMoE weights and scales must be initializers.");
-
-  std::vector<uint8_t> weight_data;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(weight_proto, weight_data, false));
-  std::vector<uint8_t> scale_data;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_proto, scale_data));
-
-  const size_t scale_element_size = utils::GetElementSizeByType(scale.type);
-  RETURN_IF_NOT(scale_element_size != 0 && scale_data.size() % scale_element_size == 0,
-                "Invalid QMoE scale initializer size.");
-  const size_t scale_count = scale_data.size() / scale_element_size;
-  std::vector<float> scales;
-  scales.reserve(scale_count);
-  if (scale.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-    const float* p = reinterpret_cast<const float*>(scale_data.data());
-    scales.assign(p, p + scale_count);
-  } else {
-    const Ort::Float16_t* p = reinterpret_cast<const Ort::Float16_t*>(scale_data.data());
-    for (size_t i = 0; i < scale_count; ++i) scales.push_back(static_cast<float>(p[i]));
-  }
-  std::vector<int32_t> offsets(scale_count, 0);
-  const std::vector<uint32_t> block_sizes = {1, 1, block_size / (8 / bits)};
-  QnnQuantParamsWrapper quant_params = QnnQuantParamsWrapper::BwBlockMapped(scales, offsets, bits, block_sizes);
-
-  std::vector<uint32_t> shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(weight.shape, shape), "Invalid QMoE weight shape.");
-  QnnTensorWrapper wrapper(weight.name,
-                           qnn_model_wrapper.GetTensorType(weight.name),
-                           QNN_DATATYPE_UINT_8,
-                           std::move(quant_params),
-                           std::move(shape),
-                           std::move(weight_data));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(wrapper)), "Failed to add QMoE weight tensor.");
-  ORT_UNUSED_PARAMETER(logger);
-  return Ort::Status();
-}
 
 }  // namespace
 
@@ -102,25 +52,16 @@ class QMoEOpBuilder final : public BaseOpBuilder {
                             bool do_op_validation) const override ORT_MUST_USE_RESULT {
     ORT_UNUSED_PARAMETER(do_op_validation);
     const auto& in = node_unit.Inputs();
-    OrtNodeAttrHelper h(node_unit);
-    const uint32_t block_size = static_cast<uint32_t>(h.Get("block_size", int64_t(32)));
-    const uint32_t bits = static_cast<uint32_t>(h.Get("expert_weight_bits", int64_t(4)));
     // QMoE has fixed positional inputs. Preserve null optional slots through router_weights
     // (slot 14), as QNN validation does not accept a truncated input array.
     const size_t map[15] = {0, 1, 2, 5, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14};
-    const size_t scale_for_weight[15] = {0, 0, 3, 6, 0, 0, 6, 0, 9, 0, 0, 0, 0, 0, 0};
     for (size_t slot = 0; slot < 15; ++slot) {
       const size_t idx = map[slot];
       if (idx >= in.size() || !in[idx].Exists()) {
         input_names.emplace_back("");
         continue;
       }
-      if (slot == 2 || slot == 3 || slot == 8) {
-        RETURN_IF_ERROR(AddQMoEWeight(qnn_model_wrapper, in[idx], in[scale_for_weight[slot]], block_size, bits, logger));
-        input_names.push_back(in[idx].name);
-      } else {
-        RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, in[idx], logger, input_names));
-      }
+      RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, in[idx], logger, input_names));
     }
     return Ort::Status();
   }
