@@ -353,9 +353,9 @@ static void RunOpTest(const std::string& op_type,
                   EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
-// The axis is larger than INT32_MAX but has a zero-sized trailing dimension, so the
-// model requires no large allocation. The in-range int64 index cannot be represented
-// by QNN's int32 indices tensor and must keep Gather off the QNN partition.
+// Integration coverage for fallback when an otherwise in-range ONNX index cannot be
+// represented by QNN's int32 indices tensor. The helper's truncation regression is
+// guarded directly by QnnUnit_NormalizeIndicesTest.
 TEST_F(QnnHTPBackendTests, GatherOp_StaticInt64IndexExceedsInt32) {
   RunOpTest<float, int64_t>("Gather",
                             TestInputDef<float>({2147483649LL, 0}, false, {}),

@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -20,6 +21,7 @@
 #include "QnnInterface.h"
 #include "QnnTypes.h"
 
+#include "core/providers/qnn/builder/opbuilder/normalize_indices_utils.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
@@ -50,6 +52,53 @@ namespace test {
 // using-declaration (not a wildcard using-directive) is required so that
 // `oss << qnn_value` resolves to the qnn::utils overload.
 using qnn::utils::operator<<;
+
+// =============================================================================
+// qnn::utils::NormalizeIndicesBytes
+// =============================================================================
+
+template <typename T>
+static std::vector<uint8_t> ToBytes(const std::vector<T>& values) {
+  std::vector<uint8_t> bytes(values.size() * sizeof(T));
+  std::memcpy(bytes.data(), values.data(), bytes.size());
+  return bytes;
+}
+
+TEST(QnnUnit_NormalizeIndicesTest, Int64RejectsValueAboveInt32MaxWithoutTruncation) {
+  const int64_t index = static_cast<int64_t>(std::numeric_limits<int32_t>::max()) + 1;
+  const std::vector<uint8_t> input = ToBytes(std::vector<int64_t>{index});
+  std::vector<uint8_t> output;
+  bool has_negative_indices = false;
+
+  EXPECT_FALSE(qnn::utils::NormalizeIndicesBytes<int64_t>(
+      input, [index](size_t) { return index + 1; }, output, has_negative_indices));
+  EXPECT_FALSE(has_negative_indices);
+}
+
+TEST(QnnUnit_NormalizeIndicesTest, Int64AcceptsInt32Max) {
+  const int64_t index = std::numeric_limits<int32_t>::max();
+  const std::vector<uint8_t> input = ToBytes(std::vector<int64_t>{index});
+  std::vector<uint8_t> output;
+  bool has_negative_indices = false;
+
+  ASSERT_TRUE(qnn::utils::NormalizeIndicesBytes<int64_t>(
+      input, [index](size_t) { return index + 1; }, output, has_negative_indices));
+  ASSERT_EQ(output.size(), sizeof(int32_t));
+  EXPECT_EQ(*reinterpret_cast<const int32_t*>(output.data()), std::numeric_limits<int32_t>::max());
+  EXPECT_FALSE(has_negative_indices);
+}
+
+TEST(QnnUnit_NormalizeIndicesTest, Int64NormalizesInRangeNegativeValue) {
+  const std::vector<uint8_t> input = ToBytes(std::vector<int64_t>{-1});
+  std::vector<uint8_t> output;
+  bool has_negative_indices = false;
+
+  ASSERT_TRUE(qnn::utils::NormalizeIndicesBytes<int64_t>(
+      input, [](size_t) { return 4; }, output, has_negative_indices));
+  ASSERT_EQ(output.size(), sizeof(int32_t));
+  EXPECT_EQ(*reinterpret_cast<const int32_t*>(output.data()), 3);
+  EXPECT_TRUE(has_negative_indices);
+}
 
 // =============================================================================
 // qnn::utils::InvertPerm

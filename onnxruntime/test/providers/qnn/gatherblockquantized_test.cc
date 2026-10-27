@@ -72,6 +72,7 @@ struct GatherBQTestParams {
   int64_t gather_axis{0};
   int64_t quantize_axis{1};
   bool indices_are_initializer{false};
+  bool indices_are_int32{false};
   std::vector<int64_t> indices;
 };
 
@@ -167,9 +168,16 @@ static void RunGatherBlockQuantizedTest(
     // ------------------------------------------------------------
     // Graph inputs
     // ------------------------------------------------------------
-    auto indices_def = TestInputDef<int64_t>({params.batch_size, params.seq_len},
-                                             params.indices_are_initializer, indices);
-    MakeTestInput<int64_t>(builder, "indices", indices_def);
+    if (params.indices_are_int32) {
+      std::vector<int32_t> int32_indices(indices.begin(), indices.end());
+      auto indices_def = TestInputDef<int32_t>({params.batch_size, params.seq_len},
+                                               params.indices_are_initializer, int32_indices);
+      MakeTestInput<int32_t>(builder, "indices", indices_def);
+    } else {
+      auto indices_def = TestInputDef<int64_t>({params.batch_size, params.seq_len},
+                                               params.indices_are_initializer, indices);
+      MakeTestInput<int64_t>(builder, "indices", indices_def);
+    }
 
     auto scales_def =
         TestInputDef<float>({params.vocab_size, blocks_per_row},
@@ -246,6 +254,29 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_StaticNegativeIndices) {
   params.indices_are_initializer = true;
   params.indices = {-1};
   RunGatherBlockQuantizedTest(params);
+}
+
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_StaticNegativeInt32Indices) {
+  GatherBQTestParams params;
+  params.vocab_size = 128;
+  params.hidden_size = 64;
+  params.block_size = 32;
+  params.indices_are_initializer = true;
+  params.indices_are_int32 = true;
+  params.indices = {-1};
+  RunGatherBlockQuantizedTest(params);
+}
+
+// Out-of-range values are legal for GatherBlockQuantized and produce zeros.
+// QNN cannot preserve that behavior, so the node must intentionally fall back.
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_StaticOutOfRangeIndicesFallback) {
+  GatherBQTestParams params;
+  params.vocab_size = 128;
+  params.hidden_size = 64;
+  params.block_size = 32;
+  params.indices_are_initializer = true;
+  params.indices = {128};
+  RunGatherBlockQuantizedTest(params, ExpectedEPNodeAssignment::None);
 }
 
 // Weight arrives already-unpacked as INT4 (Int4x2 element type, logical shape == element

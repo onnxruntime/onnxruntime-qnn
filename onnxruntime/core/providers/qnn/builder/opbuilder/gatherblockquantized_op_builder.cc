@@ -177,7 +177,6 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
   std::vector<uint32_t> weight_shape = weight_info.shape;
   int32_t gather_axis = 0;
   RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "gather_axis", 0, gather_axis));
-  const int64_t gather_axis_dim = static_cast<int64_t>(weight_shape[gather_axis]);
 
   // Get scale info
   const auto& scales_tensor = inputs[2];
@@ -193,6 +192,11 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
                                              int64_t{1},
                                              std::multiplies<int64_t>());
   const std::vector<uint32_t> block_sizes = {1, gsl::narrow_cast<uint32_t>(block_size)};
+  // QNN consumes an unpacked [vocab, hidden] weight tensor even when ONNX stores
+  // packed uint8 weights as [vocab, hidden / 2]. Bounds must use the QNN shape.
+  const std::vector<uint32_t> qnn_weight_shape = {
+      weight_shape[0], gsl::narrow_cast<uint32_t>(scale_shape[1] * block_size)};
+  const int64_t gather_axis_dim = static_cast<int64_t>(qnn_weight_shape[gather_axis]);
 
   // Creating weight+scale wrapper
   const std::string& weight_tensor_name = weight_tensor.name;
@@ -265,13 +269,11 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
     QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper::Block(float_scale,
                                                                         int32_offset,
                                                                         block_sizes);
-    std::vector<uint32_t> weight_shape_ = {static_cast<uint32_t>(weight_shape[0]),
-                                           static_cast<uint32_t>(scale_shape[1] * block_size)};
     QnnTensorWrapper weight_tensor_wrapper(weight_tensor_name,
                                            weight_tensor_type,
                                            QNN_DATATYPE_SFIXED_POINT_4,
                                            std::move(quantize_param),
-                                           std::move(weight_shape_),
+                                           std::vector<uint32_t>(qnn_weight_shape),
                                            std::move(quant_data));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor_wrapper)), "Failed to add tensor.");
   }
@@ -295,21 +297,29 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
     std::vector<uint8_t> onnx_indices_bytes;
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor, onnx_indices_bytes));
 
-    bool indices_are_valid = false;
     if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
       // NormalizeIndicesBytes also casts the int64 values to int32 for QNN.
-      indices_are_valid = utils::NormalizeIndicesBytes<int64_t>(
-          onnx_indices_bytes, [gather_axis_dim](size_t) { return gather_axis_dim; },
-          qnn_indices_bytes, has_negative_indices);
+      // GatherBlockQuantized defines out-of-range indices as zero-filled output.
+      // QNN cannot implement that contract for static out-of-range values, so
+      // deliberately reject them here and let the CPU implementation handle them.
+      RETURN_IF_NOT(utils::NormalizeIndicesBytes<int64_t>(
+                        onnx_indices_bytes, [gather_axis_dim](size_t) { return gather_axis_dim; },
+                        qnn_indices_bytes, has_negative_indices),
+                    "GatherBlockQuantized: static out-of-range indices require CPU fallback");
       indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
     } else if (indices_info.qnn_data_type == QNN_DATATYPE_INT_32) {
-      indices_are_valid = utils::NormalizeIndicesBytes<int32_t>(
-          onnx_indices_bytes, [gather_axis_dim](size_t) { return gather_axis_dim; },
-          qnn_indices_bytes, has_negative_indices);
+      RETURN_IF_NOT(utils::NormalizeIndicesBytes<int32_t>(
+                        onnx_indices_bytes, [gather_axis_dim](size_t) { return gather_axis_dim; },
+                        qnn_indices_bytes, has_negative_indices),
+                    "GatherBlockQuantized: static out-of-range indices require CPU fallback");
+    } else {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                             "GatherBlockQuantized: indices must be INT_32 or INT_64");
     }
-    RETURN_IF_NOT(indices_are_valid, "GatherBlockQuantized: indices are out of range");
 
     if (has_negative_indices) {
+      // Keep this deterministic across validation and compile passes. A stateful
+      // UniqueNameGenerator would create two tensors for the same initializer.
       indices_name += "_neg2pos_axis" + std::to_string(gather_axis_dim) + "_" + weight_tensor.name;
     }
   }

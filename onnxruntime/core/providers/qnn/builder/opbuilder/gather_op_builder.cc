@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include <cassert>
-
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/opbuilder/normalize_indices_utils.h"
@@ -16,8 +14,8 @@ namespace qnn {
 // 1) GatherElements on HTP with BOOL input: BOOL -> Cast(U8) -> GatherElements(U8) -> Cast(BOOL).
 // 2) Gather with int64 inputs: inputs gets Cast(INT32) in ProcessInt64Tensors;
 //    if ONNX graph output is int64, cast back after Gather.
-// 2.1) Gather with static int64 indices: negative indices get fixed and int64 gets reinterpreted as uint32
-//      in ProcessAttributesAndOutputs, and Cast is added if output is int64.
+// 2.1) Gather with static int64 indices: ProcessInputs normalizes negative values and converts
+//      representable values to int32; output int64 values are converted back after Gather.
 // 3) Gather with rank mismatch: Gather -> Reshape -> (optional output cast).
 
 class GatherOpBuilder : public BaseOpBuilder {
