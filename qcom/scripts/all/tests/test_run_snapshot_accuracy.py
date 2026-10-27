@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-"""Hermetic tests for the snapshot/accuracy runner."""
+"""Hermetic tests for the platform-agnostic snapshot/accuracy runner."""
 
 import json
 import os
@@ -18,7 +18,7 @@ def write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def test_converts_gtest_report_paths_for_windows_provider_binary(tmp_path: Path) -> None:
+def test_prefers_windows_provider_binary_and_converts_gtest_report_paths(tmp_path: Path) -> None:
     build_dir = tmp_path / "build"
     bin_dir = build_dir / "Release"
     bin_dir.mkdir(parents=True)
@@ -42,14 +42,17 @@ if "--gtest_list_tests" in args:
 
 output_arg = next(arg for arg in args if arg.startswith("--gtest_output=json:"))
 output_path = output_arg.removeprefix("--gtest_output=json:")
-if not output_path.startswith("WIN::"):
+if output_path.startswith("WIN::"):
+    output_path = output_path.removeprefix("WIN::")
+elif sys.platform != "win32" or not Path(output_path).is_absolute():
     raise SystemExit(91)
-output_path = Path(output_path.removeprefix("WIN::"))
+output_path = Path(output_path)
 output_path.parent.mkdir(parents=True, exist_ok=True)
 suite = "QnnAcc_Clip_AccuracyTest" if any("QnnAcc_" in arg for arg in args) else "QnnSnapshot_Clip_OpBuilderTest"
 output_path.write_text(json.dumps({{"testsuites": [{{"name": suite, "failures": 0, "errors": 0}}]}}))
 """,
     )
+    write_executable(bin_dir / "onnxruntime_provider_test", "#!/usr/bin/env bash\nexit 92\n")
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
