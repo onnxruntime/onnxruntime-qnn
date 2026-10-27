@@ -159,8 +159,27 @@ void QnnModelWrapper::SetTensorMemTypeFromSettings(QnnTensorWrapper& tensor_wrap
   SetQnnTensorMemType(tensor_wrapper.GetQnnTensor(), mem_type);
 }
 
+QnnModelWrapper::FusionValidationGuard::FusionValidationGuard(QnnModelWrapper& wrapper) : wrapper_(wrapper) {
+  if (wrapper_.active_fusion_validation_guard_ != nullptr) {
+    ORT_CXX_API_THROW("Nested fusion validation guards are not supported.", ORT_EP_FAIL);
+  }
+  wrapper_.active_fusion_validation_guard_ = this;
+}
+
+QnnModelWrapper::FusionValidationGuard::~FusionValidationGuard() noexcept {
+  if (!committed_) {
+    for (const auto& name : param_names_) {
+      wrapper_.model_params_map_.erase(name);
+    }
+    for (const auto& name : tensor_names_) {
+      wrapper_.model_tensors_map_.erase(name);
+    }
+  }
+  wrapper_.active_fusion_validation_guard_ = nullptr;
+}
+
 bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
-  // Keep a copy of tensor name sine it will be moved with the wrapper into model_tensors_map_
+  // Keep a copy of tensor name since it will be moved with the wrapper into model_tensors_map_
   std::string tensor_name = tensor_wrapper.GetName();
   if (tensor_name.length() == 0) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid tensor encountered empty name.");
@@ -174,6 +193,11 @@ bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
 
   SetTensorMemTypeFromSettings(tensor_wrapper, tensor_name);
 
+  if (active_fusion_validation_guard_ != nullptr) {
+    // Record the absent key before insertion so an allocation failure cannot
+    // leave an untracked tensor. Erasing an absent key during rollback is safe.
+    active_fusion_validation_guard_->tensor_names_.push_back(tensor_name);
+  }
   model_tensors_map_.emplace(tensor_name, std::move(tensor_wrapper));
 
   return true;
@@ -191,6 +215,10 @@ bool QnnModelWrapper::AddParamWrapper(QnnParamWrapper&& param_wrapper) {
     return true;
   }
 
+  if (active_fusion_validation_guard_ != nullptr) {
+    // As with tensors, log the absent key before the potentially throwing insertion.
+    active_fusion_validation_guard_->param_names_.push_back(param_tensor_name);
+  }
   // save created tensors for later lookup to populate graph node construction
   model_params_map_.emplace(param_tensor_name, std::move(param_wrapper));
 
@@ -478,6 +506,8 @@ bool QnnModelWrapper::ApplyBF16ConversionForValidation(const std::vector<std::st
   return true;
 }
 
+// TODO: Preserve tensors that were already BF16 before validation. Track original
+// data types so cleanup only restores tensors converted from FP32 for validation.
 void QnnModelWrapper::RestoreFP32AfterValidation(const std::vector<std::string>& input_names,
                                                  const std::vector<std::string>& output_names) {
   // Restore FP32 data types after validation
@@ -523,14 +553,14 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
 
     if (IsBF16ConversionEnabled()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "[BF16] Validation with BF16 conversion enabled");
+      // Guard partial conversion if conversion fails or throws.
+      bf16_guard = std::make_unique<BF16ConversionGuard>(this, input_names, output_names);
       if (!ApplyBF16ConversionForValidation(input_names, output_names, validation_input_names, validation_output_names)) {
         ORT_CXX_LOG(logger_,
                     ORT_LOGGING_LEVEL_ERROR,
                     ("[BF16] ApplyBF16ConversionForValidation failed for node: " + qnn_node_name).c_str());
         return false;
       }
-      // Create the guard after successful conversion
-      bf16_guard = std::make_unique<BF16ConversionGuard>(this, input_names, output_names);
     } else {
       validation_input_names = input_names;
       validation_output_names = output_names;
