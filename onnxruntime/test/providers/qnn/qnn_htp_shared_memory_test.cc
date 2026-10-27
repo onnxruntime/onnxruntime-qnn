@@ -125,6 +125,41 @@ bool TryCreateHtpSession(const ORTCHAR_T* model_path,
   }
 }
 
+bool TryCreateHtpSession(const std::string& model_data,
+                         Ort::SessionOptions& session_options,
+                         Ort::Session& session) {
+  try {
+    session = Ort::Session{*ort_env, model_data.data(), model_data.size(), session_options};
+
+    // Session creation degrades gracefully when RPCMEM is unavailable. Probe
+    // one real allocation so device tests skip for that condition as well.
+    Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+    Ort::Allocator allocator(session, info_shared);
+    auto probe = allocator.GetAllocation(64);
+    if (probe.get() == nullptr) {
+      return false;
+    }
+    return true;
+  } catch (const Ort::Exception& e) {
+    if (IsRpcMemUnavailable(e)) {
+      return false;
+    }
+    throw;
+  }
+}
+
+// Trilu is intentionally unsupported by QNN and remains on the CPU EP. Mul is
+// supported by QNN HTP, creating a real CPU EP -> intermediate -> QNN EP path.
+GetTestModelFn BuildCpuToQnnIntermediateModel() {
+  return [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("X", {3, 2}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    builder.AddNode("cpu_trilu", "Trilu", {"X"}, {"cpu_intermediate"});
+    builder.MakeInitializer<float>("W", {3, 2}, {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f});
+    builder.AddNode("qnn_mul", "Mul", {"cpu_intermediate", "W"}, {"Y"});
+    builder.MakeOutput<float>("Y", std::vector<int64_t>{3, 2});
+  };
+}
+
 }  // namespace
 
 // Regression guard: output tensor uses MEMHANDLE (zero-copy) when allocated
@@ -631,18 +666,20 @@ TEST_F(QnnHTPBackendTests, untracked_host_accessible_memory_falls_back_to_client
   EXPECT_EQ(capture.CountContaining(kLogSubstrFallbackWarning), 1u);
 }
 
-// ---------------------------------------------------------------------------
-// Cross-partition zero-copy: shared memory at CPU EP ↔ QNN EP boundaries.
-//   htp_shared_memory_cross_partition_inference_correct — functional correctness.
-//   htp_shared_memory_cross_partition_zero_copy         — all tensors use MEMHANDLE.
-// ---------------------------------------------------------------------------
-
-// Verifies inference correctness with shared memory enabled and offload_graph_io_quantization=0
-// (ensures CPU↔QNN EP partition boundary is exercised).
-TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_inference_correct) {
+// Verifies that an intermediate produced by the CPU EP is allocated directly
+// from QnnHtpShared and consumed by the downstream QNN partition via MEMHANDLE.
+//
+// Graph: X -> Trilu (CPU EP) -> cpu_intermediate -> Mul (QNN EP) -> Y
+//
+// X intentionally uses ordinary CPU memory and never enters the QNN partition.
+// Y is explicitly backed by QnnHtpShared. Therefore, the two QNN tensor bindings
+// are the CPU-produced intermediate and Y. Both must take the MEMHANDLE path.
+// This is expected to fail until plugin EP OrtMemTypeCPUInput routing and the
+// allocation planner's HOST_ACCESSIBLE selection are implemented in ORT Core.
+TEST_F(QnnHTPBackendTests, htp_shared_memory_cpu_to_qnn_intermediate_uses_memhandle) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
-  options["offload_graph_io_quantization"] = "0";  // ensures any quant/dequant stays on CPU
+  options["enable_htp_fp16_precision"] = "1";
 
   LogCapture capture;
   Ort::SessionOptions so;
@@ -651,26 +688,28 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_inference_correct) 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
 
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, BuildCpuToQnnIntermediateModel(), /*opset_version*/ 14);
+
   Ort::Session session{nullptr};
-  if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
+  if (!TryCreateHtpSession(model->model_data, so, session)) {
     GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
   }
 
+  Ort::MemoryInfo info_cpu = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
   Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
   Ort::Allocator shared_allocator(session, info_shared);
 
   const std::array<int64_t, 2> shape = {3, 2};
-  const std::array<float, 6> x_vals = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
-  const std::array<float, 6> expected = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
+  std::array<float, 6> x_vals = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  const std::array<float, 6> expected = {2.0f, 4.0f, 0.0f, 8.0f, 0.0f, 0.0f};
   const size_t nbytes = x_vals.size() * sizeof(float);
 
-  auto x_data = shared_allocator.GetAllocation(nbytes);
   auto y_data = shared_allocator.GetAllocation(nbytes);
-  ASSERT_NE(x_data.get(), nullptr);
-  memcpy(x_data.get(), x_vals.data(), nbytes);
+  ASSERT_NE(y_data.get(), nullptr);
 
   Ort::Value bound_x = Ort::Value::CreateTensor(
-      info_shared, reinterpret_cast<float*>(x_data.get()), x_vals.size(),
+      info_cpu, x_vals.data(), x_vals.size(),
       shape.data(), shape.size());
   Ort::Value bound_y = Ort::Value::CreateTensor(
       info_shared, reinterpret_cast<float*>(y_data.get()), x_vals.size(),
@@ -681,69 +720,13 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_inference_correct) 
   binding.BindOutput("Y", bound_y);
   session.Run(Ort::RunOptions{}, binding);
 
-  const float* y_out = reinterpret_cast<const float*>(y_data.get());
-  for (size_t i = 0; i < x_vals.size(); ++i) {
-    EXPECT_NEAR(y_out[i], expected[i], 0.5f) << " at index " << i;
-  }
-
-  const size_t memhandle_count = capture.CountContaining(kLogSubstrMemHandle);
-  const size_t clientbuf_count = capture.CountContaining(kLogSubstrClientBuf);
-  EXPECT_GE(memhandle_count, 1u) << "Expected MEMHANDLE for shared-memory I/O tensors.";
-  if (clientbuf_count > 0) {
-    SUCCEED() << "Cross-partition tensors used clientBuf (" << clientbuf_count
-              << "); MEMHANDLE used for " << memhandle_count << " tensors.";
-  }
-}
-
-TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_zero_copy) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  ProviderOptions options = MakeHtpOptions();
-  options["offload_graph_io_quantization"] = "0";
-
-  LogCapture capture;
-  Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
-
-  Ort::Session session{nullptr};
-  if (!TryCreateHtpSession(ORT_MODEL_FOLDER "mul_1.onnx", so, session)) {
-    GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
-  }
-
-  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
-  Ort::Allocator shared_allocator(session, info_shared);
-
-  const std::array<int64_t, 2> shape = {3, 2};
-  const std::array<float, 6> x_vals = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
-  const std::array<float, 6> expected = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
-  const size_t nbytes = x_vals.size() * sizeof(float);
-
-  auto x_data = shared_allocator.GetAllocation(nbytes);
-  auto y_data = shared_allocator.GetAllocation(nbytes);
-  ASSERT_NE(x_data.get(), nullptr);
-  memcpy(x_data.get(), x_vals.data(), nbytes);
-
-  Ort::Value bound_x = Ort::Value::CreateTensor(
-      info_shared, reinterpret_cast<float*>(x_data.get()), x_vals.size(),
-      shape.data(), shape.size());
-  Ort::Value bound_y = Ort::Value::CreateTensor(
-      info_shared, reinterpret_cast<float*>(y_data.get()), x_vals.size(),
-      shape.data(), shape.size());
-
-  Ort::IoBinding binding(session);
-  binding.BindInput("X", bound_x);
-  binding.BindOutput("Y", bound_y);
-  session.Run(Ort::RunOptions{}, binding);
-
-  // All I/O tensors must use MEMHANDLE — no QNN-internal copy at all.
+  // The QNN partition binds cpu_intermediate and Y. The graph input X is only
+  // consumed by the CPU EP and cannot contribute to these counts.
   EXPECT_GE(capture.CountContaining(kLogSubstrMemHandle), 2u)
-      << "Expected MEMHANDLE for all bound I/O tensors after the ORT Core fix.";
+      << "Expected MEMHANDLE for the CPU-produced intermediate and shared output.";
   EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u)
-      << "No clientBuf/RAW path should be taken after the GetOrtDeviceByMemType fix.";
+      << "The CPU-to-QNN intermediate must not fall back to clientBuf/RAW.";
 
-  // Verify numerical correctness.
   constexpr float kTol = 0.5f;
   const float* y_out = reinterpret_cast<const float*>(y_data.get());
   for (size_t i = 0; i < x_vals.size(); ++i) {
