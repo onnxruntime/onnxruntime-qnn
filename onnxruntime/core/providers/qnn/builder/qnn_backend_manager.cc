@@ -1798,6 +1798,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     context_config_graph_splitting.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
     context_config_graph_splitting.customConfig = &graph_splitting_custom_config;
   }
+  ORT_UNUSED_PARAMETER(htp_graph_splitting_num_prepare_threads);
 #else
   ORT_UNUSED_PARAMETER(enable_htp_graph_splitting);
 #endif
