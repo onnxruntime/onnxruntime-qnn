@@ -313,8 +313,7 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
                         qnn_indices_bytes, has_negative_indices),
                     "GatherBlockQuantized: static out-of-range indices require CPU fallback");
     } else {
-      return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
-                             "GatherBlockQuantized: indices must be INT_32 or INT_64");
+      return Ort::Status("GatherBlockQuantized: indices must be INT_32 or INT_64", ORT_INVALID_ARGUMENT);
     }
 
     if (has_negative_indices) {
