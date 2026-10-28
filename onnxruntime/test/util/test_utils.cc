@@ -146,6 +146,14 @@ void VerifyOutput(const std::string& output_name,
       }
       break;
     }
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16: {
+      const int16_t* expected_data = expected_value.GetTensorData<int16_t>();
+      const int16_t* actual_data = actual_value.GetTensorData<int16_t>();
+      for (size_t i = 0; i < element_count; ++i) {
+        EXPECT_EQ(expected_data[i], actual_data[i]) << "Element " << i << " mismatch for " << output_name;
+      }
+      break;
+    }
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8: {
       const int8_t* expected_data = expected_value.GetTensorData<int8_t>();
       const int8_t* actual_data = actual_value.GetTensorData<int8_t>();

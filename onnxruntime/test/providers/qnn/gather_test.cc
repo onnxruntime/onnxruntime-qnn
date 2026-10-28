@@ -385,6 +385,86 @@ TEST_F(QnnHTPBackendTests, GatherOp_BoolInputOutput) {
                            ExpectedEPNodeAssignment::All);
 }
 
+// Test that a raw (unquantized, no QDQ nodes) UINT8 `data` initializer runs on HTP. Models that
+// store a lookup table as raw bytes and dequantize manually downstream (e.g.
+// Gather -> Cast(float) -> Mul(scale) -> Add(bias)) hit this path.
+// Indices are a dynamic graph input so the Gather node isn't constant-folded away before
+// reaching the QNN EP.
+TEST_F(QnnHTPBackendTests, GatherOp_RawUint8DataInput) {
+  RunOpTest<uint8_t, int32_t>("Gather",
+                              TestInputDef<uint8_t>({3, 2}, true, {10, 20, 30, 40, 50, 60}),
+                              TestInputDef<int32_t>({2, 2}, false, {0, 1, 1, 2}),
+                              {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                              13,
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Same as above, but with a dynamic (non-initializer) UINT8 `data` input.
+TEST_F(QnnHTPBackendTests, GatherOp_RawUint8DataInput_Dynamic) {
+  RunOpTest<uint8_t, int32_t>("Gather",
+                              TestInputDef<uint8_t>({3, 2}, false, {10, 20, 30, 40, 50, 60}),
+                              TestInputDef<int32_t>({2, 2}, false, {0, 1, 1, 2}),
+                              {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                              13,
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Same as GatherOp_RawUint8DataInput, but with a raw INT8 `data` initializer that includes
+// negative values, to confirm the identity re-tag preserves sign.
+TEST_F(QnnHTPBackendTests, GatherOp_RawInt8DataInput_NegativeValues) {
+  RunOpTest<int8_t, int32_t>("Gather",
+                             TestInputDef<int8_t>({3, 2}, true, {-10, 20, -30, 40, -50, 60}),
+                             TestInputDef<int32_t>({2, 2}, false, {0, 1, 1, 2}),
+                             {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                             13,
+                             ExpectedEPNodeAssignment::All);
+}
+
+// Same as GatherOp_RawUint8DataInput, but with a raw UINT16 `data` initializer.
+TEST_F(QnnHTPBackendTests, GatherOp_RawUint16DataInput) {
+  RunOpTest<uint16_t, int32_t>("Gather",
+                               TestInputDef<uint16_t>({3, 2}, true, {1000, 2000, 3000, 4000, 5000, 6000}),
+                               TestInputDef<int32_t>({2, 2}, false, {0, 1, 1, 2}),
+                               {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                               13,
+                               ExpectedEPNodeAssignment::All);
+}
+
+// Same as GatherOp_RawInt8DataInput_NegativeValues, but with a raw INT16 `data` initializer that
+// includes negative values.
+TEST_F(QnnHTPBackendTests, GatherOp_RawInt16DataInput_NegativeValues) {
+  RunOpTest<int16_t, int32_t>("Gather",
+                              TestInputDef<int16_t>({3, 2}, true, {-1000, 2000, -3000, 4000, -5000, 6000}),
+                              TestInputDef<int32_t>({2, 2}, false, {0, 1, 1, 2}),
+                              {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                              13,
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Two Gather nodes share the same raw (unquantized) UINT8 `data` initializer. Exercises the
+// IsQnnTensorWrapperExist reuse path in ProcessRawNarrowIntDataInput (gather_op_builder.cc),
+// which skips re-adding the tensor wrapper for the second consumer.
+TEST_F(QnnHTPBackendTests, GatherOp_RawUint8DataInput_SharedAcrossTwoGathers) {
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInitializer<uint8_t>("data", {3, 2}, {10, 20, 30, 40, 50, 60});
+    builder.MakeInput<int32_t>("indices0", {2, 2}, {0, 1, 1, 2});
+    builder.MakeInput<int32_t>("indices1", {1, 2}, {2, 0});
+
+    builder.AddNode("gather0", "Gather", {"data", "indices0"}, {"Y0"}, kOnnxDomain,
+                    {test::MakeAttribute("axis", static_cast<int64_t>(0))});
+    builder.AddNode("gather1", "Gather", {"data", "indices1"}, {"Y1"}, kOnnxDomain,
+                    {test::MakeAttribute("axis", static_cast<int64_t>(0))});
+    builder.MakeOutput("Y0");
+    builder.MakeOutput("Y1");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(build_model, provider_options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
+}
+
 // Test the accuracy of a QDQ GatherND model on QNN EP. Checks if the QDQ model on QNN EP is as accurate as the QDQ model on CPU EP.
 template <typename QuantType, typename IndicesType>
 static void RunQDQGatherNDOpTest(const TestInputDef<float>& input_def,
