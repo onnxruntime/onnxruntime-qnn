@@ -156,6 +156,29 @@ TEST_F(QnnHTPBackendTests, ReshapeTransposeFusion_NonIdentityComposedPerm_Single
   AssertOpInQnnGraph(dir, "Reshape", 0);
 }
 
+// Fused perm is non-identity but moves only size-1 dims. The fusion emits the op through
+// QnnModelWrapper::AddTransposeNode, which must lower it to a Reshape so HTP does not
+// miscompute the unit-dim reorder (issue #1020).
+TEST_F(QnnHTPBackendTests, ReshapeTransposeFusionUnitOnlyComposedPermLoweredToReshape) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options = GetProviderOptions();
+  const auto dir = MakeDumpDir(provider_options, "ReshapeTransposeFusionUnitOnlyPerm");
+  auto cleanup = gsl::finally([&dir]() { std::filesystem::remove_all(dir); });
+
+  // Reshape [2,1,3,1] -> [2,3,1,1] has reshape_perm=[0,2,1,3].
+  // Transpose [0,1,3,2] composes to [0,2,3,1], which only reorders size-1 axes.
+  RunQnnModelTest(BuildReshapeTransposeFloatCase(/*input_shape=*/{2, 1, 3, 1},
+                                                 /*reshape_shape=*/{2, 3, 1, 1},
+                                                 /*transpose_perm=*/{0, 1, 3, 2}),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(1e-2f)});
+
+  AssertOpInQnnGraph(dir, "Transpose", 0);
+  AssertOpInQnnGraph(dir, "Reshape", 1);
+}
+
 // Reshape is NOT structurally a Transpose (ranks differ). Fusion must decline and both
 // original nodes must remain in the compiled QNN graph.
 TEST_F(QnnHTPBackendTests, ReshapeTransposeFusion_NonTransposeEquivalentReshape_NotFused) {
@@ -173,8 +196,13 @@ TEST_F(QnnHTPBackendTests, ReshapeTransposeFusion_NonTransposeEquivalentReshape_
                   EPVerificationParams{ExpectedEPNodeAssignment::All,
                                        ElementwiseAbsoluteVerifier(1e-2f)});
 
-  AssertOpInQnnGraph(dir, "Reshape", 1);
-  AssertOpInQnnGraph(dir, "Transpose", 1);
+  // The pair is not fused. The standalone Transpose moves only the size-1 axis, so the
+  // Transpose builder lowers it to a Reshape; both original nodes remain in the compiled
+  // graph, now as two Reshapes.
+  AssertOpInQnnGraph(dir, "Reshape", 2);
+  AssertOpInQnnGraph(dir, "Transpose", 0);
+  AssertTensorShapeInQnnGraph(dir, "reshape_out", {1, 16});
+  AssertTensorShapeInQnnGraph(dir, "transpose_out", {16, 1});
 }
 
 // Two non-1 dims have equal size and sit at non-adjacent positions in the input.

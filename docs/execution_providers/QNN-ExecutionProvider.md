@@ -244,6 +244,11 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |'0'|Default. Disabled. Block-quantized models use the standard compatibility path.|
 |'1'|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
 
+|`"use_native_matmul"`|Description|
+|---|---|
+|`"0"`|Default. MatMul, Gemm, and QLinearMatMul operators are translated to QNN FullyConnected (weight transposed from [K,N] to [N,K] at session creation time).|
+|`"1"`|Enabled. MatMul, Gemm, and QLinearMatMul operators are lowered to native QNN MatMul, eliminating host-side weight transposition. Reduces session creation time and peak host memory for large GenAI/MoE models.|
+
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
@@ -813,7 +818,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
 | `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
 | `Transpose → Reshape → Transpose` | `QNN_OP_RESHAPE` | Fires when the combined transformation reduces to a pure reshape (dimension-merging only, no reordering). Intermediate QDQ nodes are permitted. |
-| `Reshape → [Q → DQ]? → Transpose` | `QNN_OP_TRANSPOSE` or noop `QNN_OP_RESHAPE` | Fires when Reshape is equivalent to a permutation (same rank, non-1 dims in same relative order). Composes the reshape-implied perm with the Transpose perm; emits identity Reshape if composed perm is identity, or a single Transpose otherwise. |
+| `Reshape → [Q → DQ]? → Transpose` | `QNN_OP_TRANSPOSE` or `QNN_OP_RESHAPE` | Fires when Reshape is equivalent to a permutation (same rank, non-1 dims in same relative order). Composes the reshape-implied perm with the Transpose perm; emits a noop Reshape if the composed perm is identity, a Reshape if it only moves size-1 dimensions and changes shape, or a single Transpose otherwise. |
 
 ### Miscellaneous fusions
 
