@@ -5,6 +5,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -13,15 +14,36 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
-#include "core/providers/qnn/builder/qnn_node_group/reshape_einsum_reshape_shape_utils.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
 
-constexpr std::array<uint32_t, 6> kEinsumPerm6{0, 5, 1, 3, 2, 4};
 namespace {
+
+constexpr size_t kReshapeEinsumReshapeInputRank = 6;
+constexpr std::array<uint32_t, kReshapeEinsumReshapeInputRank> kEinsumPerm6{0, 5, 1, 3, 2, 4};
+
+struct ReshapeEinsumReshapeShapes {
+  std::array<uint32_t, 2> block_size;
+  std::array<uint32_t, 4> reshape_input;
+  std::array<uint32_t, 4> depth_to_space_output;
+  std::array<uint32_t, 4> post_reshape_output;
+};
+
+std::optional<ReshapeEinsumReshapeShapes> DeriveReshapeEinsumReshapeShapes(
+    const std::vector<uint32_t>& input_shape) {
+  if (input_shape.size() != kReshapeEinsumReshapeInputRank) {
+    return std::nullopt;
+  }
+
+  return ReshapeEinsumReshapeShapes{
+      {input_shape[3], input_shape[4]},
+      {input_shape[0], input_shape[1], input_shape[2], input_shape[3] * input_shape[4] * input_shape[5]},
+      {input_shape[0], input_shape[1] * input_shape[3], input_shape[2] * input_shape[4], input_shape[5]},
+      {input_shape[0], input_shape[5], input_shape[1] * input_shape[3], input_shape[2] * input_shape[4]}};
+}
 
 bool IsEquationEqualToTranspose(std::string equation, std::vector<uint32_t>& perm) {
   equation.erase(std::remove(equation.begin(), equation.end(), ' '), equation.end());

@@ -3,40 +3,16 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
-#include <array>
-#include <cstdint>
-#include <vector>
 #include <filesystem>
 
 #include <gsl/gsl_util>
 #include "gtest/gtest.h"
 
-#include "core/providers/qnn/builder/qnn_node_group/reshape_einsum_reshape_shape_utils.h"
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
-
-TEST(ReshapeEinsumReshapeShapeUtilsTest, RejectsNonRank6Input) {
-  for (size_t rank = 0; rank < qnn::kReshapeEinsumReshapeInputRank; ++rank) {
-    const std::vector<uint32_t> shape(rank, 1);
-    EXPECT_FALSE(qnn::DeriveReshapeEinsumReshapeShapes(shape).has_value()) << "rank=" << rank;
-  }
-
-  const std::vector<uint32_t> rank7_shape(7, 1);
-  EXPECT_FALSE(qnn::DeriveReshapeEinsumReshapeShapes(rank7_shape).has_value());
-}
-
-TEST(ReshapeEinsumReshapeShapeUtilsTest, DerivesAllFixedIndexShapes) {
-  const std::vector<uint32_t> shape{1, 32, 32, 2, 2, 8};
-  const auto derived = qnn::DeriveReshapeEinsumReshapeShapes(shape);
-  ASSERT_TRUE(derived.has_value());
-  EXPECT_EQ(derived->block_size, (std::array<uint32_t, 2>{2, 2}));
-  EXPECT_EQ(derived->reshape_input, (std::array<uint32_t, 4>{1, 32, 32, 32}));
-  EXPECT_EQ(derived->depth_to_space_output, (std::array<uint32_t, 4>{1, 64, 64, 8}));
-  EXPECT_EQ(derived->post_reshape_output, (std::array<uint32_t, 4>{1, 8, 64, 64}));
-}
 
 namespace {
 
@@ -67,6 +43,32 @@ GetTestModelFn BuildReshapeEinsumReshapeFloatTestCase() {
   };
 }
 
+GetTestModelFn BuildNonRank6ReshapeEinsumReshapeTestCase() {
+  return [](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("non_rank6_reshape_einsum_reshape_graph");
+
+    auto input_def = TestInputDef<float>({512, 32}, false, -10.0f, 10.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Reshape to rank 5. This is a valid standalone Einsum transpose pattern,
+    // but it must not be replaced by the rank-6-only node group.
+    builder.Make1DInitializer<int64_t>("reshape1_shape", {1, 32, 32, 2, 8});
+    builder.AddNode("reshape1", "Reshape", {"input", "reshape1_shape"}, {"reshape1_out"}, kOnnxDomain);
+
+    builder.AddNode("einsum",
+                    "Einsum",
+                    {"reshape1_out"},
+                    {"einsum_out"},
+                    kOnnxDomain,
+                    {test::MakeAttribute("equation", "nhwpc->nchpw")});
+
+    builder.Make1DInitializer<int64_t>("reshape2_shape", {1, 8, 64, 32});
+    builder.AddNode("reshape2", "Reshape", {"einsum_out", "reshape2_shape"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
 ProviderOptions GetProviderOptions() {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -77,9 +79,9 @@ ProviderOptions GetProviderOptions() {
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-TEST_F(QnnHTPBackendTests, ReshapeEinsumReshape_Float) {
+TEST_F(QnnHTPBackendTests, ReshapeEinsumReshape_DerivesAllFixedIndexShapes) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  const std::filesystem::path json_qnn_graph_dir = "ReshapeEinsumReshape_Float";
+  const std::filesystem::path json_qnn_graph_dir = "ReshapeEinsumReshape_DerivesAllFixedIndexShapes";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
@@ -95,6 +97,29 @@ TEST_F(QnnHTPBackendTests, ReshapeEinsumReshape_Float) {
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "DepthToSpace", 1);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Einsum", 0);
+  AssertTensorShapeInQnnGraph(json_qnn_graph_dir, "reshape1_out", {1, 32, 32, 32});
+  AssertTensorShapeInQnnGraph(json_qnn_graph_dir, "einsum_out", {1, 64, 64, 8});
+  AssertTensorShapeInQnnGraph(json_qnn_graph_dir, "output", {1, 8, 64, 64});
+}
+
+TEST_F(QnnHTPBackendTests, ReshapeEinsumReshape_RejectsNonRank6Input) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ReshapeEinsumReshape_RejectsNonRank6Input";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildNonRank6ReshapeEinsumReshapeTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(1e-2f)});
+
+  // The standalone operators may be assigned to QNN, but the rank-6-only fusion must not fire.
+  AssertOpInQnnGraph(json_qnn_graph_dir, "DepthToSpace", 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
