@@ -921,6 +921,23 @@ bool OrtDropDQNodeGroupSelector::Check(const OrtGraph* /*graph*/, const OrtApi& 
 }
 
 // Implementation of Check() for OrtUnaryNodeGroupSelector
+bool OrtRandomNormalLikeNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api,
+                                                 const OrtNode* node, const OrtNode* redundant_clip_node,
+                                                 const std::vector<const OrtNode*>& dq_nodes,
+                                                 const std::vector<const OrtNode*>& q_nodes) const {
+  // Absorb a single output Q with an optional input DQ. RNL does not consume
+  // input values, so the input and output quantization types need not match.
+  if (redundant_clip_node != nullptr || dq_nodes.size() > 1 ||
+      !CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes,
+                     static_cast<int>(dq_nodes.size()))) {
+    return false;
+  }
+
+  const auto output_type = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+  return output_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8 ||
+         output_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
+}
+
 bool OrtUnaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
                                       const OrtNode* redundant_clip_node,
                                       const std::vector<const OrtNode*>& dq_nodes,
@@ -1875,6 +1892,10 @@ OrtSelectorManager::OrtSelectorManager() {
 
 void OrtSelectorManager::CreateSelectors() {
   // Register selectors for different op types
+
+  OrtOpVersionsAndSelector::OpVersionsMap random_normal_like_ops = {
+      {"RandomNormalLike", {}}};
+  ort_selectors_.RegisterSelector(random_normal_like_ops, std::make_unique<OrtRandomNormalLikeNodeGroupSelector>());
 
   // Register misc ops
   OrtOpVersionsAndSelector::OpVersionsMap misc_ops = {

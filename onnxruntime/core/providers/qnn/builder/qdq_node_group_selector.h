@@ -103,6 +103,15 @@ class OrtDropDQNodeGroupSelector : public OrtNodeGroupSelector {
              const std::vector<const OrtNode*>& q_nodes) const override;
 };
 
+// RandomNormalLike only uses its input's shape, so input DQ is optional.
+class OrtRandomNormalLikeNodeGroupSelector : public OrtNodeGroupSelector {
+ public:
+  bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+             const OrtNode* redundant_clip_node,
+             const std::vector<const OrtNode*>& dq_nodes,
+             const std::vector<const OrtNode*>& q_nodes) const override;
+};
+
 // Selector for unary operations
 class OrtUnaryNodeGroupSelector : public OrtNodeGroupSelector {
  public:
