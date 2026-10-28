@@ -169,7 +169,11 @@ static void RunGatherBlockQuantizedTest(
     // Graph inputs
     // ------------------------------------------------------------
     if (params.indices_are_int32) {
-      std::vector<int32_t> int32_indices(indices.begin(), indices.end());
+      std::vector<int32_t> int32_indices;
+      int32_indices.reserve(indices.size());
+      for (const int64_t index : indices) {
+        int32_indices.push_back(static_cast<int32_t>(index));
+      }
       auto indices_def = TestInputDef<int32_t>({params.batch_size, params.seq_len},
                                                params.indices_are_initializer, int32_indices);
       MakeTestInput<int32_t>(builder, "indices", indices_def);
