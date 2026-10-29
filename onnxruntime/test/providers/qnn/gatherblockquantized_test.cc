@@ -73,6 +73,7 @@ struct GatherBQTestParams {
   int64_t quantize_axis{1};
   bool indices_are_initializer{false};
   bool indices_are_int32{false};
+  bool assignment_only{false};
   std::vector<int64_t> indices;
 };
 
@@ -213,11 +214,28 @@ static void RunGatherBlockQuantizedTest(
         attributes);
   };
 
-  RunQnnModelTest(
-      model_builder,
-      provider_options,
-      13,  // opset
-      EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
+  if (params.assignment_only) {
+    ModelTestBuilder helper;
+    model_builder(helper);
+
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> onnx_opset{helper.model_.add_opset_import()};
+    onnx_opset->set_domain("");
+    onnx_opset->set_version(13);
+
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> ms_opset{helper.model_.add_opset_import()};
+    ms_opset->set_domain(kMSDomain);
+    ms_opset->set_version(1);
+
+    helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+    std::string model_data;
+    helper.model_.SerializeToString(&model_data);
+    VerifyQnnEpModelAssignment(model_data, "GatherBlockQuantized_QNN", provider_options, expected_ep_assignment);
+    return;
+  }
+
+  RunQnnModelTest(model_builder, provider_options, 13,  // opset
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // =============================================================
@@ -273,12 +291,14 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_StaticNegativeInt32Indices) {
 
 // Out-of-range values are legal for GatherBlockQuantized and produce zeros.
 // QNN cannot preserve that behavior, so the node must intentionally fall back.
+// Check assignment only because the current CPU kernel rejects out-of-range indices at inference time.
 TEST_F(QnnGPUBackendTests, GatherBlockQuantized_StaticOutOfRangeIndicesFallback) {
   GatherBQTestParams params;
   params.vocab_size = 128;
   params.hidden_size = 64;
   params.block_size = 32;
   params.indices_are_initializer = true;
+  params.assignment_only = true;
   params.indices = {128};
   RunGatherBlockQuantizedTest(params, ExpectedEPNodeAssignment::None);
 }
