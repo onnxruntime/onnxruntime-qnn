@@ -247,6 +247,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // QNN-related.
   std::shared_ptr<qnn::QnnBackendManager> qnn_backend_manager_;
+  // Identifies models parked by this EP independently of a backend manager that may be shared
+  // by multiple sessions. SharedContext uses it only as an opaque, stable identity.
+  const std::shared_ptr<const void> shared_qnn_model_owner_ = std::make_shared<char>();
   std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models_;
 
   // Configurations for HTP backend.
