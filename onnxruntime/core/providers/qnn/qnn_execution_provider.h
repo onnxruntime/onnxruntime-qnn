@@ -44,9 +44,10 @@ class GenieBackendManager;
 
 class QnnEp : public OrtEp, public ApiPtrs {
  public:
-  QnnEp(const QnnEpFactory& factory,
+  QnnEp(QnnEpFactory& factory,
         const std::string& name,
         const OrtSessionOptions& session_options,
+        const std::vector<const OrtHardwareDevice*>& devices,
         const OrtLogger* logger);
   ~QnnEp();
 
@@ -170,6 +171,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
     return GetProviderOptionPrefix(name_) + key;
   }
 
+  static const std::unordered_map<OrtHardwareDeviceType, std::string>& GetDefaultBackends();
+
+  std::string GetDefaultBackendPath(const std::vector<const OrtHardwareDevice*>& devices) const;
+
+  bool IsUsingVirtualDevice() const;
+
   struct QnnNodeComputeInfo : QnnNodeComputeInfoBase {
     explicit QnnNodeComputeInfo(QnnEp& ep);
 
@@ -218,8 +225,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::optional<uint32_t> htp_power_config_id_;
   mutable std::mutex config_id_mutex_;
 
-  const QnnEpFactory& factory_;
-
+  QnnEpFactory& factory_;
   std::string name_;
   const Ort::Logger logger_;
   bool context_cache_enabled_ = false;

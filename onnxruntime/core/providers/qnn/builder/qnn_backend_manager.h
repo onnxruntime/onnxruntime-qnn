@@ -123,6 +123,7 @@ class QnnSerializerConfig {
 
 // configuration values for QnnBackendManager creation
 struct QnnBackendManagerConfig {
+  gsl::span<const OrtHardwareDevice* const> devices;
   std::string backend_path;
   ProfilingLevel profiling_level_etw;
   ProfilingLevel profiling_level;
@@ -168,7 +169,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                     const ApiPtrs& api_ptrs,
                     const Ort::Logger& logger,
                     PrivateConstructorTag)
-      : backend_path_(config.backend_path),
+      : devices_(config.devices.begin(), config.devices.end()),
+        backend_path_(config.backend_path),
         reused_io_limit_mb_(config.reused_io_limit_mb),
         context_priority_(config.context_priority),
         qnn_serializer_config_(config.qnn_serializer_config),
@@ -417,6 +419,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
   void ReleaseResources();
 
+  std::shared_ptr<void> GetBackendLibraryLifetime() const { return backend_libraries_; }
+
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   typedef struct FileMappingCallbackInfo {
     void* const mapped_file_ptr;
@@ -555,8 +559,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status LoadQnnSystemLib();
 
   Ort::Status LoadQnnSerializerBackend();
-
-  Ort::Status UnloadLib(void* handle);
 
   void* LibFunction(void* handle, const char* symbol, std::string& error_msg);
 
@@ -711,6 +713,12 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
            (act_ver.major == min_ver.major && act_ver.minor == min_ver.minor && act_ver.patch >= min_ver.patch);
   }
 
+  const OrtHardwareDevice* GetActiveOrtDevice() const;
+
+  // Declared first so libraries also outlive all members during standalone manager teardown.
+  const std::shared_ptr<std::vector<UniqueDynamicLibraryHandle>> backend_libraries_ =
+      std::make_shared<std::vector<UniqueDynamicLibraryHandle>>();
+  const std::vector<const OrtHardwareDevice*> devices_;
   const std::string backend_path_;
   std::recursive_mutex logger_recursive_mutex_;
   QNN_INTERFACE_VER_TYPE qnn_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
@@ -725,11 +733,12 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   void* system_lib_handle_ = nullptr;
   Qnn_BackendHandle_t backend_handle_ = nullptr;
   Qnn_BackendHandle_t validator_backend_handle_ = nullptr;
-  QnnBackend_Config_t** backend_config_ = nullptr;
-  // GPU backend weight sharing config (valid only when GPU backend is active, lifetime: owned by this class)
+  const QnnBackend_Config_t** backend_config_ = nullptr;
+  // GPU backend configs (valid only when GPU backend is active, lifetime: owned by this class)
   QnnGpuBackend_CustomConfig_t gpu_backend_custom_config_{};
-  QnnBackend_Config_t backend_config_wrapper_{};
-  QnnBackend_Config_t* backend_configs_ptr_[2]{nullptr, nullptr};
+  qnn::QnnConfigsBuilder<QnnBackend_Config_t, QnnGpuBackend_CustomConfig_t> gpu_backend_custom_configs_ =
+      qnn::QnnConfigsBuilder<QnnBackend_Config_t, QnnGpuBackend_CustomConfig_t>(QNN_BACKEND_CONFIG_INIT,
+                                                                                QNN_GPU_BACKEND_CUSTOM_CONFIG_INIT);
   Qnn_LogHandle_t log_handle_ = nullptr;
   Qnn_LogHandle_t validator_log_handle_ = nullptr;
   Qnn_DeviceHandle_t device_handle_ = nullptr;

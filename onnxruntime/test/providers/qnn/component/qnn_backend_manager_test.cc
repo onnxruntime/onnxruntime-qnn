@@ -25,6 +25,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -32,10 +33,13 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <vector>
 
 #include "test/providers/qnn/infra/qnn_test_windows_compat.h"
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "GPU/QnnGpuCommon.h"
+#include "onnxruntime_ep_device_ep_metadata_keys.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/ort_api.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
@@ -63,6 +67,178 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeManager(
   cfg.configure_host_mode = configure_host_mode;
   return qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
 }
+
+namespace {
+
+// Same explicit-instantiation access pattern as the existing component helpers.
+// Keep test access here rather than exposing backend setup stages in production.
+template <typename Tag, typename Tag::type Member>
+struct BackendSetupMember {
+  friend typename Tag::type GetBackendSetupMember(Tag) { return Member; }
+};
+struct GlobalConfigTag {
+  using type = Ort::Status (qnn::QnnBackendManager::*)();
+  friend type GetBackendSetupMember(GlobalConfigTag);
+};
+struct InitializeBackendTag {
+  using type = Ort::Status (qnn::QnnBackendManager::*)(bool);
+  friend type GetBackendSetupMember(InitializeBackendTag);
+};
+template struct BackendSetupMember<GlobalConfigTag, &qnn::QnnBackendManager::SetGlobalConfig>;
+template struct BackendSetupMember<InitializeBackendTag, &qnn::QnnBackendManager::InitializeBackend>;
+
+struct GpuConfigCapture {
+  std::unordered_map<const OrtHardwareDevice*, OrtHardwareDeviceType> types;
+  const char* virtual_value = nullptr;
+  bool null_metadata = false;
+  std::vector<QnnGlobalConfig_t> global_configs;
+  Qnn_ErrorHandle_t global_result = QNN_SUCCESS;
+  int global_calls = 0;
+  int backend_calls = 0;
+  int backend_free_calls = 0;
+  std::vector<QnnGpuBackend_CustomConfig_t> backend_configs;
+};
+thread_local GpuConfigCapture* gpu_capture = nullptr;
+
+class QnnUnit_GpuBackendConfigTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    gpu_capture = &capture;
+    env.stub_ort_api.HardwareDevice_Type = [](const OrtHardwareDevice* device) noexcept {
+      return gpu_capture->types.at(device);
+    };
+    env.stub_ort_api.HardwareDevice_Metadata = [](const OrtHardwareDevice* device) noexcept -> const OrtKeyValuePairs* {
+      if (gpu_capture->null_metadata || gpu_capture->types.at(device) != OrtHardwareDeviceType_GPU) return nullptr;
+      return reinterpret_cast<const OrtKeyValuePairs*>(1);
+    };
+    env.stub_ort_api.GetKeyValue = [](const OrtKeyValuePairs*, const char* key) noexcept -> const char* {
+      return std::strcmp(key, kOrtHardwareDevice_MetadataKey_IsVirtual) == 0 ? gpu_capture->virtual_value : nullptr;
+    };
+  }
+  void TearDown() override { gpu_capture = nullptr; }
+
+  std::shared_ptr<qnn::QnnBackendManager> MakeGpuManager(const std::vector<OrtHardwareDeviceType>& types,
+                                                         uint32_t soc_model = 88) {
+    std::vector<const OrtHardwareDevice*> devices;
+    for (size_t i = 0; i < types.size(); ++i) {
+      const auto* device = reinterpret_cast<const OrtHardwareDevice*>(i + 1);
+      capture.types[device] = types[i];
+      devices.push_back(device);
+    }
+    qnn::QnnBackendManagerConfig config{};
+    config.devices = devices;
+    config.soc_model = soc_model;
+    auto manager = qnn::QnnBackendManager::Create(config, env.api_ptrs, env.logger);
+    manager->SetQnnBackendType(QNN_BACKEND_ID_GPU);
+    auto& api = const_cast<QNN_INTERFACE_VER_TYPE&>(manager->GetQnnInterface());
+    api.globalConfigSet = [](const QnnGlobalConfig_t** configs) -> Qnn_ErrorHandle_t {
+      ++gpu_capture->global_calls;
+      for (size_t i = 0; configs && configs[i]; ++i) gpu_capture->global_configs.push_back(*configs[i]);
+      return gpu_capture->global_result;
+    };
+    api.errorGetMessage = [](Qnn_ErrorHandle_t, const char** message) -> Qnn_ErrorHandle_t {
+      *message = "stub error";
+      return QNN_SUCCESS;
+    };
+    api.backendCreate = [](Qnn_LogHandle_t, const QnnBackend_Config_t** configs,
+                           Qnn_BackendHandle_t* backend) -> Qnn_ErrorHandle_t {
+      ++gpu_capture->backend_calls;
+      for (size_t i = 0; configs && configs[i]; ++i) {
+        EXPECT_EQ(configs[i]->option, QNN_BACKEND_CONFIG_OPTION_CUSTOM);
+        gpu_capture->backend_configs.push_back(*static_cast<const QnnGpuBackend_CustomConfig_t*>(configs[i]->customConfig));
+      }
+      *backend = reinterpret_cast<Qnn_BackendHandle_t>(1);
+      return QNN_SUCCESS;
+    };
+    api.backendFree = [](Qnn_BackendHandle_t) -> Qnn_ErrorHandle_t {
+      ++gpu_capture->backend_free_calls;
+      return QNN_SUCCESS;
+    };
+    return manager;
+  }
+
+  StubApiEnv env;
+  GpuConfigCapture capture;
+};
+
+TEST_F(QnnUnit_GpuBackendConfigTest, VirtualGpuSetsSocModelForEitherDeviceOrder) {
+  for (const auto& types : {std::vector<OrtHardwareDeviceType>{OrtHardwareDeviceType_NPU, OrtHardwareDeviceType_GPU},
+                            std::vector<OrtHardwareDeviceType>{OrtHardwareDeviceType_GPU, OrtHardwareDeviceType_NPU}}) {
+    capture.global_configs.clear();
+    capture.virtual_value = "1";
+    auto manager = MakeGpuManager(types, 88);
+    auto status = ((*manager).*GetBackendSetupMember(GlobalConfigTag{}))();
+    ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+    ASSERT_EQ(capture.global_configs.size(), 1u);
+    EXPECT_EQ(capture.global_configs[0].option, QNN_GLOBAL_CONFIG_OPTION_SOC_MODEL);
+    EXPECT_EQ(static_cast<uint32_t>(capture.global_configs[0].socModel), 88u);
+  }
+}
+
+TEST_F(QnnUnit_GpuBackendConfigTest, PhysicalGpuDoesNotOverrideSocModel) {
+  for (const char* flag : {static_cast<const char*>(nullptr), "0", "true"}) {
+    SCOPED_TRACE(flag ? flag : "absent");
+    capture.virtual_value = flag;
+    auto manager = MakeGpuManager({OrtHardwareDeviceType_GPU});
+    auto status = ((*manager).*GetBackendSetupMember(GlobalConfigTag{}))();
+    ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+    EXPECT_EQ(capture.global_calls, 0);
+  }
+  capture.null_metadata = true;
+  auto manager = MakeGpuManager({OrtHardwareDeviceType_GPU});
+  EXPECT_TRUE(((*manager).*GetBackendSetupMember(GlobalConfigTag{}))().IsOK());
+  EXPECT_EQ(capture.global_calls, 0);
+}
+
+TEST_F(QnnUnit_GpuBackendConfigTest, MissingGpuDeviceReturnsErrorBeforeGlobalConfig) {
+  auto manager = MakeGpuManager({OrtHardwareDeviceType_NPU});
+  auto status = ((*manager).*GetBackendSetupMember(GlobalConfigTag{}))();
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("No GPU hardware device"), std::string::npos);
+  EXPECT_EQ(capture.global_calls, 0);
+}
+
+TEST_F(QnnUnit_GpuBackendConfigTest, VirtualGpuRequiresGlobalConfigApiAndPropagatesItsFailure) {
+  capture.virtual_value = "1";
+  capture.global_result = QNN_COMMON_ERROR_NOT_SUPPORTED;
+  auto manager = MakeGpuManager({OrtHardwareDeviceType_GPU});
+  auto status = ((*manager).*GetBackendSetupMember(GlobalConfigTag{}))();
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("Failed to set global config"), std::string::npos);
+  EXPECT_EQ(capture.global_calls, 1);
+  const_cast<QNN_INTERFACE_VER_TYPE&>(manager->GetQnnInterface()).globalConfigSet = nullptr;
+  status = ((*manager).*GetBackendSetupMember(GlobalConfigTag{}))();
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("without QnnGlobalConfig_set"), std::string::npos);
+  EXPECT_EQ(capture.global_calls, 1);
+}
+
+TEST_F(QnnUnit_GpuBackendConfigTest, WeightSharingConfigIsOptionalAndBackendInitIsIdempotent) {
+  for (bool enabled : {false, true}) {
+    SCOPED_TRACE(enabled);
+    capture.backend_configs.clear();
+    capture.backend_calls = 0;
+    capture.backend_free_calls = 0;
+    {
+      auto manager = MakeGpuManager({OrtHardwareDeviceType_GPU});
+      auto status = ((*manager).*GetBackendSetupMember(InitializeBackendTag{}))(enabled);
+      ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+      EXPECT_TRUE(((*manager).*GetBackendSetupMember(InitializeBackendTag{}))(enabled).IsOK());
+      EXPECT_EQ(capture.backend_calls, 1);
+      ASSERT_EQ(capture.backend_configs.size(), enabled ? 1u : 0u);
+      if (enabled) {
+        EXPECT_EQ(capture.backend_configs[0].option, QNN_GPU_BACKEND_CONFIG_OPTION_WEIGHT_SHARING_ENABLED);
+        EXPECT_EQ(capture.backend_configs[0].weightSharingEnabled, 1u);
+      }
+      manager->ReleaseResources();
+      manager->ReleaseResources();
+      EXPECT_EQ(capture.backend_free_calls, 1);
+    }
+    EXPECT_EQ(capture.backend_free_calls, 1);
+  }
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Group 0: IsBackendHostMode — pure getter, no QNN lib needed

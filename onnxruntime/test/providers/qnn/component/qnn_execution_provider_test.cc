@@ -42,6 +42,7 @@
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
+#include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
 
 namespace onnxruntime {
 namespace test {
@@ -185,6 +186,11 @@ class EpStubContext : public OrtApiStubContext {
       return nullptr;
     };
 
+    // Default backend selection uses the NPU device supplied by MakeEp.
+    stub_ort_api.HardwareDevice_Type = [](const OrtHardwareDevice*) noexcept {
+      return OrtHardwareDeviceType_NPU;
+    };
+
     // Memory info (needed by QnnEpFactory ctor).
     stub_ort_api.CreateMemoryInfo_V2 =
         [](const char*, OrtMemoryInfoDeviceType, uint32_t, int32_t,
@@ -262,8 +268,9 @@ static std::unique_ptr<QnnEp> MakeEp(QnnEpFactory& factory, EpStubContext& ctx) 
   UseGlobalEpStubs use(ctx);
   auto* fake_session_opts = reinterpret_cast<OrtSessionOptions*>(kFakeToken);
   auto* fake_logger = reinterpret_cast<OrtLogger*>(kFakeToken);
+  const std::vector<const OrtHardwareDevice*> devices{reinterpret_cast<const OrtHardwareDevice*>(kFakeToken)};
   return std::make_unique<QnnEp>(factory, "QNNExecutionProvider",
-                                 *fake_session_opts, fake_logger);
+                                 *fake_session_opts, devices, fake_logger);
 }
 
 // Asserts that ctx.log_records contains at least one entry at the given
@@ -293,6 +300,12 @@ template <typename Tag, typename Tag::type Member>
 struct QnnEpPrivateMember {
   friend typename Tag::type GetQnnEpPrivateMember(Tag) { return Member; }
 };
+
+struct PartitionCtxModelTag {
+  using type = void (QnnEp::*)(const OrtGraph*, OrtEpGraphSupportInfo*);
+  friend type GetQnnEpPrivateMember(PartitionCtxModelTag);
+};
+template struct QnnEpPrivateMember<PartitionCtxModelTag, &QnnEp::PartitionCtxModel>;
 
 struct GetPerThreadHtpPowerConfigsTag {
   using type = void (QnnEp::*)(qnn::PerThreadHtpPowerConfigs_t&, const OrtRunOptions*);
@@ -329,6 +342,33 @@ class QnnUnit_ExecutionProviderTest : public ::testing::Test {
 // ===========================================================================
 // Group 1: Default construction (sanity check)
 // ===========================================================================
+
+TEST_F(QnnUnit_ExecutionProviderTest, PartitionCtxModel_AcceptsVirtualSourcesAndRejectsOtherProviders) {
+  for (const char* name : {"qnn", "QNNExecutionProvider", "qnn.virtual", "QNNExecutionProvider.Virtual", "other.virtual"}) {
+    SCOPED_TRACE(name);
+    EpStubContext ctx;
+    UseGlobalEpStubs use(ctx);
+    InstallFakeGraphApiStubs(ctx.stub_ort_api);
+    std::vector<const OrtNode*> fused_nodes;
+    ctx.stub_ep_api.EpGraphSupportInfo_AddNodesToFuse =
+        [](OrtEpGraphSupportInfo* info, const OrtNode* const* nodes, size_t count,
+           const OrtNodeFusionOptions*) noexcept -> OrtStatus* {
+      auto& result = *reinterpret_cast<std::vector<const OrtNode*>*>(info);
+      result.insert(result.end(), nodes, nodes + count);
+      return nullptr;
+    };
+    QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
+    auto ep = MakeEp(factory, ctx);
+    auto source = FakeOpAttr::MakeString(qnn::SOURCE, name);
+    FakeNode context{"context", "EPContext", "com.microsoft", 1, {}, {}};
+    context.attrs[qnn::SOURCE] = &source;
+    FakeNode relu{"relu", "Relu", "", 13, {}, {}};
+    FakeGraph graph{{context, relu}, {}, {}, {}};
+    (ep.get()->*GetQnnEpPrivateMember(PartitionCtxModelTag{}))(
+        graph.AsGraph(), reinterpret_cast<OrtEpGraphSupportInfo*>(&fused_nodes));
+    EXPECT_EQ(fused_nodes.size(), std::strcmp(name, "other.virtual") == 0 ? 0u : 1u);
+  }
+}
 
 TEST_F(QnnUnit_ExecutionProviderTest, DefaultCtor_Succeeds) {
   EpStubContext ctx;

@@ -138,6 +138,8 @@ void* GenieBackendManager::LoadLib(const char* file_name, int flags, std::string
     mod_handles_.erase(mod);
   }
 
+  UniqueLibraryHandle library_handle(static_cast<void*>(mod));
+  backend_libraries_->push_back(std::move(library_handle));
   return static_cast<void*>(mod);
 #else
   ORT_UNUSED_PARAMETER(error_msg);
@@ -155,49 +157,34 @@ void* GenieBackendManager::LoadLib(const char* file_name, int flags, std::string
     real_flags |= RTLD_GLOBAL;
   }
 
-  void* handle = ::dlopen(file_name, real_flags);
+  UniqueLibraryHandle library_handle(::dlopen(file_name, real_flags));
+  void* handle = library_handle.get();
   if (!handle) {
     error_msg = ::dlerror();
+  } else {
+    backend_libraries_->push_back(std::move(library_handle));
   }
   return handle;
 #endif
 }
 
-void GenieBackendManager::ReleaseResources() {
-  if (backend_lib_handle_) {
-    auto result = UnloadLib(backend_lib_handle_);
-    if (!result.IsOK()) {
-      std::ostringstream oss;
-      oss << "Failed to unload backend library: "
-          << result.GetErrorMessage();
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-    }
+void GenieBackendManager::LibraryDeleter::operator()(void* handle) const noexcept {
+  if (handle == nullptr) {
+    return;
   }
-
-  backend_setup_completed_ = false;
-  return;
+#ifdef _WIN32
+  const bool unloaded = ::FreeLibrary(static_cast<HMODULE>(handle)) != 0;
+#else
+  const bool unloaded = ::dlclose(handle) == 0;
+#endif
+  if (!unloaded && OrtLoggingManager::HasDefaultLogger()) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR,
+                "Failed to unload Genie backend library.");
+  }
 }
 
-Ort::Status GenieBackendManager::UnloadLib(void* handle) {
-  if (!handle) {
-    return Ort::Status();
-  }
-
-#ifdef _WIN32
-  HMODULE mod = static_cast<HMODULE>(handle);
-
-  if (FreeLibrary(mod) == 0) {
-    return MAKE_EP_FAIL("Failed to free library.");
-  }
-  mod_handles_.erase(mod);
-#else
-  auto rt = ::dlclose(handle);
-  if (rt != 0) {
-    return MAKE_EP_FAIL("Failed to free library.");
-  }
-#endif  // defined(_WIN32)
-
-  return Ort::Status();
+void GenieBackendManager::ReleaseResources() {
+  backend_setup_completed_ = false;
 }
 
 }  // namespace qnn
