@@ -215,7 +215,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     }
   });
 
-
   // Check for keys related to Chromium's WebNN implementation. Graph compilation runs in a sandboxed process where hardware
   // devices are not visible to the EP. Instead, we must create virtual devices based on the signaled architecture.
   OrtKeyValuePairs* env_config = nullptr;
@@ -425,6 +424,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
                                                         OrtLoggingLevel::ORT_LOGGING_LEVEL_INFO,
                                                         "Creating QNN EP", ORT_FILE, __LINE__, __FUNCTION__));
 
+#if defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
   const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
 
   using SessionOptionsUniquePtr = std::unique_ptr<OrtSessionOptions, std::function<void(OrtSessionOptions*)>>;
@@ -548,6 +548,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
       session_options = autoep_session_options.get();
     }
   }
+#endif  // defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
   std::unique_ptr<QnnEp> qnn_ep;
   try {
     const std::vector<const OrtHardwareDevice*> v_devices(devices, devices + num_devices);

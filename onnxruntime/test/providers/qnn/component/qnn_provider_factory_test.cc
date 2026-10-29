@@ -1644,7 +1644,6 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_TargetOverrideOnlyApplie
   }
 }
 
-
 TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_TargetParsingUsesNonzeroSocModelOrHostFallback) {
   for (const char* target : {static_cast<const char*>(nullptr), "88", "4294967295", "0", "", "-88", "+88", "88junk", "4294967296", "htp-v73", " 88"}) {
     SCOPED_TRACE(target ? target : "unset");
@@ -1706,7 +1705,7 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_SyntheticGpuFailurePrese
 
 // Regression fence: earlier enumeration results must not refer to released hardware.
 // This currently exposes the factory's replacement of virtual_gpu_hw_device_.
-TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_RepeatedSynthesisRetainsHardware) {
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_RepeatedSynthesisRetainsHardwareWithAndWithoutDiscoveredNpu) {
   for (bool supply_npu : {false, true}) {
     SCOPED_TRACE(supply_npu);
     FactoryStubContext ctx;
@@ -1826,7 +1825,6 @@ TEST_F(QnnUnit_ProviderFactoryTest, IncompatibilityDetails_CpuConfigFailureRelea
   EXPECT_EQ(ctx.release_session_options_calls, 1);
 }
 
-
 #if defined(_WIN32) && QNN_ARCH_ARM64 && \
     (QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40))
 
@@ -1875,7 +1873,6 @@ TEST_F(QnnUnit_ProviderFactoryHtpTest,
 }
 
 #endif  // defined(_WIN32) && QNN_ARCH_ARM64 && QNN API >= 2.40
-
 
 TEST_F(QnnUnit_ProviderFactoryTest, BackendLibraries_ActiveManagerSurvivesFactoryRelease) {
   FactoryStubContext ctx;
