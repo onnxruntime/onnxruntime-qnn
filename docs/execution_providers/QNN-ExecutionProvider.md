@@ -749,7 +749,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
-|com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
+|com.microsoft:GatherBlockQuantized|GPU backend only; rank-2 or rank-3 weights/scales; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis must be the trailing axis; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
 |com.microsoft:GroupQueryAttention|GPU and HTP backends (float precision); GPU support requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP support requires QAIRT SDK ≥ 2.49|
 |com.microsoft:MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
