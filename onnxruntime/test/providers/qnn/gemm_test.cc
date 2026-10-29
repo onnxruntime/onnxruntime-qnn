@@ -338,6 +338,142 @@ static void RunQDQGemmTestOnHTP(const std::vector<TestInputDef<float>>& input_de
                                     tolerance);
 }
 
+// Builds a QDQ Gemm that mirrors the failing model's quantization layout: a per-output-channel
+// quantized weight initializer and a per-output-channel int32 bias. Both must be consumed inside the
+// node group - a standalone per-channel DequantizeLinear is unsupported, and leaving it out of the
+// group turns the weight into an extra graph input instead of failing the compile.
+template <typename ActivationQType, typename WeightQType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQGemmPerChannelTestCase(
+    const std::vector<TestInputDef<float>>& input_defs,
+    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
+  return [input_defs, attrs](ModelTestBuilder& builder,
+                             std::vector<QuantParams<OutputQType>>& output_qparams) {
+    const size_t num_inputs = input_defs.size();
+    QNN_ASSERT(num_inputs == 2 || num_inputs == 3);
+
+    // A (fp32) -> Q -> DQ (per-tensor activation)
+    MakeTestInput(builder, "A", input_defs[0]);
+    const QuantParams<ActivationQType> a_qparams = GetTestInputQuantParams<ActivationQType>(input_defs[0]);
+    const std::string a_qdq = AddQDQNodePair<ActivationQType>(builder, "qdq_a", "A", a_qparams.scale,
+                                                              a_qparams.zero_point);
+
+    // B: per-output-channel quantized initializer -> DQ -> (axis 1; B is [K, N] with transB=0, so the
+    // output channels run along the last axis and the builder rotates the encoding when it transposes
+    // the weight to QNN's [N, K] layout)
+    const auto weight_shape = input_defs[1].GetShape();
+    std::vector<float> weight_scales;
+    std::vector<WeightQType> weight_zero_points;
+    GetTestInputQuantParamsPerChannel<WeightQType>(input_defs[1], weight_scales, weight_zero_points,
+                                                   /*axis=*/1, /*symmetric=*/true);
+    std::vector<WeightQType> quantized_weights(SizeOfShape(weight_shape));
+    QuantizeValues<float, WeightQType>(input_defs[1].GetRawData(), quantized_weights, weight_shape,
+                                       weight_scales, weight_zero_points, /*axis=*/1);
+    builder.MakeInitializer<WeightQType>("B_q", weight_shape, quantized_weights);
+    builder.AddDequantizeLinearNode<WeightQType>("B_dq", "B_q", weight_scales, weight_zero_points, "B",
+                                                 {test::MakeAttribute("axis", static_cast<int64_t>(1))});
+
+    std::vector<std::string> gemm_inputs{a_qdq, "B"};
+
+    if (num_inputs == 3) {
+      // C: per-output-channel int32 bias encoded against activation_scale * weight_scale[c].
+      const auto bias_shape = input_defs[2].GetShape();
+      const size_t num_channels = static_cast<size_t>(bias_shape.back());
+      std::vector<float> bias_scales(num_channels);
+      for (size_t c = 0; c < num_channels; ++c) {
+        const float weight_scale = c < weight_scales.size() ? weight_scales[c] : weight_scales[0];
+        bias_scales[c] = a_qparams.scale * weight_scale;
+      }
+      std::vector<int32_t> bias_zero_points(num_channels, 0);
+      std::vector<int32_t> quantized_bias(SizeOfShape(bias_shape));
+      QuantizeValues<float, int32_t>(input_defs[2].GetRawData(), quantized_bias, bias_shape, bias_scales,
+                                     bias_zero_points, /*axis=*/0);
+      builder.MakeInitializer<int32_t>("C_q", bias_shape, quantized_bias);
+      builder.AddDequantizeLinearNode<int32_t>("C_dq", "C_q", bias_scales, bias_zero_points, "C",
+                                               {test::MakeAttribute("axis", static_cast<int64_t>(0))});
+      gemm_inputs.push_back("C");
+    }
+
+    builder.AddNode("gemm", "Gemm", gemm_inputs, {"Y"}, "", attrs);
+
+    // Output: Y -> Q -> DQ -> output
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(
+        builder, "qdq_out", "Y", output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+// Runs a QDQ Gemm whose activation and declared output use different fixed-point precisions. The pair
+// must stay in a single node unit: the op runs at the wider precision and the narrower side is
+// bridged with exactly one QNN Convert (on the output for a16 -> u8, on the activation for u8 -> u16).
+// With a bias, the bias must be re-encoded against the activation the op actually consumes.
+template <typename ActivationQType, typename WeightQType, typename OutputQType>
+static void RunQDQGemmMixedPrecisionTest(const char* test_name, bool with_bias,
+                                         Qnn_DataType_t expected_convert_type) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / (std::string("GemmMixedPrecision_") + test_name);
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+#ifdef __linux__
+  provider_options["htp_arch"] = "73";
+#endif
+
+  std::vector<TestInputDef<float>> input_defs{TestInputDef<float>({2, 16}, false, GetFloatDataInRange(-1.0f, 1.0f, 32)),
+                                              TestInputDef<float>({16, 8}, true, GetFloatDataInRange(-0.5f, 0.5f, 128))};
+  if (with_bias) {
+    input_defs.push_back(TestInputDef<float>({8}, true, GetFloatDataInRange(-0.5f, 0.5f, 8)));
+  }
+
+  const std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>("gemm_node", "Gemm", input_defs, {}, attrs),
+                       BuildQDQGemmPerChannelTestCase<ActivationQType, WeightQType, OutputQType>(
+                           input_defs, attrs),
+                       provider_options,
+                       // int16/uint16 zero points require QuantizeLinear >= 19; the failing model is opset 21.
+                       21,  // opset
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance());
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(graph_dir, "Convert", 1);
+  AssertConvertOutputDataType(graph_dir, expected_convert_type);
+  // One graph input (A). Anything else means a param was left outside the group.
+  AssertQnnGraphInputCount(graph_dir, 1);
+}
+
+// A16 activation with an 8-bit declared output: FullyConnected runs at 16-bit and the output is
+// Converted down.
+TEST_F(QnnHTPBackendTests, GemmMixedPrecisionU16ActivationU8Output) {
+  RunQDQGemmMixedPrecisionTest<uint16_t, uint8_t, uint8_t>("U16ActivationU8Output", /*with_bias=*/false,
+                                                           QNN_DATATYPE_UFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, GemmMixedPrecisionU16ActivationU8OutputBias) {
+  RunQDQGemmMixedPrecisionTest<uint16_t, uint8_t, uint8_t>("U16ActivationU8OutputBias", /*with_bias=*/true,
+                                                           QNN_DATATYPE_UFIXED_POINT_8);
+}
+
+// 8-bit activation with a 16-bit declared output: the activation is Converted up so FullyConnected
+// computes at the declared precision, and the int32 bias is re-encoded to match.
+TEST_F(QnnHTPBackendTests, GemmMixedPrecisionU8ActivationU16Output) {
+  RunQDQGemmMixedPrecisionTest<uint8_t, uint8_t, uint16_t>("U8ActivationU16Output", /*with_bias=*/false,
+                                                           QNN_DATATYPE_UFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, GemmMixedPrecisionU8ActivationU16OutputBias) {
+  RunQDQGemmMixedPrecisionTest<uint8_t, uint8_t, uint16_t>("U8ActivationU16OutputBias", /*with_bias=*/true,
+                                                           QNN_DATATYPE_UFIXED_POINT_16);
+}
+
 // Test 8-bit QDQ Gemm with dynamic inputs A and Bias. The B input is an initializer.
 TEST_F(QnnHTPBackendTests, Gemm_Dynamic_A_Static_B_Dynamic_Bias_U8) {
   std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);

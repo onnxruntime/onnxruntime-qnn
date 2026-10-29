@@ -5,6 +5,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/mixed_precision_convert_utils.h"
 #include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -74,6 +75,10 @@ class GemmOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(GemmOpBuilder);
 
  protected:
+  Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger) const override final ORT_MUST_USE_RESULT;
+
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
                             const Ort::Logger& logger,
@@ -88,6 +93,16 @@ class GemmOpBuilder : public BaseOpBuilder {
 
  private:
   Ort::Status ExplictOpCheck(const OrtNodeUnit& node_unit, bool is_bq_gemm) const;
+  // Registers one of Gemm's inputs (transposing a constant, adding a Transpose node for a transposed
+  // non-constant) and appends its QNN tensor name to `input_names`. A tensor already added by a
+  // producer that needs no transpose is only recorded, not re-registered.
+  Ort::Status RegisterGemmInput(QnnModelWrapper& qnn_model_wrapper,
+                                const OrtNodeUnit& node_unit,
+                                size_t input_index,
+                                const std::vector<int64_t>& input_trans_flags,
+                                const Ort::Logger& logger,
+                                std::vector<std::string>& input_names,
+                                bool do_op_validation) const ORT_MUST_USE_RESULT;
   // Block-quantized (BW_FLOAT_BLOCK) weight path for Gemm→QNN FullyConnected.
   Ort::Status ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wrapper,
                                      const OrtNodeUnit& node_unit,
@@ -127,6 +142,113 @@ Ort::Status GemmOpBuilder::ExplictOpCheck(const OrtNodeUnit& node_unit, bool is_
   return Ort::Status();
 }
 
+Ort::Status GemmOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& node_unit,
+                                         const Ort::Logger& logger) const {
+  // A mixed activation/output precision pair is bridged with Convert nodes by this builder (see
+  // ProcessInputs/ProcessOutputsAcrossPrecision), but only on the plain FullyConnected/MatMul
+  // lowering: the block-quantized, absorbed-Reshape and FullyConnected+Add lowerings build their
+  // own output tensors. A mixed Gemm that needs one of those keeps the float fallback.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    const auto& inputs = node_unit.Inputs();
+    const auto& outputs = node_unit.Outputs();
+    Qnn_DataType_t act_qnn_data_type = QNN_DATATYPE_FLOAT_32;
+    Qnn_DataType_t output_qnn_data_type = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(inputs[0].quant_param.has_value(), inputs[0].type,
+                                          act_qnn_data_type));
+    RETURN_IF_ERROR(utils::GetQnnDataType(outputs[0].quant_param.has_value(), outputs[0].type,
+                                          output_qnn_data_type));
+    if (utils::NeedsPrecisionConvert(act_qnn_data_type, output_qnn_data_type)) {
+      OrtNodeAttrHelper node_helper(node_unit);
+      const int64_t trans_b = node_helper.Get("transB", static_cast<int64_t>(0));
+      const bool has_bias = inputs.size() == 3 && node_helper.Get("beta", 1.0f) != 0.0f;
+      RETURN_IF(IsBQGemmWeight(qnn_model_wrapper, inputs[1], trans_b),
+                "QNN EP: mixed activation/output precision is not supported for a block-quantized weight.");
+      RETURN_IF(node_unit.GetOutputReshapeNode() != nullptr,
+                "QNN EP: mixed activation/output precision is not supported for a Gemm with an "
+                "absorbed Reshape.");
+      RETURN_IF(RequiresFcAddDecomposition(node_unit, /*is_native_bias=*/false) ||
+                    (qnn_model_wrapper.GetModelSettings().use_native_matmul && has_bias),
+                "QNN EP: mixed activation/output precision is not supported for a Gemm that needs "
+                "the FullyConnected + Add decomposition.");
+    }
+  }
+
+  return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);
+}
+
+Ort::Status GemmOpBuilder::RegisterGemmInput(QnnModelWrapper& qnn_model_wrapper,
+                                             const OrtNodeUnit& node_unit,
+                                             size_t input_index,
+                                             const std::vector<int64_t>& input_trans_flags,
+                                             const Ort::Logger& logger,
+                                             std::vector<std::string>& input_names,
+                                             bool do_op_validation) const {
+  const auto& inputs = node_unit.Inputs();
+  const auto& input = inputs[input_index];
+  const auto& input_name = input.name;
+
+  QnnQuantParamsWrapper quantize_param;
+  RETURN_IF_ERROR(quantize_param.Init(qnn_model_wrapper, input));
+
+  // Only skip if the input tensor has already been added (by producer op) *and* we don't need
+  // to transpose it.
+  if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name) && input_trans_flags[input_index] == 0) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + input_name).c_str());
+    input_names.push_back(input_name);
+    return Ort::Status();
+  }
+
+  Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
+  RETURN_IF_ERROR(utils::GetQnnDataType(input.quant_param.has_value(), input.type, qnn_data_type));
+
+  std::vector<uint32_t> input_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.shape, input_shape), "Cannot get shape");
+
+  std::vector<uint8_t> unpacked_tensor;
+  bool is_constant_input = qnn_model_wrapper.IsConstantInput(input_name);
+  if (is_constant_input) {
+    const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
+    if (1 == input_trans_flags.at(input_index)) {
+      RETURN_IF_ERROR(quantize_param.HandleTranspose<size_t>(std::vector<size_t>({1, 0})));
+      RETURN_IF_ERROR(
+          utils::TwoDimensionTranspose(qnn_model_wrapper, input_shape, input_tensor, unpacked_tensor, logger));
+    } else {
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_tensor, unpacked_tensor));
+    }
+  }
+
+  std::string input_tensor_name = input_name;
+  if (1 == input_trans_flags.at(input_index) && !is_constant_input) {
+    RETURN_IF(quantize_param.IsPerChannel(), "Non-constant Gemm inputs only support per-tensor quantization");
+
+    // Add Transpose node
+    std::vector<uint32_t> old_input_shape(input_shape);
+    input_shape[0] = old_input_shape[1];
+    input_shape[1] = old_input_shape[0];
+    const std::string& node_input_name(input_name);
+    input_tensor_name = input_tensor_name + "_transpose";
+    std::vector<uint32_t> perm{1, 0};
+    RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), node_input_name, input_tensor_name,
+                                                       old_input_shape, perm, input_shape,
+                                                       qnn_data_type, quantize_param, do_op_validation,
+                                                       qnn_model_wrapper.IsGraphInput(node_input_name)));
+  }
+
+  // Reshape [1, M] shape Bias.
+  if (input_index == 2 && 2 == input_shape.size() && input_shape[0] == 1) {
+    input_shape[0] = input_shape[1];
+    input_shape.resize(1);
+  }
+
+  input_names.push_back(input_tensor_name);
+  Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(input_tensor_name);
+  QnnTensorWrapper input_tensorwrapper(input_tensor_name, tensor_type, qnn_data_type, std::move(quantize_param),
+                                       std::move(input_shape), std::move(unpacked_tensor));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+  return Ort::Status();
+}
+
 Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger,
@@ -148,8 +270,6 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                   do_op_validation);
   }
 
-  Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
-
   // for Input A, B, C: 1 -- need transpose, 0 -- not needed
   std::vector<int64_t> input_trans_flag(3, 0);
   const bool use_matmul_path = qnn_model_wrapper.GetModelSettings().use_native_matmul;
@@ -161,73 +281,57 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   // suppress host-side data transposition for input A when use_native_matmul is set.
   input_trans_flag.at(0) = (!use_matmul_path && transA != 0) ? 1 : 0;
   input_trans_flag.at(1) = (!use_matmul_path && transB == 0) ? 1 : 0;
-  for (size_t input_i = 0; input_i < inputs.size(); ++input_i) {
-    // beta=0.0: C has no effect on the output — skip it so FC receives only (A, B)
-    if (input_i == 2 && beta == 0.0f) {
-      continue;
+
+  // Input A first: a narrower activation is Converted up to the declared output precision before the
+  // weight and bias are registered, so their encodings match what the op consumes (QNN
+  // FullyConnected/MatMul emit at their activation precision). A wider activation needs no Convert
+  // here; only the output is narrowed, in ProcessAttributesAndOutputs.
+  RETURN_IF_ERROR(RegisterGemmInput(qnn_model_wrapper, node_unit, 0, input_trans_flag, logger, input_names,
+                                    do_op_validation));
+
+  bool activation_widened = false;
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    const Qnn_DataType_t act_qnn_data_type =
+        qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+    Qnn_DataType_t output_qnn_data_type = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(node_unit.Outputs()[0].quant_param.has_value(),
+                                          node_unit.Outputs()[0].type, output_qnn_data_type));
+    activation_widened = utils::NeedsPrecisionConvert(act_qnn_data_type, output_qnn_data_type) &&
+                         !utils::IsNarrowingQuantOutput(act_qnn_data_type, output_qnn_data_type);
+    if (activation_widened) {
+      RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names,
+                                                                output_qnn_data_type, do_op_validation));
     }
+  }
 
-    QnnQuantParamsWrapper quantize_param;
-    RETURN_IF_ERROR(quantize_param.Init(qnn_model_wrapper, inputs[input_i]));
+  for (size_t input_i = 1; input_i < inputs.size(); ++input_i) {
+    if (input_i == 2) {
+      // beta=0.0: C has no effect on the output — skip it so FC receives only (A, B)
+      if (beta == 0.0f) {
+        continue;
+      }
 
-    bool is_quantized_tensor = inputs[input_i].quant_param.has_value();
-    const auto& input_name = inputs[input_i].name;
-
-    // Only skip if the input tensor has already been added (by producer op) *and* we don't need
-    // to transpose it.
-    if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name) && input_trans_flag[input_i] == 0) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + input_name).c_str());
-      input_names.push_back(input_name);
-      continue;
-    }
-
-    ONNXTensorElementDataType input_type = inputs[input_i].type;
-    RETURN_IF_ERROR(utils::GetQnnDataType(is_quantized_tensor, input_type, qnn_data_type));
-
-    std::vector<uint32_t> input_shape;
-    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[input_i].shape, input_shape), "Cannot get shape");
-
-    std::vector<uint8_t> unpacked_tensor;
-    bool is_constant_input = qnn_model_wrapper.IsConstantInput(input_name);
-    if (is_constant_input) {
-      const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
-      if (1 == input_trans_flag.at(input_i)) {
-        RETURN_IF_ERROR(quantize_param.HandleTranspose<size_t>(std::vector<size_t>({1, 0})));
-        RETURN_IF_ERROR(
-            utils::TwoDimensionTranspose(qnn_model_wrapper, input_shape, input_tensor, unpacked_tensor, logger));
-      } else {
-        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_tensor, unpacked_tensor));
+      // A bias feeding an op whose activation was Converted must be re-encoded against the
+      // activation the op actually consumes (QNN's bias scale invariant). Handles INT32
+      // requantization and float-to-INT32 quantization; a bias it cannot handle falls through to
+      // the generic path below.
+      if (activation_widened) {
+        bool was_handled = false;
+        const auto& act_quant_param =
+            qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetQnnQuantParams();
+        TensorInfo weight_info{};
+        RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], weight_info));
+        RETURN_IF_ERROR(utils::ProcessBiasForQuantizedOp(qnn_model_wrapper, logger, node_unit, inputs[2],
+                                                         act_quant_param, weight_info.quant_param,
+                                                         input_names, was_handled));
+        if (was_handled) {
+          continue;
+        }
       }
     }
 
-    std::string input_tensor_name = input_name;
-    if (1 == input_trans_flag.at(input_i) && !is_constant_input) {
-      RETURN_IF(quantize_param.IsPerChannel(), "Non-constant Gemm inputs only support per-tensor quantization");
-
-      // Add Transpose node
-      std::vector<uint32_t> old_input_shape(input_shape);
-      input_shape[0] = old_input_shape[1];
-      input_shape[1] = old_input_shape[0];
-      const std::string& node_input_name(input_name);
-      input_tensor_name = input_tensor_name + "_transpose";
-      std::vector<uint32_t> perm{1, 0};
-      RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), node_input_name, input_tensor_name,
-                                                         old_input_shape, perm, input_shape,
-                                                         qnn_data_type, quantize_param, do_op_validation,
-                                                         qnn_model_wrapper.IsGraphInput(node_input_name)));
-    }
-
-    // Reshape [1, M] shape Bias.
-    if (2 == input_i && 2 == input_shape.size() && input_shape[0] == 1) {
-      input_shape[0] = input_shape[1];
-      input_shape.resize(1);
-    }
-
-    input_names.push_back(input_tensor_name);
-    Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(input_tensor_name);
-    QnnTensorWrapper input_tensorwrapper(input_tensor_name, tensor_type, qnn_data_type, std::move(quantize_param),
-                                         std::move(input_shape), std::move(unpacked_tensor));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+    RETURN_IF_ERROR(RegisterGemmInput(qnn_model_wrapper, node_unit, input_i, input_trans_flag, logger,
+                                      input_names, do_op_validation));
   }
 
   return Ort::Status();
@@ -641,12 +745,21 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                        trans_b_out != 0,
                                        QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1, param_tensor_names));
-    RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names),
-                                   std::move(param_tensor_names),
-                                   logger, do_op_validation, QNN_OP_MAT_MUL));
+    const Qnn_DataType_t activation_qnn_data_type =
+        qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+    RETURN_IF_ERROR(ProcessOutputsAcrossPrecision(qnn_model_wrapper, node_unit,
+                                                  std::move(input_names),
+                                                  std::move(param_tensor_names),
+                                                  logger, do_op_validation, QNN_OP_MAT_MUL,
+                                                  activation_qnn_data_type));
   } else {
-    RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {},
-                                   logger, do_op_validation, GetQnnOpType(node_unit.OpType())));
+    const Qnn_DataType_t activation_qnn_data_type =
+        qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+    RETURN_IF_ERROR(ProcessOutputsAcrossPrecision(qnn_model_wrapper, node_unit,
+                                                  std::move(input_names), {},
+                                                  logger, do_op_validation,
+                                                  GetQnnOpType(node_unit.OpType()),
+                                                  activation_qnn_data_type));
   }
   return Ort::Status();
 }

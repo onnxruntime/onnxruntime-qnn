@@ -106,6 +106,20 @@ class BaseOpBuilder : public IOpBuilder {
                                      bool do_op_validation,
                                      const std::string& qnn_op_type) const ORT_MUST_USE_RESULT;
 
+  // Emits the node's single output at `activation_qnn_data_type` and reads it back at the declared
+  // output precision when that precision is narrower (e.g. a16 -> u8), by building the op into an
+  // intermediate that spans the declared output's range followed by a QNN Convert. Otherwise this is
+  // exactly ProcessOutputs. Ops that can produce a wider activation than their declared output use
+  // this instead of hand-rolling the Convert.
+  Ort::Status ProcessOutputsAcrossPrecision(QnnModelWrapper& qnn_model_wrapper,
+                                            const OrtNodeUnit& node_unit,
+                                            std::vector<std::string>&& input_names,
+                                            std::vector<std::string>&& param_tensor_names,
+                                            const Ort::Logger& logger,
+                                            bool do_op_validation,
+                                            const std::string& qnn_op_type,
+                                            Qnn_DataType_t activation_qnn_data_type) const ORT_MUST_USE_RESULT;
+
   Ort::Status ProcessInput(QnnModelWrapper& qnn_model_wrapper,
                            const OrtNodeUnitIODef& input,
                            const Ort::Logger& logger,

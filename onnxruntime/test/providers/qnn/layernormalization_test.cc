@@ -3,8 +3,11 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
+#include <optional>
 #include <string>
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
@@ -13,6 +16,10 @@
 namespace onnxruntime {
 namespace test {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+// |bias| bound for the mixed-precision cases. AIMET encodes a LayerNorm bias over its real range with
+// 32 bits, so the encoding scale is |bias|max / 2^31 rather than the input*scale product.
+constexpr float kLayerNormBiasAbsMax = 0.11f;
 
 // Runs an LayerNorm model on the QNN CPU backend. Checks the graph node assignment and that inference
 // outputs for QNN and CPU match.
@@ -67,15 +74,16 @@ TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm3D) {
                       ExpectedEPNodeAssignment::All);
 }
 
-template <typename InputQType, typename ScaleQType>
-GetTestQDQModelFn<InputQType> BuildQDQLayerNormTestCase(const TestInputDef<float>& input_def,
-                                                        const TestInputDef<float>& scale_def,
-                                                        const TestInputDef<float>& bias_def,
-                                                        const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                                        bool use_contrib_qdq_ops) {
-  return [input_def, scale_def, bias_def, attrs,
-          use_contrib_qdq_ops](ModelTestBuilder& builder,
-                               std::vector<QuantParams<InputQType>>& output_qparams) {
+template <typename InputQType, typename ScaleQType, typename OutputQType = InputQType>
+GetTestQDQModelFn<OutputQType> BuildQDQLayerNormTestCase(const TestInputDef<float>& input_def,
+                                                         const TestInputDef<float>& scale_def,
+                                                         const TestInputDef<float>& bias_def,
+                                                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                                         bool use_contrib_qdq_ops,
+                                                         std::optional<float> bias_scale = std::nullopt) {
+  return [input_def, scale_def, bias_def, attrs, use_contrib_qdq_ops,
+          bias_scale](ModelTestBuilder& builder,
+                      std::vector<QuantParams<OutputQType>>& output_qparams) {
     std::vector<std::string> layer_norm_inputs;
 
     // X -> Q -> DQ ->
@@ -110,8 +118,12 @@ GetTestQDQModelFn<InputQType> BuildQDQLayerNormTestCase(const TestInputDef<float
     }
 
     if (!bias_def.GetShape().empty()) {
-      const float bias_scale = input_qparams.scale * scale_qparams.scale;
-      layer_norm_inputs.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale, use_contrib_qdq_ops));
+      // QNN LayerNorm consumes the bias as its own 32-bit encoding (a real-value range over int32),
+      // not the FullyConnected-style input_scale * scale product; tests can pin either.
+      const float bias_scale_value =
+          bias_scale.value_or(input_qparams.scale * scale_qparams.scale);
+      layer_norm_inputs.push_back(
+          MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale_value, use_contrib_qdq_ops));
     }
 
     // LayerNormalization
@@ -124,8 +136,8 @@ GetTestQDQModelFn<InputQType> BuildQDQLayerNormTestCase(const TestInputDef<float
         attrs);
 
     // layer_norm_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, "final_qdq", "Y", output_qparams[0].scale,
-                                                      output_qparams[0].zero_point, use_contrib_qdq_ops);
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "final_qdq", "Y", output_qparams[0].scale,
+                                                       output_qparams[0].zero_point, use_contrib_qdq_ops);
   };
 }
 
@@ -150,6 +162,90 @@ static void RunLayerNormQDQTest(const TestInputDef<float>& input_def,
                        17,  // opset
                        expected_ep_assignment,
                        tolerance);
+}
+
+// Runs a QDQ LayerNorm model whose activation and declared output use different fixed-point
+// precisions. The pair must stay in a single node unit: the op is built at the wider precision and
+// the narrower side is bridged with exactly one QNN Convert (on the output when the activation is
+// wider, on the activation when the output is wider).
+//
+// Shapes and the bias encoding mirror the real failing model: rank-3 X, normalized along the last
+// axis, an int32 bias whose scale is a real-value range over int32 (what AIMET emits) rather than the
+// FullyConnected-style input*scale product.
+template <typename ActivationQType, typename ScaleQType, typename OutputQType>
+static void RunLayerNormMixedPrecisionTest(const char* test_name,
+                                           const TestInputDef<float>& input_def,
+                                           const TestInputDef<float>& scale_def,
+                                           const TestInputDef<float>& bias_def,
+                                           Qnn_DataType_t expected_convert_type) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() /
+                             (std::string("LayerNormMixedPrecision_") + test_name);
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+#ifdef __linux__
+  provider_options["htp_arch"] = "73";
+#endif
+
+  const std::vector<ONNX_NAMESPACE::AttributeProto> attrs{
+      test::MakeAttribute("axis", static_cast<int64_t>(-1))};
+
+  // The f32 reference must have the same signature as the QDQ model, bias included.
+  std::vector<TestInputDef<float>> f32_inputs{input_def, scale_def};
+  if (!bias_def.GetShape().empty()) {
+    f32_inputs.push_back(bias_def);
+  }
+
+  // AIMET encodes a LayerNorm bias over its real range with 32 bits; use the same for the QDQ model.
+  const float bias_scale = kLayerNormBiasAbsMax / 2147483647.0f;
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>("layer_norm_node", "LayerNormalization", f32_inputs, {}, attrs),
+                       BuildQDQLayerNormTestCase<ActivationQType, ScaleQType, OutputQType>(
+                           input_def, scale_def, bias_def, attrs, /*use_contrib_qdq_ops=*/false,
+                           bias_scale),
+                       provider_options,
+                       // int16/uint16 zero points require QuantizeLinear >= 19; the failing model is opset 21.
+                       21,  // opset
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance());
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "LayerNorm", 1);
+  AssertOpInQnnGraph(graph_dir, "Convert", 1);
+  AssertConvertOutputDataType(graph_dir, expected_convert_type);
+  AssertQnnGraphInputCount(graph_dir, 1);
+}
+
+// A16 activation with an 8-bit declared output: LayerNorm runs at 16-bit and the output is Converted
+// down. This is the AIMET `lite_mp percentage=10;override_qtype=int16` pattern that used to fall back
+// to a float32 LayerNorm plus an invalid 32-bit-input Dequantize on the bias.
+TEST_F(QnnHTPBackendTests, LayerNormMixedPrecisionU16ActivationU8Output) {
+  RunLayerNormMixedPrecisionTest<uint16_t, uint8_t, uint8_t>(
+      "u16ActivationU8Output",
+      TestInputDef<float>({1, 4, 8}, false, GetFloatDataInRange(0.0f, 10.0f, 32)),
+      TestInputDef<float>({8}, true, GetFloatDataInRange(-1.0f, 1.0f, 8)),
+      TestInputDef<float>({8}, true, GetFloatDataInRange(-kLayerNormBiasAbsMax, kLayerNormBiasAbsMax, 8)),
+      QNN_DATATYPE_UFIXED_POINT_8);
+}
+
+// 8-bit activation with a 16-bit declared output: LayerNorm runs at the declared 16-bit precision by
+// converting the activation up.
+TEST_F(QnnHTPBackendTests, LayerNormMixedPrecisionU8ActivationU16Output) {
+  RunLayerNormMixedPrecisionTest<uint8_t, uint8_t, uint16_t>(
+      "u8ActivationU16Output",
+      TestInputDef<float>({1, 4, 8}, false, GetFloatDataInRange(0.0f, 10.0f, 32)),
+      TestInputDef<float>({8}, true, GetFloatDataInRange(-1.0f, 1.0f, 8)),
+      TestInputDef<float>({8}, true, GetFloatDataInRange(-kLayerNormBiasAbsMax, kLayerNormBiasAbsMax, 8)),
+      QNN_DATATYPE_UFIXED_POINT_16);
 }
 
 // axis=0 on rank-3 flattens exactly ([1,2,3] -> [6]), so the builder lowers it to a

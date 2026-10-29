@@ -1159,6 +1159,25 @@ static bool IsConvertBeforeOpGroup(ONNXTensorElementDataType dt_input, ONNXTenso
          (dt_output != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16 || dt_weight == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8);
 }
 
+// A LayerNorm QDQ group whose activation is not wider than its declared output is built by converting
+// the activation up to the output precision before the op (a wider activation is instead narrowed
+// after the op by AddOpWithQuantizedOutput, which IsSupportedActivationOutputTypePair covers).
+// Unlike FullyConnected/MatMul there is no weight-width constraint: LayerNorm's scale and bias keep
+// their own encodings. The activation must be per-tensor so the Convert can derive an equivalent
+// encoding, which the positive-scalar-scale check guarantees. A signed 16-bit output is excluded: HTP
+// LayerNorm has no such output configuration (validateOpConfig fails 3110 for SFIXED_POINT_16), and the
+// reference converter re-encodes a signed 16-bit LayerNorm output to unsigned as well. Such a pair
+// keeps the float fallback instead of emitting a graph the backend rejects.
+static bool IsConvertActivationToOutputGroup(const OrtGraph* graph, const OrtApi& ort_api,
+                                             ONNXTensorElementDataType dt_input,
+                                             ONNXTensorElementDataType dt_output,
+                                             const OrtNode* dq_node) {
+  return NeedsPrecisionConvert(dt_input, dt_output) &&
+         FixedPointBitWidth(dt_input) <= FixedPointBitWidth(dt_output) &&
+         dt_output != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16 &&
+         IsQOrDQScalePositiveConstantScalar(graph, ort_api, dq_node);
+}
+
 // Float activation with a weight-only DQ of a constant per-channel initializer. QNN takes the weight as a
 // static quantized tensor, whereas a standalone per-channel DQ is unsupported and would leave the weight
 // as a graph input.
@@ -1413,10 +1432,18 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     }
   }
 
-  // If there are Q nodes, check if activation and output have the same type
+  // If there are Q nodes, the activation and output must have the same type, or be a pair the Gemm
+  // builder bridges with a Convert (see GemmOpBuilder): a wider activation narrows only the output,
+  // and a narrower activation is Converted up to the declared output precision.
   if (!q_nodes.empty()) {
     auto dt_Y = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
-    if (!dt_Y.has_value() || dt_A.value() != dt_Y.value()) {  // activation and output must be same type
+    if (!dt_Y.has_value()) {
+      return false;
+    }
+    const bool supported_activation_output =
+        IsSupportedActivationOutputTypePair(graph, ort_api, dt_A.value(), dt_Y.value(), q_nodes[0]) ||
+        IsConvertBeforeOpGroup(dt_A.value(), dt_B.value(), dt_Y.value());
+    if (!supported_activation_output) {
       return false;
     }
   }
@@ -1526,9 +1553,20 @@ bool OrtInstanceAndLayerNormalizationNodeGroupSelector::Check(const OrtGraph* gr
     }
   }
 
-  // Input, output, need to be the same type. The bias is int32.
-  // Scale can be different with input for a16w8 case
-  return (dt_input.value() == dt_output.value()) &&
+  // Input and output must have the same type, or be a pair the LayerNorm builder bridges with a
+  // Convert: a wider activation narrows only the output, and a narrower activation is Converted up
+  // to the declared output precision (see LayerNormalizationOpBuilder). InstanceNormalization keeps
+  // the strict same-type rule until its builder implements the same bridge. The bias is int32.
+  // Scale can be different with input for the a16w8 case.
+  bool supported_activation_output =
+      IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]);
+  if (!supported_activation_output && dq_nodes.size() > 1 &&
+      Ort::ConstNode(node).GetOperatorType() == "LayerNormalization") {
+    supported_activation_output = IsConvertActivationToOutputGroup(graph, ort_api, dt_input.value(),
+                                                                   dt_output.value(), dq_nodes[0]);
+  }
+
+  return supported_activation_output &&
          (has_bias ? dt_bias.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32 : true);
 }
 

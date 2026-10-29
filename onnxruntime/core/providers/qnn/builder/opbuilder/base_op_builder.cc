@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "core/providers/qnn/builder/opbuilder/mixed_precision_convert_utils.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -356,6 +357,45 @@ Ort::Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
                   " Failed to add Cast node");
   }
   return Ort::Status();
+}
+
+Ort::Status BaseOpBuilder::ProcessOutputsAcrossPrecision(QnnModelWrapper& qnn_model_wrapper,
+                                                         const OrtNodeUnit& node_unit,
+                                                         std::vector<std::string>&& input_names,
+                                                         std::vector<std::string>&& param_tensor_names,
+                                                         const Ort::Logger& logger,
+                                                         bool do_op_validation,
+                                                         const std::string& qnn_op_type,
+                                                         Qnn_DataType_t activation_qnn_data_type) const {
+  const auto& outputs = node_unit.Outputs();
+
+  // Only a single-output node can be bridged: the Convert would otherwise have to be replicated per
+  // output, and the extra outputs keep their declared tensors.
+  Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
+  RETURN_IF_ERROR(utils::GetQnnDataType(outputs[0].quant_param.has_value(), outputs[0].type,
+                                        declared_output_dtype));
+  if (outputs.size() == 1 && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      utils::IsNarrowingQuantOutput(activation_qnn_data_type, declared_output_dtype)) {
+    TensorInfo output_info{};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
+    const Qnn_TensorType_t output_tensor_type =
+        qnn_model_wrapper.IsGraphOutput(outputs[0].name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    return utils::AddOpWithQuantizedOutput(qnn_model_wrapper,
+                                           utils::UniqueNameGenerator().New(node_unit),
+                                           qnn_op_type,
+                                           std::move(input_names),
+                                           std::move(param_tensor_names),
+                                           outputs[0].name,
+                                           output_tensor_type,
+                                           output_info.qnn_data_type,
+                                           output_info.quant_param.Copy(),
+                                           std::vector<uint32_t>(output_info.shape),
+                                           activation_qnn_data_type,
+                                           do_op_validation);
+  }
+
+  return ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names),
+                        std::move(param_tensor_names), logger, do_op_validation, qnn_op_type);
 }
 
 Ort::Status BaseOpBuilder::SetOutputQParamEqualToInputIfNearlyEqual(QnnModelWrapper& qnn_model_wrapper,
