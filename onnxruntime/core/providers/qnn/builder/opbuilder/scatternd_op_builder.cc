@@ -32,8 +32,10 @@ Ort::Status ProcessScatterNDIndices(QnnModelWrapper& qnn_model_wrapper,
   TensorInfo indices_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(indices_input, indices_info));
 
-  // ONNX ScatterND rank>=1 is not enforced by shape inference; rely on a well-formed graph.
+  RETURN_IF(indices_info.shape.empty(), "QNN EP: ScatterND indices must have rank >= 1.");
   const uint32_t index_tuple_size = indices_info.shape.back();
+  RETURN_IF(index_tuple_size == 0 || static_cast<size_t>(index_tuple_size) > data_shape.size(),
+            "QNN EP: ScatterND indices tuple width must be in [1, rank(data)].");
 
   const auto axis_dim_for_element = [index_tuple_size, &data_shape](size_t element_index) -> int64_t {
     const size_t col = element_index % static_cast<size_t>(index_tuple_size);
