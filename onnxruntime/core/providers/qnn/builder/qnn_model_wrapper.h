@@ -25,6 +25,7 @@ class BF16ConversionGuard;
 class OpTraceCollector;
 // Prevent QnnBackendManager change triggering op builder rebuild on incremental build.
 class QnnBackendManager;
+class QnnGraphEmitter;
 
 // Stores information about an ONNX input or output tensor.
 // Filled out by QnnModelWrapper::GetTensorInfo()
@@ -63,13 +64,14 @@ class QnnModelWrapper {
                   bool is_post_layout_transform = false);
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
-  ~QnnModelWrapper() = default;
+  ~QnnModelWrapper();
 
   const ModelSettings& GetModelSettings() const { return model_settings_; }
 
   QnnHtpDevice_Arch_t GetHtpArch() const;
 
-  bool CreateQnnGraph(const Qnn_ContextHandle_t& context,
+  bool CreateQnnGraph(QnnGraphEmitter& graph_emitter,
+                      const Qnn_ContextHandle_t& context,
                       const std::string& graph_name,
                       const QnnGraph_Config_t** graph_configs = nullptr);
 

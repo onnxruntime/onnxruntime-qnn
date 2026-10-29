@@ -312,7 +312,8 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
       ProfilingMethodType::COMPOSE_GRAPHS,
       profiling_scope));
 
-  bool rt = qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, context.graph_configs);
+  bool rt = qnn_model_wrapper.CreateQnnGraph(*qnn_graph_emitter_, qnn_backend_manager_->GetQnnContext(),
+                                             graph_name, context.graph_configs);
 
   RETURN_IF_NOT(rt, "Failed to initialize qnn_model_wrapper.");
 
@@ -394,16 +395,12 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
       ProfilingMethodType::FINALIZE,
       profiling_scope));
 
-  Qnn_ErrorHandle_t status = qnn_backend_manager_->GetQnnInterface().graphFinalize(graph_info_->Graph(),
-                                                                                   profiling_scope.Handle(),
-                                                                                   nullptr);
+  Ort::Status finalize_status = qnn_graph_emitter_->Finalize(profiling_scope.Handle());
 
   profiling_scope.Complete(profiling_info);
 
-  if (QNN_GRAPH_NO_ERROR != status) {
-    return MAKE_EP_FAIL(("Failed to finalize QNN graph. " +
-                         utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), status))
-                            .c_str());
+  if (!finalize_status.IsOK()) {
+    return finalize_status;
   }
 
   // NOTE: This function returns immediately when profiling is disabled.
@@ -477,18 +474,12 @@ Ort::Status QnnModel::ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs,
     return Ort::Status();  // Nothing runtime-applicable was requested.
   }
 
-  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
-  RETURN_IF(nullptr == qnn_interface.graphSetConfig,
-            "Invalid function pointer for graphSetConfig; cannot apply runtime graph configs.");
-  Qnn_ErrorHandle_t rt = qnn_interface.graphSetConfig(graph_info_->Graph(), graph_configs);
-  if (QNN_SUCCESS != rt) {
+  const Ort::Status set_config_status = qnn_graph_emitter_->SetConfig(graph_configs);
+  if (!set_config_status.IsOK()) {
     // QNN_GRAPH_ERROR_GRAPH_FINALIZED here means an option in the set is not runtime-settable
     // on this SDK and must move back to compile-time wiring in InitQnnHtpGraphConfigs.
-    const std::string message = "Failed to apply runtime graph configs for graph: " +
-                                graph_info_->Name() + ". " +
-                                utils::FormatQnnError(qnn_interface, rt);
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, message.c_str());
-    return MAKE_EP_FAIL(message.c_str());
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, set_config_status.GetErrorMessage().c_str());
+    return MAKE_EP_FAIL(set_config_status.GetErrorMessage().c_str());
   }
 
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
@@ -588,14 +579,10 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
   }  // release recovery_lock
 
   // Retrieve our graph from the (new or reused) context.
-  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
-  Qnn_GraphHandle_t new_graph = nullptr;
-  auto rt = qnn_interface.graphRetrieve(new_context, graph_name.c_str(), &new_graph);
-  RETURN_IF(QNN_SUCCESS != rt,
-            ("SSR recovery: graphRetrieve failed for graph: " + graph_name).c_str());
+  RETURN_IF_ERROR(qnn_graph_emitter_->RetrieveGraph(new_context, graph_name));
 
   // Update graph_info_ with the new handles (tensor metadata is preserved).
-  graph_info_->ResetHandles(new_graph, new_context);
+  graph_info_->ResetHandles(qnn_graph_emitter_->Graph(), qnn_graph_emitter_->Context());
 
   // Re-build the tensor I/O metadata against the new graph handles.
   RETURN_IF_ERROR(SetupQnnInputOutput(logger));
@@ -712,8 +699,6 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
         qnn_outputs.back()));
   }
 
-  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
-
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Start execute QNN graph:" + graph_info_->Name()).c_str());
 
   qnn::profile::ProfilingInfo profiling_info;
@@ -756,13 +741,12 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 
   RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
 
-  execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
-                                              qnn_inputs.data(),
-                                              static_cast<uint32_t>(qnn_inputs.size()),
-                                              qnn_outputs.data(),
-                                              static_cast<uint32_t>(qnn_outputs.size()),
-                                              profile_backend_handle,
-                                              nullptr);
+  execute_status = qnn_graph_emitter_->Execute(qnn_inputs.data(),
+                                               static_cast<uint32_t>(qnn_inputs.size()),
+                                               qnn_outputs.data(),
+                                               static_cast<uint32_t>(qnn_outputs.size()),
+                                               profile_backend_handle,
+                                               nullptr);
 
   profiling_scope.Complete(profiling_info);
 
@@ -1172,14 +1156,11 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
     output_tensor_wrappers.push_back(std::move(tensorwrapper));
   }
 
-  Qnn_GraphHandle_t graph;
-  auto qnn_interface = qnn_backend_manager_->GetQnnInterface();
-  auto rt = qnn_interface.graphRetrieve(context, graph_name.c_str(), &graph);
-  RETURN_IF(QNN_SUCCESS != rt, "Failed to retrieve QNN graph.");
+  RETURN_IF_ERROR(qnn_graph_emitter_->RetrieveGraph(context, graph_name));
 
-  graph_info_ = std::make_unique<GraphInfo>(graph,
+  graph_info_ = std::make_unique<GraphInfo>(qnn_graph_emitter_->Graph(),
                                             graph_name,
-                                            context,
+                                            qnn_graph_emitter_->Context(),
                                             std::move(input_tensor_wrappers),
                                             std::move(output_tensor_wrappers));
 
