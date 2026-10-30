@@ -1413,6 +1413,17 @@ TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_BufferSizeMismatchFails) {
   EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(2, 3, 0, input, output).IsOK());
 }
 
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Vector_ShapeSizeMismatchFails) {
+  const std::vector<uint8_t> input(4, 0);
+  const std::vector<uint32_t> oversized_shape = {std::numeric_limits<uint32_t>::max(),
+                                                 std::numeric_limits<uint32_t>::max()};
+  std::vector<uint8_t> output;
+  const Ort::Logger logger = MakeNullLogger();
+
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(input, oversized_shape, output, logger).IsOK());
+  EXPECT_TRUE(output.empty());
+}
+
 // =============================================================================
 // RequantizeBiasTensor — per-tensor and per-channel round-trip
 // =============================================================================
