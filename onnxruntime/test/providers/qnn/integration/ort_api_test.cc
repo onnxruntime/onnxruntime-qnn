@@ -15,8 +15,7 @@
 //
 // Models are built inline via the Ort C++ model editor wrappers (Ort::Model,
 // Ort::Graph, Ort::Node, Ort::ValueInfo) — no dependency on op-builder test
-// infrastructure. A missing QNN plugin or HTP device is a CI configuration
-// failure; individual models that QNN cannot compile are skipped.
+// infrastructure. Sessions use the QNN HTP backend and skip when unavailable.
 
 #if !defined(ORT_MINIMAL_BUILD) && (defined(__linux__) || defined(_WIN32))
 
@@ -29,6 +28,9 @@
 
 #include "gtest/gtest.h"
 #include "onnxruntime_cxx_api.h"
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+#include "onnxruntime_session_options_config_keys.h"
+#endif
 
 #include "test/providers/qnn/integration/qnn_test_utils.h"
 
@@ -50,11 +52,41 @@ class QnnInteg_OrtApiTest : public ::testing::Test {
 
     ASSERT_TRUE(MakeQnnHtpSessionOptions(*ep_, session_opts_))
         << "QNN HTP EP device not found (HTP backend unavailable) — CI configuration error";
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    session_opts_.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+#endif
   }
 
   std::unique_ptr<RegisteredQnnEp> ep_;
   Ort::SessionOptions session_opts_;
 };
+
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+static void AddU8QdqParams(Ort::Graph& graph, const std::string& prefix, float scale, uint8_t zero_point) {
+  int64_t scalar_shape[] = {};
+  auto scale_value = Ort::Value::CreateTensor<float>(Ort::AllocatorWithDefaultOptions(), scalar_shape, 0);
+  *scale_value.GetTensorMutableData<float>() = scale;
+  graph.AddInitializer(prefix + "_scale", scale_value, false);
+
+  auto zero_point_value = Ort::Value::CreateTensor<uint8_t>(Ort::AllocatorWithDefaultOptions(), scalar_shape, 0);
+  *zero_point_value.GetTensorMutableData<uint8_t>() = zero_point;
+  graph.AddInitializer(prefix + "_zp", zero_point_value, false);
+}
+
+static void ExpectAllNodesAssignedToQnn(const Ort::Session& session) {
+  size_t total_nodes = 0;
+  size_t qnn_nodes = 0;
+  for (const auto& subgraph : session.GetEpGraphAssignmentInfo()) {
+    const size_t node_count = subgraph.GetNodes().size();
+    total_nodes += node_count;
+    if (subgraph.GetEpName() == "QNNExecutionProvider") {
+      qnn_nodes += node_count;
+    }
+  }
+  ASSERT_GT(total_nodes, 0u) << "EP graph assignment information is empty";
+  ASSERT_EQ(qnn_nodes, total_nodes) << "The QDQ graph was not fully assigned to QNNExecutionProvider";
+}
+#endif
 
 // ============================================================
 // Test 1: QDQ group — covers GetQDQIODefs + QDQ OrtNodeUnit ctor
@@ -234,7 +266,9 @@ TEST_F(QnnInteg_OrtApiTest, LeakyReluAttr_CoversOrtNodeAttrHelperFoundFloat) {
 //         kernel_shape / strides / pads (lines 509-511, 533-535, 557-559)
 //
 // Model: float[1,1,5,5] input, float[1,1,3,3] weight → Conv → float[1,1,3,3]
-//        (kernel_shape=[3,3], strides=[1,1], pads=[0,0,0,0])
+//        (kernel_shape=[3,3], strides=[1,1]). The Linux ARM64 CI HTP target
+// is V68, where an equivalent U8 QDQ model is used because float Conv is not
+// assigned to QNN after the NHWC layout transform.
 //
 // During Compile the Conv op builder reads all three GetInt64s attrs,
 // exercising the "found" branch for each.
@@ -244,50 +278,102 @@ TEST_F(QnnInteg_OrtApiTest, ConvAttr_CoversOrtNodeAttrHelperFoundInt64s) {
   Ort::Model model({{"", 21}});
   Ort::Graph graph;
 
-  // input: float[1,1,5,5],  weight: float[1,1,3,3]
+  // input: float[1,1,5,5], weight: float[1,1,3,3]
 
   std::vector<Ort::ValueInfo> inputs, outputs;
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+  inputs.push_back(MakeValueInfo4D("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, 1, 1, 5, 5));
+  outputs.push_back(MakeValueInfo4D("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, 1, 1, 3, 3));
+#else
   inputs.push_back(MakeValueInfo4D("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, 1, 1, 5, 5));
-  graph.SetInputs(inputs);
   outputs.push_back(MakeValueInfo4D("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, 1, 1, 3, 3));
+#endif
+  graph.SetInputs(inputs);
   graph.SetOutputs(outputs);
 
-  // weight initializer: shape [1,1,3,3], all-0.1f
+  // V68 selects the standard quantized graph-I/O form: DQ -> Conv -> Q.
+  // weight initializer: shape [1,1,3,3]
   {
     int64_t w_shape[] = {1, 1, 3, 3};
-    auto w_val = Ort::Value::CreateTensor<float>(
-        Ort::AllocatorWithDefaultOptions(), w_shape, 4);
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    auto w_val = Ort::Value::CreateTensor<uint8_t>(Ort::AllocatorWithDefaultOptions(), w_shape, 4);
+    uint8_t* w_data = w_val.GetTensorMutableData<uint8_t>();
+    for (int i = 0; i < 9; ++i) w_data[i] = (i % 2 == 0) ? 0 : 255;
+#else
+    auto w_val = Ort::Value::CreateTensor<float>(Ort::AllocatorWithDefaultOptions(), w_shape, 4);
     float* w_data = w_val.GetTensorMutableData<float>();
     for (int i = 0; i < 9; ++i) w_data[i] = 0.1f;
+#endif
     graph.AddInitializer("weight", w_val, false);
   }
 
-  // Conv node: input, weight → output
-  // auto_pad="VALID" covers Get(string) "found" path (lines 509-511)
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+  AddU8QdqParams(graph, "input", 10.0f / 255.0f, 0);
+  AddU8QdqParams(graph, "weight", 20.0f / 255.0f, 128);
+  AddU8QdqParams(graph, "output", 90.0f / 255.0f, 128);
+
+  {
+    std::vector<Ort::OpAttr> attrs;
+    Ort::Node input_dq_node("DequantizeLinear", "", "dq_input", {"input", "input_scale", "input_zp"}, {"dq_input"}, attrs);
+    graph.AddNode(input_dq_node);
+    Ort::Node weight_dq_node("DequantizeLinear", "", "dq_weight", {"weight", "weight_scale", "weight_zp"}, {"dq_weight"}, attrs);
+    graph.AddNode(weight_dq_node);
+  }
+#endif
+
+  // Conv node: dq_input, dq_weight → conv_output
+  // auto_pad="NOTSET" covers Get(string) "found" path (lines 509-511).
+  // Use explicit zero pads so the V68 QDQ model uses the same supported Conv
+  // form as the HTP Conv tests.
   // kernel_shape/strides cover Get(vector<int32_t>) "found" path (lines 533-546)
   {
-    const char* auto_pad_str = "VALID";
+    const char* auto_pad_str = "NOTSET";
     int64_t kernel_shape[] = {3, 3};
     int64_t strides[] = {1, 1};
+    int64_t pads[] = {0, 0, 0, 0};
     std::vector<Ort::OpAttr> attrs;
     attrs.emplace_back("auto_pad", auto_pad_str, static_cast<int>(strlen(auto_pad_str)), ORT_OP_ATTR_STRING);
     attrs.emplace_back("kernel_shape", kernel_shape, 2, ORT_OP_ATTR_INTS);
     attrs.emplace_back("strides", strides, 2, ORT_OP_ATTR_INTS);
+    attrs.emplace_back("pads", pads, 4, ORT_OP_ATTR_INTS);
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    Ort::Node conv_node("Conv", "", "conv", {"dq_input", "dq_weight"}, {"conv_output"}, attrs);
+#else
     Ort::Node conv_node("Conv", "", "conv", {"input", "weight"}, {"output"}, attrs);
+#endif
     graph.AddNode(conv_node);
   }
+
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+  {
+    std::vector<Ort::OpAttr> attrs;
+    Ort::Node output_q_node("QuantizeLinear", "", "q_output", {"conv_output", "output_scale", "output_zp"}, {"output"}, attrs);
+    graph.AddNode(output_q_node);
+  }
+#endif
 
   model.AddGraph(graph);
 
   try {
     Ort::Session session(*ort_env, model, session_opts_);
 
-    float input_data[25];
-    for (int i = 0; i < 25; ++i) input_data[i] = static_cast<float>(i + 1);
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    ExpectAllNodesAssignedToQnn(session);
+#endif
+
     int64_t input_shape[] = {1, 1, 5, 5};
     auto mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    uint8_t input_data[25];
+    for (int i = 0; i < 25; ++i) input_data[i] = static_cast<uint8_t>((i % 10) + 1);
+    auto input_tensor = Ort::Value::CreateTensor<uint8_t>(
+        mem_info, input_data, 25, input_shape, 4);
+#else
+    float input_data[25];
+    for (int i = 0; i < 25; ++i) input_data[i] = static_cast<float>(i + 1);
     auto input_tensor = Ort::Value::CreateTensor<float>(
         mem_info, input_data, 25, input_shape, 4);
+#endif
 
     const char* input_names[] = {"input"};
     const char* output_names[] = {"output"};
@@ -297,7 +383,11 @@ TEST_F(QnnInteg_OrtApiTest, ConvAttr_CoversOrtNodeAttrHelperFoundInt64s) {
     auto shape = result[0].GetTensorTypeAndShapeInfo().GetShape();
     EXPECT_EQ(shape, (std::vector<int64_t>{1, 1, 3, 3}));
   } catch (const Ort::Exception& e) {
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    FAIL() << "QNN HTP EP failed to compile V68 QDQ Conv model: " << e.what();
+#else
     GTEST_SKIP() << "QNN HTP EP failed to compile model — coverage goal not reached: " << e.what();
+#endif
   }
 }
 
@@ -514,7 +604,9 @@ TEST_F(QnnInteg_OrtApiTest, ArgMaxAttr_CoversOrtNodeAttrHelperFoundInt32) {
 //         (lines 533-545)
 //
 // Model: float[1,1,3,3] input, float[1,1,3,3] weight
-//        → ConvTranspose(kernel_shape=[3,3], dilations=[1,1]) → float[1,1,5,5]
+//        → ConvTranspose(kernel_shape=[3,3], dilations=[1,1]) → float[1,1,5,5].
+// The Linux ARM64 CI HTP target is V68, where an equivalent U8 QDQ model is
+// used because float ConvTranspose is not assigned after the NHWC transform.
 //
 // ConvTranspose's validation reads dilations as vector<int32_t>, exercising
 // the int32 vector "found" branch which converts int64 attribute values to
@@ -526,41 +618,87 @@ TEST_F(QnnInteg_OrtApiTest, ConvTransposeAttr_CoversOrtNodeAttrHelperFoundInt32V
   Ort::Graph graph;
 
   std::vector<Ort::ValueInfo> inputs, outputs;
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+  inputs.push_back(MakeValueInfo4D("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, 1, 1, 3, 3));
+  outputs.push_back(MakeValueInfo4D("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, 1, 1, 5, 5));
+#else
   inputs.push_back(MakeValueInfo4D("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, 1, 1, 3, 3));
-  graph.SetInputs(inputs);
   outputs.push_back(MakeValueInfo4D("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, 1, 1, 5, 5));
+#endif
+  graph.SetInputs(inputs);
   graph.SetOutputs(outputs);
 
+  // V68 selects the standard quantized graph-I/O form: DQ -> ConvTranspose -> Q.
   // weight initializer: shape [1,1,3,3]
   {
     int64_t w_shape[] = {1, 1, 3, 3};
-    auto w_val = Ort::Value::CreateTensor<float>(
-        Ort::AllocatorWithDefaultOptions(), w_shape, 4);
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    auto w_val = Ort::Value::CreateTensor<uint8_t>(Ort::AllocatorWithDefaultOptions(), w_shape, 4);
+    uint8_t* w_data = w_val.GetTensorMutableData<uint8_t>();
+    for (int i = 0; i < 9; ++i) w_data[i] = (i % 2 == 0) ? 0 : 255;
+#else
+    auto w_val = Ort::Value::CreateTensor<float>(Ort::AllocatorWithDefaultOptions(), w_shape, 4);
     float* w_data = w_val.GetTensorMutableData<float>();
     for (int i = 0; i < 9; ++i) w_data[i] = 0.1f;
+#endif
     graph.AddInitializer("weight", w_val, false);
   }
+
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+  AddU8QdqParams(graph, "input", 10.0f / 255.0f, 0);
+  AddU8QdqParams(graph, "weight", 20.0f / 255.0f, 128);
+  AddU8QdqParams(graph, "output", 90.0f / 255.0f, 128);
+
+  {
+    std::vector<Ort::OpAttr> attrs;
+    Ort::Node input_dq_node("DequantizeLinear", "", "dq_input", {"input", "input_scale", "input_zp"}, {"dq_input"}, attrs);
+    graph.AddNode(input_dq_node);
+    Ort::Node weight_dq_node("DequantizeLinear", "", "dq_weight", {"weight", "weight_scale", "weight_zp"}, {"dq_weight"}, attrs);
+    graph.AddNode(weight_dq_node);
+  }
+#endif
 
   // ConvTranspose: dilations=[1,1] triggers Get(vector<int32_t>) "found" path
   {
     int64_t kernel_shape[] = {3, 3};
     int64_t dilations[] = {1, 1};
     int64_t strides[] = {1, 1};
+    int64_t pads[] = {0, 0, 0, 0};
     std::vector<Ort::OpAttr> attrs;
     attrs.emplace_back("kernel_shape", kernel_shape, 2, ORT_OP_ATTR_INTS);
     attrs.emplace_back("dilations", dilations, 2, ORT_OP_ATTR_INTS);
     attrs.emplace_back("strides", strides, 2, ORT_OP_ATTR_INTS);
+    attrs.emplace_back("pads", pads, 4, ORT_OP_ATTR_INTS);
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    Ort::Node ct_node("ConvTranspose", "", "convtranspose", {"dq_input", "dq_weight"}, {"conv_output"}, attrs);
+#else
     Ort::Node ct_node("ConvTranspose", "", "convtranspose", {"input", "weight"}, {"output"}, attrs);
+#endif
     graph.AddNode(ct_node);
   }
+
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+  {
+    std::vector<Ort::OpAttr> attrs;
+    Ort::Node output_q_node("QuantizeLinear", "", "q_output", {"conv_output", "output_scale", "output_zp"}, {"output"}, attrs);
+    graph.AddNode(output_q_node);
+  }
+#endif
 
   model.AddGraph(graph);
 
   try {
     Ort::Session session(*ort_env, model, session_opts_);
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    ExpectAllNodesAssignedToQnn(session);
+#endif
     SUCCEED();
   } catch (const Ort::Exception& e) {
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    FAIL() << "QNN HTP EP failed to compile V68 QDQ ConvTranspose model: " << e.what();
+#else
     GTEST_SKIP() << "QNN HTP EP failed to compile model — coverage goal not reached: " << e.what();
+#endif
   }
 }
 
