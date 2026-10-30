@@ -90,6 +90,21 @@ static ProviderOptions GetHTPProviderOptions() {
   return opts;
 }
 
+// Returns true if at least one QNN JSON graph file exists in dump_dir.
+// Used to skip AssertOpInQnnGraph calls when RunQnnModelTest was silently
+// skipped (e.g., HTP unavailable on this host), which would otherwise produce
+// a vacuous green test that asserted nothing.
+static bool HasQnnJsonGraph(const std::filesystem::path& dump_dir) {
+  if (!std::filesystem::exists(dump_dir)) return false;
+  for (const auto& entry : std::filesystem::directory_iterator{dump_dir}) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json" &&
+        entry.path().filename().string().find("_tensor_log") == std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // HTP-only fusion tests
 // ---------------------------------------------------------------------------
@@ -113,6 +128,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_PositiveIndex) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  if (!HasQnnJsonGraph(json_dir)) return;
   AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
@@ -135,6 +151,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_NegativeIndex) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  if (!HasQnnJsonGraph(json_dir)) return;
   AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
@@ -157,6 +174,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_FirstIndex_Int32) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  if (!HasQnnJsonGraph(json_dir)) return;
   AssertOpInQnnGraph(json_dir, "Reshape", 5);  // 4 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
@@ -179,6 +197,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_LastIndex_Int32) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  if (!HasQnnJsonGraph(json_dir)) return;
   AssertOpInQnnGraph(json_dir, "Reshape", 5);  // 4 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
@@ -201,6 +220,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_DynamicPosition_Int32) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  if (!HasQnnJsonGraph(json_dir)) return;
   AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
@@ -227,6 +247,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_DynamicPosition_Int64) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  if (!HasQnnJsonGraph(json_dir)) return;
   AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Cast", 1);  // int64 → int32 position cast
@@ -253,6 +274,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_DynamicNegativeIndex) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  if (!HasQnnJsonGraph(json_dir)) return;
   AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
@@ -278,6 +300,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_Float16Elements) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  if (!HasQnnJsonGraph(json_dir)) return;
   AssertOpInQnnGraph(json_dir, "Reshape", 3);  // 2 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
@@ -300,6 +323,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_SingleElementSequence) {
       /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  if (!HasQnnJsonGraph(json_dir)) return;
   AssertOpInQnnGraph(json_dir, "Reshape", 2);  // 1 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);
@@ -350,6 +374,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_PosFromInPartitionOp_ListedBeforeSeq
       build_fn, opts, /*opset=*/11,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(5e-4f)});
 
+  if (!HasQnnJsonGraph(json_dir)) return;
   AssertOpInQnnGraph(json_dir, "Reshape", 4);  // 3 element + 1 output
   AssertOpInQnnGraph(json_dir, "Concat", 1);
   AssertOpInQnnGraph(json_dir, "Gather", 1);

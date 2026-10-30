@@ -509,5 +509,33 @@ std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const 
   return dims;
 }
 
+const OrtNodeUnit* FindUniqueSequenceConsumer(
+    const std::string& seq_output_name,
+    const std::string& required_op_type,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit) {
+  const OrtNodeUnit* result = nullptr;
+  for (const auto& [node_ptr, unit_ptr] : node_to_node_unit) {
+    if (unit_ptr == nullptr) continue;
+    if (unit_ptr->UnitType() != OrtNodeUnit::Type::SingleNode) continue;
+    const Ort::ConstNode candidate_node(node_ptr);
+    const auto candidate_inputs = candidate_node.GetInputs();
+    bool consumes_sequence = false;
+    for (const auto& inp : candidate_inputs) {
+      if (inp.GetName() == seq_output_name) {
+        consumes_sequence = true;
+        break;
+      }
+    }
+    if (!consumes_sequence) continue;
+    // This node consumes the sequence output — it must be the one and only
+    // node with the expected op type.
+    if (unit_ptr->OpType() != required_op_type || result != nullptr) {
+      return nullptr;  // wrong op type, or more than one total consumer
+    }
+    result = unit_ptr;
+  }
+  return result;
+}
+
 }  // namespace qnn
 }  // namespace onnxruntime
