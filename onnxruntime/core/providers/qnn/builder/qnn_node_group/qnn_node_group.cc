@@ -167,9 +167,21 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
   auto iter = fusions.find(starting_node_unit.OpType());
   if (iter != fusions.end()) {
     for (auto& fusion_func : iter->second) {
+      QnnModelWrapper::FusionValidationGuard validation_guard(qnn_model_wrapper);
       std::unique_ptr<IQnnNodeGroup> fused_node_group = fusion_func(qnn_model_wrapper, starting_node_unit, node_to_node_unit,
                                                                     node_unit_to_qnn_node_group, logger);
       if (fused_node_group) {
+        // Check affinity before committing the fusion's validation wrappers.
+        // Preserve existing behavior: affinity rejection falls back to individual
+        // NodeUnits without trying smaller fusion candidates.
+        const OpAffinityMap& affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
+        for (const OrtNodeUnit* member : fused_node_group->GetNodeUnits()) {
+          if (!affinity.Evaluate(member->OpType(), qnn_model_wrapper.GetQnnBackendType()).IsOK()) {
+            return nullptr;
+          }
+        }
+
+        validation_guard.Commit();
         return fused_node_group;
       }
     }
@@ -227,21 +239,6 @@ static Ort::Status GetQnnNodeGroupsImpl(/*out*/ std::vector<std::unique_ptr<IQnn
     std::unique_ptr<IQnnNodeGroup> fused_node_group = TryQnnFusions(qnn_model_wrapper, *node_unit,
                                                                     node_to_node_unit, node_unit_to_qnn_node_group,
                                                                     logger);
-
-    // op_affinity: a fusion must not smuggle an affinity-pinned-away op onto QNN as part of a
-    // larger accepted group. Discard the fusion if any member's op type is rejected for this
-    // session's backend.
-    // TODO: discarding the whole fusion falls each member NodeUnit back to being wrapped
-    // individually; it does not try to re-fuse the remaining members into a smaller group.
-    if (fused_node_group != nullptr) {
-      const OpAffinityMap& affinity = qnn_model_wrapper.GetModelSettings().op_affinity;
-      for (const OrtNodeUnit* member : fused_node_group->GetNodeUnits()) {
-        if (!affinity.Evaluate(member->OpType(), qnn_model_wrapper.GetQnnBackendType()).IsOK()) {
-          fused_node_group = nullptr;
-          break;
-        }
-      }
-    }
 
     if (fused_node_group) {
       const size_t index = qnn_node_groups.size();
