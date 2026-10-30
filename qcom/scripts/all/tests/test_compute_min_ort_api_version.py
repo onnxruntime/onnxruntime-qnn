@@ -183,6 +183,25 @@ void f(const OrtNode* n) {
     assert "GetValueInfoName" in names
 
 
+def test_scan_ep_source_resolves_direct_ort_api_calls(tmp_path: Path) -> None:
+    src = tmp_path / "ep"
+    src.mkdir()
+    (src / "use.cc").write_text(
+        """
+void f(const OrtNode* n, const OrtLogger* logger) {
+  Ort::ConstNode(n).GetDomain();
+  Ort::GetApi().Logger_LogMessage(logger, ORT_LOGGING_LEVEL_ERROR, "message", ORT_FILE, 0, __FUNCTION__);
+  OrtStatus* status = Ort::GetApi().CreateStatus(ORT_FAIL, "message");
+  Ort::GetApi().ReleaseStatus(status);
+}
+"""
+    )
+    names = scan_ep_source(src)
+    assert "CreateStatus" in names
+    assert "Logger_LogMessage" in names
+    assert "ReleaseStatus" in names
+
+
 def test_scan_ep_source_tripwire_on_unknown_wrapper_method(tmp_path: Path) -> None:
     """Unknown Ort:: wrapper method call triggers RuntimeError."""
     src = tmp_path / "ep"
