@@ -1307,6 +1307,12 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                                            false,
                                                                            logger_);
 
+  model_settings_.use_native_matmul = ParseBoolOption(ort_api,
+                                                      session_options_,
+                                                      FormatEPConfigKey("use_native_matmul"),
+                                                      false,
+                                                      logger_);
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,
@@ -2390,6 +2396,11 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return nullptr;
   }
 
+  // Reset the flag in case there are patterns rejected in the first GetCapability pass but supported in the second.
+  if (ep->is_post_layout_transform_) {
+    ep->has_unsupported_nodes_wo_cpu_fallback_ = false;
+  }
+
   // GetCapability runs up to twice. Clear before pass 2 so its collection
   // supersedes pass 1; pass 1's data is kept for the all-unsupported flush below
   // (reached only on pass 1, since pass 2 doesn't run when nothing is supported).
@@ -2479,6 +2490,17 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
       }
       ep->WriteFrameworkOpTrace(graph);
     }
+
+    // This flag will in fact have no effect as QnnEp::Compile will be entirely skipped without any supported nodes.
+    // Considering the bottleneck for large models should be in graph finalize instead of ORT Core graph
+    // transformations and the cases of completely no supported nodes should be rather rare, it may be okay not to stop
+    // session initialization immediately like partial support cases like below.
+    // Setting to true here is merely to make the flag consistent.
+    if (!is_qnn_ctx_model && ep->disable_cpu_ep_fallback_) {
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, "No nodes are supported in QNN EP.");
+      ep->has_unsupported_nodes_wo_cpu_fallback_ = true;
+    }
+
     return nullptr;
   }
 
@@ -2524,6 +2546,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     ORT_CXX_LOG(ep->logger_,
                 ORT_LOGGING_LEVEL_ERROR,
                 ("Unsupported nodes in QNN EP: " + get_unsupported_node_names()).c_str());
+    ep->has_unsupported_nodes_wo_cpu_fallback_ = true;
   }
 
   return nullptr;
@@ -2709,6 +2732,9 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
     end = std::chrono::steady_clock::now();
     total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
+
+    // Join every worker before consuming results or moving model ownership.
+    tp.Stop();
 
     for (auto& model_info : model_infos) {
       RETURN_IF_NOT_OK(std::move(model_info.result));
@@ -3155,6 +3181,22 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+
+  // Early fail without actual compile and make session initialization immediately terminate.
+  if (ep->has_unsupported_nodes_wo_cpu_fallback_) {
+    // Write collected trace(s) before early fail.
+    if (ep->enable_framework_op_trace_ && count > 0) {
+      if (ep->enable_multi_soc_ep_context_) {
+        ep->AppendMultiSocTraces();
+      } else {
+        ep->AppendSingleSocTrace();
+      }
+      ep->WriteFrameworkOpTrace(graphs[0]);
+    }
+
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                    "User disabled CPU EP fallback but not all nodes are supported by QNN-EP.");
+  }
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     if (ep->prepare_and_load_) {

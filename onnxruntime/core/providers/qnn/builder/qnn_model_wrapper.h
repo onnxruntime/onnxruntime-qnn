@@ -41,6 +41,7 @@ struct ModelSettings {
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
+  bool use_native_matmul = false;
   bool enable_htp_monolithic_lstm = false;
   OpAffinityMap op_affinity;  // default-constructed = unconfigured; always safe to query.
 };
@@ -278,6 +279,9 @@ class QnnModelWrapper {
                              bool is_for_input = true,
                              bool is_for_output = false);
 
+  // Adds a Transpose node. A non-identity, shape-changing perm that only reorders size-1
+  // dimensions is lowered to an equivalent Reshape to work around a QNN HTP miscomputation.
+  // See https://github.com/onnxruntime/onnxruntime-qnn/issues/1020.
   Ort::Status AddTransposeNode(size_t node_index,
                                const std::string& input_name,
                                const std::string& output_name,

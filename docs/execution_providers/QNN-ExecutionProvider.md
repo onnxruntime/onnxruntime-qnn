@@ -44,9 +44,9 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.8.0         | v2.51.0           | v1.30.0              |
+| v2.8.0         | v2.52.0           | v1.29.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.8.0 was built and tested with ORT 1.30.0 but it is compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.8.0 was built and tested with ORT 1.29.0 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
@@ -71,9 +71,9 @@ For build instructions, please see the [BUILD page](./build.md).
   - This release is validated against the following dependency versions:
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
-    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.30.0` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.51.0` |
-  - **Version note:** QNN EP v2.8.0 was built and tested with QAIRT SDK 2.51.0; the public Android Maven runtime artifact is versioned `2.51.0`.
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.29.0` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.52.0` |
+  - **Version note:** QNN EP v2.8.0 was built and tested with QAIRT SDK 2.52.0; the public Android Maven runtime artifact is versioned `2.52.0`.
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
@@ -243,6 +243,11 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |---|---|
 |'0'|Default. Disabled. Block-quantized models use the standard compatibility path.|
 |'1'|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
+
+|`"use_native_matmul"`|Description|
+|---|---|
+|`"0"`|Default. MatMul, Gemm, and QLinearMatMul operators are translated to QNN FullyConnected (weight transposed from [K,N] to [N,K] at session creation time).|
+|`"1"`|Enabled. MatMul, Gemm, and QLinearMatMul operators are lowered to native QNN MatMul, eliminating host-side weight transposition. Reduces session creation time and peak host memory for large GenAI/MoE models.|
 
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
@@ -813,7 +818,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
 | `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
 | `Transpose → Reshape → Transpose` | `QNN_OP_RESHAPE` | Fires when the combined transformation reduces to a pure reshape (dimension-merging only, no reordering). Intermediate QDQ nodes are permitted. |
-| `Reshape → [Q → DQ]? → Transpose` | `QNN_OP_TRANSPOSE` or noop `QNN_OP_RESHAPE` | Fires when Reshape is equivalent to a permutation (same rank, non-1 dims in same relative order). Composes the reshape-implied perm with the Transpose perm; emits identity Reshape if composed perm is identity, or a single Transpose otherwise. |
+| `Reshape → [Q → DQ]? → Transpose` | `QNN_OP_TRANSPOSE` or `QNN_OP_RESHAPE` | Fires when Reshape is equivalent to a permutation (same rank, non-1 dims in same relative order). Composes the reshape-implied perm with the Transpose perm; emits a noop Reshape if the composed perm is identity, a Reshape if it only moves size-1 dimensions and changes shape, or a single Transpose otherwise. |
 
 ### Miscellaneous fusions
 
