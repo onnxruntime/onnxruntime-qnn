@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/qnn_model.h"
 
+#include <filesystem>
 #include <iostream>
 #include <fstream>
 #include <gsl/gsl>
@@ -30,6 +31,8 @@ namespace onnxruntime {
 namespace qnn {
 
 namespace {
+
+constexpr int kQnnGraphGoldenMetadataSchemaVersion = 1;
 
 // Resolves the correct I/O order for a QNN fused subgraph, preferring ONNX declaration order.
 // For each ONNX-declared name, tries `tensor_name_overrides_reversed` first (handles renames),
@@ -338,7 +341,9 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   }
 
   const bool build_json_graph = !context.json_qnn_graph_path.empty();
-  RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
+  const bool build_golden_metadata = context.htp_graph_configs != nullptr;
+  RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph, build_golden_metadata),
+                "Failed to compose Qnn graph.");
 
   profiling_scope.Complete(profiling_info);
 
@@ -360,6 +365,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   LogTensorDetails(qnn_model_wrapper, graph_name, context.json_qnn_graph_path, logger);
 
   if (build_json_graph) {
+    namespace fs = std::filesystem;
     const nlohmann::json& json_graph = qnn_model_wrapper.GetQnnJSONGraph();
     std::ofstream ofs(context.json_qnn_graph_path);
 
@@ -370,6 +376,40 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
       ORT_CXX_LOG(logger,
                   ORT_LOGGING_LEVEL_WARNING,
                   ("Could not open JSON graph file: " + context.json_qnn_graph_path).c_str());
+    }
+
+    if (context.htp_graph_configs != nullptr) {
+      const HtpGraphConfigs_t& configs = *context.htp_graph_configs;
+      const fs::path graph_path(context.json_qnn_graph_path);
+      fs::path metadata_path = graph_path;
+      metadata_path.replace_extension(".golden_metadata.json");
+      std::ofstream metadata_ofs(metadata_path);
+
+      if (metadata_ofs.is_open()) {
+        nlohmann::json metadata = {
+            {"schema_version", kQnnGraphGoldenMetadataSchemaVersion},
+            {"graph_file", graph_path.filename().string()},
+            {"backend", "htp"},
+            {"htp_arch", static_cast<uint32_t>(qnn_backend_manager_->GetHtpArch())},
+            {"backend_config",
+             {
+                 {"vtcm_size_in_mb", configs.vtcm_size_in_mb},
+                 {"htp_graph_finalization_opt_mode", static_cast<int>(configs.htp_graph_finalization_opt_mode)},
+                 {"enable_htp_fp16_precision", configs.enable_htp_fp16_precision},
+                 {"enable_htp_monolithic_lstm", configs.enable_htp_monolithic_lstm},
+                 {"enable_htp_fp16_clamp_overflow", configs.enable_htp_fp16_clamp_overflow},
+                 {"enable_htp_matmul_lut", configs.enable_htp_matmul_lut},
+                 {"htp_num_cores", configs.htp_num_cores},
+             }},
+            {"static_tensor_hashes", qnn_model_wrapper.GetStaticTensorHashes()},
+        };
+        metadata_ofs << metadata.dump();
+        metadata_ofs.close();
+      } else {
+        ORT_CXX_LOG(logger,
+                    ORT_LOGGING_LEVEL_WARNING,
+                    ("Could not open QNN graph golden metadata file: " + metadata_path.string()).c_str());
+      }
     }
   }
 
