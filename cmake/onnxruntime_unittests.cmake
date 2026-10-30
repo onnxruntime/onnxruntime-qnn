@@ -347,13 +347,20 @@ block()
 
   set(onnxruntime_provider_test_deps ${onnxruntime_test_providers_dependencies})
 
+  # Accuracy tests are run by the dedicated accuracy validation flow.
+  set(onnxruntime_provider_test_args "--gtest_filter=-QnnAcc_*")
+  if(WIN32 AND onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS)
+    # The internal-symbol Windows validation owns snapshot and accuracy tiers
+    # through its dedicated two-pass runner.
+    set(onnxruntime_provider_test_args "--gtest_filter=-QnnSnapshot_*:QnnAcc_*")
+  endif()
+
   AddTest(
     TARGET onnxruntime_provider_test
     SOURCES ${onnxruntime_provider_test_srcs}
     LIBS ${onnxruntime_provider_test_libs}
     DEPENDS ${onnxruntime_provider_test_deps}
-    # Accuracy tests are run by the dedicated accuracy validation flow.
-    TEST_ARGS "--gtest_filter=-QnnAcc_*"
+    TEST_ARGS ${onnxruntime_provider_test_args}
   )
 
   # Expose QNN SDK headers to unit tests via an interface target
