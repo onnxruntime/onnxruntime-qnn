@@ -433,6 +433,77 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_IndicesDynamicInt64) {
       ExpectedEPNodeAssignment::All);
 }
 
+// Test that ordinary-rank bool GatherND runs on HTP without the high-rank indices reshape.
+TEST_F(QnnHTPBackendTests, GatherNDOp_BoolInputOutput_OrdinaryRank) {
+  RunOpTest<bool, int64_t>(
+      "GatherND",
+      TestInputDef<bool>({1, 4}, false,
+                         {false, true, false, true}),
+      TestInputDef<int64_t>({2, 2}, true,
+                            {0, 0, 0, 3}),
+      {},  // No attributes for GatherND
+      13,  // Opset version
+      ExpectedEPNodeAssignment::All);
+}
+
+// Test the high-rank indices reshape independently of bool casting, with dynamic indices.
+TEST_F(QnnHTPBackendTests, GatherNDOp_HighRankIndicesDynamic) {
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInitializer<float>("data", {1, 4}, {0.0f, 1.0f, 2.0f, 3.0f});
+    builder.MakeInput<int64_t>("indices_flat", {2, 2}, {0, 0, 0, 3});
+    builder.MakeInitializer<int64_t>("indices_shape", {5}, {1, 1, 1, 2, 2});
+    builder.AddNode("indices_reshape", "Reshape", {"indices_flat", "indices_shape"}, {"indices"});
+    builder.AddNode("gathernd", "GatherND", {"data", "indices"}, {"output"});
+    builder.MakeOutput("output");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  RunQnnModelTest(build_model, provider_options, 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// Test the interaction between bool casting and the high-rank indices reshape.
+TEST_F(QnnHTPBackendTests, GatherNDOp_BoolInputOutput_HighRankIndices) {
+  RunOpTest<bool, int64_t>(
+      "GatherND",
+      TestInputDef<bool>({1, 4}, false,
+                         {false, true, false, true}),
+      TestInputDef<int64_t>({1, 1, 1, 2, 2}, true,
+                            {0, 0, 0, 3}),
+      {},  // No attributes for GatherND
+      13,  // Opset version
+      ExpectedEPNodeAssignment::All);
+}
+
+// Exercises the INT64 graph-output cast after restoring the ONNX shape for high-rank indices.
+TEST_F(QnnHTPBackendTests, GatherNDOp_Int64InputOutput_HighRankIndices) {
+  RunOpTest<int64_t, int64_t>(
+      "GatherND",
+      TestInputDef<int64_t>({1, 4}, false,
+                            {0, 1, 2, 3}),
+      TestInputDef<int64_t>({1, 1, 1, 2, 2}, true,
+                            {0, 0, 0, 3}),
+      {},  // No attributes for GatherND
+      13,  // Opset version
+      ExpectedEPNodeAssignment::All);
+}
+
+// Flattening indices[:-1] is not semantics-preserving when batch_dims is non-zero. Verify that
+// high-rank indices with batch_dims > 0 remain on CPU instead of using the HTP reshape workaround.
+TEST_F(QnnHTPBackendTests, GatherNDOp_HighRankIndices_BatchDims1_FallsBack) {
+  RunOpTest<float, int64_t>(
+      "GatherND",
+      TestInputDef<float>({1, 4}, false,
+                          {0.0f, 1.0f, 2.0f, 3.0f}),
+      TestInputDef<int64_t>({1, 1, 1, 2, 1}, false,
+                            {0, 3}),
+      {test::MakeAttribute("batch_dims", static_cast<int64_t>(1))},
+      13,  // Opset version
+      ExpectedEPNodeAssignment::None);
+}
+
 // Static negative int64 indices with negative values and batch_dims = 0
 TEST_F(QnnHTPBackendTests, GatherNDOp_Negative_IndicesInt64_BatchDims0) {
   RunOpTest<float, int64_t>(
