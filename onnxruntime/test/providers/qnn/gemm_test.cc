@@ -671,9 +671,10 @@ namespace {
 GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t block_size,
                                      int64_t trans_b = 0, bool include_bias = false,
                                      int weight_bits = 4, bool weight_is_unsigned = false,
-                                     int64_t trans_a = 0) {
+                                     int64_t trans_a = 0,
+                                     bool use_rank2_bias = false) {
   return [M, K, N, block_size, trans_b, include_bias, weight_bits,
-          weight_is_unsigned, trans_a](ModelTestBuilder& builder) -> void {
+          weight_is_unsigned, trans_a, use_rank2_bias](ModelTestBuilder& builder) -> void {
     const int64_t num_blocks = K / block_size;  // caller ensures K % block_size == 0
 
     // ── Activation A: float → Q(uint16) → DQ ─────────────────────────────────
@@ -729,9 +730,12 @@ GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t bl
     if (include_bias) {
       // INT32-quantized bias (per-tensor scale). Matches Conv BQ bias pattern.
       const float bias_scale = act_scale * 0.03f;
+      const std::vector<int64_t> bias_shape = use_rank2_bias ? std::vector<int64_t>{1, N}
+                                                             : std::vector<int64_t>{N};
       builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
       builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
-      builder.Make1DInitializer<int32_t>("bias_quant", std::vector<int32_t>(static_cast<size_t>(N), 0));
+      builder.MakeInitializer<int32_t>("bias_quant", bias_shape,
+                                       std::vector<int32_t>(SizeOfShape(bias_shape), 0));
       builder.AddNode("bias_dql", "DequantizeLinear",
                       {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"});
       gemm_inputs.push_back("bias_dql_out");
@@ -835,6 +839,90 @@ TEST_F(QnnHTPBackendTests, DISABLED_GemmBQ_U16Int2_TransB0_BlockSize16) {
                                       /*include_bias=*/false, /*weight_bits=*/2),
                   GetBQGemmProviderOptions(), /*opset=*/21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// ─── LPBQ Gemm tests ──────────────────────────────────────────────────────────────────────────
+// Same model as BQ Gemm but with enable_block_quant_weight_optimization=1.
+// The QNN EP converts the BQ INT4 weight to LPBQ (BLOCKWISE_EXPANSION) encoding and lowers
+// the Gemm to a QNN Conv2D with 1x1 filters.
+// LPBQ requires: INT4 weight, symmetric zero-points (all zero), INT16 activation.
+
+namespace {
+ProviderOptions GetLPBQGemmProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["enable_block_quant_weight_optimization"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  return opts;
+}
+}  // namespace
+
+// INT4 weight transB=0, [K,N]=[16,4], block_size=8, no bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_NoBias) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// INT4 weight transB=1, [N,K]=[4,16], block_size=8, no bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB1_NoBias) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// transA=1: ONNX activation is [K, M];
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransA1_TransB0) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/false, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/1),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// transA=1 with transB=1: both A and B transposed.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransA1_TransB1) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1,
+                                      /*include_bias=*/false, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/1),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// INT4 transB=0 with INT32-quantized bias (per-tensor scale).
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_WithBias) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/true),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// INT4 transB=1 with INT32-quantized bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB1_WithBias) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1,
+                                      /*include_bias=*/true),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// INT4 transB=0 with an INT32-quantized rank-2 [1, N] bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_WithRank2Bias) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/true, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/0,
+                                      /*use_rank2_bias=*/true),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
+}
+
+// INT4 transB=0, larger K with multiple blocks.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_MultiBlock) {
+  RunQnnModelTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/32, /*N=*/8, /*block_size=*/8, /*transB=*/0),
+                  GetLPBQGemmProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // MatMulAddFusion (Gemm sandwiched by Reshapes) supergroup tests. The QDQ selector absorbs
