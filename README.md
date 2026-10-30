@@ -93,7 +93,7 @@ ort.unregister_execution_provider_library(lib_registration_name)
 
 ```bash
 pip install onnxruntime==1.29.0
-pip install onnxruntime-qnn==2.7.0
+pip install onnxruntime-qnn==2.8.0
 ```
 
 **Requirements:**
