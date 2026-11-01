@@ -387,6 +387,109 @@ TEST_F(QnnCPUBackendTests, MatMulOp) {
   // RunMatMulOpTest({2, 3, 3, 3}, {3, 2}, true, false);
 }
 
+// Tests for the `use_native_matmul` session config option.
+// When set to "1", the QNN EP routes rank-2 static-weight MatMul to QNN_OP_MAT_MUL instead
+// of QNN_OP_FULLY_CONNECTED. The tests use the JSON graph dump to assert the exact op type
+// present in the compiled QNN graph.
+
+// Rank-2 static weight: verify the QNN graph emits MatMul (not FullyConnected) when the
+// use_native_matmul flag is set.
+TEST_F(QnnHTPBackendTests, MatMulDisableFC_2D_StaticWeight) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulDisableFC_2D_StaticWeight";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["use_native_matmul"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // A: [4, 8] dynamic;  B: [8, 3] static initializer.
+  RunQnnModelTest(
+      BuildMatMulOpTestCase(
+          TestInputDef<float>({4, 8}, false, GetSequentialFloatData({4, 8}, 0.01f, 0.02f)),
+          TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
+      provider_options,
+      /*opset=*/18,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "MatMul", 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 0);
+}
+
+// Rank-3 activation, rank-2 static weight: verify MatMul (not FullyConnected) when the
+// use_native_matmul flag is set.
+TEST_F(QnnHTPBackendTests, MatMulDisableFC_3D_StaticWeight) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulDisableFC_3D_StaticWeight";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["use_native_matmul"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // A: [2, 4, 8] dynamic;  B: [8, 3] static initializer.
+  RunQnnModelTest(
+      BuildMatMulOpTestCase(
+          TestInputDef<float>({2, 4, 8}, false, GetSequentialFloatData({2, 4, 8}, 0.01f, 0.02f)),
+          TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
+      provider_options,
+      /*opset=*/18,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "MatMul", 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 0);
+}
+
+// Regression guard: without the flag, the default behaviour (FullyConnected) is preserved.
+TEST_F(QnnHTPBackendTests, MatMulDefaultUsesFC) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulDefaultUsesFC";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  // use_native_matmul is intentionally NOT set; default is false (FullyConnected).
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // Same shapes as MatMulDisableFC_2D_StaticWeight.
+  RunQnnModelTest(
+      BuildMatMulOpTestCase(
+          TestInputDef<float>({4, 8}, false, GetSequentialFloatData({4, 8}, 0.01f, 0.02f)),
+          TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
+      provider_options,
+      /*opset=*/18,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(graph_dir, "MatMul", 0);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 //

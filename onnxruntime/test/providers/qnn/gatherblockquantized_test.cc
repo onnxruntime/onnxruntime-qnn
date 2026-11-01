@@ -71,6 +71,10 @@ struct GatherBQTestParams {
   int64_t block_size{32};
   int64_t gather_axis{0};
   int64_t quantize_axis{1};
+  bool indices_are_initializer{false};
+  bool indices_are_int32{false};
+  bool assignment_only{false};
+  std::vector<int64_t> indices;
 };
 
 // When weight_is_unpacked_int4 is true, the weight input arrives already-unpacked as INT4
@@ -153,18 +157,32 @@ static void RunGatherBlockQuantizedTest(
     // ------------------------------------------------------------
     // Indices
     // ------------------------------------------------------------
-    int64_t num_indices = params.batch_size * params.seq_len;
-    std::vector<int64_t> indices(num_indices);
-    for (int64_t i = 0; i < num_indices; ++i) {
-      indices[i] = i % params.vocab_size;
+    const int64_t num_indices = params.batch_size * params.seq_len;
+    std::vector<int64_t> indices = params.indices;
+    if (indices.empty()) {
+      indices.resize(num_indices);
+      for (int64_t i = 0; i < num_indices; ++i) {
+        indices[i] = i % params.vocab_size;
+      }
     }
 
     // ------------------------------------------------------------
     // Graph inputs
     // ------------------------------------------------------------
-    auto indices_def =
-        TestInputDef<int64_t>({params.batch_size, params.seq_len}, false, indices);
-    MakeTestInput<int64_t>(builder, "indices", indices_def);
+    if (params.indices_are_int32) {
+      std::vector<int32_t> int32_indices;
+      int32_indices.reserve(indices.size());
+      for (const int64_t index : indices) {
+        int32_indices.push_back(static_cast<int32_t>(index));
+      }
+      auto indices_def = TestInputDef<int32_t>({params.batch_size, params.seq_len},
+                                               params.indices_are_initializer, int32_indices);
+      MakeTestInput<int32_t>(builder, "indices", indices_def);
+    } else {
+      auto indices_def = TestInputDef<int64_t>({params.batch_size, params.seq_len},
+                                               params.indices_are_initializer, indices);
+      MakeTestInput<int64_t>(builder, "indices", indices_def);
+    }
 
     auto scales_def =
         TestInputDef<float>({params.vocab_size, blocks_per_row},
@@ -196,11 +214,28 @@ static void RunGatherBlockQuantizedTest(
         attributes);
   };
 
-  RunQnnModelTest(
-      model_builder,
-      provider_options,
-      13,  // opset
-      EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
+  if (params.assignment_only) {
+    ModelTestBuilder helper;
+    model_builder(helper);
+
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> onnx_opset{helper.model_.add_opset_import()};
+    onnx_opset->set_domain("");
+    onnx_opset->set_version(13);
+
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> ms_opset{helper.model_.add_opset_import()};
+    ms_opset->set_domain(kMSDomain);
+    ms_opset->set_version(1);
+
+    helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+    std::string model_data;
+    helper.model_.SerializeToString(&model_data);
+    VerifyQnnEpModelAssignment(model_data, "GatherBlockQuantized_QNN", provider_options, expected_ep_assignment);
+    return;
+  }
+
+  RunQnnModelTest(model_builder, provider_options, 13,  // opset
+                  EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
 // =============================================================
@@ -229,6 +264,43 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_LargerIndices) {
   params.gather_axis = 0;
   params.quantize_axis = 1;
   RunGatherBlockQuantizedTest(params);
+}
+
+// Static negative indices are valid ONNX values. The builder must normalize them
+// against the Gather axis before creating QNN's int32 indices tensor.
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_StaticNegativeIndices) {
+  GatherBQTestParams params;
+  params.vocab_size = 128;
+  params.hidden_size = 64;
+  params.block_size = 32;
+  params.indices_are_initializer = true;
+  params.indices = {-1};
+  RunGatherBlockQuantizedTest(params);
+}
+
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_StaticNegativeInt32Indices) {
+  GatherBQTestParams params;
+  params.vocab_size = 128;
+  params.hidden_size = 64;
+  params.block_size = 32;
+  params.indices_are_initializer = true;
+  params.indices_are_int32 = true;
+  params.indices = {-1};
+  RunGatherBlockQuantizedTest(params);
+}
+
+// Out-of-range values are legal for GatherBlockQuantized and produce zeros.
+// QNN cannot preserve that behavior, so the node must intentionally fall back.
+// Check assignment only because the current CPU kernel rejects out-of-range indices at inference time.
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_StaticOutOfRangeIndicesFallback) {
+  GatherBQTestParams params;
+  params.vocab_size = 128;
+  params.hidden_size = 64;
+  params.block_size = 32;
+  params.indices_are_initializer = true;
+  params.assignment_only = true;
+  params.indices = {128};
+  RunGatherBlockQuantizedTest(params, ExpectedEPNodeAssignment::None);
 }
 
 // Weight arrives already-unpacked as INT4 (Int4x2 element type, logical shape == element

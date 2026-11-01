@@ -353,6 +353,18 @@ static void RunOpTest(const std::string& op_type,
                   EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
+// Integration coverage for fallback when an otherwise in-range ONNX index cannot be
+// represented by QNN's int32 indices tensor. The helper's truncation regression is
+// guarded directly by QnnUnit_NormalizeIndicesTest.
+TEST_F(QnnHTPBackendTests, GatherOp_StaticInt64IndexExceedsInt32) {
+  RunOpTest<float, int64_t>("Gather",
+                            TestInputDef<float>({2147483649LL, 0}, false, {}),
+                            TestInputDef<int64_t>({1}, true, {2147483648LL}),
+                            {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                            13,
+                            ExpectedEPNodeAssignment::None);
+}
+
 // Non-QDQ model, Gather with static input and dynamic int64 indices
 // Fails with QNN SDK 2.35.0:
 // Failed to finalize QNN graph. Error code: 1002

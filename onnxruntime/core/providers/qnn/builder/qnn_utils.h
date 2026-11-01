@@ -232,6 +232,17 @@ static Ort::Status InvertPerm(gsl::span<const IntType> perm, /*out*/ gsl::span<I
   return Ort::Status();
 }
 
+template <typename IntType>
+inline bool IsIdentityPerm(gsl::span<const IntType> perm) {
+  static_assert(std::is_integral<IntType>::value, "permutation arrays must contain integer elements");
+  for (size_t i = 0; i < perm.size(); ++i) {
+    if (perm[i] != static_cast<IntType>(i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Utility function that checks if an array of strings contains a specific string.
 // Used to validate ONNX operator attributes.
 template <size_t N>
@@ -582,6 +593,55 @@ Ort::Status PermuteShape(gsl::span<const T> input_shape, gsl::span<const P> perm
   }
 
   return Ort::Status();
+}
+
+// Workaround for a QNN HTP backend bug: a non-identity, shape-changing Transpose that only
+// moves dimensions of size 1 preserves the flat element order and is therefore equivalent to a
+// Reshape. HTP can silently miscompute such a Transpose (for example, [128, 1, 128] with perm
+// [1, 0, 2] returns the transposed data instead of the original order).
+//
+// The lowering is semantically valid on every QNN backend, so callers apply it unconditionally.
+// `output_shape` must equal the permuted input shape, and `perm` must be a valid permutation.
+// Zero-sized dimensions are rejected to keep empty tensors on the original Transpose path.
+// TODO: Remove this workaround and its call sites once the downstream QNN HTP bug is fixed.
+// https://github.com/onnxruntime/onnxruntime-qnn/issues/1020
+inline bool NeedsHtpTransposeReshapeWorkaround(gsl::span<const uint32_t> input_shape,
+                                               gsl::span<const uint32_t> perm,
+                                               gsl::span<const uint32_t> output_shape) {
+  const size_t rank = input_shape.size();
+  if (perm.size() != rank || output_shape.size() != rank || IsIdentityPerm(perm) ||
+      std::equal(input_shape.begin(), input_shape.end(), output_shape.begin())) {
+    return false;
+  }
+
+  std::vector<bool> seen_axis(rank, false);
+  bool has_previous_non_unit_axis = false;
+  uint32_t previous_non_unit_axis = 0;
+
+  for (size_t i = 0; i < rank; ++i) {
+    const uint32_t axis = perm[i];
+    if (axis >= rank || seen_axis[axis]) {
+      return false;
+    }
+    seen_axis[axis] = true;
+
+    const uint32_t dim = input_shape[axis];
+    if (dim == 0 || output_shape[i] != dim) {
+      return false;
+    }
+
+    // Moving size-1 dimensions does not change the flat element order. Non-unit dimensions must
+    // keep their relative order.
+    if (dim != 1) {
+      if (has_previous_non_unit_axis && axis < previous_non_unit_axis) {
+        return false;
+      }
+      previous_non_unit_axis = axis;
+      has_previous_non_unit_axis = true;
+    }
+  }
+
+  return true;
 }
 
 // Computes the broadcasted shape of two shapes following NumPy/ONNX broadcasting rules
