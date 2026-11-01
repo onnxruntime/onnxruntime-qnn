@@ -1990,6 +1990,17 @@ TEST_F(QnnHTPBackendTests, GridSample_Linear_ReflectionPadding_U16) {
                          /*use_contrib_qdq=*/true);
 }
 
+// Rank-5 float GridSample exceeds QNN HTP's rank-4 limit and must fall back to CPU.
+TEST_F(QnnHTPBackendTests, GridSample_Rank5_Float_Unsupported) {
+  RunOpTest<float>("GridSample",
+                   {TestInputDef<float>({1, 1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8)),
+                    TestInputDef<float>({1, 2, 2, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 24))},
+                   {test::MakeAttribute("mode", "linear"), test::MakeAttribute("padding_mode", "zeros")},
+                   /*opset_version=*/20,
+                   ExpectedEPNodeAssignment::None,
+                   kOnnxDomain);
+}
+
 // Test QDQ GridSample with reflection padding mode
 // Inaccuracy detected for output 'output', element 2.
 // Output quant params: scale=0.024269860237836838, zero_point=0.

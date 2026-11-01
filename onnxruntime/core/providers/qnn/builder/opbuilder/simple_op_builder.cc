@@ -55,6 +55,17 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     std::string padding_mode = node_helper.Get("padding_mode", "zeros");
     RETURN_IF_NOT(utils::ArrayHasString(gridsample_supported_padding_modes, padding_mode),
                   ("GridSample does not support padding_mode " + padding_mode).c_str());
+
+    // QNN HTP supports rank <= 5 for 8/16-bit fixed-point GridSample, rank <= 4 for float.
+    TensorInfo input_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+    const bool is_fixed_point = utils::IsQuant8bit(input_info.qnn_data_type) ||
+                                 utils::IsQuant16bit(input_info.qnn_data_type);
+    const size_t max_rank = is_fixed_point ? 5 : 4;
+    RETURN_IF(input_info.shape.size() > max_rank,
+              ("QNN EP does not support GridSample with input rank > " + std::to_string(max_rank) +
+               (is_fixed_point ? " (fixed-point)." : " (floating-point)."))
+                  .c_str());
   }
 
   const auto qnn_backend_type = qnn_model_wrapper.GetQnnBackendType();
