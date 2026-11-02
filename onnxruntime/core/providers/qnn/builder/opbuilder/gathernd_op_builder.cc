@@ -78,13 +78,13 @@ Ort::Status ProcessGatherNDIndices(QnnModelWrapper& qnn_model_wrapper,
                                                     indices_tensor_name, std::move(qnn_indices_bytes),
                                                     logger, input_names, do_op_validation));
 
-  // TODO: QAIRT 2.51 does not reliably compile HTP GatherNd with rank-5 indices.
-  // FP32 is rejected during validation, while UFXP8 passes validation but graph finalization fails
-  // with QNN_COMMON_ERROR_MEM_ALLOC. The UFXP8 failure reproduces with an isolated single-GatherND
+  // TODO: Remove or version-gate this workaround once the minimum supported QAIRT version reliably
+  // validates and finalizes HTP GatherNd with rank-5 indices. QAIRT 2.51 does not reliably compile it:
+  // FP32 is rejected during validation, while UINT8 passes validation but graph finalization fails
+  // with QNN_COMMON_ERROR_MEM_ALLOC. The UINT8 failure reproduces with an isolated single-GatherND
   // ONNX model, so it is not caused by the surrounding graph. With no batch dimensions, flattening
   // indices[:-1] preserves the index tuples; the output is reshaped back to the ONNX shape in
-  // ProcessAttributesAndOutputs. Re-test after a QAIRT upgrade and remove this workaround once
-  // rank-5 GatherNd validates and finalizes successfully on HTP.
+  // ProcessAttributesAndOutputs.
   const auto& indices_tensor = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]);
   const auto& indices_shape = indices_tensor.GetTensorDims();
   if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
@@ -134,7 +134,7 @@ Ort::Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   TensorInfo data_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], data_info));
 
-  // GatherND on HTP does not support BOOL data. Cast to UFXP8 before GatherND and cast the output
+  // GatherND on HTP does not support BOOL data. Cast to UINT8 before GatherND and cast the output
   // back to BOOL in ProcessAttributesAndOutputs.
   const bool needs_bool_cast = (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
                                 inputs[0].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
@@ -254,7 +254,7 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
     }
   }
 
-  // BOOL data runs through GatherND as UFXP8 and is cast back after any output reshape.
+  // BOOL data runs through GatherND as UINT8 and is cast back after any output reshape.
   if (cast_plan.needs_bool_cast) {
     cast_plan.bool_cast_input_name = utils::UniqueNameGenerator().New(output_name, "_u8_to_bool_in");
   }

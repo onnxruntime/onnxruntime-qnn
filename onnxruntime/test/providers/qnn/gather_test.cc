@@ -492,6 +492,20 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_HighRankIndices_BatchDims1_FallsBack) {
       ExpectedEPNodeAssignment::None);
 }
 
+// BOOL data is cast to UINT8 on HTP. Verify that this cast does not let high-rank indices with
+// batch_dims > 0 pass op validation and fail later during QNN graph finalization.
+TEST_F(QnnHTPBackendTests, GatherNDOp_BoolInputOutput_HighRankIndices_BatchDims1_FallsBack) {
+  RunOpTest<bool, int64_t>(
+      "GatherND",
+      TestInputDef<bool>({1, 4}, false,
+                         {false, true, false, true}),
+      TestInputDef<int64_t>({1, 1, 1, 2, 1}, false,
+                            {0, 3}),
+      {test::MakeAttribute("batch_dims", static_cast<int64_t>(1))},
+      13,  // Opset version
+      ExpectedEPNodeAssignment::None);
+}
+
 // Static negative int64 indices with negative values and batch_dims = 0
 TEST_F(QnnHTPBackendTests, GatherNDOp_Negative_IndicesInt64_BatchDims0) {
   RunOpTest<float, int64_t>(
