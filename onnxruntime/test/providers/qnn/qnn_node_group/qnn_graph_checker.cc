@@ -145,9 +145,6 @@ void AssertOpWithNameInQnnGraph(const std::filesystem::path& dump_dir,
                      << name_substring << "' in " << json_path;
 }
 
-// Asserts that the compiled QNN graph exposes exactly `expected_count` graph inputs, i.e. tensors of
-// type QNN_TENSOR_TYPE_APP_WRITE. A QDQ group whose producer was left on CPU turns its consumer's
-// input into an extra graph input instead of failing the compile, so this pins the artifact shape.
 void AssertQnnGraphInputCount(const std::filesystem::path& dump_dir, size_t expected_count) {
   if (::testing::Test::IsSkipped()) {
     GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";

@@ -101,13 +101,9 @@ class GemmOpBuilder : public BaseOpBuilder {
     bool use_matmul = false;
   };
 
-  // Shared by validation and construction, including the bias's tensor type before registration.
   LoweringPlan GetLoweringPlan(const QnnModelWrapper& qnn_model_wrapper,
                                const OrtNodeUnit& node_unit) const;
   Ort::Status ExplictOpCheck(const OrtNodeUnit& node_unit, const LoweringPlan& plan) const;
-  // Registers one of Gemm's inputs (transposing a constant, adding a Transpose node for a transposed
-  // non-constant) and appends its QNN tensor name to `input_names`. A tensor already added by a
-  // producer that needs no transpose is only recorded, not re-registered.
   Ort::Status RegisterGemmInput(QnnModelWrapper& qnn_model_wrapper,
                                 const OrtNodeUnit& node_unit,
                                 size_t input_index,
@@ -141,7 +137,7 @@ GemmOpBuilder::LoweringPlan GemmOpBuilder::GetLoweringPlan(const QnnModelWrapper
   } else if (node_unit.GetOutputReshapeNode() != nullptr) {
     plan.lowering = Lowering::kReshaped;
   } else if (RequiresFcAddDecomposition(node_unit, is_native_bias) || (plan.use_matmul && has_bias)) {
-    // QNN MatMul has no bias input, so an effective C always requires a separate Add.
+    // QNN MatMul requires a separate Add for bias.
     plan.lowering = Lowering::kDecomposed;
   }
   return plan;
@@ -178,10 +174,7 @@ Ort::Status GemmOpBuilder::ExplictOpCheck(const OrtNodeUnit& node_unit, const Lo
 Ort::Status GemmOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger) const {
-  // A mixed activation/output precision pair is bridged with Convert nodes by this builder (see
-  // ProcessInputs/ProcessOutputsAcrossPrecision), but only on the plain FullyConnected/MatMul
-  // lowering: the block-quantized, absorbed-Reshape and FullyConnected+Add lowerings build their
-  // own output tensors. A mixed Gemm that needs one of those keeps the float fallback.
+  // Other lowerings construct their own outputs and cannot use the precision bridge.
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     const auto& inputs = node_unit.Inputs();
     const auto& outputs = node_unit.Outputs();
@@ -221,8 +214,6 @@ Ort::Status GemmOpBuilder::RegisterGemmInput(QnnModelWrapper& qnn_model_wrapper,
   QnnQuantParamsWrapper quantize_param;
   RETURN_IF_ERROR(quantize_param.Init(qnn_model_wrapper, input));
 
-  // Only skip if the input tensor has already been added (by producer op) *and* we don't need
-  // to transpose it.
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name) && input_trans_flags[input_index] == 0) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + input_name).c_str());
     input_names.push_back(input_name);
@@ -252,7 +243,6 @@ Ort::Status GemmOpBuilder::RegisterGemmInput(QnnModelWrapper& qnn_model_wrapper,
   if (1 == input_trans_flags[input_index] && !is_constant_input) {
     RETURN_IF(quantize_param.IsPerChannel(), "Non-constant Gemm inputs only support per-tensor quantization");
 
-    // Add Transpose node
     std::vector<uint32_t> old_input_shape(input_shape);
     input_shape[0] = old_input_shape[1];
     input_shape[1] = old_input_shape[0];
@@ -265,7 +255,6 @@ Ort::Status GemmOpBuilder::RegisterGemmInput(QnnModelWrapper& qnn_model_wrapper,
                                                        qnn_model_wrapper.IsGraphInput(node_input_name)));
   }
 
-  // Reshape [1, M] shape Bias.
   if (input_index == 2 && 2 == input_shape.size() && input_shape[0] == 1) {
     input_shape[0] = input_shape[1];
     input_shape.resize(1);
@@ -312,10 +301,7 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   input_trans_flag.at(0) = (!use_matmul_path && transA != 0) ? 1 : 0;
   input_trans_flag.at(1) = (!use_matmul_path && transB == 0) ? 1 : 0;
 
-  // Input A first: a narrower activation is Converted up to the declared output precision before the
-  // weight and bias are registered, so their encodings match what the op consumes (QNN
-  // FullyConnected/MatMul emit at their activation precision). A wider activation needs no Convert
-  // here; only the output is narrowed, in ProcessAttributesAndOutputs.
+  // Convert activation before encoding bias, which must use the activation's scale.
   RETURN_IF_ERROR(RegisterGemmInput(qnn_model_wrapper, node_unit, 0, input_trans_flag, logger, input_names,
                                     do_op_validation));
 
@@ -336,15 +322,10 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   for (size_t input_i = 1; input_i < inputs.size(); ++input_i) {
     if (input_i == 2) {
-      // beta=0.0: C has no effect on the output — skip it so FC receives only (A, B)
       if (beta == 0.0f) {
         continue;
       }
 
-      // A bias feeding an op whose activation was Converted must be re-encoded against the
-      // activation the op actually consumes (QNN's bias scale invariant). Handles INT32
-      // requantization and float-to-INT32 quantization; a bias it cannot handle falls through to
-      // the generic path below.
       if (activation_widened) {
         bool was_handled = false;
         const auto& act_quant_param =

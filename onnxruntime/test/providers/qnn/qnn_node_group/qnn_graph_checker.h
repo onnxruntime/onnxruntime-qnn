@@ -28,10 +28,7 @@ void AssertOpWithNameInQnnGraph(const std::filesystem::path& dump_dir,
 void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
                                  uint32_t expected_data_type);
 
-// Asserts that the compiled QNN graph exposes exactly `expected_count` graph inputs
-// (tensors of type QNN_TENSOR_TYPE_APP_WRITE). A QDQ group whose producer was left on CPU turns the
-// consumer's input into an extra graph input rather than failing the compile, so this pins the
-// artifact shape.
+// Count APP_WRITE tensors to detect parameters left outside a QDQ group.
 void AssertQnnGraphInputCount(const std::filesystem::path& dump_dir, size_t expected_count);
 
 // Asserts that a node with the exact `node_name` does not appear in

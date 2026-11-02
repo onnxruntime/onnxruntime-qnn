@@ -55,12 +55,12 @@ void CheckMixedPrecisionNativeBiasRejected(ONNXTensorElementDataType activation_
 
 }  // namespace
 
-TEST(QnnUnit_Gemm_ComponentTest, MixedPrecisionU16ActivationU8OutputNativeBiasRejected) {
+TEST(QnnUnitGemmComponentTest, MixedPrecisionU16ActivationU8OutputNativeBiasRejected) {
   CheckMixedPrecisionNativeBiasRejected(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16,
                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8);
 }
 
-TEST(QnnUnit_Gemm_ComponentTest, MixedPrecisionU8ActivationU16OutputNativeBiasRejected) {
+TEST(QnnUnitGemmComponentTest, MixedPrecisionU8ActivationU16OutputNativeBiasRejected) {
   CheckMixedPrecisionNativeBiasRejected(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
                                         ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16);
 }

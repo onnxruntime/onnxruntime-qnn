@@ -338,10 +338,7 @@ static void RunQDQGemmTestOnHTP(const std::vector<TestInputDef<float>>& input_de
                                     tolerance);
 }
 
-// Builds a QDQ Gemm that mirrors the failing model's quantization layout: a per-output-channel
-// quantized weight initializer and a per-output-channel int32 bias. Both must be consumed inside the
-// node group - a standalone per-channel DequantizeLinear is unsupported, and leaving it out of the
-// group turns the weight into an extra graph input instead of failing the compile.
+// Keep per-channel weight/bias DQ nodes inside the group; HTP cannot execute them standalone.
 template <typename ActivationQType, typename WeightQType, typename OutputQType>
 static GetTestQDQModelFn<OutputQType> BuildQDQGemmPerChannelTestCase(
     const std::vector<TestInputDef<float>>& input_defs,
@@ -351,15 +348,12 @@ static GetTestQDQModelFn<OutputQType> BuildQDQGemmPerChannelTestCase(
     const size_t num_inputs = input_defs.size();
     QNN_ASSERT(num_inputs == 2 || num_inputs == 3);
 
-    // A (fp32) -> Q -> DQ (per-tensor activation)
     MakeTestInput(builder, "A", input_defs[0]);
     const QuantParams<ActivationQType> a_qparams = GetTestInputQuantParams<ActivationQType>(input_defs[0]);
     const std::string a_qdq = AddQDQNodePair<ActivationQType>(builder, "qdq_a", "A", a_qparams.scale,
                                                               a_qparams.zero_point);
 
-    // B: per-output-channel quantized initializer -> DQ -> (axis 1; B is [K, N] with transB=0, so the
-    // output channels run along the last axis and the builder rotates the encoding when it transposes
-    // the weight to QNN's [N, K] layout)
+    // B is [K, N], so output-channel quantization uses axis 1.
     const auto weight_shape = input_defs[1].GetShape();
     std::vector<float> weight_scales;
     std::vector<WeightQType> weight_zero_points;
@@ -375,7 +369,6 @@ static GetTestQDQModelFn<OutputQType> BuildQDQGemmPerChannelTestCase(
     std::vector<std::string> gemm_inputs{a_qdq, "B"};
 
     if (num_inputs == 3) {
-      // C: per-output-channel int32 bias encoded against activation_scale * weight_scale[c].
       const auto bias_shape = input_defs[2].GetShape();
       const size_t num_channels = static_cast<size_t>(bias_shape.back());
       std::vector<float> bias_scales(num_channels);
@@ -395,16 +388,11 @@ static GetTestQDQModelFn<OutputQType> BuildQDQGemmPerChannelTestCase(
 
     builder.AddNode("gemm", "Gemm", gemm_inputs, {"Y"}, "", attrs);
 
-    // Output: Y -> Q -> DQ -> output
     AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(
         builder, "qdq_out", "Y", output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
 
-// Runs a QDQ Gemm whose activation and declared output use different fixed-point precisions. The pair
-// must stay in a single node unit: the op runs at the wider precision and the narrower side is
-// bridged with exactly one QNN Convert (on the output for a16 -> u8, on the activation for u8 -> u16).
-// With a bias, the bias must be re-encoded against the activation the op actually consumes.
 template <typename ActivationQType, typename WeightQType, typename OutputQType>
 static void RunQDQGemmMixedPrecisionTest(const char* test_name, bool with_bias,
                                          Qnn_DataType_t expected_convert_type) {
@@ -435,8 +423,7 @@ static void RunQDQGemmMixedPrecisionTest(const char* test_name, bool with_bias,
                        BuildQDQGemmPerChannelTestCase<ActivationQType, WeightQType, OutputQType>(
                            input_defs, attrs),
                        provider_options,
-                       // int16/uint16 zero points require QuantizeLinear >= 19; the failing model is opset 21.
-                       21,  // opset
+                       /*opset=*/21,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance());
 
@@ -446,12 +433,9 @@ static void RunQDQGemmMixedPrecisionTest(const char* test_name, bool with_bias,
   AssertOpInQnnGraph(graph_dir, "FullyConnected", 1);
   AssertOpInQnnGraph(graph_dir, "Convert", 1);
   AssertConvertOutputDataType(graph_dir, expected_convert_type);
-  // One graph input (A). Anything else means a param was left outside the group.
   AssertQnnGraphInputCount(graph_dir, 1);
 }
 
-// A16 activation with an 8-bit declared output: FullyConnected runs at 16-bit and the output is
-// Converted down.
 TEST_F(QnnHTPBackendTests, GemmMixedPrecisionU16ActivationU8Output) {
   RunQDQGemmMixedPrecisionTest<uint16_t, uint8_t, uint8_t>("U16ActivationU8Output", /*with_bias=*/false,
                                                            QNN_DATATYPE_UFIXED_POINT_8);
@@ -462,8 +446,6 @@ TEST_F(QnnHTPBackendTests, GemmMixedPrecisionU16ActivationU8OutputBias) {
                                                            QNN_DATATYPE_UFIXED_POINT_8);
 }
 
-// 8-bit activation with a 16-bit declared output: the activation is Converted up so FullyConnected
-// computes at the declared precision, and the int32 bias is re-encoded to match.
 TEST_F(QnnHTPBackendTests, GemmMixedPrecisionU8ActivationU16Output) {
   RunQDQGemmMixedPrecisionTest<uint8_t, uint8_t, uint16_t>("U8ActivationU16Output", /*with_bias=*/false,
                                                            QNN_DATATYPE_UFIXED_POINT_16);
@@ -1212,7 +1194,7 @@ TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_NativeBias_NotAbsorbed) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
-TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_FcCompatibleNativeBias_NotAbsorbed) {
+TEST_F(QnnHTPBackendTests, GemmReshapeQDirectFcCompatibleNativeBiasNotAbsorbed) {
   DirectGemmReshapeQConfig cfg;
   cfg.M = 1;
   cfg.bias_from_intermediate = true;

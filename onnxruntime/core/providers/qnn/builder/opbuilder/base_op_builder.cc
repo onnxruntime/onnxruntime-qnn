@@ -369,8 +369,6 @@ Ort::Status BaseOpBuilder::ProcessOutputsAcrossPrecision(QnnModelWrapper& qnn_mo
                                                          Qnn_DataType_t activation_qnn_data_type) const {
   const auto& outputs = node_unit.Outputs();
 
-  // Only a single-output node can be bridged: the Convert would otherwise have to be replicated per
-  // output, and the extra outputs keep their declared tensors.
   Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
   RETURN_IF_ERROR(utils::GetQnnDataType(outputs[0].quant_param.has_value(), outputs[0].type,
                                         declared_output_dtype));

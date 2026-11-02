@@ -62,16 +62,10 @@ class LayerNormalizationOpBuilder : public BaseOpBuilder {
     bool externalize_bias;
   };
 
-  // Which lowering this node takes. Single is one QNN LayerNorm; Flattened is Reshape -> LayerNorm
-  // (last axis) -> Reshape for a multi-axis node on HTP; Decomposed externalizes a misaligned scale
-  // and/or bias as a following Mul/Add. Single and Flattened consume the node's scale/bias as-is.
   enum class Lowering { kSingle,
                         kFlattened,
                         kDecomposed };
 
-  // The single source of truth for the lowering decision and for the axis/shape facts it depends
-  // on, so IsOpSupported and ProcessAttributesAndOutputs cannot disagree about which path a node
-  // takes (and therefore about whether the precision bridge is available for it).
   struct LoweringPlan {
     std::vector<uint32_t> x_shape;
     size_t x_rank = 0;
@@ -81,8 +75,6 @@ class LayerNormalizationOpBuilder : public BaseOpBuilder {
     bool externalize_bias = false;
   };
 
-  // Fills `plan`. Validates flattenability (multi-axis on HTP) and the axis range, so a failure here
-  // means the node is not supported rather than a later, less specific build error.
   Ort::Status GetLoweringPlan(QnnModelWrapper& qnn_model_wrapper,
                               const OrtNodeUnit& node_unit,
                               LoweringPlan& plan) const ORT_MUST_USE_RESULT;
@@ -235,9 +227,6 @@ Ort::Status LayerNormalizationOpBuilder::GetLoweringPlan(QnnModelWrapper& qnn_mo
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, plan.x_shape), "Cannot get shape of input 0");
   plan.x_rank = plan.x_shape.size();
 
-  // ONNX requires Scale/B to broadcast to X.shape[axis:], so their rank cannot exceed X's rank.
-  // Letting such a model through would underflow the prefix arithmetic in HasNonOneDimBeforeAxis or
-  // surface later as an opaque QNN shape-mismatch error; reject it here with a clear diagnostic.
   std::vector<uint32_t> scale_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].shape, scale_shape), "Cannot get shape of input 1 (scale)");
   RETURN_IF(scale_shape.size() > plan.x_rank,
@@ -251,26 +240,18 @@ Ort::Status LayerNormalizationOpBuilder::GetLoweringPlan(QnnModelWrapper& qnn_mo
   }
 
   RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, plan.ln_axis));
-  // GetCanonicalizedAxisAttribute normalizes ln_axis to a non-negative index below x_rank; range-check
-  // anyway so a malformed axis fails loudly instead of underflowing the subtract below to ~SIZE_MAX.
   RETURN_IF(plan.ln_axis < 0 || static_cast<size_t>(plan.ln_axis) >= plan.x_rank,
             "QNN LayerNorm: axis out of range after normalization.");
   const size_t ln_axis = static_cast<size_t>(plan.ln_axis);
 
-  // QNN HTP LayerNorm only normalizes the last axis. Flatten the trailing reduced axes instead of
-  // falling back; anything that doesn't flatten exactly keeps the CPU fallback with a clear
-  // diagnostic. Other backends lower the node as-is.
+  // HTP normalizes only the last axis.
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) && ln_axis != plan.x_rank - 1) {
     RETURN_IF_ERROR(CheckFlattenableLayerNorm(qnn_model_wrapper, node_unit, plan.x_shape, ln_axis));
     plan.lowering = Lowering::kFlattened;
     return Ort::Status();
   }
 
-  // QNN can consume the node's scale/bias only when they broadcast along the normalized axes. If a
-  // model has non-1 dims before the axis (e.g. folded in by an outer Mul/Add), that side has to be
-  // applied as a following Mul/Add instead:
-  //   - scale misaligned -> externalize scale; the bias must be externalized too when present,
-  //   - scale legal, bias misaligned -> keep LN(scale), externalize only the bias Add.
+  // Misaligned scale/bias must be applied as Mul/Add after LayerNorm.
   plan.externalize_scale = HasNonOneDimBeforeAxis(scale_shape, plan.x_rank, ln_axis);
   plan.externalize_bias = has_bias_input &&
                           (HasNonOneDimBeforeAxis(bias_shape, plan.x_rank, ln_axis) ||
@@ -290,15 +271,10 @@ Ort::Status LayerNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mode
 
   const auto& inputs = node_unit.Inputs();
 
-  // Validates the axis, the scale/bias ranks (ONNX requires them to broadcast to X.shape[axis:]) and
-  // flattenability, and reports which lowering the node takes.
   LoweringPlan plan;
   RETURN_IF_ERROR(GetLoweringPlan(qnn_model_wrapper, node_unit, plan));
 
-  // A mixed activation/output precision pair is bridged with Convert nodes by this builder (see
-  // ProcessInputs/ProcessAttributesAndOutputs), but only on the single-op lowering: the flattened
-  // and decomposed lowerings build their own output tensors, and a decomposed bias/scale would have
-  // to be re-encoded for the converted activation. Keep the float fallback for those.
+  // Flattened/decomposed lowerings construct their own outputs and cannot use the precision bridge.
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     Qnn_DataType_t act_qnn_data_type = QNN_DATATYPE_FLOAT_32;
     Qnn_DataType_t output_qnn_data_type = QNN_DATATYPE_FLOAT_32;
@@ -330,12 +306,7 @@ Ort::Status LayerNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
   // Input[0] (X, required)
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[X_IDX], logger, input_names));
 
-  // HTP LayerNorm emits at its activation precision, so a narrower declared output (e.g. a16 -> u8)
-  // is emitted at the activation precision and Converted afterwards (ProcessAttributesAndOutputs).
-  // A narrower activation is Converted up to the declared output precision here, so the op computes
-  // at the precision the QDQ group declared. Both are no-ops unless the two precisions are a
-  // bridgeable fixed-point pair; the scale/bias inputs keep their own encodings either way, which
-  // QNN LayerNorm accepts.
+  // HTP LayerNorm emits at activation precision; scale/bias keep their existing encodings.
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     const auto& output = node_unit.Outputs()[0];
     Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
@@ -374,7 +345,6 @@ Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   const size_t ln_axis = static_cast<size_t>(plan.ln_axis);
 
   if (plan.lowering == Lowering::kFlattened) {
-    // IsOpSupported already verified exact flattenability.
     return BuildFlattenedLayerNorm(qnn_model_wrapper, node_unit, input_names,
                                    do_op_validation, logger);
   }
@@ -422,8 +392,7 @@ Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   TensorInfo scale_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], scale_info));
   if (!has_bias_input && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-    // Read the activation's quant params from the tensor actually bound to input_names[0], not
-    // inputs[0]: the mixed-precision bridge rebinds input_names[0] to a Converted activation.
+    // The bridge may have rebound input_names[0] to a converted activation.
     const auto& x_input_qparams = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetQnnQuantParams();
     if (x_input_qparams.IsPerTensor(/*include_bw*/ true) && scale_info.quant_param.IsQuantized()) {
       const std::string bias_name = utils::UniqueNameGenerator().New(node_unit, "_implicit_bias");
@@ -434,9 +403,6 @@ Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   }
 #endif
 
-  // HTP LayerNorm emits its activation precision: a wider activation narrows only the output here,
-  // and a narrower one was already Converted up in ProcessInputs. The scale/bias keep their own
-  // encodings, which QNN LayerNorm accepts.
   const Qnn_DataType_t activation_qnn_data_type =
       qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
   RETURN_IF_ERROR(ProcessOutputsAcrossPrecision(qnn_model_wrapper, node_unit,

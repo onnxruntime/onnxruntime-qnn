@@ -1159,15 +1159,7 @@ static bool IsConvertBeforeOpGroup(ONNXTensorElementDataType dt_input, ONNXTenso
          (dt_output != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16 || dt_weight == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8);
 }
 
-// A LayerNorm QDQ group whose activation is not wider than its declared output is built by converting
-// the activation up to the output precision before the op (a wider activation is instead narrowed
-// after the op by AddOpWithQuantizedOutput, which IsSupportedActivationOutputTypePair covers).
-// Unlike FullyConnected/MatMul there is no weight-width constraint: LayerNorm's scale and bias keep
-// their own encodings. The activation must be per-tensor so the Convert can derive an equivalent
-// encoding, which the positive-scalar-scale check guarantees. A signed 16-bit output is excluded: HTP
-// LayerNorm has no such output configuration (validateOpConfig fails 3110 for SFIXED_POINT_16), and the
-// reference converter re-encodes a signed 16-bit LayerNorm output to unsigned as well. Such a pair
-// keeps the float fallback instead of emitting a graph the backend rejects.
+// HTP LayerNorm has no signed 16-bit output configuration.
 static bool IsConvertActivationToOutputGroup(const OrtGraph* graph, const OrtApi& ort_api,
                                              ONNXTensorElementDataType dt_input,
                                              ONNXTensorElementDataType dt_output,
@@ -1432,9 +1424,6 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     }
   }
 
-  // If there are Q nodes, the activation and output must have the same type, or be a pair the Gemm
-  // builder bridges with a Convert (see GemmOpBuilder): a wider activation narrows only the output,
-  // and a narrower activation is Converted up to the declared output precision.
   if (!q_nodes.empty()) {
     auto dt_Y = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
     if (!dt_Y.has_value()) {
@@ -1553,11 +1542,7 @@ bool OrtInstanceAndLayerNormalizationNodeGroupSelector::Check(const OrtGraph* gr
     }
   }
 
-  // Input and output must have the same type, or be a pair the LayerNorm builder bridges with a
-  // Convert: a wider activation narrows only the output, and a narrower activation is Converted up
-  // to the declared output precision (see LayerNormalizationOpBuilder). InstanceNormalization keeps
-  // the strict same-type rule until its builder implements the same bridge. The bias is int32.
-  // Scale can be different with input for the a16w8 case.
+  // Only LayerNormalization implements the activation/output precision bridge.
   bool supported_activation_output = dt_input.value() == dt_output.value();
   if (!supported_activation_output && Ort::ConstNode(node).GetOperatorType() == "LayerNormalization") {
     supported_activation_output =

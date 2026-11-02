@@ -988,7 +988,7 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, Gemm_RejectsInt8AWithUint8B) {
                          {dq_a.AsNode(), dq_b.AsNode()}, {}));
 }
 
-TEST(QnnUnit_QdqNodeGroupSelectorTest, Gemm_ActivationOutputTypePairs) {
+TEST(QnnUnitQdqNodeGroupSelectorTest, GemmActivationOutputTypePairs) {
   QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -1145,7 +1145,7 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, Where_AcceptsInt16) {
 // OrtInstanceAndLayerNormalizationNodeGroupSelector — type mismatch (private)
 // =============================================================================
 
-TEST(QnnUnit_QdqNodeGroupSelectorTest, Norm_MixedPrecisionRestrictedToLayerNorm) {
+TEST(QnnUnitQdqNodeGroupSelectorTest, NormMixedPrecisionRestrictedToLayerNorm) {
   constexpr auto u8 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
   constexpr auto u16 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
   struct Case {
@@ -1192,7 +1192,7 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, Norm_MixedPrecisionRestrictedToLayerNorm)
   }
 }
 
-TEST(QnnUnit_QdqNodeGroupSelectorTest, InstanceNorm_RejectsTypeMismatch) {
+TEST(QnnUnitQdqNodeGroupSelectorTest, InstanceNormRejectsTypeMismatch) {
   QdqNodeGroupSelectorTestContext ctx;
   OrtGlobalApiOverride global_guard(&ctx.api);
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};

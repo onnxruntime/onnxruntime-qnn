@@ -17,8 +17,6 @@ namespace onnxruntime {
 namespace test {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-// |bias| bound for the mixed-precision cases. AIMET encodes a LayerNorm bias over its real range with
-// 32 bits, so the encoding scale is |bias|max / 2^31 rather than the input*scale product.
 constexpr float kLayerNormBiasAbsMax = 0.11f;
 
 // Runs an LayerNorm model on the QNN CPU backend. Checks the graph node assignment and that inference
@@ -118,8 +116,6 @@ GetTestQDQModelFn<OutputQType> BuildQDQLayerNormTestCase(const TestInputDef<floa
     }
 
     if (!bias_def.GetShape().empty()) {
-      // QNN LayerNorm consumes the bias as its own 32-bit encoding (a real-value range over int32),
-      // not the FullyConnected-style input_scale * scale product; tests can pin either.
       const float bias_scale_value =
           bias_scale.value_or(input_qparams.scale * scale_qparams.scale);
       layer_norm_inputs.push_back(
@@ -164,14 +160,6 @@ static void RunLayerNormQDQTest(const TestInputDef<float>& input_def,
                        tolerance);
 }
 
-// Runs a QDQ LayerNorm model whose activation and declared output use different fixed-point
-// precisions. The pair must stay in a single node unit: the op is built at the wider precision and
-// the narrower side is bridged with exactly one QNN Convert (on the output when the activation is
-// wider, on the activation when the output is wider).
-//
-// Shapes and the bias encoding mirror the real failing model: rank-3 X, normalized along the last
-// axis, an int32 bias whose scale is a real-value range over int32 (what AIMET emits) rather than the
-// FullyConnected-style input*scale product.
 template <typename ActivationQType, typename ScaleQType, typename OutputQType>
 static void RunLayerNormMixedPrecisionTest(const char* test_name,
                                            const TestInputDef<float>& input_def,
@@ -197,13 +185,12 @@ static void RunLayerNormMixedPrecisionTest(const char* test_name,
   const std::vector<ONNX_NAMESPACE::AttributeProto> attrs{
       test::MakeAttribute("axis", static_cast<int64_t>(-1))};
 
-  // The f32 reference must have the same signature as the QDQ model, bias included.
   std::vector<TestInputDef<float>> f32_inputs{input_def, scale_def};
   if (!bias_def.GetShape().empty()) {
     f32_inputs.push_back(bias_def);
   }
 
-  // AIMET encodes a LayerNorm bias over its real range with 32 bits; use the same for the QDQ model.
+  // Match AIMET's independent int32 bias encoding over its real-value range.
   const float bias_scale = kLayerNormBiasAbsMax / 2147483647.0f;
 
   TestQDQModelAccuracy(BuildOpTestCase<float>("layer_norm_node", "LayerNormalization", f32_inputs, {}, attrs),
@@ -211,8 +198,7 @@ static void RunLayerNormMixedPrecisionTest(const char* test_name,
                            input_def, scale_def, bias_def, attrs, /*use_contrib_qdq_ops=*/false,
                            bias_scale),
                        provider_options,
-                       // int16/uint16 zero points require QuantizeLinear >= 19; the failing model is opset 21.
-                       21,  // opset
+                       /*opset=*/21,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance());
 
@@ -225,9 +211,6 @@ static void RunLayerNormMixedPrecisionTest(const char* test_name,
   AssertQnnGraphInputCount(graph_dir, 1);
 }
 
-// A16 activation with an 8-bit declared output: LayerNorm runs at 16-bit and the output is Converted
-// down. This is the AIMET `lite_mp percentage=10;override_qtype=int16` pattern that used to fall back
-// to a float32 LayerNorm plus an invalid 32-bit-input Dequantize on the bias.
 TEST_F(QnnHTPBackendTests, LayerNormMixedPrecisionU16ActivationU8Output) {
   RunLayerNormMixedPrecisionTest<uint16_t, uint8_t, uint8_t>(
       "u16ActivationU8Output",
@@ -237,8 +220,6 @@ TEST_F(QnnHTPBackendTests, LayerNormMixedPrecisionU16ActivationU8Output) {
       QNN_DATATYPE_UFIXED_POINT_8);
 }
 
-// 8-bit activation with a 16-bit declared output: LayerNorm runs at the declared 16-bit precision by
-// converting the activation up.
 TEST_F(QnnHTPBackendTests, LayerNormMixedPrecisionU8ActivationU16Output) {
   RunLayerNormMixedPrecisionTest<uint8_t, uint8_t, uint16_t>(
       "u8ActivationU16Output",

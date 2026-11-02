@@ -2297,11 +2297,7 @@ static Ort::Status RequantizeBiasIfNeeded(QnnModelWrapper& qnn_model_wrapper,
       weights_scales, activation_scale, bias_info.qnn_data_type,
       new_bias_data, new_scales, new_offsets, axis_opt));
 
-  // RequantizeBiasTensor rounds and saturates at the destination type's range. Widening an op's
-  // activation shrinks the required bias scale, which inflates every stored value, so a bias that
-  // already fills its range would be silently clipped. Report it instead of shipping a clipped bias.
-  // The channel slicing below assumes the channel axis is the outermost one, which is what the
-  // [1, N] -> [N] collapse in ProcessBiasForQuantizedOp produces.
+  // Widening activation can saturate bias. Channel slicing requires an outermost channel axis.
   if (!axis_opt.has_value() || axis_opt.value() == 0) {
     const size_t num_elems = ShapeSizeCalc(bias_info.shape, 0, bias_info.shape.size());
     if (num_elems > 0) {
