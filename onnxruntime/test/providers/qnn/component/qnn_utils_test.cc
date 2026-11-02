@@ -25,6 +25,7 @@
 
 #include "core/providers/qnn/builder/opbuilder/normalize_indices_utils.h"
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
@@ -676,6 +677,41 @@ TEST(QnnUnit_UtilsTest, OstreamQnnQuantizeParams_AllEncodingBranches) {
     qp.encodingDefinition = QNN_DEFINITION_UNDEFINED;
     check(qp, "UNDEFINED");
   }
+}
+
+TEST(QnnUnit_UtilsTest, OstreamLpbqQuantizeParamsDoesNotReadUnboundedScaleOffsets) {
+  const std::vector<float> per_channel_scales{0.25f, 0.5f};
+  const std::vector<uint8_t> per_block_scales(40, 1);
+  const std::vector<int32_t> offsets{0, 0};
+  qnn::QnnQuantParamsWrapper quant_params = qnn::QnnQuantParamsWrapper::LowPowerBlockwise(
+      gsl::make_span(per_channel_scales), gsl::make_span(per_block_scales), gsl::make_span(offsets),
+      /*axis=*/0, /*block_scale_bitwidth=*/8);
+
+  std::ostringstream oss;
+  oss << quant_params.Get();
+
+  EXPECT_EQ(oss.str().find(" scales=("), std::string::npos);
+  EXPECT_EQ(oss.str().find(" offsets=("), std::string::npos);
+  EXPECT_NE(oss.str().find("perBlockIntScales=("), std::string::npos);
+}
+
+TEST(QnnUnit_UtilsTest, LowPowerBlockQuantizeDataRejectsZeroBlockSize) {
+  const std::vector<float> data(4, 1.0f);
+  const std::vector<uint32_t> data_shape{1, 4};
+  const std::vector<float> channel_scales{0.5f};
+  const std::vector<uint8_t> block_scales{1};
+  const std::vector<int32_t> offsets{0};
+  std::vector<uint8_t> quant_bytes(data.size());
+  const std::vector<uint32_t> block_scales_shape{1, 1};
+
+  const Ort::Status status = qnn::utils::LowPowerBlockQuantizeData(
+      gsl::make_span(data), gsl::make_span(data_shape), gsl::make_span(channel_scales),
+      gsl::make_span(block_scales), gsl::make_span(offsets), gsl::make_span(quant_bytes),
+      QNN_DATATYPE_SFIXED_POINT_8, /*data_axis=*/0, /*block_scales_axis=*/0,
+      /*channel_block_size=*/0, gsl::make_span(block_scales_shape));
+
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("greater than zero"), std::string::npos);
 }
 
 TEST(QnnUnit_UtilsTest, OstreamQnnTensorType_AllBranches) {

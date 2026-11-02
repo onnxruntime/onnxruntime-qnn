@@ -411,22 +411,11 @@ std::ostream& operator<<(std::ostream& out, const Qnn_QuantizeParams_t& quantize
       out << " axis=" << lpbq.axis
           << " numBlocksPerAxis=" << lpbq.numBlocksPerAxis
           << " blockScaleBitwidth=" << lpbq.blockScaleBitwidth;
-      // For LPBQ, num_elems are not present in the quantize_params,
-      // we are using numBlocksPerAxis instead to print the first numBlocksPerAxis scale offset values
+      // Qnn_QuantizeParams_t does not carry the number of scaleOffsets entries.
+      // numBlocksPerAxis only describes blocksScale8, so it cannot safely bound scaleOffsets.
       size_t num_elems = lpbq.numBlocksPerAxis;
       bool truncate = num_elems > 20;
       num_elems = truncate ? 20 : num_elems;
-      if (lpbq.scaleOffsets != nullptr) {
-        out << " scales=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << lpbq.scaleOffsets[i].scale << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")") << " offsets=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << lpbq.scaleOffsets[i].offset << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")");
-      }
       if (lpbq.blocksScale8 != nullptr) {
         out << " perBlockIntScales=(";
         for (size_t i = 0; i < num_elems; i++) {
@@ -1442,6 +1431,7 @@ Ort::Status LowPowerBlockQuantizeData(gsl::span<const float> data,
   RETURN_IF_NOT(data_axis_no_neg == 0, "BlockQuantize works for Output Channel at axis 0");  // Data is expected in format: OI or OIHW; Output channel at axis-0
   // Current implementation is expecting block axis at axis-0
   RETURN_IF_NOT(data_shape[data_axis_no_neg] == block_scales_shape[block_scales_axis_no_neg], "Incompatible shape of block_scales w.r.t data");
+  RETURN_IF_NOT(data_block_size != 0, "Data block size must be greater than zero");
 
   size_t channel_count = data_shape[data_axis_no_neg];
   size_t block_count = (block_scales_axis_no_neg == 0) ? block_scales_shape[1] : block_scales_shape[0];

@@ -27,11 +27,12 @@ namespace test {
 namespace {
 
 template <typename INT4_DTYPE = Int4x2>
-GetQDQTestCaseFn BuildLPBQGemmTestCase(uint8_t scale_min = 1, uint8_t scale_max = 17) {
+GetQDQTestCaseFn BuildLPBQGemmTestCase(uint8_t scale_min = 1, uint8_t scale_max = 17,
+                                       bool dynamic_bias = false) {
   static_assert(std::is_same<INT4_DTYPE, Int4x2>::value || std::is_same<INT4_DTYPE, UInt4x2>::value,
                 "Only INT4x2 or UINT4x2 data type is supported");
 
-  return [scale_min, scale_max](ModelTestBuilder& builder) -> void {
+  return [scale_min, scale_max, dynamic_bias](ModelTestBuilder& builder) -> void {
     // Define the test case for LPBQGemm fusion here
     const int64_t input_channels = 16;
     const int64_t output_channels = 16;
@@ -94,7 +95,11 @@ GetQDQTestCaseFn BuildLPBQGemmTestCase(uint8_t scale_min = 1, uint8_t scale_max 
                      builder.MakeScalarAttribute("block_size", static_cast<int64_t>(4))});
 
     // Gemm
-    builder.MakeInitializer<float>("gemm_bias", {output_channels}, -1.0f, 1.0f);
+    if (dynamic_bias) {
+      builder.MakeInput<float>("gemm_bias", {output_channels}, -1.0f, 1.0f);
+    } else {
+      builder.MakeInitializer<float>("gemm_bias", {output_channels}, -1.0f, 1.0f);
+    }
     builder.AddNode("gemm", "Gemm",
                     {"act_dql_output", "w_dql_output", "gemm_bias"},
                     {"gemm_output"});
@@ -190,6 +195,17 @@ TEST_F(QnnHTPBackendTests, LPBQGemmFusion_OutOfRangeScaleMax) {
                                        ElementwiseAbsoluteVerifier(1e-2f),
                                        &graph_verifier},
                   /*log_severity =*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+TEST_F(QnnHTPBackendTests, LPBQGemmFusion_DynamicBiasFallsBack) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  RunQnnModelTest(BuildLPBQGemmTestCase(/*scale_min=*/1, /*scale_max=*/17, /*dynamic_bias=*/true),
+                  GetProviderOptions(),
+                  /*opset_version=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some},
+                  /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs=*/false);
 }
 

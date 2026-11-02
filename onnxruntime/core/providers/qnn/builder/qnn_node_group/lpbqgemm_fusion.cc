@@ -81,6 +81,11 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
     }
   }
 
+  const bool has_bias = gemm_node_unit.Inputs().size() == 3 && gemm_node_unit.Inputs()[2].Exists();
+  if (has_bias && !qnn_model_wrapper.IsConstantInput(gemm_node_unit.Inputs()[2].name)) {
+    return nullptr;
+  }
+
   const OrtNodeUnit* p_scale_dql_node_unit = nullptr;
   if (p_w_ql_node_unit != nullptr) {
     const std::array<std::string_view, 1> w_ql_parent_types = {"DequantizeLinear"};
@@ -339,11 +344,12 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   // Prepare Bias tensor;
   // Bias tensor is in FP32 and need to quantize to datatype of input 0 of Gemm
   QnnTensorWrapper bias_tensor;
-  bool has_bias = gemm_node_unit.Inputs().size() == 3 && gemm_node_unit.Inputs()[2].Exists();
+  const bool has_bias = gemm_node_unit.Inputs().size() == 3 && gemm_node_unit.Inputs()[2].Exists();
   if (has_bias) {
     const OrtNodeUnitIODef& bias_def = gemm_node_unit.Inputs()[2];
     std::string bias_tensor_name = bias_def.name;
     const OrtValueInfo* bias_tensor_proto = qnn_model_wrapper.GetConstantTensor(bias_tensor_name);
+    RETURN_IF_NOT(bias_tensor_proto != nullptr, "Bias must be a constant initializer");
     std::vector<uint32_t> bias_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(
                       Ort::ConstValueInfo(bias_tensor_proto).TypeInfo().GetTensorTypeAndShapeInfo().GetShape(),
