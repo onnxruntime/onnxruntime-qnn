@@ -1736,6 +1736,10 @@ TEST_F(QnnHTPBackendTests, Conv2D_U16Act_U16Weight_RejectedOnV68) {
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8350);
+#else
+  if (!HasPlatformAttributes() || GetPlatformAttributes().htp_arch != QNN_HTP_DEVICE_ARCH_V68) {
+    GTEST_SKIP() << "Test requires V68 HTP.";
+  }
 #endif
 
   TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
@@ -1757,6 +1761,10 @@ TEST_F(QnnHTPBackendTests, Conv2D_U16Act_U8Weight_AcceptedOnV68) {
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8350);
+#else
+  if (!HasPlatformAttributes() || GetPlatformAttributes().htp_arch != QNN_HTP_DEVICE_ARCH_V68) {
+    GTEST_SKIP() << "Test requires V68 HTP.";
+  }
 #endif
 
   TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));

@@ -60,7 +60,7 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     TensorInfo input_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
     const bool is_fixed_point = utils::IsQuant8bit(input_info.qnn_data_type) ||
-                                 utils::IsQuant16bit(input_info.qnn_data_type);
+                                utils::IsQuant16bit(input_info.qnn_data_type);
     const size_t max_rank = is_fixed_point ? 5 : 4;
     RETURN_IF(input_info.shape.size() > max_rank,
               ("QNN EP does not support GridSample with input rank > " + std::to_string(max_rank) +
