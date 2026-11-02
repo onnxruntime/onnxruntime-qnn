@@ -2261,7 +2261,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // Genie Pathway
   if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
     return ep->GetGenieCapability(this_ptr, graph, graph_support_info);
 #else
     return ep->ort_api.CreateStatus(ORT_EP_FAIL,
