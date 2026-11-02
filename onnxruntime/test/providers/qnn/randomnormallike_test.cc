@@ -3,12 +3,16 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <type_traits>
 #include <vector>
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
+
+#include "gsl/gsl"
 
 #include "gtest/gtest.h"
 
@@ -61,8 +65,16 @@ static void RunFP16RandomNormalLikeTest(bool has_seed, bool explicit_dtype, bool
     }
   };
 
+  const auto* test_info = ::testing::UnitTest::GetInstance()->current_test_info();
+  const std::filesystem::path json_dir = std::string(test_info->test_suite_name()) + "_" + test_info->name();
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_dir.string();
 
   // The CPU EP lacks an FP16 RandomNormalLike kernel, and random number
   // algorithms differ across backends. Check assignment and inference instead.
@@ -72,6 +84,12 @@ static void RunFP16RandomNormalLikeTest(bool has_seed, bool explicit_dtype, bool
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs=*/false);
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(json_dir, "RandomNormalLike", 1);
+  AssertOpInQnnGraph(json_dir, "Dequantize", 0);
 }
 
 TEST_F(QnnHTPBackendTests, RandomNormalLike_FP16) {
@@ -118,8 +136,16 @@ TEST_F(QnnHTPBackendTests, RandomNormalLike_AddDownstream) {
                     {"Y"});
   };
 
+  const auto* test_info = ::testing::UnitTest::GetInstance()->current_test_info();
+  const std::filesystem::path json_dir = std::string(test_info->test_suite_name()) + "_" + test_info->name();
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_dir.string();
 
   // Do not verify outputs since RandomNormalLike randomness algo differs from ORT CPU EP.
   RunQnnModelTest(build_test_case,
@@ -128,6 +154,12 @@ TEST_F(QnnHTPBackendTests, RandomNormalLike_AddDownstream) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs=*/false);
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(json_dir, "RandomNormalLike", 1);
+  AssertOpInQnnGraph(json_dir, "Dequantize", 1);
 }
 
 TEST_F(QnnHTPBackendTests, RandomNormalLike_GraphInputRegistered) {
