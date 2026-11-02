@@ -28,6 +28,7 @@
 
 #include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/runtime/interfaces/graph_emitter_interface.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/ort_api.h"
 #include "test/util/include/test/test_environment.h"
@@ -86,6 +87,9 @@ struct OpBuilderTestContext {
   Qnn_BackendHandle_t& backend_handle = backend_manager.BackendHandle();
   QNN_INTERFACE_VER_TYPE& qnn_validator_interface = backend_manager.ValidatorInterface();
   Qnn_BackendHandle_t& validator_backend_handle = backend_manager.ValidatorBackendHandle();
+
+  // The context outlives wrappers returned by snapshot helpers.
+  std::unique_ptr<qnn::IGraphEmitter> graph_emitter;
 
   // Stable lvalue used as OrtGraph* argument to QnnModelWrapper. The wrapper only
   // flows this pointer through OrtApi function pointers (never dereferences it as a
