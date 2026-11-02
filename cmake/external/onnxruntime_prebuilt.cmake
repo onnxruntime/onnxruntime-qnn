@@ -3,11 +3,6 @@
 
 include(ExternalProject)
 
-set(ORT_SOURCE_DIR "${ort_core_SOURCE_DIR}")
-set(ORT_BUILD_DIR "${ort_core_BINARY_DIR}")
-message(STATUS "ORT_SOURCE_DIR: ${ORT_SOURCE_DIR}")
-message(STATUS "ORT_BUILD_DIR: ${ORT_BUILD_DIR}")
-
 # Determine the correct path for the test executable based on generator type
 # Single-config generators (like Ninja) don't have config subdirectories
 # Multi-config generators (like Visual Studio) have config subdirectories
@@ -22,7 +17,6 @@ endif()
 
 if(onnxruntime_ORT_HOME)
     message(STATUS "Use prebuilt from MS only at ${onnxruntime_ORT_HOME}. ORT Core will NOT be built from source")
-    set(ORT_BUILD_COMMAND ${CMAKE_COMMAND} -E echo "Skipping ORT_BUILD_COMMAND")
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_LIBRARY_ARCHITECTURE AND
        EXISTS "${onnxruntime_ORT_HOME}/lib/${CMAKE_LIBRARY_ARCHITECTURE}")
         set(ORT_PREBUILT_SOURCE "${onnxruntime_ORT_HOME}/lib/${CMAKE_LIBRARY_ARCHITECTURE}")
@@ -39,14 +33,43 @@ if(onnxruntime_ORT_HOME)
         set(ONNXRUNTIME_APPLICATION_INCLUDES "${onnxruntime_ORT_HOME}/include/onnxruntime")
     endif()
     message(STATUS "ONNXRUNTIME_APPLICATION_INCLUDES: ${ONNXRUNTIME_APPLICATION_INCLUDES}")
-    # In prebuilt mode the ort_core source is not fetched, so ort_core_SOURCE_DIR/ort_core_BINARY_DIR
-    # (and thus ORT_SOURCE_DIR/ORT_BUILD_DIR set above) are empty. ExternalProject_Add below still
-    # requires a valid, non-empty SOURCE_DIR/BINARY_DIR even though its build/configure/install steps
-    # are no-ops here, so point them at an empty stub directory.
-    set(ORT_SOURCE_DIR "${CMAKE_BINARY_DIR}/ort_core_prebuilt_stub")
-    set(ORT_BUILD_DIR "${CMAKE_BINARY_DIR}/ort_core_prebuilt_stub")
-    file(MAKE_DIRECTORY "${ORT_SOURCE_DIR}")
+    set(_ort_required_headers
+        "${ONNXRUNTIME_APPLICATION_INCLUDES}/onnxruntime_c_api.h"
+        "${ONNXRUNTIME_APPLICATION_INCLUDES}/onnxruntime_cxx_api.h")
+    foreach(_header IN LISTS _ort_required_headers)
+        if(NOT EXISTS "${_header}")
+            message(FATAL_ERROR "Required prebuilt ORT header not found: ${_header}")
+        endif()
+    endforeach()
+
+    if(NOT onnxruntime_ORT_TEST_ASSETS_HOME AND DEFINED ENV{ORT_TEST_ASSETS_ROOT})
+        set(onnxruntime_ORT_TEST_ASSETS_HOME "$ENV{ORT_TEST_ASSETS_ROOT}" CACHE PATH
+            "Path to version-matched ONNX Runtime test assets")
+    endif()
+    if(onnxruntime_ORT_TEST_ASSETS_HOME)
+        set(_ort_test_assets_version_file "${onnxruntime_ORT_TEST_ASSETS_HOME}/VERSION_NUMBER")
+        if(NOT EXISTS "${_ort_test_assets_version_file}")
+            message(FATAL_ERROR
+                "ORT test-assets version file not found: ${_ort_test_assets_version_file}")
+        endif()
+        file(READ "${_ort_test_assets_version_file}" _ort_test_assets_version)
+        string(STRIP "${_ort_test_assets_version}" _ort_test_assets_version)
+        if(NOT "${_ort_test_assets_version}" STREQUAL "${ORT_CORE_VER}")
+            message(FATAL_ERROR
+                "ORT test-assets version ${_ort_test_assets_version} does not match prebuilt ORT ${ORT_CORE_VER}.")
+        endif()
+        if(NOT IS_DIRECTORY "${onnxruntime_ORT_TEST_ASSETS_HOME}/onnxruntime/test/testdata")
+            message(FATAL_ERROR
+                "ORT provider testdata not found under ${onnxruntime_ORT_TEST_ASSETS_HOME}/onnxruntime/test/testdata")
+        endif()
+        message(STATUS "Using ORT ${_ort_test_assets_version} test assets from ${onnxruntime_ORT_TEST_ASSETS_HOME}")
+    endif()
 else()
+    set(ORT_SOURCE_DIR "${ort_core_SOURCE_DIR}")
+    set(ORT_BUILD_DIR "${ort_core_BINARY_DIR}")
+    message(STATUS "ORT_SOURCE_DIR: ${ORT_SOURCE_DIR}")
+    message(STATUS "ORT_BUILD_DIR: ${ORT_BUILD_DIR}")
+
     # Use Python to run build.py
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
@@ -211,6 +234,14 @@ foreach(_file IN LISTS ORT_BINARY_FILES)
     list(APPEND ORT_PREBUILT_SOURCE_FILES "${ORT_PREBUILT_SOURCE}/${_file}")
 endforeach()
 
+if(onnxruntime_ORT_HOME)
+    foreach(_file IN LISTS ORT_PREBUILT_SOURCE_FILES)
+        if(NOT EXISTS "${_file}")
+            message(FATAL_ERROR "Required prebuilt ORT library not found: ${_file}")
+        endif()
+    endforeach()
+endif()
+
 # Generic install command that copies required files from ORT_PREBUILT_SOURCE to ORT_PREBUILT_DEST.
 # Handles both Windows (.dll/.lib) and Linux/Android (.so) platforms.
 set(ORT_INSTALL_COMMAND
@@ -231,30 +262,41 @@ foreach(_file IN LISTS ORT_BINARY_FILES)
     list(APPEND ORT_BUILD_BYPRODUCTS "${ORT_PREBUILT_DEST}/${_file}")
 endforeach()
 
-message(STATUS "ORT_BUILD_COMMAND for ExternalProject: ${ORT_BUILD_COMMAND}")
-ExternalProject_Add(
-    ort_core_target
-    SOURCE_DIR ${ORT_SOURCE_DIR}
-    BINARY_DIR ${ORT_BUILD_DIR}
-    DOWNLOAD_COMMAND ""
-    PATCH_COMMAND ${Patch_EXECUTABLE} --ignore-whitespace -p1
-                  -i "${CMAKE_SOURCE_DIR}/patches/ort_core/0003-Guard-QNN_LIB_FILES-copy-in-onnxruntime-unittests.patch"
-    CONFIGURE_COMMAND ""
-    BUILD_COMMAND ${ORT_BUILD_COMMAND}
-    BUILD_ALWAYS ON
-    INSTALL_COMMAND ${ORT_INSTALL_COMMAND}
-    BUILD_BYPRODUCTS ${ORT_BUILD_BYPRODUCTS}
-    # Enable comprehensive logging for debugging
-    LOG_DOWNLOAD ON
-    LOG_PATCH ON
-    LOG_CONFIGURE ON
-    LOG_INSTALL ON
-    LOG_OUTPUT_ON_FAILURE ON
-    LOG_MERGED_STDOUTERR ON
+if(onnxruntime_ORT_HOME)
+    add_custom_command(
+        OUTPUT ${ORT_BUILD_BYPRODUCTS}
+        COMMAND ${ORT_INSTALL_COMMAND}
+        DEPENDS ${ORT_PREBUILT_SOURCE_FILES}
+        COMMENT "Installing prebuilt ONNX Runtime ${ORT_CORE_VER}"
+        VERBATIM
+    )
+    add_custom_target(ort_core_target DEPENDS ${ORT_BUILD_BYPRODUCTS})
+else()
+    message(STATUS "ORT_BUILD_COMMAND for ExternalProject: ${ORT_BUILD_COMMAND}")
+    ExternalProject_Add(
+        ort_core_target
+        SOURCE_DIR ${ORT_SOURCE_DIR}
+        BINARY_DIR ${ORT_BUILD_DIR}
+        DOWNLOAD_COMMAND ""
+        PATCH_COMMAND ${Patch_EXECUTABLE} --ignore-whitespace -p1
+                      -i "${CMAKE_SOURCE_DIR}/patches/ort_core/0003-Guard-QNN_LIB_FILES-copy-in-onnxruntime-unittests.patch"
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND ${ORT_BUILD_COMMAND}
+        BUILD_ALWAYS ON
+        INSTALL_COMMAND ${ORT_INSTALL_COMMAND}
+        BUILD_BYPRODUCTS ${ORT_BUILD_BYPRODUCTS}
+        # Enable comprehensive logging for debugging
+        LOG_DOWNLOAD ON
+        LOG_PATCH ON
+        LOG_CONFIGURE ON
+        LOG_INSTALL ON
+        LOG_OUTPUT_ON_FAILURE ON
+        LOG_MERGED_STDOUTERR ON
 
-    # Don't run more than one Ninja build at a time
-    USES_TERMINAL_BUILD ON
-)
+        # Don't run more than one Ninja build at a time
+        USES_TERMINAL_BUILD ON
+    )
+endif()
 
 # Create imported target for ONNX Runtime
 add_library(onnxruntime SHARED IMPORTED GLOBAL)

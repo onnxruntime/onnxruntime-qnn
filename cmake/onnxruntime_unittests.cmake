@@ -380,18 +380,25 @@ block()
   # Dependency on ORT Core public header files
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDES})
 
-  # Copy upstream ORT test data next to the test binary. The data lives in the fetched ort_core
-  # source, which is not available in prebuilt mode (onnxruntime_ORT_HOME set), so skip the copy
-  # there. Tests needing upstream models must have that data provided separately in prebuilt builds.
-  if(NOT onnxruntime_ORT_HOME)
+  # Copy version-matched upstream ORT test data next to the test binary. Source builds use the
+  # fetched ort_core tree. Prebuilt builds use the explicit test-assets contract.
+  if(onnxruntime_ORT_HOME AND onnxruntime_ORT_TEST_ASSETS_HOME)
+    set(_ort_provider_testdata_dir "${onnxruntime_ORT_TEST_ASSETS_HOME}/onnxruntime/test/testdata")
+  elseif(NOT onnxruntime_ORT_HOME)
+    set(_ort_provider_testdata_dir "${ort_core_SOURCE_DIR}/onnxruntime/test/testdata")
+  endif()
+
+  if(_ort_provider_testdata_dir)
     add_custom_command(
       TARGET onnxruntime_provider_test POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_directory
-      ${ort_core_SOURCE_DIR}/onnxruntime/test/testdata
+      ${_ort_provider_testdata_dir}
       $<TARGET_FILE_DIR:onnxruntime_provider_test>/testdata
     )
   else()
-    message(STATUS "onnxruntime_ORT_HOME is set; skipping upstream testdata copy for onnxruntime_provider_test.")
+    message(WARNING
+      "Prebuilt ORT testdata was not provided. Build-only tasks remain supported, but test tasks "
+      "must provide --ort-test-assets or ORT_TEST_ASSETS_ROOT.")
   endif()
 
   # Exclude test_dynamic_plugin_ep when using prebuilt ONNX Runtime

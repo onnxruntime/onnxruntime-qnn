@@ -43,6 +43,7 @@ The build system uses a task-based approach via `python qcom/build_and_test.py`.
 * `--config [Release/RelWithDebInfo/Debug]`: Build configuration (default: Release)
 * `--qairt-sdk PATH`: Path to QAIRT SDK (overrides environment variables)
 * `--ort-prebuilt PATH`: Path to pre-built ONNX Runtime SDK (optional)
+* `--ort-test-assets PATH`: Path to version-matched ORT test assets (required only for prebuilt test tasks)
 * `--target-py-version [3.10/3.11/3.12/3.13/3.14]`: Python version for wheel building (default: 3.12 on Windows, 3.10 on Linux)
 * `--build-nuget`: Enable building NuGet packages for .NET bindings
 * `--build-archive`: Enable building archives
@@ -56,6 +57,7 @@ The build system supports the following environment variables:
 
 * `QAIRT_SDK_ROOT` / `QNN_SDK_ROOT` / `SNPE_ROOT`: Path to QAIRT SDK (searched in this order)
 * `ORT_PREBUILT_ROOT`: Path to pre-built ONNX Runtime
+* `ORT_TEST_ASSETS_ROOT`: Path to version-matched ORT test assets; equivalent to `--ort-test-assets`
 * `ORT_BUILD_DOCKER_CCACHE_ROOT`: Docker ccache root directory
 * `ORT_NIGHTLY_BUILD`: Set to 1 for nightly builds
 * `ANDROID_HOME` / `ANDROID_NDK_HOME`: Android SDK/NDK paths
@@ -76,6 +78,25 @@ python qcom/build_and_test.py list_all
 ```
 
 ## Build Instructions
+
+### Pre-built ORT SDK contract
+
+When `--ort-prebuilt` is provided, the build does not download, patch, or build ORT source. The SDK must
+contain `VERSION_NUMBER`, public C/C++ headers under `include`, and the platform libraries under `lib`.
+ORT 1.24.2 or newer is required, and missing or malformed SDK contents fail during CMake configuration.
+
+Build-only tasks do not require ORT source or test data. Test tasks additionally require
+`--ort-test-assets PATH` (or `ORT_TEST_ASSETS_ROOT`) pointing to a version-matched extracted ORT tree:
+
+```text
+<ORT_TEST_ASSETS_ROOT>/
+  VERSION_NUMBER
+  onnxruntime/test/testdata/
+  java/src/test/android/app/src/androidTest/assets/sigmoid.ort  # Android tests only
+```
+
+The test-assets `VERSION_NUMBER` must exactly match the pre-built SDK version. This keeps prebuilt headers,
+libraries, and test models on one supported ORT version while allowing build-only consumers to omit test data.
 
 ### Windows Builds
 

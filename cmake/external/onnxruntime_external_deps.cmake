@@ -477,6 +477,14 @@ endif()
 # source is NOT fetched or patched. Otherwise (source build) the version is parsed from the
 # pinned deps.txt URL and the ort_core source is fetched and patched as before.
 if(onnxruntime_ORT_HOME)
+  file(STRINGS "${PROJECT_SOURCE_DIR}/requirements.txt" _ort_python_requirement
+       REGEX "^onnxruntime *>=")
+  if(NOT _ort_python_requirement MATCHES ">= *([0-9]+\\.[0-9]+\\.[0-9]+)")
+    message(FATAL_ERROR
+      "Could not determine the minimum supported ORT version from requirements.txt.")
+  endif()
+  set(_ort_minimum_version "${CMAKE_MATCH_1}")
+
   # Pin 1: read ORT_CORE_VER from the prebuilt instead of from the deps.txt URL.
   set(_ort_version_file "${onnxruntime_ORT_HOME}/VERSION_NUMBER")
   if(NOT EXISTS "${_ort_version_file}")
@@ -485,6 +493,15 @@ if(onnxruntime_ORT_HOME)
   endif()
   file(READ "${_ort_version_file}" ORT_CORE_VER)
   string(STRIP "${ORT_CORE_VER}" ORT_CORE_VER)
+  if(NOT ORT_CORE_VER MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+([.-][0-9A-Za-z.-]+)?$")
+    message(FATAL_ERROR
+      "Invalid prebuilt ORT version '${ORT_CORE_VER}' in ${_ort_version_file}. "
+      "Expected a semantic version such as 1.24.4.")
+  endif()
+  if(ORT_CORE_VER VERSION_LESS "${_ort_minimum_version}")
+    message(FATAL_ERROR
+      "Prebuilt ORT ${ORT_CORE_VER} is unsupported. QNN EP requires ORT ${_ort_minimum_version} or newer.")
+  endif()
   message(STATUS "Using prebuilt ORT_CORE_VER from ${_ort_version_file}: ${ORT_CORE_VER}")
   # Pin 2: do NOT fetch or patch the ort_core source in prebuilt mode.
   message(STATUS "onnxruntime_ORT_HOME is set; skipping ort_core source fetch.")
