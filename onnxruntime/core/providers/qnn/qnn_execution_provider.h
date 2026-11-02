@@ -123,6 +123,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   OrtStatus* ValidateCapabilityPreconditions(bool is_qnn_ctx_model);
   OrtStatus* GetOnnxGraphCapability(const OrtGraph*, OrtEpGraphSupportInfo*, size_t, bool);
 #ifdef USE_QAIRT_API
+  OrtStatus* ValidateQairtProviderOptions();
   OrtStatus* GetQairtCapability(const OrtGraph*, OrtEpGraphSupportInfo*, size_t);
   OrtStatus* CompileQairtModels(const OrtGraph**, const OrtNode**, size_t, OrtNodeComputeInfo**, OrtNode**);
   OrtStatus* OnQairtRunStart(const OrtRunOptions*);

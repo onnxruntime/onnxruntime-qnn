@@ -77,7 +77,7 @@ struct OpBuilderTestContext {
 
   ApiPtrs api_ptrs{stub_ort_api, stub_ep_api, stub_editor_api};
 
-  // QnnModelWrapper takes a `const QnnBackendManager&`. No real backend library
+  // QnnModelWrapper uses the manager's emitter factory. No real backend library
   // is loaded here — the references below just
   // let existing call sites keep assigning function pointers directly, e.g.
   // ctx.qnn_interface.graphAddNode = ...
@@ -113,7 +113,7 @@ struct OpBuilderTestContext {
         fake_graph,
         api_ptrs,
         ort_logger,
-        *backend_manager.Get(),
+        *backend_manager.GetMutable(),
         input_info,
         output_info,
         settings);

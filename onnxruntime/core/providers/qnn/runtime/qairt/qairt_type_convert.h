@@ -29,8 +29,8 @@ namespace qairt_convert {
 //
 // Buffer ownership: qairt::ClientBuffer::setData() stores the pointer without
 // copying, so the Qnn_Tensor_t's clientBuf.data must outlive the qairt::Tensor.
-// In practice both live inside the same emit/execute call, and the underlying
-// storage is owned by QnnTensorWrapper (compose) or ORT (execute).
+// Storage belongs to QnnTensorWrapper during composition or ORT during execution.
+// Cached execution descriptors clear their borrowed I/O pointers after each run.
 
 // Maps Qnn_DataType_t to qairt::DataType. The two enums share numeric values
 // (both derive from the same backend ABI), but cast through explicitly so a

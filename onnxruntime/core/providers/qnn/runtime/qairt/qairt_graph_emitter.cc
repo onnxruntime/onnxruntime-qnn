@@ -6,7 +6,6 @@
 #include "core/providers/qnn/runtime/qairt/qairt_graph_emitter.h"
 #include "core/providers/qnn/runtime/qairt/qairt_type_convert.h"
 #include "core/providers/qnn/builder/qnn_def.h"
-#include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
 
 #include "QairtCpp/QairtApi.hpp"
 
@@ -15,15 +14,16 @@
 namespace onnxruntime {
 namespace qnn {
 
-QairtGraphEmitter::QairtGraphEmitter(std::shared_ptr<QairtBackendManager> manager)
-    : manager_(std::move(manager)) {}
+QairtGraphEmitter::QairtGraphEmitter(Dependencies dependencies)
+    : dependencies_(std::move(dependencies)) {}
 
 Ort::Status QairtGraphEmitter::InitializeGraph(Qnn_ContextHandle_t context,
                                                const QnnGraph_Config_t** graph_configs) {
   ORT_UNUSED_PARAMETER(context);
-  ORT_UNUSED_PARAMETER(graph_configs);
+  RETURN_IF(graph_configs != nullptr && graph_configs[0] != nullptr,
+            "QNN graph configurations cannot be passed to a QAIRT graph; use QAIRT configuration callbacks.");
   try {
-    qairt_context_ = manager_->GetContext();
+    qairt_context_ = dependencies_.get_context();
     RETURN_IF(qairt_context_ == nullptr, "QAIRT context is not initialized.");
     qairt_graph_.reset();
     registered_tensors_.clear();
@@ -40,8 +40,10 @@ Ort::Status QairtGraphEmitter::RetrieveGraph(std::shared_ptr<qairt::Context> con
   RETURN_IF(context == nullptr, "QAIRT context is not initialized.");
   RETURN_IF(name.empty(), "Empty QAIRT graph name.");
   try {
-    qairt_graph_ = context->retrieveGraph(name.c_str());
-    RETURN_IF(qairt_graph_ == nullptr, ("Failed to retrieve QAIRT graph: " + name).c_str());
+    auto graph = context->retrieveGraph(name.c_str());
+    RETURN_IF(graph == nullptr, ("Failed to retrieve QAIRT graph: " + name).c_str());
+    RETURN_IF_ERROR(dependencies_.configure_retrieved_graph(*graph));
+    qairt_graph_ = std::move(graph);
     qairt_context_ = std::move(context);
     registered_tensors_.clear();
     input_tensors_.clear();
@@ -58,10 +60,10 @@ Ort::Status QairtGraphEmitter::CreateGraph(const char* name) {
   try {
     RETURN_IF(qairt_graph_, "A QAIRT emitter already owns a graph.");
     if (!qairt_context_) {
-      qairt_context_ = manager_->GetContext();
+      qairt_context_ = dependencies_.get_context();
     }
     RETURN_IF(qairt_context_ == nullptr, "QAIRT context is not initialized.");
-    auto config = manager_->GetApi().make<qairt::GraphConfiguration>();
+    auto config = dependencies_.create_graph_config();
     qairt_graph_ = std::make_shared<qairt::Graph>(qairt_context_->createGraph(name, config));
     return Ort::Status();
   } catch (const std::exception& e) {
@@ -73,7 +75,7 @@ Ort::Status QairtGraphEmitter::CreateTensor(Qnn_Tensor_t& tensor) {
   RETURN_IF(qairt_graph_ == nullptr, "QAIRT graph is not initialized.");
   try {
     qairt::Tensor qairt_tensor;
-    RETURN_IF_ERROR(qairt_convert::FromQnnTensor(tensor, manager_->GetApi(), qairt_tensor));
+    RETURN_IF_ERROR(qairt_convert::FromQnnTensor(tensor, dependencies_.api, qairt_tensor));
     qairt_graph_->createGraphTensor(qairt_tensor);
     // Write back the assigned tensor ID so the caller can reference it later.
     uint32_t id = static_cast<uint32_t>(qairt_tensor.getId());
@@ -97,7 +99,7 @@ Ort::Status QairtGraphEmitter::CreateTensor(Qnn_Tensor_t& tensor) {
 Ort::Status QairtGraphEmitter::AddNode(const Qnn_OpConfig_t& op) {
   RETURN_IF(qairt_graph_ == nullptr, "QAIRT graph is not initialized.");
   try {
-    qairt::OpConfig qairt_op = manager_->GetApi().make<qairt::OpConfig>();
+    qairt::OpConfig qairt_op = dependencies_.api.make<qairt::OpConfig>();
     const auto& v1 = op.v1;
 
     if (v1.name) {
@@ -115,14 +117,14 @@ Ort::Status QairtGraphEmitter::AddNode(const Qnn_OpConfig_t& op) {
     params.reserve(v1.numOfParams);
     for (uint32_t i = 0; i < v1.numOfParams; ++i) {
       const auto& qp = v1.params[i];
-      auto param = manager_->GetApi().make<qairt::Param>();
+      auto param = dependencies_.api.make<qairt::Param>();
       if (qp.name) {
         param.setName(qp.name);
       }
 
       if (qp.paramType == QNN_PARAMTYPE_SCALAR) {
         qairt::Scalar scalar;
-        RETURN_IF_ERROR(qairt_convert::ConvertScalarPublic(qp.scalarParam, manager_->GetApi(), scalar));
+        RETURN_IF_ERROR(qairt_convert::ConvertScalarPublic(qp.scalarParam, dependencies_.api, scalar));
         param.setScalar(scalar);
       } else if (qp.paramType == QNN_PARAMTYPE_TENSOR) {
         uint32_t id = GetQnnTensorID(qp.tensorParam);
@@ -186,7 +188,7 @@ Ort::Status QairtGraphEmitter::AddNode(const Qnn_OpConfig_t& op) {
 }
 
 Ort::Status QairtGraphEmitter::ValidateOp(const Qnn_OpConfig_t& op) {
-  return manager_->ValidateOp(op);
+  return dependencies_.validate_op(op);
 }
 
 Ort::Status QairtGraphEmitter::Finalize(const IGraphProfile* profile) {
@@ -228,10 +230,10 @@ Ort::Status QairtGraphEmitter::Execute(Qnn_Tensor_t* inputs, uint32_t n_inputs,
     if (!io_metadata_initialized_) {
       std::vector<qairt::Tensor> in(n_inputs), out(n_outputs);
       for (uint32_t i = 0; i < n_inputs; ++i) {
-        RETURN_IF_ERROR(qairt_convert::FromQnnTensor(inputs[i], manager_->GetApi(), in[i]));
+        RETURN_IF_ERROR(qairt_convert::FromQnnTensor(inputs[i], dependencies_.api, in[i]));
       }
       for (uint32_t i = 0; i < n_outputs; ++i) {
-        RETURN_IF_ERROR(qairt_convert::FromQnnTensor(outputs[i], manager_->GetApi(), out[i]));
+        RETURN_IF_ERROR(qairt_convert::FromQnnTensor(outputs[i], dependencies_.api, out[i]));
       }
       input_tensors_ = std::move(in);
       output_tensors_ = std::move(out);
@@ -239,14 +241,22 @@ Ort::Status QairtGraphEmitter::Execute(Qnn_Tensor_t* inputs, uint32_t n_inputs,
     }
     RETURN_IF(input_tensors_.size() != n_inputs || output_tensors_.size() != n_outputs,
               "QAIRT graph I/O counts changed after initialization.");
-    auto clear_buffers = gsl::finally([&] {
-      for (auto& tensor : input_tensors_) {
-        tensor.getClientBuffer().setData(nullptr);
-        tensor.getClientBuffer().setDataSize(0);
-      }
-      for (auto& tensor : output_tensors_) {
-        tensor.getClientBuffer().setData(nullptr);
-        tensor.getClientBuffer().setDataSize(0);
+    auto clear_buffers = gsl::finally([&]() noexcept {
+      try {
+        for (auto& tensor : input_tensors_) {
+          tensor.getClientBuffer().setData(nullptr);
+          tensor.getClientBuffer().setDataSize(0);
+        }
+        for (auto& tensor : output_tensors_) {
+          tensor.getClientBuffer().setData(nullptr);
+          tensor.getClientBuffer().setDataSize(0);
+        }
+      } catch (...) {
+        // SDK setters can throw. Discard cached descriptors on cleanup failure
+        // instead of throwing from the scope guard during stack unwinding.
+        input_tensors_.clear();
+        output_tensors_.clear();
+        io_metadata_initialized_ = false;
       }
     });
     for (uint32_t i = 0; i < n_inputs; ++i) {

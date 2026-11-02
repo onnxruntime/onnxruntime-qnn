@@ -2,8 +2,10 @@
 // Licensed under the MIT License.
 
 #include <array>
+#include <gsl/gsl>
 #include <atomic>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -256,7 +258,23 @@ bool RunReluNoProfiling(Ort::Session& session) {
   const char* output_names[] = {"Y"};
 
   auto outputs = session.Run(Ort::RunOptions{}, input_names, &input, 1, output_names, 1);
-  return outputs.size() == 1u;
+  if (outputs.size() != 1u || outputs[0].GetTensorTypeAndShapeInfo().GetElementCount() != 4u) {
+    EXPECT_EQ(outputs.size(), 1u);
+    if (!outputs.empty()) {
+      EXPECT_EQ(outputs[0].GetTensorTypeAndShapeInfo().GetElementCount(), 4u);
+    }
+    return false;
+  }
+  const auto* data = outputs[0].GetTensorData<float>();
+  const float expected[] = {0.0f, 2.0f, 0.0f, 4.0f};
+  bool matches = true;
+  for (size_t i = 0; i < 4; ++i) {
+    EXPECT_FLOAT_EQ(data[i], expected[i]);
+    // EXPECT_FLOAT_EQ enforces ULP tolerance; the helper must not require
+    // bitwise equality after the SDK's floating-point execution.
+    matches = matches && std::abs(data[i] - expected[i]) <= 1e-5f;
+  }
+  return matches;
 }
 
 bool RunUnprofiledRelu(const char* backend_type, const std::filesystem::path* provider_profile_path = nullptr) {
@@ -277,7 +295,30 @@ bool RunUnprofiledRelu(const char* backend_type, const std::filesystem::path* pr
 
 #ifdef USE_QAIRT_API
 TEST(QairtArchitectureTests, HtpDirectSmokeWithoutQnnBackendLibraries) {
-  EXPECT_TRUE(RunUnprofiledRelu("htp"));
+  auto model = BuildReluModel();
+  ProviderOptions provider_options{{"backend_type", "htp"}};
+  Ort::SessionOptions session_options;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, provider_options);
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*GetOrtEnv(), model->model_data.data(), model->model_data.size(), session_options));
+#ifdef _WIN32
+  EXPECT_NE(GetModuleHandleW(L"QairtHtp.dll"), nullptr);
+  EXPECT_EQ(GetModuleHandleW(L"QnnHtp.dll"), nullptr);
+#endif
+  const char* input_names[] = {"X"};
+  const char* output_names[] = {"Y"};
+  for (int run = 0; run < 4; ++run) {
+    std::array<float, 4> data{-1.0f, 2.0f + run, -3.0f, 4.0f + run};
+    auto input = MakeReluInput(data);
+    auto outputs = scoped.session().Run(Ort::RunOptions{}, input_names, &input, 1, output_names, 1);
+    ASSERT_EQ(outputs.size(), 1u);
+    ASSERT_EQ(outputs[0].GetTensorTypeAndShapeInfo().GetElementCount(), data.size());
+    const float* result = outputs[0].GetTensorData<float>();
+    for (size_t i = 0; i < data.size(); ++i) {
+      EXPECT_FLOAT_EQ(result[i], data[i] > 0.0f ? data[i] : 0.0f);
+    }
+  }
 }
 #endif
 
@@ -529,7 +570,9 @@ size_t RunProfiledReluWithCsv(const char* backend_type = "htp", bool enable_ort_
     const std::string profile = ReadFile(profile_path);
     ExpectQnnOrtProfileMetadata(profile);
     root_events = CountQnnRootEventsForOperation(profile, "execute");
-#ifdef _WIN32
+    EXPECT_GE(root_events, run_count);
+#if defined(_WIN32) && !defined(USE_QAIRT_API)
+    // QNN adds legacy HTP event aliases; QAIRT reports SDK-native event names.
     if (std::string_view{backend_type} == "htp" && std::string_view{profiling_level} == "detailed") {
       EXPECT_TRUE(HasQnnEvent(profile, "RPC (execute) time", "execute"));
       EXPECT_TRUE(HasQnnEvent(profile, "QNN accelerator (execute) time", "execute"));
@@ -1007,6 +1050,79 @@ TEST_F(QnnHTPBackendTests, QnnOnlyProfilingPreservesCsvOutput) {
 TEST_F(QnnHTPBackendTests, ProfilingDefaultDisabled) {
   EXPECT_TRUE(RunUnprofiledRelu("htp"));
 }
+
+#ifdef USE_QAIRT_API
+TEST(QairtArchitectureTests, EpContextRoundTripEmbeddedAndExternal) {
+  auto model = BuildReluModel();
+  const auto directory = MakeProfilePrefix("qairt_context_roundtrip", model.get());
+  std::filesystem::create_directories(directory);
+  auto cleanup = gsl::finally([&] {
+    std::error_code ec;
+    std::filesystem::remove_all(directory, ec);
+  });
+  for (const char* embed : {"0", "1"}) {
+    const auto path = directory / (std::string("context_") + embed + ".onnx");
+    ProviderOptions options{{"backend_type", "htp"}};
+    {
+      Ort::SessionOptions session_options;
+      session_options.AddConfigEntry("ep.context_enable", "1");
+      session_options.AddConfigEntry("ep.context_embed_mode", embed);
+      session_options.AddConfigEntry("ep.context_file_path", path.string().c_str());
+      RegisteredEpDeviceUniquePtr device;
+      RegisterQnnEpLibrary(device, session_options, kQnnExecutionProvider, options);
+      ScopedOrtSession session(std::move(device), Ort::Session(*GetOrtEnv(), model->model_data.data(),
+                                                               model->model_data.size(), session_options));
+      EXPECT_TRUE(RunReluNoProfiling(session.session()));
+    }
+    ASSERT_TRUE(std::filesystem::exists(path));
+    Ort::SessionOptions session_options;
+    RegisteredEpDeviceUniquePtr device;
+    RegisterQnnEpLibrary(device, session_options, kQnnExecutionProvider, options);
+    ScopedOrtSession session(std::move(device), Ort::Session(*GetOrtEnv(), ToOrtPathString(path).c_str(), session_options));
+    EXPECT_TRUE(RunReluNoProfiling(session.session()));
+  }
+}
+
+TEST(QairtArchitectureTests, UnsupportedProviderOptionsFailExplicitly) {
+  auto model = BuildReluModel();
+  const auto directory = MakeProfilePrefix("qairt_unsupported_options", model.get());
+  std::filesystem::create_directories(directory);
+  auto cleanup = gsl::finally([&] {
+    std::error_code ec;
+    std::filesystem::remove_all(directory, ec);
+  });
+  for (const auto& option : {
+           std::pair<const char*, const char*>{"enable_htp_shared_memory_allocator", "1"},
+           {"enable_dx12_shared_memory_allocator", "1"},
+           {"op_packages", "missing-package.dll:MissingInterface:CPU"},
+           {"num_graph_prepare_threads", "2"},
+           {"disable_file_mapped_weights", "0"},
+           {"enable_htp_prepare_only", "1"},
+           {"enable_htp_prepare_and_load", "1"},
+           {"enable_htp_spill_fill_buffer", "1"},
+           {"htp_performance_mode", "burst"}}) {
+    SCOPED_TRACE(option.first);
+    ProviderOptions options{{"backend_type", "htp"}, {option.first, option.second}};
+    try {
+      Ort::SessionOptions session_options;
+      session_options.AddConfigEntry("ep.context_enable", "1");
+      const auto context_path = directory / (std::string(option.first) + ".onnx");
+      session_options.AddConfigEntry("ep.context_file_path", context_path.string().c_str());
+      RegisteredEpDeviceUniquePtr device;
+      RegisterQnnEpLibrary(device, session_options, kQnnExecutionProvider, options);
+      ScopedOrtSession session(std::move(device), Ort::Session(*GetOrtEnv(), model->model_data.data(),
+                                                               model->model_data.size(), session_options));
+      ADD_FAILURE() << "Unsupported option unexpectedly created a session";
+    } catch (const Ort::Exception& e) {
+      EXPECT_NE(std::string(e.what()).find("QAIRT"), std::string::npos) << e.what();
+    }
+  }
+}
+
+TEST(QairtArchitectureTests, CsvProfilingAndSessionProfiling) {
+  EXPECT_GT(RunProfiledReluWithCsv("htp", true, "detailed", false, 2), 0u);
+}
+#endif
 
 }  // namespace test
 }  // namespace onnxruntime

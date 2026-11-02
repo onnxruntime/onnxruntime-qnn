@@ -4,6 +4,7 @@
 #include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
 #include "QairtCpp/QairtBackend.hpp"
 #include "QairtCpp/QairtContext.hpp"
+#include "QairtCpp/QairtDevice.hpp"
 #include "QairtCpp/QairtInfo.hpp"
 #include "QairtCpp/System/QairtSystemApi.hpp"
 #include "QairtCpp/System/QairtSystemContext.hpp"
@@ -79,17 +80,27 @@ std::string QairtBackendManager::GetSdkVersion() {
 Ort::Status QairtBackendManager::LoadContext(std::vector<char>& buffer, std::vector<CachedGraph>& graphs, qairt::Profile* profile) {
   try {
     RETURN_IF(buffer.empty(), "Empty QAIRT context binary.");
+    auto config = CreateContextConfiguration();
+    // Persistent-binary configurations borrow serialized storage for the whole
+    // context lifetime. Transfer ownership without copying the binary.
+    std::shared_ptr<std::vector<char>> persistent_binary;
+    if (config.getIsPersistentBinary()) {
+      persistent_binary = std::make_shared<std::vector<char>>(std::move(buffer));
+    }
+    auto& bytes = persistent_binary ? *persistent_binary : buffer;
     const auto system_path = GetSystemLibraryPath();
     qairt::SystemApi system(system_path.c_str());
     auto system_context = system.make<qairt::SystemContext>();
-    auto binary_info = system_context.getBinaryInfo(buffer.data(), buffer.size());
-    auto config = qairt_api_->make<qairt::ContextConfiguration>();
+    auto binary_info = system_context.getBinaryInfo(bytes.data(), bytes.size());
     auto binary = qairt_api_->make<qairt::ContextBinaryBuffer>();
-    binary.setData(buffer.data());
-    binary.setSize(buffer.size());
-    auto context = std::make_shared<qairt::Context>(profile
-                                                        ? qairt_backend_->createContextFromBinary({}, config, binary, {}, *profile)
-                                                        : qairt_backend_->createContextFromBinary({}, config, binary));
+    binary.setData(bytes.data());
+    binary.setSize(bytes.size());
+    const auto device = qairt_device_ ? qairt::ApiTypeRef<const qairt::Device&>(*qairt_device_)
+                                      : qairt::ApiTypeRef<const qairt::Device&>{};
+    auto loaded_context = profile ? qairt_backend_->createContextFromBinary(device, config, binary, {}, *profile)
+                                  : qairt_backend_->createContextFromBinary(device, config, binary);
+    auto context = std::shared_ptr<qairt::Context>(new qairt::Context(std::move(loaded_context)),
+                                                   [persistent_binary](qairt::Context* value) { delete value; });
     std::vector<CachedGraph> loaded;
     for (auto& graph : binary_info.getGraphs()) {
       std::vector<QnnTensorWrapper> inputs, outputs;

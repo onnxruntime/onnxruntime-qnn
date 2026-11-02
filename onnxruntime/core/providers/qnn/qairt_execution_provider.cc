@@ -27,27 +27,40 @@ Ort::Status ReadContext(const OrtNode* node, const std::filesystem::path& model_
     bytes.assign(payload.begin(), payload.end());
   } else {
     const auto relative = std::filesystem::path(payload).lexically_normal();
-    RETURN_IF(payload.empty() || relative.has_root_path(), "EPContext requires a relative binary path.");
+    if (payload.empty() || relative.has_root_path()) {
+      return Ort::Status("EPContext requires a relative binary path.", ORT_INVALID_GRAPH);
+    }
     for (const auto& component : relative) {
-      RETURN_IF(component == "..", "EPContext path escapes the model directory.");
+      if (component == "..") {
+        return Ort::Status("EPContext path escapes the model directory.", ORT_INVALID_GRAPH);
+      }
     }
     if (io.HasReadCallback()) {
-      return io.Read(payload, bytes);
+      RETURN_IF_ERROR(io.Read(payload, bytes));
+    } else {
+      std::ifstream file(model_path.parent_path() / relative, std::ios::binary | std::ios::ate);
+      if (!file) {
+        return Ort::Status("Cannot open EPContext binary.", ORT_INVALID_GRAPH);
+      }
+      const auto size = file.tellg();
+      if (size <= 0) {
+        return Ort::Status("Empty or unreadable EPContext binary.", ORT_INVALID_GRAPH);
+      }
+      bytes.resize(static_cast<size_t>(size));
+      file.seekg(0);
+      if (!file.read(bytes.data(), size)) {
+        return Ort::Status("Cannot read EPContext binary.", ORT_INVALID_GRAPH);
+      }
     }
-    std::ifstream file(model_path.parent_path() / relative, std::ios::binary | std::ios::ate);
-    RETURN_IF(!file, "Cannot open EPContext binary.");
-    const auto size = file.tellg();
-    RETURN_IF(size <= 0, "Empty or unreadable EPContext binary.");
-    bytes.resize(static_cast<size_t>(size));
-    file.seekg(0);
-    RETURN_IF(!file.read(bytes.data(), size), "Cannot read EPContext binary.");
   }
-  RETURN_IF(bytes.empty(), "Empty EPContext binary.");
+  if (bytes.empty()) {
+    return Ort::Status("Empty EPContext binary.", ORT_INVALID_GRAPH);
+  }
   return Ort::Status();
 }
 }  // namespace
 
-OrtStatus* QnnEp::GetQairtCapability(const OrtGraph* graph, OrtEpGraphSupportInfo* support, size_t count) try {
+OrtStatus* QnnEp::ValidateQairtProviderOptions() try {
   // These options have no QAIRT implementation yet. Check explicit requests here,
   // rather than letting shared option parsing imply that the SDK applied them.
   const bool is_htp = qairt_backend_manager_->GetBackendType() == qnn::QnnBackendType::HTP;
@@ -71,11 +84,6 @@ OrtStatus* QnnEp::GetQairtCapability(const OrtGraph* graph, OrtEpGraphSupportInf
       return ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
     }
   }
-  RETURN_IF_NOT_OK(qairt_backend_manager_->Setup());
-  RETURN_IF_NOT_NULL(ValidateCapabilityPreconditions(qnn::GraphHasEpContextNode(graph, ort_api)));
-  if (qnn::GraphHasDlcContextNode(graph, ort_api)) {
-    return ort_api.CreateStatus(ORT_EP_FAIL, "QAIRT sessions do not support the Genie DLC execution pathway.");
-  }
   if (is_htp &&
       (htp_graph_configs_.enable_htp_monolithic_lstm || htp_graph_configs_.enable_htp_fp16_precision ||
        htp_graph_configs_.enable_htp_fp16_clamp_overflow || htp_graph_configs_.vtcm_size_in_mb > 0 ||
@@ -89,6 +97,18 @@ OrtStatus* QnnEp::GetQairtCapability(const OrtGraph* graph, OrtEpGraphSupportInf
       share_ep_contexts_ || enable_spill_fill_buffer_ || prepare_only_ || prepare_and_load_) {
     return ort_api.CreateStatus(ORT_EP_FAIL,
                                 "QAIRT shared memory, op packages, shared/multi-SoC contexts and prepare modes are not implemented.");
+  }
+  return nullptr;
+} catch (const std::exception& e) {
+  return ort_api.CreateStatus(ORT_EP_FAIL, e.what());
+}
+
+OrtStatus* QnnEp::GetQairtCapability(const OrtGraph* graph, OrtEpGraphSupportInfo* support, size_t count) try {
+  RETURN_IF_NOT_NULL(ValidateQairtProviderOptions());
+  RETURN_IF_NOT_OK(qairt_backend_manager_->Setup());
+  RETURN_IF_NOT_NULL(ValidateCapabilityPreconditions(qnn::GraphHasEpContextNode(graph, ort_api)));
+  if (qnn::GraphHasDlcContextNode(graph, ort_api)) {
+    return ort_api.CreateStatus(ORT_EP_FAIL, "QAIRT sessions do not support the Genie DLC execution pathway.");
   }
   if (qnn::GraphHasEpContextNode(graph, ort_api)) {
     PartitionCtxModel(graph, support);

@@ -85,6 +85,9 @@ APPROVED_CMAKE_INCLUDES: dict[str, frozenset[str]] = {
     "onnxruntime_provider_test": frozenset(
         {
             "${ONNXRUNTIME_APPLICATION_INCLUDES}",
+            # QAIRT SDK C++ headers for opt-in conversion/runtime component tests.
+            # This does not grant access to private ONNX Runtime headers.
+            "${onnxruntime_QNN_HOME}/include/QAIRT",
         }
     ),
 }

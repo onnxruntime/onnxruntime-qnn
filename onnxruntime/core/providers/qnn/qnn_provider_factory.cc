@@ -384,6 +384,8 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
   std::unique_ptr<QnnEp> qnn_ep;
   try {
     qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options, logger);
+  } catch (const Ort::Exception& e) {
+    return factory->ort_api.CreateStatus(e.GetOrtErrorCode(), e.what());
   } catch (const std::runtime_error& e) {
     return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
   } catch (...) {

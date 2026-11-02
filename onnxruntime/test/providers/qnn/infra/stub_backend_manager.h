@@ -53,6 +53,7 @@ class StubBackendManager {
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(StubBackendManager);
 
+  qnn::QnnBackendManager* Get() { return manager_.get(); }
   const qnn::QnnBackendManager* Get() const { return manager_.get(); }
 
   // Non-const access for components that take a mutable QnnBackendManager*

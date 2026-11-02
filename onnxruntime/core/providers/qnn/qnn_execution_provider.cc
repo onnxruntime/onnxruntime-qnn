@@ -1616,6 +1616,9 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                     FormatEPConfigKey("enable_htp_shared_memory_allocator"), false, logger_) ||
                                     ParseBoolOption(ort_api, session_options_, FormatEPConfigKey("enable_dx12_shared_memory_allocator"), false, logger_);
     qairt_has_op_packages_ = !op_packages.empty();
+    // Capability failures can be treated as CPU fallback by ORT. Reject
+    // unsupported explicit session options while creating the EP instead.
+    Ort::ThrowOnError(ValidateQairtProviderOptions());
   } else
 #endif
   {

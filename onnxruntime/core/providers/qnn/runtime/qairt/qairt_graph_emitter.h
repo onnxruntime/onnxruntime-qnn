@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #ifdef USE_QAIRT_API
+#include <functional>
 #include <memory>
 #include <unordered_map>
 #include "QairtCpp/QairtGraph.hpp"
 #include "QairtCpp/QairtContext.hpp"
 #include "core/providers/qnn/runtime/interfaces/graph_emitter_interface.h"
+namespace qairt {
+class Api;
+}
 namespace onnxruntime::qnn {
-class QairtBackendManager;
 class QairtProfileAdapter;
 
 class QairtGraphProfile final : public IGraphProfile {
@@ -23,7 +26,14 @@ class QairtGraphProfile final : public IGraphProfile {
 
 class QairtGraphEmitter final : public IGraphEmitter {
  public:
-  explicit QairtGraphEmitter(std::shared_ptr<QairtBackendManager> manager);
+  struct Dependencies {
+    const qairt::Api& api;
+    std::function<std::shared_ptr<qairt::Context>()> get_context;
+    std::function<qairt::GraphConfiguration()> create_graph_config;
+    std::function<Ort::Status(qairt::Graph&)> configure_retrieved_graph;
+    std::function<Ort::Status(const Qnn_OpConfig_t&)> validate_op;
+  };
+  explicit QairtGraphEmitter(Dependencies dependencies);
   ~QairtGraphEmitter() override = default;
   Ort::Status RetrieveGraph(std::shared_ptr<qairt::Context> context, const std::string& name);
   Ort::Status InitializeGraph(Qnn_ContextHandle_t context,
@@ -39,8 +49,9 @@ class QairtGraphEmitter final : public IGraphEmitter {
                       GraphExecutionResult& result) override;
 
  private:
-  // Declaration order ensures tensors/graph/context are freed before the backend/API.
-  std::shared_ptr<QairtBackendManager> manager_;
+  // Factory callbacks retain runtime ownership. Declaration order destroys SDK
+  // graph objects before those callbacks release the backend/API lifetime.
+  Dependencies dependencies_;
   std::shared_ptr<qairt::Context> qairt_context_;
   std::shared_ptr<qairt::Graph> qairt_graph_;
   std::unordered_map<uint32_t, qairt::Tensor> registered_tensors_;

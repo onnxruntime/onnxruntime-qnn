@@ -48,7 +48,7 @@ param (
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Build QNN EP with internal symbols exported for tests. Not for production.")]
-    [bool]$QnnInternalTestSymbols = $false,
+    [bool]$QnnInternalTestSymbols = ($Env:ORT_QNN_INTERNAL_TEST_SYMBOLS -eq "1"),
 
     [Parameter(Mandatory = $true,
                HelpMessage = "Python virtual environment to activate.")]
@@ -165,6 +165,10 @@ $CommonArgs = `
     "--cmake_generator", $CMakeGenerator, `
     "--config", $Config, `
     "--parallel"
+if ($Env:ORT_BUILD_ROOT) {
+    $CmakeDepsMirrorDir = Join-Path $BuildRoot "mirror"
+    $CommonArgs += "--cmake_deps_mirror_dir", $CmakeDepsMirrorDir
+}
 
 # Use static MSVC runtime for builds to eliminate MSVCP140.dll and
 # VCRUNTIME140.dll dependencies from the shipping QNN EP DLL.
@@ -329,7 +333,11 @@ else {
     if ($GenerateBuild -or $DoBuild) {
         try {
             Assert-Success -ErrorMessage "Failed to fetch CMake dependencies" {
-                python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+                if ($Env:ORT_BUILD_ROOT) {
+                    python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py" --mirror-dir $CmakeDepsMirrorDir
+                } else {
+                    python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+                }
             }
             $BuildBatPath = (Join-Path $RepoRoot "build.bat")
 
