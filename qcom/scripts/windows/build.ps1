@@ -94,8 +94,6 @@ else {
     $QairtSdkRoot = Resolve-Path -Path $QairtSdkRoot
 }
 
-$QairtSdkVersion = Get-QairtSdkVersion -QairtSdkRoot $QairtSdkRoot
-
 if ($Mode -eq "generate_sln") {
     $CMakeGenerator = (Get-InstalledVsGenerator).Generator
     $BuildIsDirty = $true
@@ -364,28 +362,6 @@ else {
         Push-Location (Join-Path $BuildDir $Config)
         $OnnxModelsRoot = (Get-OnnxModelsRoot)
         if ($QnnInternalTestSymbols) {
-            # The tiered runner uses these exact build inputs to compare the snapshot-golden manifest.
-            $env:QNN_UT_QAIRT_VERSION = $QairtSdkVersion
-            Remove-Item Env:QNN_UT_ORT_VERSION -ErrorAction SilentlyContinue
-
-            $OrtVersionFiles = @()
-            if ($OrtPrebuiltRoot -ne "") {
-                $OrtVersionFiles += (Join-Path $OrtPrebuiltRoot "VERSION_NUMBER")
-                $OrtVersionFiles += (Join-Path $OrtPrebuiltRoot "VERSION")
-            }
-            $OrtVersionFiles += (Join-Path (Join-Path $BuildDir $Config) "_deps\ort_core-src\VERSION_NUMBER")
-            $OrtVersionFiles += (Join-Path $BuildDir "_deps\ort_core-src\VERSION_NUMBER")
-
-            foreach ($OrtVersionFile in $OrtVersionFiles) {
-                if (Test-Path $OrtVersionFile) {
-                    $OrtVersion = (Get-Content -LiteralPath $OrtVersionFile -TotalCount 1).Trim()
-                    if ($OrtVersion) {
-                        $env:QNN_UT_ORT_VERSION = $OrtVersion
-                        break
-                    }
-                }
-            }
-
             & .\run_snapshot_accuracy.ps1 -Config $Config -OnnxModelsRoot $OnnxModelsRoot
         }
         else {

@@ -315,6 +315,15 @@ def test_detect_version_env_override(monkeypatch):
     assert cur.ort == "8.8.8"
 
 
+def test_detect_versions_missing_env_are_unknown(monkeypatch):
+    monkeypatch.delenv("QNN_UT_QAIRT_VERSION", raising=False)
+    monkeypatch.delenv("QNN_UT_ORT_VERSION", raising=False)
+
+    cur = gate.detect_current_versions()
+    assert cur == gate.ToolVersions()
+    assert cur.matches(_cur()) is False
+
+
 # ===========================================================================
 # run_gate end-to-end (synthetic files)
 # ===========================================================================

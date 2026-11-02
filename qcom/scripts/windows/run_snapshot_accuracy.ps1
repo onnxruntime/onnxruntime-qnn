@@ -18,13 +18,17 @@ $ErrorActionPreference = "Stop"
 $RootDir = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)").Path
 $RepoRoot = (Resolve-Path -Path (Join-Path $RootDir "..\..\.."))
 $BaselineRunner = Join-Path $RootDir "run_tests.ps1"
-$GateScript = Join-Path $RepoRoot "qcom\scripts\linux\accuracy_gate.py"
+$GateScript = Join-Path $RepoRoot "qcom\scripts\all\accuracy_gate.py"
+$VersionResolver = Join-Path $RepoRoot "qcom\scripts\all\resolve_tool_versions.sh"
 
 if (-not (Test-Path $BaselineRunner)) {
     throw "$BaselineRunner not found"
 }
 if (-not (Test-Path $GateScript)) {
     throw "$GateScript not found"
+}
+if (-not (Test-Path $VersionResolver)) {
+    throw "$VersionResolver not found"
 }
 if ($env:QNN_UT_SNAPSHOT_GOLDEN_UPDATE -eq "1") {
     throw "QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 is not allowed in validation. Use the dedicated golden producer."
@@ -41,6 +45,55 @@ if (-not (Test-Path $ProviderTestExe)) {
 }
 if (-not (Test-Path $ProviderTestExe)) {
     throw "onnxruntime_provider_test.exe not found under $RootDir"
+}
+
+# Producer and consumer must use identical version strings. Resolve them from
+# the built binary through the same shared helper that stamps golden manifests.
+$GitBash = Join-Path $env:ProgramW6432 "Git\bin\bash.exe"
+if (-not (Test-Path $GitBash)) {
+    throw "Git Bash was not found under $GitBash"
+}
+
+function ConvertTo-GitBashPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $ConvertedPath = & $GitBash -c 'cygpath -u "$1"' _ $Path
+    if ($LASTEXITCODE -ne 0 -or -not $ConvertedPath) {
+        throw "Failed to convert path for Git Bash: $Path"
+    }
+    $ConvertedPath.Trim()
+}
+
+$ProviderBinDir = Split-Path -Parent $ProviderTestExe
+$ProviderBinDirBash = ConvertTo-GitBashPath -Path $ProviderBinDir
+$VersionResolverBash = ConvertTo-GitBashPath -Path $VersionResolver
+
+Remove-Item Env:QNN_UT_QAIRT_VERSION -ErrorAction SilentlyContinue
+Remove-Item Env:QNN_UT_ORT_VERSION -ErrorAction SilentlyContinue
+
+$ResolvedVersions = & $GitBash $VersionResolverBash "--bin-dir=$ProviderBinDirBash" both
+$VersionResolverExit = $LASTEXITCODE
+if ($VersionResolverExit -eq 0) {
+    foreach ($VersionLine in $ResolvedVersions) {
+        if ($VersionLine -match '^(qairt|ort)=(.+)$') {
+            if ($Matches[1] -eq "qairt") {
+                $env:QNN_UT_QAIRT_VERSION = $Matches[2].Trim()
+            }
+            else {
+                $env:QNN_UT_ORT_VERSION = $Matches[2].Trim()
+            }
+        }
+    }
+    if (-not $env:QNN_UT_QAIRT_VERSION -or -not $env:QNN_UT_ORT_VERSION) {
+        throw "Version resolver returned incomplete QAIRT/ORT versions."
+    }
+    Write-Host "Resolved tool versions: qairt=$env:QNN_UT_QAIRT_VERSION ort=$env:QNN_UT_ORT_VERSION"
+}
+elseif ($VersionResolverExit -eq 3) {
+    Write-Warning "QAIRT/ORT versions could not be resolved; the gate will run all accuracy tests."
+}
+else {
+    throw "Tool version resolver failed (exit $VersionResolverExit)."
 }
 
 # Windows x86 uses the QNN CPU attach point for the HTP emulator. The baseline

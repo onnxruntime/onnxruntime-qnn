@@ -135,6 +135,7 @@ env:
   TEST_ARCHIVE_EXT: "${{ inputs.target_os == 'linux' && 'tar.bz2' || 'zip' }}"
 
   ORT_VERSION_SUFFIX: "${{ inputs.version_suffix != '' && inputs.version_suffix || '' }}"
+  SNAPSHOT_GOLDEN_PROFILE: "${{ inputs.target_os == 'windows' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && 'windows-x86_64-htp-simulator' || '' }}"
   # Materialize for step-level `if` checks: GitHub Actions does not allow `env`/`secrets`
   # contexts in job-level `if`, so jobs gate on `github.event.pull_request.head.repo.fork`
   # while steps gate on `env.BUILD_ARTIFACTORY_REPO != ''`. Both signals skip Artifactory
@@ -178,6 +179,36 @@ jobs:
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
           ${{ inputs.upload_test_archive == true && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
 
+      - name: Setup JFrog CLI for snapshot goldens
+        if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner && env.SNAPSHOT_GOLDEN_PROFILE != '' && env.BUILD_ARTIFACTORY_REPO != '' }}
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Enable aligned snapshot goldens
+        if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner && env.SNAPSHOT_GOLDEN_PROFILE != '' && env.BUILD_ARTIFACTORY_REPO != '' }}
+        shell: powershell
+        run: |
+          $gitBash = Join-Path $env:ProgramW6432 "Git\bin\bash.exe"
+          if (-not (Test-Path -LiteralPath $gitBash)) {
+            throw "Git Bash was not found under $gitBash"
+          }
+
+          $buildDir = "build/windows-$env:BUILD_DIR_ARCH/$env:BUILD_CONFIG_DIR"
+          $goldenDir = "build/windows-$env:BUILD_DIR_ARCH/snapshot-goldens"
+          $env:PYTHON_BIN = "python.exe"
+          & $gitBash qcom/scripts/all/prepare_snapshot_goldens.sh `
+            "--build-dir=$buildDir" `
+            "--golden-dir=$goldenDir" `
+            "--golden-profile=$env:SNAPSHOT_GOLDEN_PROFILE"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Snapshot-golden preflight failed (exit $LASTEXITCODE)."
+          }
+
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }}
         run: >
@@ -186,6 +217,31 @@ jobs:
           --target-py-version ${{inputs.target_py_vsn}}
           --config ${{ inputs.build_config }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }} --only
+
+      - name: Verify matched snapshot-golden gating
+        if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner && env.SNAPSHOT_GOLDEN_PROFILE != '' && env.BUILD_ARTIFACTORY_REPO != '' }}
+        shell: powershell
+        run: |
+          if (-not $env:QNN_UT_SNAPSHOT_GOLDEN_DIR) {
+            Write-Warning "Aligned snapshot goldens were unavailable; validation used the full-accuracy fallback."
+            exit 0
+          }
+
+          $summary = Join-Path `
+            "build/windows-$env:BUILD_DIR_ARCH/$env:BUILD_CONFIG_DIR" `
+            "snapshot_accuracy_results/accuracy_gate_summary.txt"
+          if (-not (Test-Path -LiteralPath $summary)) {
+            throw "Accuracy gate summary was not produced: $summary"
+          }
+
+          $content = Get-Content -LiteralPath $summary -Raw
+          if ($content -notmatch '(?m)^\[VERSION\].*-> MATCH$') {
+            throw "Snapshot-golden versions did not match the test build."
+          }
+          if ($content -notmatch '(?m)^\[ROUTING\] \d+ accuracy case\(s\): run \d+, skip ([1-9]\d*)\.$') {
+            throw "Matched goldens did not selectively skip any accuracy cases."
+          }
+          Write-Host "Verified matched snapshot-golden gating with $($Matches[1]) skipped accuracy case(s)."
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
@@ -211,7 +267,7 @@ jobs:
 
       # Artifactory steps are no-ops on fork PRs (secrets unavailable); the build still compiles the change.
       - name: Setup JFrog CLI
-        if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' }}
+        if: ${{ inputs.has_code_changes && env.SNAPSHOT_GOLDEN_PROFILE == '' && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
