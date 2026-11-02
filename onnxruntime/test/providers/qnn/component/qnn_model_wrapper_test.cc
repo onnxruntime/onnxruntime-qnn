@@ -20,6 +20,11 @@ namespace test {
 
 namespace {
 
+Qnn_ErrorHandle_t StubErrorGetMessage(Qnn_ErrorHandle_t, const char** message) {
+  *message = "stub QNN error";
+  return QNN_SUCCESS;
+}
+
 // Context for constructing a QnnModelWrapper in function-level unit tests.
 //
 //   QnnModelWrapperTestContext ctx;
@@ -1306,6 +1311,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveFail
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.graphCreate = StubGraphCreateFail;
   ctx.qnn_interface.graphRetrieve = StubGraphRetrieveFail;
+  ctx.qnn_interface.errorGetMessage = StubErrorGetMessage;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
