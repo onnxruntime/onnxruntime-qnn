@@ -667,7 +667,10 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_HtpHost_CreatesEpDevice)
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
 
-  OrtHardwareDevice* htp = MakeFakeHwDevice(35);
+  // The fake device id is arbitrary; discovery is driven by device type and
+  // Qualcomm vendor id below.
+  constexpr uint32_t kFakeHtpDeviceId = 35;
+  OrtHardwareDevice* htp = MakeFakeHwDevice(kFakeHtpDeviceId);
   ctx.device_type_map[htp] = OrtHardwareDeviceType_NPU;
   ctx.device_vendor_map[htp] = kQualcommVendorId;
 

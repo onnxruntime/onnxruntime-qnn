@@ -52,9 +52,6 @@ class QnnInteg_OrtApiTest : public ::testing::Test {
 
     ASSERT_TRUE(MakeQnnHtpSessionOptions(*ep_, session_opts_))
         << "QNN HTP EP device not found (HTP backend unavailable) — CI configuration error";
-#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
-    session_opts_.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-#endif
   }
 
   std::unique_ptr<RegisteredQnnEp> ep_;
@@ -62,6 +59,17 @@ class QnnInteg_OrtApiTest : public ::testing::Test {
 };
 
 #if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+static bool MakeLinuxArm64V68QdqSessionOptions(const RegisteredQnnEp& ep, Ort::SessionOptions& out_opts) {
+  // V68 needs graph-I/O quantization disabled so the QDQ Conv group is
+  // partitioned as one QNN graph. Keep this V68-specific setting out of the
+  // shared HTP session-options helper used by unrelated integration tests.
+  if (!MakeQnnHtpSessionOptions(ep, out_opts, {{"offload_graph_io_quantization", "0"}})) {
+    return false;
+  }
+  out_opts.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  return true;
+}
+
 static void AddU8QdqParams(Ort::Graph& graph, const std::string& prefix, float scale, uint8_t zero_point) {
   int64_t scalar_shape[] = {};
   auto scale_value = Ort::Value::CreateTensor<float>(Ort::AllocatorWithDefaultOptions(), scalar_shape, 0);
@@ -355,7 +363,13 @@ TEST_F(QnnInteg_OrtApiTest, ConvAttr_CoversOrtNodeAttrHelperFoundInt64s) {
   model.AddGraph(graph);
 
   try {
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    Ort::SessionOptions qdq_session_opts;
+    ASSERT_TRUE(MakeLinuxArm64V68QdqSessionOptions(*ep_, qdq_session_opts));
+    Ort::Session session(*ort_env, model, qdq_session_opts);
+#else
     Ort::Session session(*ort_env, model, session_opts_);
+#endif
 
 #if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
     ExpectAllNodesAssignedToQnn(session);
@@ -688,7 +702,13 @@ TEST_F(QnnInteg_OrtApiTest, ConvTransposeAttr_CoversOrtNodeAttrHelperFoundInt32V
   model.AddGraph(graph);
 
   try {
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    Ort::SessionOptions qdq_session_opts;
+    ASSERT_TRUE(MakeLinuxArm64V68QdqSessionOptions(*ep_, qdq_session_opts));
+    Ort::Session session(*ort_env, model, qdq_session_opts);
+#else
     Ort::Session session(*ort_env, model, session_opts_);
+#endif
 #if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
     ExpectAllNodesAssignedToQnn(session);
 #endif
