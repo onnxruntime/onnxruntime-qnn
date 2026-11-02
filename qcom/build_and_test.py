@@ -1594,7 +1594,22 @@ def _read_ort_version(root: Path, description: str) -> str:
 
 
 def _tasks_require_ort_test_assets(tasks: list[str], build_aar: bool) -> bool:
-    return build_aar or any(task == "test" or task.startswith("test_ort_") for task in tasks)
+    test_execution_tasks = {
+        "asan_linux_x86_64",
+        "coverage_linux_x86_64",
+        "coverage_report_linux_x86_64",
+        "diff_coverage_linux_x86_64",
+    }
+
+    def task_requires_assets(task: str, visited: set[str]) -> bool:
+        if task == "test" or task.startswith("test_ort_") or task in test_execution_tasks:
+            return True
+        if task in visited:
+            return False
+        visited.add(task)
+        return any(task_requires_assets(dependency, visited) for dependency in TASK_DEPENDENCIES.get(task, []))
+
+    return build_aar or any(task_requires_assets(task, set()) for task in tasks)
 
 
 def get_ort_test_assets_root(

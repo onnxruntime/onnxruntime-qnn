@@ -12,6 +12,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PREBUILT_CMAKE = REPO_ROOT / "cmake" / "external" / "onnxruntime_prebuilt.cmake"
+BUILD_AND_TEST = REPO_ROOT / "qcom" / "build_and_test.py"
 ORT_VERSION = "1.24.4"
 
 
@@ -46,6 +47,35 @@ def _create_prebuilt_sdk(root: Path) -> list[str]:
 
 
 class PrebuiltCmakeSmokeTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux-only task graph")
+    def test_composite_test_tasks_require_assets(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ort-prebuilt-task-smoke-") as temp_dir:
+            sdk = Path(temp_dir) / "sdk"
+            _create_prebuilt_sdk(sdk)
+
+            for task in (
+                "asan_linux_x86_64",
+                "coverage_linux_x86_64",
+                "coverage_report_linux_x86_64",
+                "diff_coverage_linux_x86_64",
+                "file_coverage_excel_linux_x86_64",
+            ):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(BUILD_AND_TEST),
+                        "--dry-run",
+                        "--ort-prebuilt",
+                        str(sdk),
+                        task,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                self.assertNotEqual(result.returncode, 0, task)
+                self.assertIn("Prebuilt ORT test tasks require --ort-test-assets", result.stderr, task)
+
     def test_prebuilt_target_copies_without_source_patch(self) -> None:
         cmake = os.environ.get("CMAKE_EXECUTABLE") or shutil.which("cmake")
         if cmake is None:
