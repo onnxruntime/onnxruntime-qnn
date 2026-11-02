@@ -46,7 +46,7 @@ GetTestModelFn BuildMatMulAddSoftmaxNonLastAxisTestCase(int64_t K, int64_t N) {
 }
 }  // namespace
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 template <typename InputQType = uint8_t>
 static void RunQDQOpTest(const std::string& op_type,
@@ -380,7 +380,7 @@ TEST_F(QnnHTPBackendTests, Softmax_AsymmetricOutput_U8_NoSplit) {
                                              ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

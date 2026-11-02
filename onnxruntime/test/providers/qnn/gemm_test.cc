@@ -255,7 +255,7 @@ TEST_F(QnnCPUBackendTests, ReshapeGemmFusion) {
 #endif
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -1244,9 +1244,9 @@ TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_IncompatibleBiasBroadcast_NotAbso
                   EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 //
 // GPU tests:
 //
@@ -1418,7 +1418,7 @@ TEST_F(QnnGPUBackendTests, ReshapeGemmFusion) {
                      "gpu");
 }
 
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) GPU tests
 
 // Tests for the `use_native_matmul` session config option.
 // When set to "1", the QNN EP routes float32 Gemm to QNN_OP_MAT_MUL (with transpose params)

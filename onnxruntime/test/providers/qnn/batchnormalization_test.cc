@@ -223,7 +223,7 @@ TEST_F(QnnCPUBackendTests, BatchNorm2D_int8) {
       QDQTolerance());
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Same shape as BuildQDQBatchNormTestCase, but the output Q/DQ pair can use a different quantized
 // type than the input, so that dq_nodes[0]'s element type differs from q_nodes[0]'s. That mismatch
@@ -1093,7 +1093,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_SharedBiasInitializer) {
                        ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

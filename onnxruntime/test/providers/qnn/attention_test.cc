@@ -13,7 +13,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // ---------------------------------------------------------------------------
 // Helper: build a minimal float32 Attention test model (Q, K, V only).
@@ -442,7 +442,7 @@ TEST_F(QnnHTPBackendTests, Attention_MQA_3D) {
 // Softcap: scores = softcap * tanh(scores / softcap)
 // Gated to real ARM64 hardware
 // ===========================================================================
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 // 4D MHA with softcap=10.0, non-causal.
 TEST_F(QnnHTPBackendTests, Attention_Softcap_4D) {
@@ -481,7 +481,7 @@ TEST_F(QnnHTPBackendTests, Attention_Softcap_3D_Causal) {
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 // ===========================================================================
 // KV cache: past_key/value as static initializers,
@@ -549,7 +549,7 @@ TEST_F(QnnHTPBackendTests, Attention_DebugOutput_Mode3) {
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // ===========================================================================
 // GPU Attention tests
@@ -562,7 +562,7 @@ TEST_F(QnnHTPBackendTests, Attention_DebugOutput_Mode3) {
 //
 // Gated to _M_ARM64: Adreno GPU is only available on Snapdragon X hardware.
 // ===========================================================================
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 // ---------------------------------------------------------------------------
 // Native GQA path (GPU + causal + no softcap/attn_mask/qk_output)
@@ -740,7 +740,7 @@ TEST_F(QnnGPUBackendTests, Attention_GPU_MHA_3D_Decompose_NonCausal) {
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
 }
 
-#endif  // defined(_M_ARM64)
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 }  // namespace test
 }  // namespace onnxruntime
