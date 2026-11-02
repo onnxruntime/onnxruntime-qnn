@@ -92,14 +92,26 @@ class GemmOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  Ort::Status ExplictOpCheck(const OrtNodeUnit& node_unit, bool is_bq_gemm) const;
+  enum class Lowering { kSingle,
+                        kBlockQuantized,
+                        kReshaped,
+                        kDecomposed };
+  struct LoweringPlan {
+    Lowering lowering = Lowering::kSingle;
+    bool use_matmul = false;
+  };
+
+  // Shared by validation and construction, including the bias's tensor type before registration.
+  LoweringPlan GetLoweringPlan(const QnnModelWrapper& qnn_model_wrapper,
+                               const OrtNodeUnit& node_unit) const;
+  Ort::Status ExplictOpCheck(const OrtNodeUnit& node_unit, const LoweringPlan& plan) const;
   // Registers one of Gemm's inputs (transposing a constant, adding a Transpose node for a transposed
   // non-constant) and appends its QNN tensor name to `input_names`. A tensor already added by a
   // producer that needs no transpose is only recorded, not re-registered.
   Ort::Status RegisterGemmInput(QnnModelWrapper& qnn_model_wrapper,
                                 const OrtNodeUnit& node_unit,
                                 size_t input_index,
-                                const std::vector<int64_t>& input_trans_flags,
+                                gsl::span<const int64_t> input_trans_flags,
                                 const Ort::Logger& logger,
                                 std::vector<std::string>& input_names,
                                 bool do_op_validation) const ORT_MUST_USE_RESULT;
@@ -113,7 +125,29 @@ class GemmOpBuilder : public BaseOpBuilder {
                                      bool do_op_validation) const ORT_MUST_USE_RESULT;
 };
 
-Ort::Status GemmOpBuilder::ExplictOpCheck(const OrtNodeUnit& node_unit, bool is_bq_gemm) const {
+GemmOpBuilder::LoweringPlan GemmOpBuilder::GetLoweringPlan(const QnnModelWrapper& qnn_model_wrapper,
+                                                           const OrtNodeUnit& node_unit) const {
+  OrtNodeAttrHelper node_helper(node_unit);
+  const auto& inputs = node_unit.Inputs();
+  const int64_t trans_b = node_helper.Get("transB", static_cast<int64_t>(0));
+  const bool has_bias = inputs.size() == 3 && node_helper.Get("beta", 1.0f) != 0.0f;
+  const bool is_native_bias = has_bias &&
+                              qnn_model_wrapper.GetTensorType(inputs[2].name) == QNN_TENSOR_TYPE_NATIVE;
+
+  LoweringPlan plan;
+  plan.use_matmul = qnn_model_wrapper.GetModelSettings().use_native_matmul;
+  if (IsBQGemmWeight(qnn_model_wrapper, inputs[1], trans_b)) {
+    plan.lowering = Lowering::kBlockQuantized;
+  } else if (node_unit.GetOutputReshapeNode() != nullptr) {
+    plan.lowering = Lowering::kReshaped;
+  } else if (RequiresFcAddDecomposition(node_unit, is_native_bias) || (plan.use_matmul && has_bias)) {
+    // QNN MatMul has no bias input, so an effective C always requires a separate Add.
+    plan.lowering = Lowering::kDecomposed;
+  }
+  return plan;
+}
+
+Ort::Status GemmOpBuilder::ExplictOpCheck(const OrtNodeUnit& node_unit, const LoweringPlan& plan) const {
   OrtNodeAttrHelper node_helper(node_unit);
   auto alpha = node_helper.Get("alpha", (float)1.0);
   RETURN_IF(alpha != 1.0, "QNN FullyConnected Op only support alpha=1.0.");
@@ -122,8 +156,7 @@ Ort::Status GemmOpBuilder::ExplictOpCheck(const OrtNodeUnit& node_unit, bool is_
 
   // Split non-FC-compatible C broadcasts into FullyConnected + ElementWiseAdd. BQ Gemm only
   // supports FullyConnected, so it still requires a compatible bias shape.
-  if (node_unit.Inputs().size() == 3 && beta != 0.0f &&
-      (is_bq_gemm || !RequiresFcAddDecomposition(node_unit, /*is_native_bias=*/false))) {
+  if (node_unit.Inputs().size() == 3 && beta != 0.0f && plan.lowering != Lowering::kDecomposed) {
     auto& inputB = node_unit.Inputs()[1];
     std::vector<uint32_t> inputB_shape;
     RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(inputB.shape, inputB_shape) && inputB_shape.size() == 2,
@@ -159,16 +192,13 @@ Ort::Status GemmOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(utils::GetQnnDataType(outputs[0].quant_param.has_value(), outputs[0].type,
                                           output_qnn_data_type));
     if (utils::NeedsPrecisionConvert(act_qnn_data_type, output_qnn_data_type)) {
-      OrtNodeAttrHelper node_helper(node_unit);
-      const int64_t trans_b = node_helper.Get("transB", static_cast<int64_t>(0));
-      const bool has_bias = inputs.size() == 3 && node_helper.Get("beta", 1.0f) != 0.0f;
-      RETURN_IF(IsBQGemmWeight(qnn_model_wrapper, inputs[1], trans_b),
+      const LoweringPlan plan = GetLoweringPlan(qnn_model_wrapper, node_unit);
+      RETURN_IF(plan.lowering == Lowering::kBlockQuantized,
                 "QNN EP: mixed activation/output precision is not supported for a block-quantized weight.");
-      RETURN_IF(node_unit.GetOutputReshapeNode() != nullptr,
+      RETURN_IF(plan.lowering == Lowering::kReshaped,
                 "QNN EP: mixed activation/output precision is not supported for a Gemm with an "
                 "absorbed Reshape.");
-      RETURN_IF(RequiresFcAddDecomposition(node_unit, /*is_native_bias=*/false) ||
-                    (qnn_model_wrapper.GetModelSettings().use_native_matmul && has_bias),
+      RETURN_IF(plan.lowering == Lowering::kDecomposed,
                 "QNN EP: mixed activation/output precision is not supported for a Gemm that needs "
                 "the FullyConnected + Add decomposition.");
     }
@@ -180,7 +210,7 @@ Ort::Status GemmOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 Ort::Status GemmOpBuilder::RegisterGemmInput(QnnModelWrapper& qnn_model_wrapper,
                                              const OrtNodeUnit& node_unit,
                                              size_t input_index,
-                                             const std::vector<int64_t>& input_trans_flags,
+                                             gsl::span<const int64_t> input_trans_flags,
                                              const Ort::Logger& logger,
                                              std::vector<std::string>& input_names,
                                              bool do_op_validation) const {
@@ -209,7 +239,7 @@ Ort::Status GemmOpBuilder::RegisterGemmInput(QnnModelWrapper& qnn_model_wrapper,
   bool is_constant_input = qnn_model_wrapper.IsConstantInput(input_name);
   if (is_constant_input) {
     const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
-    if (1 == input_trans_flags.at(input_index)) {
+    if (1 == input_trans_flags[input_index]) {
       RETURN_IF_ERROR(quantize_param.HandleTranspose<size_t>(std::vector<size_t>({1, 0})));
       RETURN_IF_ERROR(
           utils::TwoDimensionTranspose(qnn_model_wrapper, input_shape, input_tensor, unpacked_tensor, logger));
@@ -219,7 +249,7 @@ Ort::Status GemmOpBuilder::RegisterGemmInput(QnnModelWrapper& qnn_model_wrapper,
   }
 
   std::string input_tensor_name = input_name;
-  if (1 == input_trans_flags.at(input_index) && !is_constant_input) {
+  if (1 == input_trans_flags[input_index] && !is_constant_input) {
     RETURN_IF(quantize_param.IsPerChannel(), "Non-constant Gemm inputs only support per-tensor quantization");
 
     // Add Transpose node
@@ -258,21 +288,21 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   const int64_t trans_b = node_helper.Get("transB", static_cast<int64_t>(0));
   const float beta = node_helper.Get("beta", 1.0f);
   const auto& inputs = node_unit.Inputs();
-  const bool is_bq_gemm = IsBQGemmWeight(qnn_model_wrapper, inputs[1], trans_b);
+  const LoweringPlan plan = GetLoweringPlan(qnn_model_wrapper, node_unit);
 
   if (do_op_validation) {
-    RETURN_IF_ERROR(ExplictOpCheck(node_unit, is_bq_gemm));
+    RETURN_IF_ERROR(ExplictOpCheck(node_unit, plan));
   }
 
   // Block-quantized weight: translate to QNN FullyConnected with BW_FLOAT_BLOCK weight.
-  if (is_bq_gemm) {
+  if (plan.lowering == Lowering::kBlockQuantized) {
     return ProcessInputsForBQGemm(qnn_model_wrapper, node_unit, trans_b, beta, logger, input_names,
                                   do_op_validation);
   }
 
   // for Input A, B, C: 1 -- need transpose, 0 -- not needed
   std::vector<int64_t> input_trans_flag(3, 0);
-  const bool use_matmul_path = qnn_model_wrapper.GetModelSettings().use_native_matmul;
+  const bool use_matmul_path = plan.use_matmul;
   const int64_t transA = node_helper.Get("transA", (int64_t)0);
   auto transB = node_helper.Get("transB", (int64_t)0);
   // FC path needs weight in [N,K]; MatMul path keeps weight in [K,N] and expresses the
@@ -560,10 +590,11 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   OrtNodeAttrHelper node_helper(node_unit);
   const int64_t trans_b_out = node_helper.Get("transB", static_cast<int64_t>(0));
 
-  // Detect BQ (BW_FLOAT_BLOCK) Gemm using IsBQGemmWeight, consistent with ProcessInputs detection.
+  const LoweringPlan plan = GetLoweringPlan(qnn_model_wrapper, node_unit);
+
   // BQ Gemm→FC: activation stays 2-D, weight is 2-D [N,K] with BW_FLOAT_BLOCK.
   // FC outputs FP16 → re-quantize to INT16.
-  if (IsBQGemmWeight(qnn_model_wrapper, node_unit.Inputs()[1], trans_b_out)) {
+  if (plan.lowering == Lowering::kBlockQuantized) {
     const std::string& org_output_name = node_unit.Outputs()[0].name;
     TensorInfo output_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
@@ -600,8 +631,7 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   // MatMulAddFusion post-Gemm Reshape absorbed by the QDQ selector: FC (rank-2, encoded) followed
   // by a QNN Reshape (rank-N, same encoding). node_unit.Outputs()[0] already reflects the Reshape's
   // rank-N shape and the terminal Q's encoding.
-  const OrtNode* absorbed_reshape = node_unit.GetOutputReshapeNode();
-  if (absorbed_reshape != nullptr) {
+  if (plan.lowering == Lowering::kReshaped) {
     const std::string& final_output_name = node_unit.Outputs()[0].name;
     TensorInfo final_output_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], final_output_info));
@@ -657,21 +687,10 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     return Ort::Status();
   }
 
-  // Non-BQ path: decompose Gemm into FullyConnected + Add when C cannot be an FC bias.
-  // Folded bias already reports NATIVE, and ProcessInputs reuses its [1, N] STATIC
-  // as-is (no reshape), so the FC + Add path follows without an extra check.
-  const bool is_native_bias = node_unit.Inputs().size() == 3 &&
-                              qnn_model_wrapper.GetTensorType(node_unit.Inputs()[2].name) == QNN_TENSOR_TYPE_NATIVE;
-  const bool use_matmul = qnn_model_wrapper.GetModelSettings().use_native_matmul;
+  const bool use_matmul = plan.use_matmul;
   const int64_t trans_a_out = node_helper.Get("transA", static_cast<int64_t>(0));
-  // QNN_OP_MAT_MUL does not accept a bias input; when the native MatMul path is active and a bias
-  // is present (beta != 0), always decompose into MatMul + ElementWiseAdd regardless of bias shape.
-  const float beta_out = node_helper.Get("beta", 1.0f);
-  const bool has_bias = node_unit.Inputs().size() == 3 && beta_out != 0.0f;
-  const bool requires_fc_add_decomposition = RequiresFcAddDecomposition(node_unit, is_native_bias) ||
-                                             (use_matmul && has_bias);
 
-  if (requires_fc_add_decomposition) {
+  if (plan.lowering == Lowering::kDecomposed) {
     // Gemm input and output must be at least rank 2 for the FC + Add decomposition.
     const std::string& org_output_name = node_unit.Outputs()[0].name;
     TensorInfo input_info = {};

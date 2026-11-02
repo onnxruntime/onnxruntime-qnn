@@ -1558,12 +1558,12 @@ bool OrtInstanceAndLayerNormalizationNodeGroupSelector::Check(const OrtGraph* gr
   // to the declared output precision (see LayerNormalizationOpBuilder). InstanceNormalization keeps
   // the strict same-type rule until its builder implements the same bridge. The bias is int32.
   // Scale can be different with input for the a16w8 case.
-  bool supported_activation_output =
-      IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]);
-  if (!supported_activation_output && dq_nodes.size() > 1 &&
-      Ort::ConstNode(node).GetOperatorType() == "LayerNormalization") {
-    supported_activation_output = IsConvertActivationToOutputGroup(graph, ort_api, dt_input.value(),
-                                                                   dt_output.value(), dq_nodes[0]);
+  bool supported_activation_output = dt_input.value() == dt_output.value();
+  if (!supported_activation_output && Ort::ConstNode(node).GetOperatorType() == "LayerNormalization") {
+    supported_activation_output =
+        IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]) ||
+        (dq_nodes.size() > 1 && IsConvertActivationToOutputGroup(graph, ort_api, dt_input.value(),
+                                                                 dt_output.value(), dq_nodes[0]));
   }
 
   return supported_activation_output &&

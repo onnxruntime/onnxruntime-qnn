@@ -1212,6 +1212,14 @@ TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_NativeBias_NotAbsorbed) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
+TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_FcCompatibleNativeBias_NotAbsorbed) {
+  DirectGemmReshapeQConfig cfg;
+  cfg.M = 1;
+  cfg.bias_from_intermediate = true;
+  RunQnnModelTest(BuildDirectGemmReshapeQTestCase(cfg), GetHtpProviderOptions(), /*opset=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
 // Negative gate (M-3): direct Gemm with a dynamic QDQ bias must NOT be absorbed
 // as FullyConnected bias. The regular QDQ Gemm path can still handle the graph.
 TEST_F(QnnHTPBackendTests, GemmReshapeQ_Direct_DynamicQDQBias_NotAbsorbed) {
