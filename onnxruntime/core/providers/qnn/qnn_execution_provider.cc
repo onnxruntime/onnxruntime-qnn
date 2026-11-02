@@ -1353,6 +1353,12 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                                            false,
                                                                            logger_);
 
+  model_settings_.use_native_matmul = ParseBoolOption(ort_api,
+                                                      session_options_,
+                                                      FormatEPConfigKey("use_native_matmul"),
+                                                      false,
+                                                      logger_);
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,
@@ -2348,6 +2354,16 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph, ep->ort_api);
 
+  // Compatibility validation precedes GetCapability and therefore cannot
+  // inspect the graph to determine is_qnn_ctx_model. It tentatively prepares
+  // a cached-context backend so a real EPContext can reuse it. If this graph
+  // is not an EPContext model, discard that tentative setup and let the
+  // regular setup below create the backend with the actual graph's settings.
+  if (!is_qnn_ctx_model && ep->backend_setup_from_compatibility_check_) {
+    ep->backend_setup_from_compatibility_check_ = false;
+    ep->qnn_backend_manager_->ReleaseResources();
+  }
+
   if (is_qnn_ctx_model && ep->share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
     if (EpSharedContextsHasAllGraphs(graph, ep->ort_api, ep->logger_)) {
       ep->PartitionCtxModel(graph, graph_support_info);
@@ -2475,6 +2491,11 @@ OrtStatus* QnnEp::ValidateCapabilityPreconditions(bool is_qnn_ctx_model) {
 OrtStatus* QnnEp::GetOnnxGraphCapability(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info,
                                          size_t num_nodes_in_graph, bool is_qnn_ctx_model) {
   auto* ep = this;
+  // Reset the flag in case there are patterns rejected in the first GetCapability pass but supported in the second.
+  if (ep->is_post_layout_transform_) {
+    ep->has_unsupported_nodes_wo_cpu_fallback_ = false;
+  }
+
   // GetCapability runs up to twice. Clear before pass 2 so its collection
   // supersedes pass 1; pass 1's data is kept for the all-unsupported flush below
   // (reached only on pass 1, since pass 2 doesn't run when nothing is supported).
@@ -2564,6 +2585,17 @@ OrtStatus* QnnEp::GetOnnxGraphCapability(const OrtGraph* graph, OrtEpGraphSuppor
       }
       ep->WriteFrameworkOpTrace(graph);
     }
+
+    // This flag will in fact have no effect as QnnEp::Compile will be entirely skipped without any supported nodes.
+    // Considering the bottleneck for large models should be in graph finalize instead of ORT Core graph
+    // transformations and the cases of completely no supported nodes should be rather rare, it may be okay not to stop
+    // session initialization immediately like partial support cases like below.
+    // Setting to true here is merely to make the flag consistent.
+    if (!is_qnn_ctx_model && ep->disable_cpu_ep_fallback_) {
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, "No nodes are supported in QNN EP.");
+      ep->has_unsupported_nodes_wo_cpu_fallback_ = true;
+    }
+
     return nullptr;
   }
 
@@ -2609,6 +2641,7 @@ OrtStatus* QnnEp::GetOnnxGraphCapability(const OrtGraph* graph, OrtEpGraphSuppor
     ORT_CXX_LOG(ep->logger_,
                 ORT_LOGGING_LEVEL_ERROR,
                 ("Unsupported nodes in QNN EP: " + get_unsupported_node_names()).c_str());
+    ep->has_unsupported_nodes_wo_cpu_fallback_ = true;
   }
 
   return nullptr;
@@ -2794,6 +2827,9 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
     end = std::chrono::steady_clock::now();
     total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
+
+    // Join every worker before consuming results or moving model ownership.
+    tp.Stop();
 
     for (auto& model_info : model_infos) {
       RETURN_IF_NOT_OK(std::move(model_info.result));
@@ -3254,6 +3290,22 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     return ep->CompileQairtModels(graphs, fused_nodes, count, node_compute_infos, ep_context_nodes);
   }
 #endif
+
+  // Early fail without actual compile and make session initialization immediately terminate.
+  if (ep->has_unsupported_nodes_wo_cpu_fallback_) {
+    // Write collected trace(s) before early fail.
+    if (ep->enable_framework_op_trace_ && count > 0) {
+      if (ep->enable_multi_soc_ep_context_) {
+        ep->AppendMultiSocTraces();
+      } else {
+        ep->AppendSingleSocTrace();
+      }
+      ep->WriteFrameworkOpTrace(graphs[0]);
+    }
+
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                    "User disabled CPU EP fallback but not all nodes are supported by QNN-EP.");
+  }
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     if (ep->prepare_and_load_) {
@@ -3884,14 +3936,48 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
     return nullptr;
   }
 
-  // Backend is only setup in GetCapability. However, at this point, it is possible that this function is invoked
-  // before any GetCapability call, and thus backend is not ready. Here, backend is setup and released with basic
-  // settings for actual setup in GetCapability later. If the duplicate setup introduces significant overhead in the
-  // future, we may consider setup actual backend here.
+  // Compatibility validation runs before GetCapability. For a normal EPContext
+  // session, retain the backend setup used for validation so GetCapability can
+  // reuse it. This avoids opening and closing a QNN device solely for
+  // validation, only to create the same device again when the cached context
+  // is loaded.
+  //
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
+  // HTP resource sharing creates contexts during SetupBackend and requires
+  // graph-derived context_bin_map data, so only the default (-1) configuration
+  // can reuse the compatibility backend.
+  bool compatibility_backend_isreusable = htp_share_resource_optimization_ == -1;
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
+    Ort::Status setup_status = Ort::Status();
+    if (compatibility_backend_isreusable) {
+      setup_status = qnn_backend_manager_->SetupBackend(/*load_from_cached_context*/ true,
+                                                        /*need_load_system_lib*/ true,
+                                                        /*share_ep_contexts*/ false,
+                                                        /*htp_share_resource_optimization*/ -1,
+                                                        enable_file_mapped_weights_,
+                                                        rpcmem_library_,
+                                                        dummy_map);
+    }
+    if (!compatibility_backend_isreusable || !setup_status.IsOK()) {
+      // Preserve compatibility validation when the reusable setup is not
+      // supported. SetupBackend cleaned up its failed attempt, so retry with
+      // the original isolated probe configuration.
+      compatibility_backend_isreusable = false;
+      setup_status = qnn_backend_manager_->SetupBackend(true, true, false, -1, false, nullptr, dummy_map);
+    }
+    if (!setup_status.IsOK()) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Skip compatibility validation due to backend setup failure: " +
+                   setup_status.GetErrorMessage())
+                      .c_str());
+      *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+      return nullptr;
+    }
+    if (compatibility_backend_isreusable) {
+      backend_setup_from_compatibility_check_ = true;
+    }
   }
 
   status = qnn_cache_compatibility_manager_->ValidateCompatibilityInfo(info, *model_compatibility);
@@ -3902,8 +3988,8 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
   }
 
-  if (!is_backend_setup) {
-    // Release backend to avoid interfering later usage.
+  if (!is_backend_setup && !compatibility_backend_isreusable) {
+    // The isolated compatibility setup is only used for validation.
     qnn_backend_manager_->ReleaseResources();
   }
 

@@ -308,11 +308,27 @@ static void RunQDQBlockQuantMatMulOpTest(
     QDQTolerance tolerance = QDQTolerance(),
     ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
     int opset = 21,
-    bool use_contrib_qdq = false) {
+    bool use_contrib_qdq = false,
+    const char* graph_test_name = nullptr) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["enable_block_quant_weight_optimization"] = "1";
+
+  std::filesystem::path graph_dir;
+  auto cleanup = gsl::finally([&graph_dir]() {
+    if (!graph_dir.empty()) {
+      std::filesystem::remove_all(graph_dir);
+    }
+  });
+  if (graph_test_name != nullptr) {
+    graph_dir = std::filesystem::temp_directory_path() /
+                (std::string("MatMulOp_QDQ_BlockQuant_") + graph_test_name);
+    std::filesystem::remove_all(graph_dir);
+    ASSERT_TRUE(std::filesystem::create_directories(graph_dir));
+    provider_options["dump_json_qnn_graph"] = "1";
+    provider_options["json_qnn_graph_dir"] = graph_dir.string();
+  }
 
   const size_t num_input_elems = static_cast<size_t>(
       std::accumulate(shape_input.begin(), shape_input.end(), static_cast<int64_t>(1), std::multiplies<int64_t>()));
@@ -327,6 +343,13 @@ static void RunQDQBlockQuantMatMulOpTest(
       BuildQDQBlockQuantMatMulTestCase<InputQType, WeightQType, OutputQType>(
           input_def, weight_def, block_size, weight_quant_axis, use_contrib_qdq),
       provider_options, opset, expected_ep_assignment, tolerance);
+
+  if (!graph_dir.empty() && !::testing::Test::IsSkipped()) {
+    AssertOpInQnnGraph(graph_dir, "Convert", 1);
+    AssertConvertOutputDataType(graph_dir,
+                                std::is_same_v<OutputQType, uint8_t> ? QNN_DATATYPE_UFIXED_POINT_8
+                                                                     : QNN_DATATYPE_SFIXED_POINT_8);
+  }
 }
 
 //
@@ -362,6 +385,109 @@ TEST_F(QnnCPUBackendTests, MatMulOp) {
   // Actual: 16-byte object <24-00 00-00 00-00 00-00 80-39 2B-42 4D-56 00-00>, where the value pair (0.104199991, 0)
   // at index #18 don't match, which is -0.1042 from 0.1042
   // RunMatMulOpTest({2, 3, 3, 3}, {3, 2}, true, false);
+}
+
+// Tests for the `use_native_matmul` session config option.
+// When set to "1", the QNN EP routes rank-2 static-weight MatMul to QNN_OP_MAT_MUL instead
+// of QNN_OP_FULLY_CONNECTED. The tests use the JSON graph dump to assert the exact op type
+// present in the compiled QNN graph.
+
+// Rank-2 static weight: verify the QNN graph emits MatMul (not FullyConnected) when the
+// use_native_matmul flag is set.
+TEST_F(QnnHTPBackendTests, MatMulDisableFC_2D_StaticWeight) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulDisableFC_2D_StaticWeight";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["use_native_matmul"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // A: [4, 8] dynamic;  B: [8, 3] static initializer.
+  RunQnnModelTest(
+      BuildMatMulOpTestCase(
+          TestInputDef<float>({4, 8}, false, GetSequentialFloatData({4, 8}, 0.01f, 0.02f)),
+          TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
+      provider_options,
+      /*opset=*/18,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "MatMul", 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 0);
+}
+
+// Rank-3 activation, rank-2 static weight: verify MatMul (not FullyConnected) when the
+// use_native_matmul flag is set.
+TEST_F(QnnHTPBackendTests, MatMulDisableFC_3D_StaticWeight) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulDisableFC_3D_StaticWeight";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["use_native_matmul"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // A: [2, 4, 8] dynamic;  B: [8, 3] static initializer.
+  RunQnnModelTest(
+      BuildMatMulOpTestCase(
+          TestInputDef<float>({2, 4, 8}, false, GetSequentialFloatData({2, 4, 8}, 0.01f, 0.02f)),
+          TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
+      provider_options,
+      /*opset=*/18,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "MatMul", 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 0);
+}
+
+// Regression guard: without the flag, the default behaviour (FullyConnected) is preserved.
+TEST_F(QnnHTPBackendTests, MatMulDefaultUsesFC) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulDefaultUsesFC";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  // use_native_matmul is intentionally NOT set; default is false (FullyConnected).
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // Same shapes as MatMulDisableFC_2D_StaticWeight.
+  RunQnnModelTest(
+      BuildMatMulOpTestCase(
+          TestInputDef<float>({4, 8}, false, GetSequentialFloatData({4, 8}, 0.01f, 0.02f)),
+          TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
+      provider_options,
+      /*opset=*/18,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(graph_dir, "MatMul", 0);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -988,12 +1114,8 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_static_weight) {
         provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
   }
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-
-#if defined(__linux__)
 
 // Tests MatMul with ONNX block-quantized (BQ) weight using the BQ -> QNN LPBQ conversion path.
-// Currently BQ -> LPBQ conversion is only supported on Linux. It will be later enabled for windows as well.
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant) {
   RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
   RunQDQBlockQuantMatMulOpTest<int16_t, Int4x2, int16_t>({4, 128}, {128, 64}, 32, 0, QDQTolerance(0.05f));
@@ -1002,7 +1124,13 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant) {
   RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({2, 3, 4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
 }
 
-#endif  // defined(__linux__)
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant_U16ActivationU8Output) {
+  RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint8_t>(
+      {4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f), ExpectedEPNodeAssignment::All, 21, false,
+      "u16_u8");
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_M_ARM64)
 //

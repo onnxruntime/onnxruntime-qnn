@@ -110,7 +110,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Erf", {GeluFusion::TryFusion}},
     {"Tanh", {TanhGeluFusion::TryFusion}},
-    {"ReduceMean", {LayerNormFusion::TryFusion}},
+    {"ReduceMean", {LayerNormFusion::TryFusionFull, LayerNormFusion::TryFusionGammaOnly, LayerNormFusion::TryFusionCoreOnly}},
     {"ReduceL2", {L2NormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
     {"Reshape", {SpaceToDepthFusion::TryFusion, ChannelShuffleFusion::TryFusionFromReshape, Rank6ToRank5Fusion::TryFusion, ReshapeTransposeFusion::TryFusion, Rank5ToRank4Fusion::TryFusion}},

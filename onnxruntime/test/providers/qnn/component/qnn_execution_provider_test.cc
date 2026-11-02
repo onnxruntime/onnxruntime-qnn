@@ -319,10 +319,10 @@ class QnnUnit_ExecutionProviderTest : public ::testing::Test {
   void SetUp() override {
     // Reset the SharedContext singleton's shared QnnBackendManager so that
     // tests that modify it don't interfere with each other.
-    SharedContext::GetInstance().ResetSharedQnnBackendManager();
+    ResetSharedBackendManagerForTest();
   }
   void TearDown() override {
-    SharedContext::GetInstance().ResetSharedQnnBackendManager();
+    ResetSharedBackendManagerForTest();
   }
 };
 
@@ -707,9 +707,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SharedBackendManagerWithDifferentAllo
   // The host-only test cannot load RPCMEM to create a real HTP_SHARED owner.
   // Set the shared manager's mode directly to emulate an existing opted-in
   // session before constructing a second session that requests NONE.
-  auto shared_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
-  ASSERT_NE(shared_manager, nullptr);
-  shared_manager->SetQnnAllocatorType(qnn::QnnAllocatorType::HTP_SHARED);
+  ASSERT_TRUE(SetSharedBackendManagerAllocatorForTest(qnn::QnnAllocatorType::HTP_SHARED));
 
   EpStubContext consumer_ctx;
   consumer_ctx.session_config[EPKey("htp_share_resource_optimization")] = "1";
@@ -1324,6 +1322,23 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_OldSd
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
                "htp_graph_splitting_num_prepare_threads was set but this build was compiled against "
                "QAIRT SDK < 2.51");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_UseNativeMatMulEnabled_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("use_native_matmul")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_UseNativeMatMulInvalidValue_LogsVerbose) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("use_native_matmul")] = "x";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Invalid value for ep.qnnexecutionprovider.use_native_matmul");
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresNegative_Succeeds) {

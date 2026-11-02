@@ -188,7 +188,7 @@ If `AddToModelBuilder` returns non-OK during Compile, the error is logged at ERR
 | `ReduceMean` | `LayerNormFusion` | Full LayerNorm expansion → QNN LayerNorm |
 | `Einsum` | `ReshapeEinsumReshapeNodeGroup` | `Reshape→Einsum→Reshape` (6D) → Reshape+DepthToSpace+Transpose |
 | `Reshape` | `SpaceToDepthFusion`, then `Rank6ToRank5Fusion` | SpaceToDepth lowering; rank-6 `Reshape→Transpose→Reshape` → rank-5 |
-| `Concat` | `SliceConcatSpaceToDepthFusion` | Strided `Slice` tiling (4 tiles) + `Concat(axis=1)` → `PreT + SpaceToDepth(DCR,block=2) + [Gather] + PostT` |
+| `Concat` | `SliceConcatSpaceToDepthFusion` | Strided `Slice` tiling (4 tiles) + `Concat(axis=1)` → `PreT + SpaceToDepth(DCR; two unequal-block stages for Focus order) + PostT + [Gather]` |
 | `Transpose` | `ChannelShuffleFusion`, then `TransposeReshapeTransposeFusion` | ChannelShuffle (5-node); `Transpose→Reshape→Transpose` → Reshape |
 | *(dynamic)* | `UDOQDQFusion` | `DQ→UDO→Q` → QNN custom op, via `registerUDO` |
 

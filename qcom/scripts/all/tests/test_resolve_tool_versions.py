@@ -8,9 +8,7 @@ subprocess, feeding a synthetic `--bin-dir` tree (CMakeCache.txt + sdk.yaml /
 VERSION_NUMBER files) to assert its precedence rules and exit codes. Run
 locally with:
 
-    pytest qcom/scripts/linux/tests -v
-
-(These are not CI-wired, mirroring qcom/scripts/all/tests.)
+    pytest qcom/scripts/all/tests/test_resolve_tool_versions.py -v
 """
 
 import subprocess

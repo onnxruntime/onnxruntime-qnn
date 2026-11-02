@@ -36,11 +36,7 @@
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
-
-#ifdef _WIN32
-extern "C" const OrtApi* ORT_API_CALL QnnUnit_SetOrtApiForTesting(const OrtApi* api) noexcept;
-extern "C" void ORT_API_CALL QnnUnit_RestoreOrtApiForTesting(const OrtApi* previous) noexcept;
-#endif
+#include "test/providers/qnn/infra/qnn_module_state_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -558,10 +554,10 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
 // so this is safe, but do not use two overrides simultaneously in the same
 // thread.
 //
-// Lives here (alongside the fake-graph stubs it enables) so that mock_node_unit.h
-// can build a NodeUnit holder that keeps the global routed to fake-graph stubs
-// for the lifetime of OrtNodeUnit accessor calls (OpType/Name/Index deref
-// target_node_ via the global Ort::GetApi()).
+// The implementation lives in qnn_module_state_test_utils.h so all module-local
+// test state uses the same Windows bridge. This header includes it so
+// mock_node_unit.h can keep the global routed to fake-graph stubs for the
+// lifetime of OrtNodeUnit accessor calls.
 //
 // Implementation note: uses Ort::detail::Global::Api(), which is declared in
 // the public onnxruntime_cxx_api.h header (not a private "core/" include).
@@ -570,31 +566,6 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
 // unit-test builds so all TUs agree on static initialisation. This helper
 // is test-only (gated by QNN_EP_INTERNAL_SYMBOL_ACCESS) and must be
 // re-verified if ORT uplevels and changes the detail::Global layout.
-class OrtGlobalApiOverride {
- public:
-  explicit OrtGlobalApiOverride(const OrtApi* new_api) {
-    original_ = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-    Ort::detail::Global::Api(new_api);
-#ifdef _WIN32
-    provider_original_ = QnnUnit_SetOrtApiForTesting(new_api);
-#endif
-  }
-  ~OrtGlobalApiOverride() {
-#ifdef _WIN32
-    QnnUnit_RestoreOrtApiForTesting(provider_original_);
-#endif
-    Ort::detail::Global::Api(original_);
-  }
-
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OrtGlobalApiOverride);
-
- private:
-  const OrtApi* original_ = nullptr;
-#ifdef _WIN32
-  const OrtApi* provider_original_ = nullptr;
-#endif
-};
-
 }  // namespace test
 }  // namespace onnxruntime
 

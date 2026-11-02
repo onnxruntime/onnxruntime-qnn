@@ -121,20 +121,17 @@ Ort::Status InsertOutputPrecisionConvert(QnnModelWrapper& qnn_model_wrapper,
   const std::string& op_type = node_unit.OpType();
   const std::string& declared_output_name = node_unit.Outputs()[0].name;
 
-  // 1. Guard the two cases this Convert doesn't handle.
-  RETURN_IF_NOT(!qnn_model_wrapper.IsGraphOutput(declared_output_name),
-                ("QNN EP's precision Convert does not support a graph-output result for " + op_type).c_str());
   RETURN_IF_NOT(declared_output_info.quant_param.IsPerTensor(),
                 ("QNN EP's precision Convert only supports per-tensor quantization for " + op_type).c_str());
 
-  // 2. Derive a native-precision encoding, then let any op-specific override (e.g. Sigmoid/Tanh) apply.
+  // 1. Derive a native-precision encoding, then let any op-specific override (e.g. Sigmoid/Tanh) apply.
   const Qnn_ScaleOffset_t& declared_so = declared_output_info.quant_param.Get().scaleOffsetEncoding;
   Qnn_ScaleOffset_t native_so{};
   RETURN_IF_ERROR(DeriveScaleOffsetForDtype(declared_output_info.qnn_data_type, declared_so.offset, declared_so.scale,
                                             native_dtype, /*to_symmetric*/ false, native_so.scale, native_so.offset));
   OverrideActivationFixedEncoding(op_type, native_dtype, native_so);
 
-  // 3. Build the op with a native-precision intermediate output tensor.
+  // 2. Build the op with a native-precision intermediate output tensor.
   const std::string native_output_name = UniqueNameGenerator().New(declared_output_name, "_native");
   QnnTensorWrapper native_output_tensorwrapper(native_output_name, QNN_TENSOR_TYPE_NATIVE, native_dtype,
                                                QnnQuantParamsWrapper::PerTensor(native_so.scale, native_so.offset),
@@ -150,11 +147,15 @@ Ort::Status InsertOutputPrecisionConvert(QnnModelWrapper& qnn_model_wrapper,
                                                 do_op_validation),
                 "Failed to add node.");
 
-  // 4. Convert the native-precision result to the node's declared output tensor/precision.
+  // 3. Convert the native-precision result to the node's declared output tensor/precision.
+  const Qnn_TensorType_t output_tensor_type = qnn_model_wrapper.IsGraphOutput(declared_output_name)
+                                                  ? QNN_TENSOR_TYPE_APP_READ
+                                                  : QNN_TENSOR_TYPE_NATIVE;
   return InsertConvertOp(qnn_model_wrapper, native_output_name, declared_output_name,
                          native_dtype, declared_output_info.qnn_data_type,
                          native_so.offset, native_so.scale,
-                         declared_output_info.shape, /*output_symmetric*/ false, do_op_validation);
+                         declared_output_info.shape, /*output_symmetric*/ false, do_op_validation,
+                         output_tensor_type);
 }
 
 }  // namespace utils
