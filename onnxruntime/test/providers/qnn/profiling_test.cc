@@ -251,13 +251,17 @@ size_t RunReluWithRunProfiling(Ort::Session& session, const std::filesystem::pat
   return root_events;
 }
 
-bool RunReluNoProfiling(Ort::Session& session) {
+std::vector<Ort::Value> RunNoProfiling(Ort::Session& session) {
   std::array<float, 4> input_data{-1.0f, 2.0f, -3.0f, 4.0f};
   Ort::Value input = MakeReluInput(input_data);
   const char* input_names[] = {"X"};
   const char* output_names[] = {"Y"};
 
-  auto outputs = session.Run(Ort::RunOptions{}, input_names, &input, 1, output_names, 1);
+  return session.Run(Ort::RunOptions{}, input_names, &input, 1, output_names, 1);
+}
+
+bool RunReluNoProfiling(Ort::Session& session) {
+  auto outputs = RunNoProfiling(session);
   if (outputs.size() != 1u || outputs[0].GetTensorTypeAndShapeInfo().GetElementCount() != 4u) {
     EXPECT_EQ(outputs.size(), 1u);
     if (!outputs.empty()) {
@@ -1005,7 +1009,9 @@ TEST_F(QnnHTPBackendTests, OrtProfilingApiAotMixedEpContextIncludesQnnAndCpuEven
     ScopedOrtSession scoped(std::move(registered_ep_device),
                             Ort::Session(*GetOrtEnv(), context_path.c_str(), session_options));
 
-    EXPECT_TRUE(RunReluNoProfiling(scoped.session()));
+    const auto outputs = RunNoProfiling(scoped.session());
+    ASSERT_EQ(outputs.size(), 1u);
+    EXPECT_EQ(outputs[0].GetTensorTypeAndShapeInfo().GetElementCount(), 8u);
     Ort::AllocatorWithDefaultOptions allocator;
     const auto profile_path = scoped.session().EndProfilingAllocated(allocator);
     const std::string profile = ReadFile(profile_path.get());

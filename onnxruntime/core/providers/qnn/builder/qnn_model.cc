@@ -442,7 +442,7 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
   profiling_scope.Complete(profiling_info);
 
   if (!finalize_status.IsOK()) {
-    return std::move(finalize_status);
+    return finalize_status;
   }
 
   // NOTE: This function returns immediately when profiling is disabled.
