@@ -246,7 +246,8 @@ TEST_F(QnnHTPBackendTests, RandomNormalLike_AddDownstream) {
     return;
   }
   AssertOpInQnnGraph(json_dir, "RandomNormalLike", 1);
-  AssertOpInQnnGraph(json_dir, "Dequantize", 1);
+  AssertOpInQnnGraph(json_dir, "Dequantize", 0);
+  AssertOpInQnnGraph(json_dir, "Cast", 1);
 }
 
 TEST_F(QnnHTPBackendTests, RandomNormalLike_GraphInputRegistered) {
