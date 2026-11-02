@@ -49,7 +49,8 @@
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/htp_usr_drv_utils.h"
 #include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
-#include "core/providers/qnn/qnn_ep_utils.h"
+#include "core/providers/qnn/builder/qdq_node_group_selector.h"
+#include "core/providers/qnn/qnn_ep_partition_utils.h"
 #include "core/providers/qnn/soc_utility/soc_utils.h"
 
 // Forward declarations for NodeUnit-related classes
@@ -1306,6 +1307,12 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                                            false,
                                                                            logger_);
 
+  model_settings_.use_native_matmul = ParseBoolOption(ort_api,
+                                                      session_options_,
+                                                      FormatEPConfigKey("use_native_matmul"),
+                                                      false,
+                                                      logger_);
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,
@@ -1543,8 +1550,9 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                     false,
                                                     logger_);
 
-  // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
-  // So that all graphs from later sessions will be compiled into the same QNN context
+  // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exists
+  // so that all graphs from later sessions will be compiled into the same QNN context. Keep the result from a single lookup:
+  // another session may clear the singleton, but this session must retain the manager it adopted.
   const bool use_shared_backend_mgr =
       ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ != -1);
   const auto shared_qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
@@ -1569,10 +1577,8 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                      skip_backend_op_validation,
                                      reused_io_limit_mb,
                                      enable_htp_cross_device_prepare},
-        ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
+        static_cast<const ApiPtrs&>(*this), logger_);
   }
-  // Terminator reset is deferred to GetCapabilityImpl (after SetupBackend) for both
-  // htp_share_resource_optimization and share_ep_contexts paths, so no reset here.
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
@@ -1651,12 +1657,15 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     // subsequent session to overwrite it.
     qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
 
-    // Publish only after fixing the allocator mode. ContextCreateAsyncCallback
-    // retrieves this manager during SetupBackend (GetCapability), so it is
-    // still available before any context work starts.
-    if (htp_share_resource_optimization_ == 1) {
+    // Publish only after fixing the allocator mode so later sessions can reuse it.
+    if (htp_share_resource_optimization_ != -1) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
+  }
+  // Clear the singleton only after allocator compatibility and logger ownership are settled.
+  // Async context callbacks retain the initiating manager and do not depend on this shared slot.
+  if (stop_share_ep_contexts_) {
+    SharedContext::GetInstance().ResetSharedQnnBackendManager();
   }
   if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
     ORT_CXX_LOGF(logger_,
@@ -1715,18 +1724,11 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   }
 #endif
 
-  // Owns the EPContext callbacks resolved from session_options. On pre-v28 ORT this is a no-op
-  // stub with HasReadCallback()/HasWriteCallback() returning false.
-  // When running on ORT < 1.28, pass nullptr to skip the Experimental::EpContextConfig path
-  // that would dereference API vtable entries that don't exist in older runtimes (crash).
-  const OrtSessionOptions* session_opts_for_epctx = &session_options_;
-  if (factory.effective_api_version_ < 28) {
-    session_opts_for_epctx = nullptr;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "ORT runtime API version is below 28 (v1.28). "
-                "EPContext encryption callbacks are unavailable; upgrade to onnxruntime >= 1.28 to enable.");
-  }
-  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_opts_for_epctx, &logger_);
+  // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
+  // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
+  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
+                                                            runtime_capabilities,
+                                                            &logger_);
 
   // File mapping and encryption are mutually exclusive: an App-provided read callback replaces
   // the on-disk read, so file mapping must be off when a read callback is registered.
@@ -1884,7 +1886,7 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   init_input_output_info(model_outputs.names, model_outputs.indices, graph_outputs);
 
   auto qnn_model_wrapper = qnn::QnnModelWrapper(*graph,
-                                                ApiPtrs{ort_api, ep_api, model_editor_api},
+                                                static_cast<const ApiPtrs&>(*this),
                                                 logger_,
                                                 *qnn_backend_manager_,
                                                 model_inputs,
@@ -2269,6 +2271,16 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph, ep->ort_api);
 
+  // Compatibility validation precedes GetCapability and therefore cannot
+  // inspect the graph to determine is_qnn_ctx_model. It tentatively prepares
+  // a cached-context backend so a real EPContext can reuse it. If this graph
+  // is not an EPContext model, discard that tentative setup and let the
+  // regular setup below create the backend with the actual graph's settings.
+  if (!is_qnn_ctx_model && ep->backend_setup_from_compatibility_check_) {
+    ep->backend_setup_from_compatibility_check_ = false;
+    ep->qnn_backend_manager_->ReleaseResources();
+  }
+
   if (is_qnn_ctx_model && ep->share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
     if (EpSharedContextsHasAllGraphs(graph, ep->ort_api, ep->logger_)) {
       ep->PartitionCtxModel(graph, graph_support_info);
@@ -2336,14 +2348,6 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   context_bin_map.clear();
 
-  // Deferred terminator reset for both htp_share_resource_optimization and share_ep_contexts:
-  // the singleton must remain populated during SetupBackend because ContextCreateAsyncCallback
-  // retrieves the backend manager from it. Now that SetupBackend has completed it is safe to
-  // clear the slot, regardless of whether setup succeeded.
-  if (ep->stop_share_ep_contexts_) {
-    SharedContext::GetInstance().ResetSharedQnnBackendManager();
-  }
-
   if (!rt.IsOK()) {
     const std::string message = "QNN SetupBackend failed " + rt.GetErrorMessage();
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
@@ -2390,6 +2394,11 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   if (is_qnn_ctx_model) {
     ep->PartitionCtxModel(graph, graph_support_info);
     return nullptr;
+  }
+
+  // Reset the flag in case there are patterns rejected in the first GetCapability pass but supported in the second.
+  if (ep->is_post_layout_transform_) {
+    ep->has_unsupported_nodes_wo_cpu_fallback_ = false;
   }
 
   // GetCapability runs up to twice. Clear before pass 2 so its collection
@@ -2481,6 +2490,17 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
       }
       ep->WriteFrameworkOpTrace(graph);
     }
+
+    // This flag will in fact have no effect as QnnEp::Compile will be entirely skipped without any supported nodes.
+    // Considering the bottleneck for large models should be in graph finalize instead of ORT Core graph
+    // transformations and the cases of completely no supported nodes should be rather rare, it may be okay not to stop
+    // session initialization immediately like partial support cases like below.
+    // Setting to true here is merely to make the flag consistent.
+    if (!is_qnn_ctx_model && ep->disable_cpu_ep_fallback_) {
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, "No nodes are supported in QNN EP.");
+      ep->has_unsupported_nodes_wo_cpu_fallback_ = true;
+    }
+
     return nullptr;
   }
 
@@ -2526,6 +2546,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     ORT_CXX_LOG(ep->logger_,
                 ORT_LOGGING_LEVEL_ERROR,
                 ("Unsupported nodes in QNN EP: " + get_unsupported_node_names()).c_str());
+    ep->has_unsupported_nodes_wo_cpu_fallback_ = true;
   }
 
   return nullptr;
@@ -2562,7 +2583,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     const std::string fused_node_name = Ort::ConstNode(fused_node).GetName();
 
     std::unique_ptr<qnn::QnnModel> qnn_model = std::make_unique<qnn::QnnModel>(
-        qnn_backend_manager_.get(), ApiPtrs{ort_api, ep_api, model_editor_api});
+        qnn_backend_manager_.get(), static_cast<const ApiPtrs&>(*this));
 
     qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
         QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
@@ -2711,6 +2732,9 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
     end = std::chrono::steady_clock::now();
     total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
+
+    // Join every worker before consuming results or moving model ownership.
+    tp.Stop();
 
     for (auto& model_info : model_infos) {
       RETURN_IF_NOT_OK(std::move(model_info.result));
@@ -3157,6 +3181,22 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+
+  // Early fail without actual compile and make session initialization immediately terminate.
+  if (ep->has_unsupported_nodes_wo_cpu_fallback_) {
+    // Write collected trace(s) before early fail.
+    if (ep->enable_framework_op_trace_ && count > 0) {
+      if (ep->enable_multi_soc_ep_context_) {
+        ep->AppendMultiSocTraces();
+      } else {
+        ep->AppendSingleSocTrace();
+      }
+      ep->WriteFrameworkOpTrace(graphs[0]);
+    }
+
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                    "User disabled CPU EP fallback but not all nodes are supported by QNN-EP.");
+  }
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     if (ep->prepare_and_load_) {
@@ -3747,20 +3787,48 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
     return nullptr;
   }
 
-  // Backend is only setup in GetCapability. However, at this point, it is possible that this function is invoked
-  // before any GetCapability call, and thus backend is not ready. Here, backend is setup and released with basic
-  // settings for actual setup in GetCapability later. If the duplicate setup introduces significant overhead in the
-  // future, we may consider setup actual backend here.
+  // Compatibility validation runs before GetCapability. For a normal EPContext
+  // session, retain the backend setup used for validation so GetCapability can
+  // reuse it. This avoids opening and closing a QNN device solely for
+  // validation, only to create the same device again when the cached context
+  // is loaded.
+  //
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
+  // HTP resource sharing creates contexts during SetupBackend and requires
+  // graph-derived context_bin_map data, so only the default (-1) configuration
+  // can reuse the compatibility backend.
+  bool compatibility_backend_isreusable = htp_share_resource_optimization_ == -1;
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    qnn_backend_manager_->SetupBackend(/*load_from_cached_context=*/true,
-                                       /*need_load_system_lib=*/true,
-                                       /*share_ep_contexts=*/false,
-                                       /*htp_share_resource_optimization=*/-1,
-                                       /*enable_file_mapped_weights=*/false,
-                                       /*rpcmem_library=*/nullptr,
-                                       dummy_map);
+    Ort::Status setup_status = Ort::Status();
+    if (compatibility_backend_isreusable) {
+      setup_status = qnn_backend_manager_->SetupBackend(/*load_from_cached_context*/ true,
+                                                        /*need_load_system_lib*/ true,
+                                                        /*share_ep_contexts*/ false,
+                                                        /*htp_share_resource_optimization*/ -1,
+                                                        enable_file_mapped_weights_,
+                                                        rpcmem_library_,
+                                                        dummy_map);
+    }
+    if (!compatibility_backend_isreusable || !setup_status.IsOK()) {
+      // Preserve compatibility validation when the reusable setup is not
+      // supported. SetupBackend cleaned up its failed attempt, so retry with
+      // the original isolated probe configuration.
+      compatibility_backend_isreusable = false;
+      setup_status = qnn_backend_manager_->SetupBackend(true, true, false, -1, false, nullptr, dummy_map);
+    }
+    if (!setup_status.IsOK()) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Skip compatibility validation due to backend setup failure: " +
+                   setup_status.GetErrorMessage())
+                      .c_str());
+      *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+      return nullptr;
+    }
+    if (compatibility_backend_isreusable) {
+      backend_setup_from_compatibility_check_ = true;
+    }
   }
 
   status = qnn_cache_compatibility_manager_->ValidateCompatibilityInfo(info, *model_compatibility);
@@ -3771,8 +3839,8 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
   }
 
-  if (!is_backend_setup) {
-    // Release backend to avoid interfering later usage.
+  if (!is_backend_setup && !compatibility_backend_isreusable) {
+    // The isolated compatibility setup is only used for validation.
     qnn_backend_manager_->ReleaseResources();
   }
 

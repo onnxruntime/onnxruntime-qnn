@@ -85,7 +85,59 @@ GetTestModelFn BuildConstantDQQGemmBiasTestCase(float requant_scale) {
   };
 }
 
-void RunConstantDQQTest(const GetTestModelFn& build_test_case, const std::filesystem::path& json_dir) {
+// A runtime DQ -> Q pair after Add. The scale nudge prevents ORT's QDQ optimizer
+// from removing the pair before QNN EP composes it as a Convert.
+template <typename QuantType>
+GetTestModelFn BuildRuntimeDQQTestCase(const TestInputDef<float>& input0_def,
+                                       const TestInputDef<float>& input1_def,
+                                       const QuantParams<QuantType>& output_qparams) {
+  return [input0_def, input1_def, output_qparams](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input0", input0_def);
+    MakeTestInput<float>(builder, "input1", input1_def);
+
+    const QuantParams<QuantType> input0_qparams = GetTestInputQuantParams<QuantType>(input0_def);
+    const std::string input0_after_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq0", "input0", input0_qparams.scale, input0_qparams.zero_point);
+
+    const QuantParams<QuantType> input1_qparams = GetTestInputQuantParams<QuantType>(input1_def);
+    const std::string input1_after_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq1", "input1", input1_qparams.scale, input1_qparams.zero_point);
+
+    builder.AddNode("add", "Add", {input0_after_qdq, input1_after_qdq}, {"add_out"});
+
+    QuantParams<QuantType> add_output_qparams = output_qparams;
+    add_output_qparams.scale *= 1.01f;
+    const std::string add_output_after_qdq =
+        AddQDQNodePair<QuantType>(builder, "add_qdq", "add_out",
+                                  add_output_qparams.scale, add_output_qparams.zero_point);
+
+    builder.AddQuantizeLinearNode<QuantType>("final_q", add_output_after_qdq,
+                                             output_qparams.scale, output_qparams.zero_point, "output");
+    builder.MakeOutput("output");
+  };
+}
+
+// The DQ output has two consumers, so GetOnlyChildOfType must reject the
+// DQ -> Q fusion and leave the standalone Dequantize and Quantize nodes intact.
+GetTestModelFn BuildRuntimeDQQExtraConsumerTestCase() {
+  return [](ModelTestBuilder& builder) {
+    MakeTestInput<uint8_t>(builder, "input",
+                           TestInputDef<uint8_t>({1, 2, 2, 2}, false,
+                                                 {0, 32, 64, 96, 128, 160, 192, 255}));
+
+    builder.AddDequantizeLinearNode<uint8_t>("shared_dq", "input", 0.1f, 128, "shared_dq_out");
+    builder.AddQuantizeLinearNode<uint8_t>("requant_q", "shared_dq_out", 0.2f, 120, "requant_output");
+    builder.MakeOutput("requant_output");
+
+    builder.AddNode("relu", "Relu", {"shared_dq_out"}, {"relu_output"});
+    builder.MakeOutput("relu_output");
+  };
+}
+
+void RunDQQTest(const GetTestModelFn& build_test_case,
+                const std::filesystem::path& json_dir,
+                const EPVerificationParams& verification_params =
+                    EPVerificationParams{ExpectedEPNodeAssignment::All}) {
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
 
@@ -98,12 +150,57 @@ void RunConstantDQQTest(const GetTestModelFn& build_test_case, const std::filesy
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
-  // HTP and the CPU EP may round the Add output to adjacent codes.
-  RunQnnModelTest(build_test_case, provider_options, /*opset_version=*/21,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier{1.0f / 64.0f + 1e-5f}});
+  RunQnnModelTest(build_test_case, provider_options, /*opset_version=*/21, verification_params);
 }
 
 }  // namespace
+
+TEST_F(QnnHTPBackendTests, DQQFusion_RuntimeU8_EmitsConvert) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_dir = "DQQFusion_RuntimeU8_EmitsConvert";
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  const std::vector<float> input_data = {-8.0f, -6.0f, -2.0f, 0.0f, 2.0f, 4.0f, 6.0f, 8.0f};
+  const TestInputDef<float> input0_def({1, 2, 2, 2}, false, input_data);
+  const TestInputDef<float> input1_def({1, 2, 2, 2}, false, input_data);
+  RunDQQTest(BuildRuntimeDQQTestCase<uint8_t>(input0_def, input1_def, {1.0f, 128}), json_dir);
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
+  AssertOpWithNameInQnnGraph(json_dir, "Convert", "add_qdq_dq");
+}
+
+TEST_F(QnnHTPBackendTests, DQQFusion_RuntimeU16_EmitsConvert) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_dir = "DQQFusion_RuntimeU16_EmitsConvert";
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  const std::vector<float> input_data = {-8.0f, -6.0f, -2.0f, 0.0f, 2.0f, 4.0f, 6.0f, 8.0f};
+  const TestInputDef<float> input0_def({1, 2, 2, 2}, false, input_data);
+  const TestInputDef<float> input1_def({1, 2, 2, 2}, false, input_data);
+  RunDQQTest(BuildRuntimeDQQTestCase<uint16_t>(input0_def, input1_def, {1.0f, 32768}), json_dir);
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
+  AssertOpWithNameInQnnGraph(json_dir, "Convert", "add_qdq_dq");
+}
+
+TEST_F(QnnHTPBackendTests, DQQFusion_ExtraConsumer_DoesNotFuse) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_dir = "DQQFusion_ExtraConsumer_DoesNotFuse";
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  RunDQQTest(BuildRuntimeDQQExtraConsumerTestCase(), json_dir,
+             EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                  ElementwiseAbsoluteVerifier{1e-2f}});
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
+  AssertOpWithNameInQnnGraph(json_dir, "Dequantize", "shared_dq");
+}
 
 // A runtime Convert here would turn the constant bias into an activation.
 TEST_F(QnnHTPBackendTests, DQQFusion_ConstantInput_FoldsToStaticTensor) {
@@ -111,7 +208,9 @@ TEST_F(QnnHTPBackendTests, DQQFusion_ConstantInput_FoldsToStaticTensor) {
   const std::filesystem::path json_dir = "DQQFusion_ConstantInput_FoldsToStaticTensor";
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
 
-  RunConstantDQQTest(BuildConstantDQQTestCase(kBetaScale), json_dir);
+  RunDQQTest(BuildConstantDQQTestCase(kBetaScale), json_dir,
+             EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                  ElementwiseAbsoluteVerifier{1.0f / 64.0f + 1e-5f}});
   if (::testing::Test::IsSkipped()) {
     return;
   }
@@ -124,7 +223,9 @@ TEST_F(QnnHTPBackendTests, DQQFusion_ConstantInputRequantized_FoldsToStaticTenso
   const std::filesystem::path json_dir = "DQQFusion_ConstantInputRequantized_FoldsToStaticTensor";
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
 
-  RunConstantDQQTest(BuildConstantDQQTestCase(2 * kBetaScale), json_dir);
+  RunDQQTest(BuildConstantDQQTestCase(2 * kBetaScale), json_dir,
+             EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                  ElementwiseAbsoluteVerifier{1.0f / 64.0f + 1e-5f}});
   if (::testing::Test::IsSkipped()) {
     return;
   }
@@ -137,7 +238,9 @@ TEST_F(QnnHTPBackendTests, DQQFusion_ConstantInputTransposed_FoldsTranspose) {
   const std::filesystem::path json_dir = "DQQFusion_ConstantInputTransposed_FoldsTranspose";
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
 
-  RunConstantDQQTest(BuildConstantDQQTransposeTestCase(2 * kBetaScale), json_dir);
+  RunDQQTest(BuildConstantDQQTransposeTestCase(2 * kBetaScale), json_dir,
+             EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                  ElementwiseAbsoluteVerifier{1.0f / 64.0f + 1e-5f}});
   if (::testing::Test::IsSkipped()) {
     return;
   }
@@ -151,7 +254,9 @@ TEST_F(QnnHTPBackendTests, DQQFusion_ConstantGemmBias_FoldsToStaticTensor) {
   const std::filesystem::path json_dir = "DQQFusion_ConstantGemmBias_FoldsToStaticTensor";
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
 
-  RunConstantDQQTest(BuildConstantDQQGemmBiasTestCase(2 * kBetaScale), json_dir);
+  RunDQQTest(BuildConstantDQQGemmBiasTestCase(2 * kBetaScale), json_dir,
+             EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                  ElementwiseAbsoluteVerifier{1.0f / 64.0f + 1e-5f}});
   if (::testing::Test::IsSkipped()) {
     return;
   }

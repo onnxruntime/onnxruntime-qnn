@@ -137,7 +137,7 @@ Ort::Status SimpleOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(BaseOpBuilder::ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation));
 
   // Only HTP was validated for this Convert; the relaxed selectors are backend-agnostic, so guard here.
-  // See OrtBinaryNodeGroupSelector's relaxation in qnn_ep_utils.cc for context.
+  // See OrtBinaryNodeGroupSelector's relaxation in qdq_node_group_selector.cc for context.
   if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return Ort::Status();
   }

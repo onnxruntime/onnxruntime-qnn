@@ -23,9 +23,10 @@ class QnnModelWrapper;
 // the Transpose's perm, then emits ONE QNN node:
 //
 //   * composed perm is identity -> single noop Reshape (input/output shapes coincide)
-//   * otherwise                 -> single Transpose(perm = fused) from the Reshape's
-//                                  outer input tensor to the Transpose's outer output
-//                                  tensor
+//   * otherwise                 -> single fused op from the Reshape's outer input tensor
+//                                  to the Transpose's outer output tensor. This is a
+//                                  Transpose, or a Reshape when the composed perm only
+//                                  moves size-1 dimensions and changes shape.
 //
 // The upstream ORT ReshapeTransposeFusion pass in core/optimizer/ handles the same
 // pattern on the pre-partition graph, but for QNN EP models the offending pairs are

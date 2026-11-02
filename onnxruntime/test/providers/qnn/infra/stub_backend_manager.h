@@ -7,6 +7,8 @@
 
 #include <memory>
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "QnnInterface.h"
 #include "HTP/QnnHtpDevice.h"
 #include "System/QnnSystemInterface.h"

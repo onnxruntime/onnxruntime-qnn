@@ -6,7 +6,10 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -2309,6 +2312,202 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_AOT_Phase2_NoSidecar_EmitsEmptyColum
       << "got " << annotated.size() << " non-empty annotations";
 }
 
+static ProviderOptions MakeHtpTraceProviderOptions(const fs::path& trace_dir) {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+  opts["enable_framework_op_trace"] = "1";
+  opts["framework_op_trace_dir"] = trace_dir.string();
+#if defined(__linux__) && !defined(__aarch64__)
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  return opts;
+}
+
+// With a Conv prefix, layout transformation runs and the dynamic Reshape remains
+// unsupported in pass 2. Without it, no nodes are supported and Compile is skipped.
+static void RunFrameworkOpTraceCpuFallbackFailure(bool add_supported_conv,
+                                                  const ProviderOptions& opts,
+                                                  Ort::SessionOptions& so,
+                                                  const std::vector<std::string>& expected_arches = {}) {
+  auto build_model = [add_supported_conv](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("input", {2, 2, 4, 4}, GetFloatDataInRange(-1.0f, 1.0f, 64));
+    builder.MakeInput<int64_t>("shape", {4}, std::vector<int64_t>{2, 8, 2, 2});
+    std::string reshape_input = "input";
+    if (add_supported_conv) {
+      builder.MakeInitializer<float>("weight", {2, 2, 1, 1}, -1.0f, 1.0f);
+      builder.AddNode("conv", "Conv", {"input", "weight"}, {"conv_out"});
+      reshape_input = "conv_out";
+    }
+    builder.AddNode("dynamic_reshape", "Reshape", {reshape_input, "shape"}, {"Y"});
+    builder.MakeOutput("Y");
+  };
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, build_model);
+  so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  ASSERT_NO_FATAL_FAILURE(RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, opts));
+  try {
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, model->model_data.data(), model->model_data.size(), so));
+    FAIL() << "Session initialization should fail with CPU fallback disabled";
+  } catch (const Ort::Exception& ex) {
+    EXPECT_EQ(ex.GetOrtErrorCode(), add_supported_conv ? ORT_EP_FAIL : ORT_FAIL);
+    const char* expected_error = add_supported_conv
+                                     ? "User disabled CPU EP fallback but not all nodes are supported by QNN-EP."
+                                     : "This session contains graph nodes that are assigned to the default CPU EP, "
+                                       "but fallback to CPU EP has been explicitly disabled by the user.";
+    EXPECT_NE(std::string(ex.what()).find(expected_error), std::string::npos) << ex.what();
+  }
+
+  const auto trace_file = FindTraceFile(opts.at("framework_op_trace_dir"));
+  ASSERT_FALSE(trace_file.empty()) << "Rejections must be written even though compilation did not run";
+  const auto j = ReadTraceJson(trace_file);
+  ASSERT_TRUE(j.is_object());
+  EXPECT_EQ(j.at("backend_type"), "htp");
+  ASSERT_EQ(j.at("unsupported_nodes").size(), 1u) << "Passes and SoCs must not duplicate rejections";
+  const auto& rejected = j.at("unsupported_nodes")[0];
+  EXPECT_EQ(rejected.at("node_name"), "dynamic_reshape");
+  EXPECT_EQ(rejected.at("op_type"), "Reshape");
+  const auto reason = rejected.at("reason").get<std::string>();
+  EXPECT_FALSE(reason.empty());
+
+  // No ComposeGraph call occurred, so supported nodes have no compiled mappings.
+  EXPECT_TRUE(j.at("subgraph_traces").empty());
+  EXPECT_EQ(j.at("summary").at("qnn_subgraphs"), 0u);
+  EXPECT_EQ(j.at("summary").at("total_qnn_ops"), 0u);
+  EXPECT_EQ(j.at("summary").at("supported_nodes"), 0u);
+  EXPECT_EQ(j.at("summary").at("unsupported_nodes"), 1u);
+  const size_t num_socs = expected_arches.empty() ? 1u : expected_arches.size();
+  ASSERT_EQ(j.at("soc_traces").size(), num_socs);
+  EXPECT_EQ(j.at("summary").at("total_socs"), num_socs);
+  for (const auto& soc : j.at("soc_traces")) {
+    EXPECT_TRUE(soc.at("compilation_target").contains("device_id"));
+  }
+  for (size_t i = 0; i < expected_arches.size(); ++i) {
+    const auto arch = "V" + expected_arches[i];
+    EXPECT_EQ(j.at("soc_traces")[i].at("compilation_target").at("htp_arch"), arch);
+    EXPECT_NE(reason.find(arch), std::string::npos) << "Missing rejection reason for " << arch;
+  }
+}
+
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_CpuFallbackDisabled_CompileEarlyFailure) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  Ort::SessionOptions so;
+  ASSERT_NO_FATAL_FAILURE(RunFrameworkOpTraceCpuFallbackFailure(
+      /*add_supported_conv=*/true, MakeHtpTraceProviderOptions(tmp.path()), so));
+}
+
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_CpuFallbackDisabled_AllUnsupported) {
+  ScopedTempDir tmp;
+  Ort::SessionOptions so;
+  ASSERT_NO_FATAL_FAILURE(RunFrameworkOpTraceCpuFallbackFailure(
+      /*add_supported_conv=*/false, MakeHtpTraceProviderOptions(tmp.path()), so));
+}
+
+namespace {
+
+struct FrameworkOpTraceCapabilityLog {
+  std::mutex mutex;
+  bool saw_first_pass = false;
+  bool saw_second_pass = false;
+  bool rejected_before_second_pass = false;
+  bool rejected_after_second_pass = false;
+
+  static void ORT_API_CALL Capture(void* param, OrtLoggingLevel, const char*, const char*, const char*,
+                                   const char* message) {
+    auto& capture = *static_cast<FrameworkOpTraceCapabilityLog*>(param);
+    std::lock_guard<std::mutex> lock(capture.mutex);
+    const std::string_view text(message);
+    if (text.find("GetCapability pass 1") != std::string_view::npos) {
+      capture.saw_first_pass = true;
+    } else if (text.find("GetCapability pass 2") != std::string_view::npos) {
+      capture.saw_second_pass = true;
+    } else if (text.find("Unsupported nodes in QNN EP:") != std::string_view::npos) {
+      if (capture.saw_second_pass) {
+        capture.rejected_after_second_pass = true;
+      } else if (capture.saw_first_pass && text.find("Transpose") != std::string_view::npos) {
+        capture.rejected_before_second_pass = true;
+      }
+    }
+  }
+};
+
+}  // namespace
+
+TEST_F(QnnHTPBackendTests, FrameworkOpTrace_CpuFallbackDisabled_SecondPassSupportsAllNodes) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ScopedTempDir tmp;
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("input", {2, 2, 4, 4}, GetFloatDataInRange(-1.0f, 1.0f, 64));
+    builder.MakeInitializer<float>("conv1_weight", {2, 2, 1, 1}, -1.0f, 1.0f);
+    builder.AddNode("Conv1", "Conv", {"input", "conv1_weight"}, {"conv1_out"});
+
+    // Bare SpaceToDepth is deferred until pass 2. No unit dimensions and the DCR
+    // permutation prevent Rank6ToRank5Fusion from claiming this pattern in pass 1.
+    builder.Make1DInitializer<int64_t>("reshape1_shape", {2, 2, 2, 2, 2, 2});
+    builder.AddNode("Reshape1", "Reshape", {"conv1_out", "reshape1_shape"}, {"reshape1_out"});
+    builder.AddNode("Transpose", "Transpose", {"reshape1_out"}, {"transpose_out"}, kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", {0, 3, 5, 1, 2, 4})});
+    builder.Make1DInitializer<int64_t>("reshape2_shape", {2, 8, 2, 2});
+    builder.AddNode("Reshape2", "Reshape", {"transpose_out", "reshape2_shape"}, {"reshape2_out"});
+
+    // The Conv nodes trigger layout transformation and the second capability pass.
+    builder.MakeInitializer<float>("conv2_weight", {8, 8, 1, 1}, -1.0f, 1.0f);
+    builder.AddNode("Conv2", "Conv", {"reshape2_out", "conv2_weight"}, {"Y"});
+    builder.MakeOutput("Y");
+  };
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, build_model);
+  FrameworkOpTraceCapabilityLog capture;
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  Ort::ThrowOnError(Ort::GetApi().SetUserLoggingFunction(so, FrameworkOpTraceCapabilityLog::Capture, &capture));
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  ASSERT_NO_FATAL_FAILURE(RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider,
+                                               MakeHtpTraceProviderOptions(tmp.path())));
+  // Initialization alone exercises trace generation; DCR inference accuracy is unrelated.
+  ASSERT_NO_THROW(ScopedOrtSession scoped(std::move(registered_ep_device),
+                                          Ort::Session(*ort_env,
+                                                       model->model_data.data(),
+                                                       model->model_data.size(),
+                                                       so)));
+  {
+    std::lock_guard<std::mutex> lock(capture.mutex);
+    EXPECT_TRUE(capture.saw_first_pass);
+    EXPECT_TRUE(capture.saw_second_pass);
+    EXPECT_TRUE(capture.rejected_before_second_pass) << "The model must exercise the stale-flag regression";
+    EXPECT_FALSE(capture.rejected_after_second_pass);
+  }
+
+  const auto trace_file = FindTraceFile(tmp.path());
+  ASSERT_FALSE(trace_file.empty());
+  const auto j = ReadTraceJson(trace_file);
+  ASSERT_NO_FATAL_FAILURE(ValidateTraceStructure(j));
+  EXPECT_TRUE(j.at("unsupported_nodes").empty()) << "First-pass rejections must be cleared";
+  EXPECT_EQ(j.at("summary").at("unsupported_nodes"), 0u);
+
+  std::unordered_set<std::string> fused_sources;
+  for (const auto& subgraph : j.at("subgraph_traces")) {
+    for (const auto& mapping : subgraph.at("op_mappings")) {
+      if (mapping.contains("node_group_type") && mapping.at("node_group_type") == "SpaceToDepthFusion") {
+        for (const auto& source : mapping.at("sources")) {
+          if (source.at("type") == "OP") {
+            fused_sources.insert(source.at("name").get<std::string>());
+          }
+        }
+      }
+    }
+  }
+  for (const auto* name : {"Reshape1", "Transpose", "Reshape2"}) {
+    EXPECT_EQ(fused_sources.count(name), 1u) << name << " must be mapped by SpaceToDepthFusion";
+  }
+}
+
 // ================= FCB multi-SoC framework op trace (x86-only) =================
 // Multi-SoC FCB EP-context compilation is an x86 offline-preparation feature
 // (the EP rejects it on aarch64), so these E2E tests are x86-only.
@@ -2379,6 +2578,37 @@ void AssertFcbTraceInvariants(const nlohmann::json& j, size_t num_socs) {
 }
 
 }  // namespace
+
+// Early failures must preserve every configured SoC even without graph compilation.
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_FrameworkOpTrace_CpuFallbackDisabled_CompileEarlyFailure) {
+  ScopedTempDir tmp;
+  const auto ctx_file = tmp.path() / "model_ctx.onnx";
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_file.string().c_str());
+
+  ASSERT_NO_FATAL_FAILURE(RunFrameworkOpTraceCpuFallbackFailure(/*add_supported_conv=*/true,
+                                                                MakeFcbTraceProviderOptions(tmp.path().string()),
+                                                                so,
+                                                                FcbTraceTestConfig::TargetArches()));
+  EXPECT_FALSE(fs::exists(ctx_file)) << "Early failure must not generate an EPContext model";
+}
+
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_FrameworkOpTrace_CpuFallbackDisabled_AllUnsupported) {
+  ScopedTempDir tmp;
+  const auto ctx_file = tmp.path() / "model_ctx.onnx";
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_file.string().c_str());
+
+  ASSERT_NO_FATAL_FAILURE(RunFrameworkOpTraceCpuFallbackFailure(/*add_supported_conv=*/false,
+                                                                MakeFcbTraceProviderOptions(tmp.path().string()),
+                                                                so,
+                                                                FcbTraceTestConfig::TargetArches()));
+  EXPECT_FALSE(fs::exists(ctx_file));
+}
 
 // FCB multi-SoC framework op trace E2E test: exercises GetCapabilityImpl ->
 // GetMultiSocSupportedNodes -> CompileMultiSocOnnxModel with tracing enabled.

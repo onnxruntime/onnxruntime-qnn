@@ -7,8 +7,9 @@
 // without constructing a real QnnEp instance. They exercise:
 //   - Basic getters (name/vendor/version/vendor-id/is-stream-aware) and the
 //     ctor's CreateMemoryInfo_V2 wiring.
+//   - Factory data-transfer creation.
 //   - Trivial factory methods that never dispatch through the OrtApi tables
-//     (CreateDataTransferImpl, ReleaseEpImpl(nullptr)).
+//     (ReleaseEpImpl(nullptr)).
 //   - CreateEpFactories / ReleaseEpFactory extern-"C" entry points, focused
 //     on argument-validation and version-check error paths that do NOT
 //     reach the QnnEpFactory ctor's Ort::InitApi() (which would clobber the
@@ -37,8 +38,12 @@
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
+
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "onnxruntime_config.h"
+#include "onnxruntime_ep_device_ep_metadata_keys.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
@@ -112,6 +117,10 @@ class FactoryStubContext {
   // per test before calling into factory code.
   std::unordered_map<const OrtHardwareDevice*, OrtHardwareDeviceType> device_type_map;
   std::unordered_map<const OrtHardwareDevice*, uint32_t> device_vendor_map;
+  std::unordered_map<std::string, std::string> env_config;
+
+  // Ordered log of (key, value) pairs passed to AddKeyValuePair (e.g., hw device metadata).
+  std::vector<std::pair<std::string, std::string>> added_kv_pairs;
 
   // Ordered log of every OrtHardwareDevice* passed to CreateEpDevice.
   std::vector<const OrtHardwareDevice*> created_ep_devices;
@@ -181,6 +190,15 @@ class FactoryStubContext {
 
  private:
   void InstallOrtApiStubs() {
+    stub_ort_api.GetEpApi = []() noexcept -> const OrtEpApi* {
+      auto* self = current_;
+      return self == nullptr ? nullptr : &self->stub_ep_api;
+    };
+    stub_ort_api.GetModelEditorApi = []() noexcept -> const OrtModelEditorApi* {
+      auto* self = current_;
+      return self == nullptr ? nullptr : &self->stub_editor_api;
+    };
+
     // QnnEp probes the v28 EPContext experimental API during construction.
     // This fake runtime has no experimental APIs, so report them unavailable
     // rather than leaving the lookup entry null.
@@ -217,8 +235,18 @@ class FactoryStubContext {
     stub_ort_api.CreateKeyValuePairs = [](OrtKeyValuePairs** out) noexcept {
       *out = reinterpret_cast<OrtKeyValuePairs*>(kFakeToken);
     };
-    stub_ort_api.AddKeyValuePair = [](OrtKeyValuePairs*, const char*, const char*) noexcept {};
+    stub_ort_api.AddKeyValuePair = [](OrtKeyValuePairs*, const char* key, const char* value) noexcept {
+      if (auto* self = current_) {
+        self->added_kv_pairs.emplace_back(key ? key : "", value ? value : "");
+      }
+    };
     stub_ort_api.ReleaseKeyValuePairs = [](OrtKeyValuePairs*) noexcept {};
+    stub_ort_api.GetKeyValue = [](const OrtKeyValuePairs*, const char* key) noexcept -> const char* {
+      auto* self = current_;
+      if (self == nullptr || key == nullptr) return nullptr;
+      const auto it = self->env_config.find(key);
+      return it == self->env_config.end() ? nullptr : it->second.c_str();
+    };
 
     stub_ort_api.HardwareDevice_Type =
         [](const OrtHardwareDevice* dev) noexcept -> OrtHardwareDeviceType {
@@ -315,6 +343,10 @@ class FactoryStubContext {
   }
 
   void InstallOrtEpApiStubs() {
+    stub_ep_api.GetEnvConfigEntries = [](OrtKeyValuePairs** out) noexcept -> OrtStatus* {
+      *out = reinterpret_cast<OrtKeyValuePairs*>(kFakeToken);
+      return nullptr;
+    };
     stub_ep_api.CreateEpDevice =
         [](OrtEpFactory*, const OrtHardwareDevice* device,
            const OrtKeyValuePairs*, const OrtKeyValuePairs*,
@@ -362,13 +394,16 @@ class FactoryStubContext {
 
 thread_local FactoryStubContext* FactoryStubContext::current_ = nullptr;
 
-// RAII installer for FactoryStubContext::current_. Stub lambdas read the
-// active context through this TLS pointer since C function pointers have no
-// user-data slot. Restoring the previous value on scope exit keeps the stub
-// state predictable if a test happens to nest contexts.
+// RAII installer for FactoryStubContext::current_ and the matching global ORT
+// API. Stub lambdas read the active context through this TLS pointer since C
+// function pointers have no user-data slot. The API override is also required
+// while constructing QnnEpFactory because its custom-op setup uses Ort C++
+// wrappers, and Windows keeps separate API state in the test EXE and provider
+// DLL.
 class UseFactoryStubs {
  public:
-  explicit UseFactoryStubs(FactoryStubContext& ctx) noexcept {
+  explicit UseFactoryStubs(FactoryStubContext& ctx)
+      : global_override_(&ctx.stub_ort_api) {
     prev_ = FactoryStubContext::current_;
     FactoryStubContext::current_ = &ctx;
   }
@@ -378,28 +413,8 @@ class UseFactoryStubs {
   UseFactoryStubs& operator=(const UseFactoryStubs&) = delete;
 
  private:
-  FactoryStubContext* prev_;
-};
-
-// Combines UseFactoryStubs with OrtGlobalApiOverride so that Ort::Logger's
-// C++ ctor (invoked during QnnEp's member-initialiser list when the factory
-// calls std::make_unique<QnnEp>) routes through the stubbed
-// Logger_GetLoggingSeverityLevel and short-circuits at FATAL. Without the
-// global override, the Ort::Logger ctor would call the real
-// Logger_GetLoggingSeverityLevel on our fake OrtLogger* token and SIGSEGV.
-// Used exclusively by Group 6 (QnnUnit_ProviderFactoryHtpTest) tests that
-// reach QnnEp construction; other groups keep their existing stub scopes.
-class UseGlobalFactoryStubs {
- public:
-  explicit UseGlobalFactoryStubs(FactoryStubContext& ctx)
-      : use_stubs_(ctx), global_override_(&ctx.stub_ort_api) {}
-
-  UseGlobalFactoryStubs(const UseGlobalFactoryStubs&) = delete;
-  UseGlobalFactoryStubs& operator=(const UseGlobalFactoryStubs&) = delete;
-
- private:
-  UseFactoryStubs use_stubs_;
   OrtGlobalApiOverride global_override_;
+  FactoryStubContext* prev_;
 };
 
 // Builds a fake OrtApiBase whose GetVersionString / GetApi route through the
@@ -422,14 +437,11 @@ static OrtApiBase MakeFakeApiBase() {
   return base;
 }
 
-// Base fixture: resets the process-wide default logger to nullptr at the start
-// of each test so that HasDefaultLogger()==false is the default state. Tests
-// that need a non-null default logger call OrtLoggingManager::SetDefaultLogger
-// themselves.
+// Base fixture: make HasDefaultLogger()==false in both the test executable and
+// provider DLL by default, then restore their previous state after each test.
 class QnnUnit_ProviderFactoryTest : public ::testing::Test {
  protected:
-  void SetUp() override { OrtLoggingManager::SetDefaultLogger(nullptr); }
-  void TearDown() override { OrtLoggingManager::SetDefaultLogger(nullptr); }
+  ScopedDefaultLoggerOverride default_logger_scope_{nullptr};
 };
 
 // Convenience: Qualcomm vendor ID computed the same way as in the factory
@@ -481,13 +493,18 @@ TEST_F(QnnUnit_ProviderFactoryTest, IsStreamAware_ReturnsFalse) {
   EXPECT_FALSE(factory.IsStreamAware(&factory));
 }
 
-TEST_F(QnnUnit_ProviderFactoryTest, CreateDataTransfer_SetsNullAndReturnsOk) {
+TEST_F(QnnUnit_ProviderFactoryTest, CreateDataTransfer_ReturnsInitializedTransfer) {
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
-  OrtDataTransferImpl* transfer = reinterpret_cast<OrtDataTransferImpl*>(0xDEAD);
+  OrtDataTransferImpl* transfer = nullptr;
   EXPECT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
-  EXPECT_EQ(transfer, nullptr);
+  ASSERT_NE(transfer, nullptr);
+  EXPECT_EQ(transfer->ort_version_supported, ORT_API_VERSION);
+  EXPECT_NE(transfer->CanCopy, nullptr);
+  EXPECT_NE(transfer->CopyTensors, nullptr);
+  EXPECT_NE(transfer->Release, nullptr);
+  transfer->Release(transfer);
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, CreateAllocator_HostAccessible_DoesNotLoadRpcMem) {
@@ -504,7 +521,14 @@ TEST_F(QnnUnit_ProviderFactoryTest, CreateAllocator_HostAccessible_DoesNotLoadRp
 
   EXPECT_EQ(status, nullptr);
   ASSERT_NE(allocator, nullptr);
+  EXPECT_NE(allocator->Alloc, nullptr);
+  EXPECT_NE(allocator->Free, nullptr);
+  EXPECT_NE(allocator->Info, nullptr);
+  EXPECT_EQ(allocator->Reserve, allocator->Alloc);
+  EXPECT_EQ(allocator->Info(allocator), reinterpret_cast<const OrtMemoryInfo*>(kFakeToken));
+#ifndef _WIN32
   EXPECT_EQ(allocator->Alloc, qnn::HtpSharedMemoryAllocator::AllocImpl);
+#endif
   factory.ReleaseAllocator(&factory, allocator);
 }
 
@@ -807,6 +831,141 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_AddAllocatorInfoFails_Do
 }
 
 // ===========================================================================
+// Group 3b: GetSupportedDevicesImpl — x86/x64 cross-compile NPU synthesis.
+//
+// On x86/x64 hosts (no real Qualcomm NPU), GetSupportedDevicesImpl should
+// synthesize a virtual NPU OrtHardwareDevice for AOT cross-compilation.
+// ===========================================================================
+
+#if !QNN_ARCH_ARM64
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_AdvertisesVirtualNpu) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  ctx.env_config["allow_virtual_devices"] = "1";
+
+  // Pass no devices at all — no NPU in the input array.
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, nullptr, 0, ep_devices, 4, &num), nullptr);
+
+  // On x86, the cross-compile NPU synthesis should fire.
+  EXPECT_GE(num, 1u);
+  ASSERT_FALSE(ctx.created_ep_devices.empty());
+
+  // The synthesized device must have IsVirtual="1" metadata.
+  bool found_is_virtual = false;
+  for (const auto& kv : ctx.added_kv_pairs) {
+    if (kv.first == kOrtHardwareDevice_MetadataKey_IsVirtual && kv.second == "1") {
+      found_is_virtual = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found_is_virtual) << "Synthesized NPU on x86 must have IsVirtual=1 metadata.";
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_CpuDeviceUnaffected) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+  ctx.env_config["allow_virtual_devices"] = "1";
+
+  // Pass only a CPU device — no NPU in the input array.
+  OrtHardwareDevice* cpu = MakeFakeHwDevice(30);
+  ctx.device_type_map[cpu] = OrtHardwareDeviceType_CPU;
+  ctx.device_vendor_map[cpu] = 0;
+
+  const OrtHardwareDevice* devices[] = {cpu};
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num), nullptr);
+
+  // Both CPU (from input) and synthesized virtual NPU (from cross-compile path).
+  EXPECT_EQ(num, 2u);
+  ASSERT_EQ(ctx.created_ep_devices.size(), 2u);
+  EXPECT_EQ(ctx.created_ep_devices[0], cpu);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHostWithoutOptIn_DoesNotAdvertiseVirtualNpu) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, nullptr, 0, ep_devices, 4, &num), nullptr);
+
+  EXPECT_EQ(num, 0u);
+  EXPECT_TRUE(ctx.created_ep_devices.empty());
+  EXPECT_TRUE(ctx.added_kv_pairs.empty());
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CrossCompileHost_ExplicitNpuNoDoubleSynthesis) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  // Pass an explicit Qualcomm NPU device on x86 — synthesis should NOT fire.
+  OrtHardwareDevice* npu = MakeFakeHwDevice(32);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+
+  const OrtHardwareDevice* devices[] = {npu};
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num), nullptr);
+
+  // Only the explicitly provided NPU — no virtual synthesis despite being on x86.
+  EXPECT_EQ(num, 1u);
+  ASSERT_EQ(ctx.created_ep_devices.size(), 1u);
+  EXPECT_EQ(ctx.created_ep_devices[0], npu);
+
+  // No IsVirtual metadata should have been added for the real NPU.
+  bool found_is_virtual = false;
+  for (const auto& kv : ctx.added_kv_pairs) {
+    if (kv.first == kOrtHardwareDevice_MetadataKey_IsVirtual) {
+      found_is_virtual = true;
+      break;
+    }
+  }
+  EXPECT_FALSE(found_is_virtual) << "Explicit NPU on x86 — no synthesis, no IsVirtual metadata.";
+}
+
+#endif  // !QNN_ARCH_ARM64
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_RealNpuPresent_NoSynthesis) {
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  // Pass a real Qualcomm NPU — synthesis should NOT fire.
+  OrtHardwareDevice* npu = MakeFakeHwDevice(31);
+  ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[npu] = kQualcommVendorId;
+
+  const OrtHardwareDevice* devices[] = {npu};
+  OrtEpDevice* ep_devices[4] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 4, &num), nullptr);
+
+  // Only the real NPU, no synthesis.
+  EXPECT_EQ(num, 1u);
+  ASSERT_EQ(ctx.created_ep_devices.size(), 1u);
+  EXPECT_EQ(ctx.created_ep_devices[0], npu);
+
+  // No IsVirtual metadata should have been added.
+  bool found_is_virtual = false;
+  for (const auto& kv : ctx.added_kv_pairs) {
+    if (kv.first == kOrtHardwareDevice_MetadataKey_IsVirtual) {
+      found_is_virtual = true;
+      break;
+    }
+  }
+  EXPECT_FALSE(found_is_virtual) << "Real NPU present — no synthesis, no IsVirtual metadata.";
+}
+
+// ===========================================================================
 // Group 4: GetHardwareDeviceIncompatibilityDetailsImpl /
 //          ValidateCompiledModelCompatibilityInfoImpl — error paths that stop
 //          before std::make_unique<QnnEp>. The fixture leaves the default
@@ -1097,14 +1256,13 @@ TEST_F(QnnUnit_ProviderFactoryTest, ReleaseEpFactory_NullPointer_ReturnsNull) {
 class QnnUnit_ProviderFactoryHtpTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    OrtLoggingManager::SetDefaultLogger(nullptr);
     QnnRealHtpBackendContext htp_check;
     if (!htp_check.IsValid()) {
       GTEST_SKIP() << QnnHtpBackendLibraryName() << " not available";
     }
   }
 
-  void TearDown() override { OrtLoggingManager::SetDefaultLogger(nullptr); }
+  ScopedDefaultLoggerOverride default_logger_scope_{nullptr};
 };
 
 // Verifies that CreateEpImpl enters the autoep branch when neither
@@ -1117,7 +1275,7 @@ class QnnUnit_ProviderFactoryHtpTest : public ::testing::Test {
 TEST_F(QnnUnit_ProviderFactoryHtpTest,
        CreateEp_AutoepNpuQualcomm_ClonesAndAddsBackendPath) {
   FactoryStubContext ctx;  // empty session_config → autoep branch
-  UseGlobalFactoryStubs use(ctx);
+  UseFactoryStubs use(ctx);
   QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
 
   OrtHardwareDevice* npu = MakeFakeHwDevice(20);
@@ -1162,7 +1320,7 @@ TEST_F(QnnUnit_ProviderFactoryHtpTest,
 TEST_F(QnnUnit_ProviderFactoryHtpTest,
        CreateEp_AutoepMultiDeviceNpuAndGpu_PicksNpu) {
   FactoryStubContext ctx;
-  UseGlobalFactoryStubs use(ctx);
+  UseFactoryStubs use(ctx);
   QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
 
   OrtHardwareDevice* npu = MakeFakeHwDevice(21);
@@ -1209,12 +1367,12 @@ TEST_F(QnnUnit_ProviderFactoryHtpTest,
 TEST_F(QnnUnit_ProviderFactoryHtpTest,
        ValidateCompatibilityInfo_NpuNoQnnEp_WiresHtpBackendType) {
   FactoryStubContext ctx;
-  UseGlobalFactoryStubs use(ctx);
-  QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
+  UseFactoryStubs use(ctx);
 
   // ValidateCompiledModelCompatibilityInfoImpl requires HasDefaultLogger().
   auto* fake_logger = reinterpret_cast<OrtLogger*>(kFakeToken);
-  OrtLoggingManager::SetDefaultLogger(fake_logger);
+  ScopedDefaultLoggerOverride logger_scope(fake_logger);
+  QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
 
   OrtHardwareDevice* npu = MakeFakeHwDevice(23);
   ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;
@@ -1245,11 +1403,10 @@ TEST_F(QnnUnit_ProviderFactoryHtpTest,
 TEST_F(QnnUnit_ProviderFactoryHtpTest,
        GetHardwareDeviceIncompatibilityDetails_NpuQualcomm_WiresHtpBackendType) {
   FactoryStubContext ctx;
-  UseGlobalFactoryStubs use(ctx);
-  QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
-
+  UseFactoryStubs use(ctx);
   auto* fake_logger = reinterpret_cast<OrtLogger*>(kFakeToken);
-  OrtLoggingManager::SetDefaultLogger(fake_logger);
+  ScopedDefaultLoggerOverride logger_scope(fake_logger);
+  QnnEpFactory factory("QNNExecutionProvider", ctx.MakeApiPtrs());
 
   OrtHardwareDevice* npu = MakeFakeHwDevice(24);
   ctx.device_type_map[npu] = OrtHardwareDeviceType_NPU;

@@ -371,7 +371,7 @@ block()
     target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_BUILD)
     # Accuracy tests exercise QNN through the public plugin EP API and do not
     # require direct access to QNN EP-internal symbols.
-    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ACCURACY_UT=1)
+    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ENABLE_ACCURACY_TESTS=1)
     if(onnxruntime_BUILD_QNN_UDO_TEST)
       target_compile_definitions(onnxruntime_provider_test PRIVATE BUILD_QNN_UDO_TEST)
     endif()
@@ -400,14 +400,14 @@ block()
 
   # Internal-symbol test build: link against the SHARED QNN EP library so tests
   # can call EP-internal functions directly.
-  if(onnxruntime_qnn_internal_ut_symbols_enabled)
+  if(onnxruntime_qnn_internal_test_symbols_enabled)
     target_link_libraries(onnxruntime_provider_test PRIVATE onnxruntime_providers_qnn)
     # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
     # It tracks whether the test binary is link-time bound to the SHARED EP library
     # (i.e., the cmake conditions above hold), not whether any production source is
     # under #if. When the macro is off, direct-access tier test bodies
     # (component/, snapshot/, session_snapshot/) compile to empty translation units, so
-    # non-coverage builds do not see undefined references.
+    # builds without internal-symbol access do not see undefined references.
     # Coverage builds and explicit internal-symbol builds enable this gate.
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
   endif()

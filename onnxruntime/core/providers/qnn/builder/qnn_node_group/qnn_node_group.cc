@@ -33,6 +33,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5_to_rank4.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/sequence_at_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/tanh_gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
@@ -109,11 +110,12 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Erf", {GeluFusion::TryFusion}},
     {"Tanh", {TanhGeluFusion::TryFusion}},
-    {"ReduceMean", {LayerNormFusion::TryFusion}},
+    {"ReduceMean", {LayerNormFusion::TryFusionFull, LayerNormFusion::TryFusionGammaOnly, LayerNormFusion::TryFusionCoreOnly}},
     {"ReduceL2", {L2NormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
     {"Reshape", {SpaceToDepthFusion::TryFusion, ChannelShuffleFusion::TryFusionFromReshape, Rank6ToRank5Fusion::TryFusion, ReshapeTransposeFusion::TryFusion, Rank5ToRank4Fusion::TryFusion}},
     {"Concat", {SliceConcatSpaceToDepthFusion::TryFusion}},
+    {"SequenceConstruct", {SequenceAtFusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {

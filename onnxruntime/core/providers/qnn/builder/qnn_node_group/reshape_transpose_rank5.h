@@ -18,20 +18,40 @@ namespace qnn {
 class QnnModelWrapper;
 
 /// <summary>
+/// How a rank-6 intermediate is reduced to rank 5.
+/// </summary>
+enum class RankReduction {
+  Squeeze,       ///< Drop the unit dim at index, which the transpose leaves in place.
+  MergeLeading,  ///< Merge input dims 0 and 1, which must travel together.
+};
+
+/// <summary>
 /// Represents a fusion of pattern: Reshape -> Transpose -> Reshape where intermediate tensors are rank-6.
 /// QNN doesn't support rank-6 Reshape and Transpose operators, so this fusion converts them to rank-5
-/// by removing a unit dimension (value of 1) from intermediate tensors.
+/// by dropping one dimension: a unit dimension the transpose leaves in place, or - when no such
+/// dimension exists - by merging input dims 0 and 1, which must travel together
+/// (perm[0] == 0 && perm[1] == 1).
+///
+/// Both reductions are pure view operations - an axis removal, or a merge of two adjacent axes
+/// that the permutation keeps adjacent - so they preserve element order exactly. Validity
+/// therefore depends only on which axes survive, never on the permutation's semantics. A perm
+/// that happens to be a SpaceToDepth decomposition is not a reason to bail out here.
+///
+/// Priority over SpaceToDepthFusion is provided by fusions-table order (SpaceToDepthFusion is
+/// tried first in qnn_node_group.cc), not by a list of permutations in this file. When
+/// SpaceToDepthFusion declines a pattern -- it refuses bare RTR before Layout Transform, see
+/// spacetodepth_fusion.cc - this fallback claims it rather than leaving it on the CPU.
+///
 /// Pattern: Tensor(t0) -> Reshape(R1) -> Tensor(t1) -> Transpose(T1) -> Tensor(t2) -> Reshape(R2) -> Tensor(t3)
-/// Conditions:
-/// - Rank(t0) == Rank(t3) AND Last dimension of t0 equals last dimension of t3
-/// - Rank(t1) == Rank(t2) == 6
-/// - There exists a dimension index where both t1 and t2 have value 1
-/// - Transpose must leave that unit dimension in place (perm[unit_dim_index] == unit_dim_index)
+/// Conditions: Rank(t1) == Rank(t2) == 6 with constant Reshape shapes, and either
+/// a fixed unit dim (t1[i] == t2[i] == 1, perm[i] == i) or perm[0] == 0 && perm[1] == 1.
 /// </summary>
 class Rank6ToRank5Fusion : public IQnnNodeGroup {
  public:
-  explicit Rank6ToRank5Fusion(gsl::span<const OrtNodeUnit* const> node_units, size_t unit_dim_index)
-      : unit_dim_index_(unit_dim_index) {
+  explicit Rank6ToRank5Fusion(gsl::span<const OrtNodeUnit* const> node_units,
+                              RankReduction kind,
+                              size_t index)
+      : kind_(kind), index_(index) {
     if (node_units.size() != 3) {
       ORT_CXX_API_THROW("Pattern expects exactly 3 NodeUnits.", ORT_EP_FAIL);
     }
@@ -60,7 +80,8 @@ class Rank6ToRank5Fusion : public IQnnNodeGroup {
 
  private:
   std::array<const OrtNodeUnit*, 3> node_units_;  // Reshape1, Transpose, Reshape2
-  size_t unit_dim_index_;                         // Index of the unit dimension (value 1) to remove
+  RankReduction kind_;
+  size_t index_;  // Squeeze: unit dim to drop. MergeLeading: unused, always 0.
 };
 
 }  // namespace qnn

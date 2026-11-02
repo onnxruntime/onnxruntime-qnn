@@ -308,6 +308,11 @@ class QnnEp : public OrtEp, public ApiPtrs {
   qnn::QnnCompatibilityInfo compatibility_info_ = QNN_COMPATIBILITY_INFO_INIT;
   std::string compatibility_info_string_ = "";
 
+  // Compatibility validation happens before GetCapability can inspect the
+  // graph. If validation retained a backend prepared as a cached-context
+  // load, GetCapability releases it when the graph is not an EPContext model.
+  bool backend_setup_from_compatibility_check_ = false;
+
   // One-shot guard so the HNRD fallback warning emitted by WarnIfHnrdPathActive()
   // fires at most once per session, even when GetCapability is invoked multiple
   // times (e.g. initial pass + EPContext re-pass).
@@ -315,6 +320,15 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // A flag to indicate whether current GetCapability call is after layout transform, flipped to true once exiting the first call.
   bool is_post_layout_transform_ = false;
+
+  // When disable_cpu_ep_fallback is set and there are unsupported nodes, session initialization will eventually fail
+  // but only after performing compile and graph transformations which in fact can be skipped. However, returning a
+  // non-OK status in GetCapability would not stop the session initialization as PluginExecutionProvider does not
+  // bypass the returned status back to caller (i.e., graph partitioner) but merely log the error message.
+  // Since PluginExecutionProvider::Compile will honor the returned status and it is executed after GetCapability in
+  // graph partitioner, this flag is used to indicate that QnnEp::Compile should return error status at the very
+  // beginning to immediately stop session initialization.
+  bool has_unsupported_nodes_wo_cpu_fallback_ = false;
 
   // Transient state captured in GetCapability() and consumed in Compile().
   // Only one model is ever in-flight per EP instance (one EP per session).

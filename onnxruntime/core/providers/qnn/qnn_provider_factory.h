@@ -18,10 +18,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
 
-  // Effective ORT API version: min(runtime, compile-time). Set by CreateEpFactories after
-  // construction. Used by QnnEp to gate features that require a minimum runtime version.
-  uint32_t effective_api_version_ = ORT_API_VERSION;
-
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
     return host_accessible_memory_info_.get();
   }
@@ -78,7 +74,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   const std::string ep_name_;                         // EP name
   const std::string vendor_{"Qualcomm"};              // EP vendor name
   const std::string ep_version_{ORT_QNN_EP_VERSION};  // EP version
-
   // Qualcomm vendor ID. Refer to the ACPI ID registry (search Qualcomm): https://uefi.org/ACPI_ID_List
   const uint32_t vendor_id_{'Q' | ('C' << 8) | ('O' << 16) | ('M' << 24)};
 
@@ -89,8 +84,9 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   std::vector<OrtEpDevice*> ep_devices_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
-  // This is an actual NPU hardware but unable to be detected by ORT Core (e.g., Makena).
-  HardwareDeviceUniquePtr undetected_npu_hw_device_;
+  // Synthesized NPU hardware device when ORT Core doesn't enumerate one.
+  // Real-but-undetected (WoS Makena, Linux/Android arm64) or virtual (x86 cross-compile).
+  HardwareDeviceUniquePtr synthesized_npu_hw_device_;
 
   // Custom op domains reported to ORT via GetCustomOpDomains. Holds both the qti_aisw block-op
   // domain (always registered) and any domains built from ORT_QNN_CUSTOM_OP_DOMAINS.

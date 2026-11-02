@@ -51,7 +51,7 @@ class QnnModel {
   QnnModel(QnnBackendManager* qnn_backend_manager,
            const ApiPtrs& api_ptrs)
       : qnn_backend_manager_(qnn_backend_manager),
-        api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}) {
+        api_ptrs_(api_ptrs) {
     qnn_backend_type_ = qnn_backend_manager_->GetQnnBackendType();
   }
 

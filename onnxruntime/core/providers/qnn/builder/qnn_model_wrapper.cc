@@ -37,7 +37,7 @@ QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
       graph_inputs_(graph_inputs),
       graph_outputs_(graph_outputs),
       model_settings_(model_settings),
-      api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
+      api_ptrs_(api_ptrs),
       tensor_name_overrides_(tensor_name_overrides),
       op_trace_collector_(op_trace_collector),
       is_post_layout_transform_(is_post_layout_transform) {
@@ -1089,6 +1089,16 @@ Ort::Status QnnModelWrapper::AddTransposeNode(size_t node_index,
   // we don't need this right now.
   RETURN_IF(quantize_param.IsPerChannel(),
             "Do not support inserted Transpose nodes with per-channel quantization");
+
+  if (utils::NeedsHtpTransposeReshapeWorkaround(input_shape, transpose_perm, output_shape)) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                ("Lowering Transpose node '" + output_name +
+                 "' to Reshape because its perm only reorders size-1 dimensions.")
+                    .c_str());
+    return AddReshapeNode(input_name, output_name, input_shape, output_shape, tensor_data_type,
+                          quantize_param, do_op_validation, is_for_input, is_for_output);
+  }
+
   // During GetCapability, upstream node groups that validate via ValidateQnnNode() do not
   // populate model_tensors_map_, so the input wrapper may be missing. Register a NATIVE
   // fallback; AddTensorWrapper is idempotent, so Compose-path registration still wins.
@@ -1154,6 +1164,20 @@ Ort::Status QnnModelWrapper::AddNoopReshapeNode(const std::string& node_name,
                               do_op_validation),
                 "Failed to add no-op node.");
 
+  return Ort::Status();
+}
+
+Ort::Status QnnModelWrapper::AddStaticBiasTensor(const std::string& bias_name,
+                                                 const std::vector<uint32_t>& bias_shape,
+                                                 Qnn_DataType_t data_type,
+                                                 QnnQuantParamsWrapper quant_params,
+                                                 std::vector<uint8_t> bias_data,
+                                                 std::vector<std::string>& input_names) {
+  QnnTensorWrapper bias_wrapper(bias_name, QNN_TENSOR_TYPE_STATIC, data_type,
+                                std::move(quant_params), std::vector<uint32_t>(bias_shape),
+                                std::move(bias_data));
+  RETURN_IF_NOT(AddTensorWrapper(std::move(bias_wrapper)), "Failed to add bias tensor.");
+  input_names.push_back(bias_name);
   return Ort::Status();
 }
 

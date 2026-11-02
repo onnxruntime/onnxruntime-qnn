@@ -26,6 +26,7 @@
 
 #include "gtest/gtest.h"
 #include "onnxruntime_cxx_api.h"
+#include "onnxruntime_env_config_keys.h"
 
 #include "test/util/env_var_utils.h"
 
@@ -56,7 +57,22 @@ extern "C" void ortenv_setup() {
     }
 
     Ort::ThreadingOptions tpo;
+#if defined(USE_QNN) && !defined(__aarch64__) && !defined(_M_ARM64)
+    // x86/x64 QNN HTP tests use the simulator and therefore have no physical NPU for ORT to discover.
+    // Explicitly opt the test environment into the compile-only virtual NPU advertised by the QNN EP.
+    Ort::KeyValuePairs env_configs;
+    env_configs.Add(kOrtEnvAllowVirtualDevices, "1");
+
+    OrtEnvCreationOptions env_options{};
+    env_options.version = ORT_API_VERSION;
+    env_options.logging_severity_level = log_level;
+    env_options.log_id = "Default";
+    env_options.threading_options = tpo;
+    env_options.config_entries = env_configs.GetConst();
+    ort_env.reset(new Ort::Env(&env_options));
+#else
     ort_env.reset(new Ort::Env(tpo, log_level, "Default"));
+#endif
   } catch (const std::exception& ex) {
     std::cerr << ex.what();
     std::exit(1);
