@@ -21,6 +21,30 @@ namespace onnxruntime {
 namespace test {
 
 namespace {
+#if ORT_API_HAS_EPCONTEXT_ENCRYPTION
+struct ReadBufferState {
+  void* returned = nullptr;
+  std::string name;
+  bool fail_after_free = false;
+
+  static OrtStatus* ORT_API_CALL Read(void* opaque, const char* name, OrtAllocator* allocator,
+                                      void** data, size_t* size) {
+    auto& state = *static_cast<ReadBufferState*>(opaque);
+    state.name = name;
+    *data = allocator->Alloc(allocator, 32);
+    *size = 32;
+    state.returned = *data;
+    if (!*data) return Ort::GetApi().CreateStatus(ORT_FAIL, "Allocation failed");
+    if (state.fail_after_free) {
+      allocator->Free(allocator, *data);
+      return Ort::GetApi().CreateStatus(ORT_FAIL, "Callback freed its failed output");
+    }
+    static_cast<char*>(*data)[0] = 42;
+    return nullptr;
+  }
+};
+#endif
+
 // Minimal OrtApi stub: GetExperimentalFunction always reports "unavailable",
 // standing in for a runtime that doesn't have the v28 experimental vtable.
 // If EpContextIoDispatch's effective_api_version guard is skipped and it
@@ -78,12 +102,41 @@ TEST(QnnUnit_EpContextIoDispatchTest, DefaultConstructor_IsDisabled) {
 
 TEST(QnnUnit_EpContextIoDispatchTest, DisabledDispatch_ReadAndWrite_ReturnFailures) {
   qnn::EpContextIoDispatch dispatch;
-  std::vector<char> bytes;
+  qnn::EpContextBuffer bytes;
   Ort::Logger logger;
 
   EXPECT_FALSE(dispatch.Read("context.bin", bytes).IsOK());
   EXPECT_FALSE(dispatch.Write("context.bin", nullptr, 0, logger).IsOK());
 }
+
+#if ORT_API_HAS_EPCONTEXT_ENCRYPTION
+TEST(QnnUnit_EpContextIoDispatchTest, AdoptsCallbackAllocationAndPreservesOutputOnError) {
+  auto setter = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(&Ort::GetApi());
+  if (!setter) GTEST_SKIP() << "Runtime does not support EPContext read callbacks";
+  Ort::SessionOptions options;
+  ReadBufferState state;
+  Ort::ThrowOnError(setter(options, ReadBufferState::Read, &state));
+  qnn::EpContextIoDispatch dispatch(*options, OrtApiRuntimeCapabilities{ORT_API_VERSION});
+  for (bool mapped : {false, true}) {
+    qnn::EpContextBuffer bytes;
+    ASSERT_TRUE(dispatch.Read("requested.bin", bytes, mapped).IsOK());
+    EXPECT_EQ(state.name, "requested.bin");
+    EXPECT_EQ(bytes.data(), state.returned);
+    EXPECT_EQ(bytes.size(), 32u);
+    EXPECT_EQ(bytes.data()[0], 42);
+    auto owner = bytes.Owner();
+    std::weak_ptr<char> weak = owner;
+    state.fail_after_free = true;
+    EXPECT_FALSE(dispatch.Read("failed.bin", bytes, mapped).IsOK());
+    EXPECT_EQ(bytes.data(), owner.get());
+    bytes = {};
+    EXPECT_FALSE(weak.expired());
+    owner.reset();
+    EXPECT_TRUE(weak.expired());
+    state.fail_after_free = false;
+  }
+}
+#endif
 
 // The named EPContext-encryption capability proceeds to resolve callbacks
 // (and, with no experimental API registered by this stub, fails via the

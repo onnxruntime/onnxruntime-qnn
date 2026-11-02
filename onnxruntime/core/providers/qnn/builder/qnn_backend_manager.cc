@@ -4,6 +4,10 @@
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#include "core/providers/qnn/builder/qnn_context_binary_dma_buffer.h"
+#endif
+
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -1310,7 +1314,7 @@ Ort::Status QnnBackendManager::GetFileSizeIfValid(const std::string& filepath,
 }
 
 Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                                     std::vector<char>& buffer,
+                                                     EpContextBuffer& buffer,
                                                      const qnn::EpContextIoDispatch& io_dispatch) {
   if (io_dispatch.HasReadCallback()) {
     const std::string filename = std::filesystem::path(context_bin_filepath).filename().string();
@@ -1326,6 +1330,7 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
   RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_size));
 
   buffer.resize(buffer_size);
+  RETURN_IF(buffer.data() == nullptr, "Failed to allocate context binary buffer.");
 
   std::ifstream cache_file(context_bin_filepath.c_str(), std::ifstream::binary);
   RETURN_IF(!cache_file || !cache_file.good(), ("Failed to read context binary from: " + context_bin_filepath).c_str());
@@ -1381,14 +1386,38 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
     const std::string& context_bin_filepath,
     const qnn::EpContextIoDispatch& io_dispatch,
     Qnn_ProfileHandle_t profile_handle,
-    Qnn_ContextHandle_t& context) {
+    Qnn_ContextHandle_t& context,
+    std::shared_ptr<QnnContextBinaryDmaBuffer>* dma_buffer) {
   RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
             "Invalid function pointer for contextCreateFromBinary.");
 
   Qnn_ErrorHandle_t rt = QNN_SUCCESS;
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  if (use_file_mapping && file_mapper_) {
+  if (use_file_mapping && dma_buffer && *dma_buffer) {
+    RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinaryWithCallback,
+              "Invalid function pointer for contextCreateFromBinaryWithCallback.");
+    auto& state = *dma_buffer;
+    auto callbacks = state->Callbacks();
+    state->ContextCreated();
+    rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_, device_handle_,
+                                                            context_configs, &callbacks, bin_buffer,
+                                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
+                                                            &context, profile_handle, nullptr);
+    if (rt != QNN_SUCCESS) {
+      // A partially created context must stop using its callback state before
+      // fallback. If contextFree fails the state's deleter retains the buffer.
+      if (context != nullptr) {
+        const auto free_result = qnn_interface_.contextFree(context, nullptr);
+        RETURN_IF(free_result != QNN_SUCCESS, "Failed to release partial DMA context.");
+        context = nullptr;
+      }
+      state->ContextReleased();
+      state.reset();
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                      "Decrypted EPContext DMA loading failed; retrying with the supplied plaintext buffer.");
+    }
+  } else if (use_file_mapping && file_mapper_) {
     RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinaryWithCallback,
               "Invalid function pointer for contextCreateFromBinaryWithCallback.");
 
@@ -1420,12 +1449,14 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
                           .c_str());
     }
   }
+#else
+  ORT_UNUSED_PARAMETER(dma_buffer);
 #endif
 
   if (!use_file_mapping || rt != QNN_SUCCESS) {
-    // Read from file if no pre-read buffer was supplied or if file mapping failed.
-    std::vector<char> file_buffer;
-    if (bin_buffer == nullptr || rt != QNN_SUCCESS) {
+    // Reuse supplied plaintext on DMA failure. Re-reading would decrypt twice.
+    EpContextBuffer file_buffer;
+    if (bin_buffer == nullptr) {
       RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, file_buffer, io_dispatch));
       bin_buffer = static_cast<void*>(file_buffer.data());
       buffer_length = static_cast<uint64_t>(file_buffer.size());
@@ -1460,7 +1491,7 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Attempt file mapping first if enabled (matches initial load behavior).
-  if (file_mapped_weights_enabled_ && file_mapper_) {
+  if (file_mapped_weights_enabled_ && file_mapper_ && !io_dispatch.HasReadCallback()) {
     RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
     RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
 
@@ -1558,7 +1589,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   configs_vec.push_back(nullptr);
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  if (file_mapped_weights_enabled_ && file_mapper_) {
+  if (file_mapped_weights_enabled_ && file_mapper_ && !io_dispatch.HasReadCallback()) {
     // Retry logic -- if context creation failed with file mapped weights, then retry with feature disabled
     auto res = CreateContextFromListAsyncWithCallback(configs_vec.data(), context_bin_map);
     if (!res.IsOK()) {
@@ -1581,7 +1612,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
             "Invalid function pointer for contextCreateFromBinaryListAsync.");
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
-  std::vector<std::vector<char>> buffer_list;
+  std::vector<EpContextBuffer> buffer_list;
   std::vector<ContextCreateAsyncCallbackInfo> callback_infos;
 
   context_params_list.reserve(context_bin_map.size());
@@ -1592,7 +1623,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
   for (auto& it : context_bin_map) {
     auto context_bin_filepath = it.first;
 
-    std::vector<char> buffer;
+    EpContextBuffer buffer;
     RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer, io_dispatch));
 
     size_t buffer_size = buffer.size();
@@ -1993,7 +2024,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
     int64_t max_spill_fill_size,
     const qnn::EpContextIoDispatch& io_dispatch,
-    bool is_multi_soc_buffer) {
+    bool is_multi_soc_buffer,
+    std::shared_ptr<char> buffer_owner) {
   bool result = nullptr == qnn_sys_interface_.systemContextCreate ||
                 nullptr == qnn_sys_interface_.systemContextGetBinaryInfo ||
                 nullptr == qnn_sys_interface_.systemContextFree;
@@ -2012,7 +2044,10 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
 
   } else {
-    if (use_file_mapping) {
+    if (CanUseDecryptedDmaBuffer() && buffer_owner && !is_multi_soc_buffer) {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      "Using decrypted EPContext buffer with QNN DMA callbacks.");
+    } else if (use_file_mapping) {
       use_file_mapping = false;
       ORT_CXX_LOG_PTR(logger_ptr_,
                       ORT_LOGGING_LEVEL_WARNING,
@@ -2096,13 +2131,22 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
         ProfilingMethodType::CREATE_FROM_BINARY,
         profiling_scope));
 
+    // Only acquire a DMA owner after metadata and version validation. Ordinary
+    // loads and failed validation never retain plaintext at manager scope.
+    std::shared_ptr<QnnContextBinaryDmaBuffer> dma_buffer;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    if (use_file_mapping && buffer_owner) {
+      dma_buffer = QnnContextBinaryDmaBuffer::Create(buffer_owner, static_cast<size_t>(buffer_length),
+                                                     rpcmem_library_->Api(), rpcmem_library_);
+    }
+#endif
     RETURN_IF_ERROR(CreateContextHandleFromBinary(bin_buffer, buffer_length, use_file_mapping,
                                                   configs_builder.GetQnnConfigs(), context_bin_filepath,
-                                                  io_dispatch, profiling_scope.Handle(), context));
+                                                  io_dispatch, profiling_scope.Handle(), context, &dma_buffer));
+
+    RETURN_IF_ERROR(AddQnnContextHandle(context, std::move(dma_buffer)));
 
     profiling_scope.Complete(profiling_info);
-
-    RETURN_IF_ERROR(AddQnnContextHandle(context));
 
     if (!profiling_info.graph_name.empty()) {
       RETURN_IF_ERROR(GetProfilingManager().ExtractBackendProfilingInfo(profiling_info, *logger_ptr_));
@@ -2158,15 +2202,6 @@ Ort::Status QnnBackendManager::SetupBackend(
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
-
-    // Shared manager: file_mapped_weights_enabled_ was latched by an earlier session and
-    // wouldn't otherwise see this session's read callback.
-    if (file_mapped_weights_enabled_ && io_dispatch.HasReadCallback()) {
-      file_mapped_weights_enabled_ = false;
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                      "EPContext read callback registered on a session reusing an already-set-up "
-                      "backend manager; disabling file mapping for this session.");
-    }
 
     if (htp_share_resource_optimization_ == 1) {
       // If a context bin filepath has not been processed yet,
@@ -2926,9 +2961,15 @@ void* QnnBackendManager::LibFunction(void* handle, const char* symbol, std::stri
 #endif
 }
 
-Ort::Status QnnBackendManager::AddQnnContextHandle(Qnn_ContextHandle_t raw_context_handle) {
-  auto free_context_handle = [this](Qnn_ContextHandle_t raw_context_handle) {
+Ort::Status QnnBackendManager::AddQnnContextHandle(Qnn_ContextHandle_t raw_context_handle,
+                                                   std::shared_ptr<QnnContextBinaryDmaBuffer> dma_buffer) {
+  auto free_context_handle = [this, dma_buffer = std::move(dma_buffer)](Qnn_ContextHandle_t raw_context_handle) {
     const auto free_result = qnn_interface_.contextFree(raw_context_handle, nullptr);
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    if (free_result == QNN_SUCCESS && dma_buffer) {
+      dma_buffer->ContextReleased();
+    }
+#endif
     if (free_result != QNN_CONTEXT_NO_ERROR) {
       ORT_CXX_LOG_PTR(logger_ptr_,
                       ORT_LOGGING_LEVEL_ERROR,

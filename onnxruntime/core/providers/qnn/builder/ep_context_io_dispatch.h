@@ -4,13 +4,34 @@
 #pragma once
 
 #include <string>
-#include <vector>
+#include <memory>
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/ort_api_runtime_capabilities.h"
 
 namespace onnxruntime {
 namespace qnn {
+
+// Keeps the allocator and its returned allocation alive together. Copies share
+// ownership; adopting callback output does not copy the context binary.
+class EpContextBuffer {
+ public:
+  char* data() const { return data_.get(); }
+  size_t size() const { return size_; }
+  void Adopt(void* data, size_t size, std::shared_ptr<OrtAllocator> allocator) {
+    data_ = std::shared_ptr<char>(static_cast<char*>(data), [allocator](char* ptr) { allocator->Free(allocator.get(), ptr); });
+    size_ = size;
+  }
+  void resize(size_t size) {
+    auto allocator = std::make_shared<Ort::AllocatorWithDefaultOptions>();
+    Adopt(allocator->Alloc(size), size, std::shared_ptr<OrtAllocator>(allocator, *allocator));
+  }
+  std::shared_ptr<char> Owner() const { return data_; }
+
+ private:
+  std::shared_ptr<char> data_;
+  size_t size_ = 0;
+};
 
 // Owns the App-provided EPContext read/write callbacks resolved from a session options object.
 // Constructed once per session by QnnEp; not thread-safe (callers must serialize concurrent
@@ -51,8 +72,10 @@ class EpContextIoDispatch {
   bool HasReadCallback() const noexcept;
   bool HasWriteCallback() const noexcept;
 
-  // Precondition: HasReadCallback(). Fills `out` with the decrypted bytes.
-  Ort::Status Read(const std::string& file_name, std::vector<char>& out) const;
+  // Precondition: HasReadCallback(). Adopts successful callback output without
+  // copying it. On callback error, the application owns any output allocation,
+  // matching the original Read behavior; `out` remains unchanged.
+  Ort::Status Read(const std::string& file_name, EpContextBuffer& out, bool mapped_allocation = false) const;
 
   // Precondition: HasWriteCallback(). Logs INFO with byte count on success.
   Ort::Status Write(const std::string& name,

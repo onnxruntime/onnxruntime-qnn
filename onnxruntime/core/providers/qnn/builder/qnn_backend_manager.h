@@ -58,6 +58,7 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
 // Forward declaration.
 class QnnModel;
 class QnnBackendSystemDlcPlugin;
+class QnnContextBinaryDmaBuffer;
 
 class QnnSerializerConfig {
  public:
@@ -201,20 +202,22 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
       int64_t max_spill_fill_size,
       const qnn::EpContextIoDispatch& io_dispatch,
-      bool is_multi_soc_buffer = false);
+      bool is_multi_soc_buffer = false,
+      std::shared_ptr<char> buffer_owner = nullptr);
 
   // Remove a single context handle from all tracking structures and free it via contextFree.
   void ReleaseSpecificContextHandle(Qnn_ContextHandle_t context_handle);
 
   // Adds a new QNN context handle and takes ownership (responsible for freeing via contextFree).
-  Ort::Status AddQnnContextHandle(Qnn_ContextHandle_t context_handle);
+  Ort::Status AddQnnContextHandle(Qnn_ContextHandle_t context_handle,
+                                  std::shared_ptr<QnnContextBinaryDmaBuffer> dma_buffer = nullptr);
 
   // Reads a context binary file into a buffer. Validates the file exists and is non-empty.
   // Shared between LoadCachedQnnContextFromBuffer and RecoverFromSSR to avoid duplicating
   // file I/O logic. If io_dispatch is non-null and carries a read callback, the
   // callback is dispatched instead of reading from disk.
   Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                    std::vector<char>& buffer,
+                                    EpContextBuffer& buffer,
                                     const qnn::EpContextIoDispatch& io_dispatch);
 
   // Reloads a QNN context from its binary file after an SSR event. Handles both file-mapped
@@ -247,7 +250,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                             const std::string& context_bin_filepath,
                                             const qnn::EpContextIoDispatch& io_dispatch,
                                             Qnn_ProfileHandle_t profile_handle,
-                                            Qnn_ContextHandle_t& context);
+                                            Qnn_ContextHandle_t& context,
+                                            std::shared_ptr<QnnContextBinaryDmaBuffer>* dma_buffer = nullptr);
 
   // Returns true if the given context handle is still tracked (not yet freed).
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
@@ -399,6 +403,15 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   bool FileMappingIsEnabled() {
     return file_mapped_weights_enabled_;
+  }
+
+  bool CanUseDecryptedDmaBuffer() const {
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    return file_mapped_weights_enabled_ && file_mapper_ && rpcmem_library_ &&
+           htp_share_resource_optimization_ != 1;
+#else
+    return false;
+#endif
   }
 
   // Note that whether in host mode is meaningless if not on device.

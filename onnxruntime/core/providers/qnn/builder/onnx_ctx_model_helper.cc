@@ -215,9 +215,10 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   // the decrypted buffer immediately so QNN is never handed the on-disk ciphertext
   // via the file-mapping path below.
   if (io_dispatch.HasReadCallback()) {
-    std::vector<char> decrypted;
-    RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted));
-    // QNN's contextCreateFromBinary copies the buffer internally; `decrypted` is scope-owned.
+    EpContextBuffer decrypted;
+    RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted,
+                                     qnn_backend_manager->CanUseDecryptedDmaBuffer() && !is_multi_soc_ep_context));
+    // Transfer ownership if QNN uses this allocation as DMA backing memory.
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(decrypted.data(),
                                                                static_cast<uint64_t>(decrypted.size()),
                                                                context_binary_path_str,
@@ -225,7 +226,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                qnn_models,
                                                                max_spill_fill_size,
                                                                io_dispatch,
-                                                               is_multi_soc_ep_context);
+                                                               is_multi_soc_ep_context,
+                                                               decrypted.Owner());
   }
 
   if (!std::filesystem::is_regular_file(context_binary_path)) {

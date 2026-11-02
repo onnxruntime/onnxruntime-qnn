@@ -1373,9 +1373,22 @@ Ort::Session session(env, ctx_model_path, inference_session_options);
 
 If no callback is registered, the EP uses the legacy plaintext behavior.
 
-- File-mapped weights and this feature are mutually exclusive for a given session: registering a
-  read callback disables file mapping for that session, since file mapping requires reading the
-  on-disk bytes directly.
+- The EP adopts successful read-callback output without copying the entire binary. Allocate the
+  output with the supplied allocator, finish processing it before returning, and transfer ownership
+  to the EP on success. On error, free any allocation before returning an error status. The EP forwards
+  the requested name unchanged; applications serving multiple binaries must resolve each name correctly
+  and synchronize any state shared between sessions.
+- On Windows ARM64 with QNN API >= 2.32, the standard single-context load can also use file-mapped
+  weight loading with a read callback. When enabled, the supplied allocator creates anonymous mapped
+  storage for the plaintext, and QNN imports that storage through DMA callbacks. This does not map
+  the encrypted file as plaintext or create an application plaintext temporary file. The allocation
+  stays alive until its QNN context and FastRPC registrations have been released.
+- Callback DMA requires a context binary version >= 3.3.3 and does not apply to multi-SoC loading,
+  `htp_share_resource_optimization=1`, or SSR reload. Those paths keep ordinary callback loading.
+  Set `disable_file_mapped_weights=1` to disable mapped loading explicitly. If DMA context creation
+  fails, the EP retries ordinary loading with the same decrypted buffer rather than invoking the
+  callback a second time. Decryption algorithms and application-side parallelism remain the
+  application's responsibility.
 
 **What is (and isn't) covered:**
 
