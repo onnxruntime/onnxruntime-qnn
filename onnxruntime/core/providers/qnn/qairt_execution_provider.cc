@@ -1,9 +1,9 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 #ifdef USE_QAIRT_API
 #include "core/providers/qnn/qnn_execution_provider.h"
-#include "core/providers/qnn/builder/qairt_backend_manager.h"
-#include "core/providers/qnn/builder/qairt_profiling_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_profiling_manager.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/qnn_ep_profiler.h"
@@ -72,6 +72,7 @@ OrtStatus* QnnEp::GetQairtCapability(const OrtGraph* graph, OrtEpGraphSupportInf
     }
   }
   RETURN_IF_NOT_OK(qairt_backend_manager_->Setup());
+  RETURN_IF_NOT_NULL(ValidateCapabilityPreconditions(qnn::GraphHasEpContextNode(graph, ort_api)));
   if (qnn::GraphHasDlcContextNode(graph, ort_api)) {
     return ort_api.CreateStatus(ORT_EP_FAIL, "QAIRT sessions do not support the Genie DLC execution pathway.");
   }
@@ -101,7 +102,12 @@ OrtStatus* QnnEp::GetQairtCapability(const OrtGraph* graph, OrtEpGraphSupportInf
 }
 OrtStatus* QnnEp::CompileQairtModels(const OrtGraph** graphs, const OrtNode** fused_nodes, size_t count,
                                      OrtNodeComputeInfo** node_compute_infos, OrtNode** ep_context_nodes) try {
-  if (count && qnn::GraphHasEpContextNode(graphs[0], ort_api)) {
+  if (qnn::IsOrtGraphHasCtxNode(graphs, count, ort_api)) {
+    for (size_t i = 0; i < count; ++i) {
+      if (!qnn::GraphHasEpContextNode(graphs[i], ort_api)) {
+        return ort_api.CreateStatus(ORT_INVALID_GRAPH, "QAIRT compilation cannot mix EPContext and fresh graph partitions.");
+      }
+    }
     if (enable_framework_op_trace_) {
       auto trace_path = qnn::DeriveTracePathFromContextModel(ContextPath(graphs[0], ort_api, context_cache_path_cfg_));
       qnn::OpTraceLookup lookup;

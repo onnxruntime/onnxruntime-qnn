@@ -1,4 +1,4 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
 #pragma once
@@ -8,8 +8,8 @@
 
 #include <map>
 #include "core/providers/qnn/qnn_ep_profiler.h"
-#include "core/providers/qnn/builder/backend_profile_api.h"
-#include "core/providers/qnn/builder/qairt_backend_manager.h"
+#include "core/providers/qnn/runtime/interfaces/backend_profile_api.h"
+#include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
 
 namespace onnxruntime::qnn {
 

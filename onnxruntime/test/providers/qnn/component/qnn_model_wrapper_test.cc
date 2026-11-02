@@ -11,6 +11,7 @@
 #include "QnnTypes.h"
 
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/runtime/qnn/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
@@ -18,6 +19,11 @@ namespace onnxruntime {
 namespace test {
 
 namespace {
+
+Qnn_ErrorHandle_t StubErrorGetMessage(Qnn_ErrorHandle_t, const char** message) {
+  *message = "stub QNN error";
+  return QNN_SUCCESS;
+}
 
 // Context for constructing a QnnModelWrapper in function-level unit tests.
 //
@@ -50,6 +56,11 @@ struct QnnModelWrapperTestContext : public OrtApiStubContext {
 
   QNN_INTERFACE_VER_TYPE& qnn_interface = backend_manager.QnnInterface();
   Qnn_BackendHandle_t& backend_handle = backend_manager.BackendHandle();
+  qnn::QnnGraphEmitter graph_emitter{qnn_interface, [this](const Qnn_OpConfig_t& op) {
+                                       const auto status = qnn::QnnGraphEmitter::ValidateOp(qnn_interface, backend_handle, op);
+                                       RETURN_IF(status != QNN_SUCCESS, "Stub operation validation failed.");
+                                       return Ort::Status();
+                                     }};
 
   // No validator interface in unit tests — validator_backend_handle stays null so
   // ValidateQnnNode routes through qnn_interface / backend_handle. Tests that want
@@ -652,7 +663,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_NullContext_ReturnsFalse) {
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  EXPECT_FALSE(wrapper->CreateQnnGraph(nullptr, "my_graph"));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, nullptr, "my_graph"));
 }
 
 // ── CreateQnnNode ─────────────────────────────────────────────────────────
@@ -867,7 +878,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_EmptyName_ReturnsFalse) {
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_FALSE(wrapper->CreateQnnGraph(fake_ctx, ""));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, ""));
 }
 
 // First call succeeds (graphCreate stub sets graph_ non-null); second call returns false
@@ -880,8 +891,8 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_AlreadyInitialized_ReturnsFalse) {
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_TRUE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
-  EXPECT_FALSE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
+  EXPECT_TRUE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
 }
 
 // CreateQnnNode with do_op_validation=true and BF16 disabled calls backendValidateOpConfig.
@@ -1304,11 +1315,12 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveFail
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.graphCreate = StubGraphCreateFail;
   ctx.qnn_interface.graphRetrieve = StubGraphRetrieveFail;
+  ctx.qnn_interface.errorGetMessage = StubErrorGetMessage;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_FALSE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
 }
 
 // graphCreate fails but graphRetrieve succeeds → lines ~38-39, ~47-49 are hit → return true.
@@ -1320,7 +1332,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveSucc
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_TRUE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
+  EXPECT_TRUE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
 }
 
 // Tensor IS in model_tensors_map_ but tensorCreateGraphTensor fails during the main compose loop

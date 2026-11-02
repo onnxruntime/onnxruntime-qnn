@@ -15,7 +15,8 @@
 
 #include "QnnInterface.h"
 
-#include "core/providers/qnn/builder/graph_emitter_interface.h"
+#include "core/providers/qnn/runtime/interfaces/backend_types.h"
+#include "core/providers/qnn/runtime/interfaces/graph_emitter_interface.h"
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn/ort_api.h"
 
@@ -197,38 +198,17 @@ typedef struct HtpGraphConfigs {
   uint32_t htp_num_cores = 0;
 } HtpGraphConfigs_t;
 
-enum class QnnBackendType : uint8_t {
-  CPU = 0,
-  GPU,
-  DSP,
-  HTP,
-  HTP_FP16,
-  SERIALIZER,
-};
-
 enum class QnnAllocatorType : uint8_t {
   NONE = 0,
   HTP_SHARED,
   DX12_SHARED,
 };
 
-bool IsIrBackend(QnnBackendType backend_type);
-
-bool IsCpuBackend(QnnBackendType backend_type);
-
-bool IsNpuBackend(QnnBackendType backend_type);
-
-bool IsGpuBackend(QnnBackendType backend_type);
-
-bool IsQpuBackend(QnnBackendType backend_type);
-
 bool IsHtpSharedMemoryAllocator(QnnAllocatorType allocator_type);
 
 bool IsDx12SharedMemoryAllocator(QnnAllocatorType allocator_type);
 
 std::string_view QnnAllocatorTypeToString(QnnAllocatorType allocator_type);
-
-std::string QnnBackendTypeToString(QnnBackendType backend_type);
 
 // latency values are in microseconds
 constexpr const int kSleepMinLatency = 40;

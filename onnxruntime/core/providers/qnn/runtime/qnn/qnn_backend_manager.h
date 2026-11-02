@@ -31,22 +31,22 @@
 #include "System/QnnSystemInterface.h"
 
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
-#include "core/providers/qnn/builder/backend_manager_interface.h"
+#include "core/providers/qnn/runtime/interfaces/backend_manager_interface.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/op_package/op_package.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
-#include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_context_mem_handle_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
-#include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_htp_power_config_manager.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
-#include "core/providers/qnn/builder/qnn_backend_profiling_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_profiling_manager.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/rpcmem_library.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-#include "core/providers/qnn/builder/qnn_file_mapping_interface.h"
+#include "core/providers/qnn/runtime/qnn/qnn_file_mapping_interface.h"
 #endif
 
 namespace onnxruntime {

@@ -1,9 +1,9 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 #pragma once
 #ifdef USE_QAIRT_API
 #include <mutex>
-#include "core/providers/qnn/builder/qairt_profile_adapter.h"
+#include "core/providers/qnn/runtime/qairt/qairt_profile_adapter.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 namespace onnxruntime::qnn {
 class QairtProfilingManager final {

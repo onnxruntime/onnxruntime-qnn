@@ -13,7 +13,7 @@
 #include "HTP/QnnHtpDevice.h"
 #include "QnnTypes.h"
 
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_info.h"

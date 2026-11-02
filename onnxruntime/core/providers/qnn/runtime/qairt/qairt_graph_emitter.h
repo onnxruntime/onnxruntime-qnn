@@ -1,4 +1,4 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 #pragma once
 #ifdef USE_QAIRT_API
@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include "QairtCpp/QairtGraph.hpp"
 #include "QairtCpp/QairtContext.hpp"
-#include "core/providers/qnn/builder/graph_emitter_interface.h"
+#include "core/providers/qnn/runtime/interfaces/graph_emitter_interface.h"
 namespace onnxruntime::qnn {
 class QairtBackendManager;
 class QairtProfileAdapter;
@@ -44,6 +44,11 @@ class QairtGraphEmitter final : public IGraphEmitter {
   std::shared_ptr<qairt::Context> qairt_context_;
   std::shared_ptr<qairt::Graph> qairt_graph_;
   std::unordered_map<uint32_t, qairt::Tensor> registered_tensors_;
+  // Metadata is immutable after graph initialization. Execute is serialized by
+  // QnnModel's per-graph mutex; only client buffers change between runs.
+  std::vector<qairt::Tensor> input_tensors_;
+  std::vector<qairt::Tensor> output_tensors_;
+  bool io_metadata_initialized_ = false;
 };
 }  // namespace onnxruntime::qnn
 #endif

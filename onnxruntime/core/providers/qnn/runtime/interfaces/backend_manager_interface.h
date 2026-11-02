@@ -1,4 +1,4 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
 #pragma once
@@ -6,7 +6,7 @@
 #include <memory>
 
 #include "HTP/QnnHtpDevice.h"
-#include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/runtime/interfaces/backend_types.h"
 
 namespace onnxruntime::qnn {
 
@@ -17,9 +17,10 @@ enum class BackendRuntimeKind {
   Qairt,
 };
 
-// Common runtime boundary used by graph-building code. Runtime-specific
-// services such as DLC authoring, memory registration, power management, and
-// context recovery remain on focused implementation classes.
+// Common runtime boundary used by graph-building code. Keep this interface
+// deliberately small: EP orchestration and runtime-specific services such as
+// DLC authoring, memory registration, power management, and context recovery
+// belong on focused components rather than growing this manager.
 class IBackendManager {
  public:
   virtual ~IBackendManager() = default;

@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-#include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_system_dlc_plugin.h"
 
 #include <memory>
 #include <vector>
@@ -13,7 +13,7 @@
 #include "System/QnnSystemInterface.h"
 #include "System/QnnSystemLog.h"
 
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"

@@ -60,8 +60,7 @@ class QnnModelWrapper {
                   const ModelSettings& model_settings,
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
                   OpTraceCollector* op_trace_collector = nullptr,
-                  bool is_post_layout_transform = false,
-                  IGraphEmitter* graph_emitter = nullptr);
+                  bool is_post_layout_transform = false);
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
   ~QnnModelWrapper();
@@ -70,7 +69,8 @@ class QnnModelWrapper {
 
   QnnHtpDevice_Arch_t GetHtpArch() const;
 
-  bool CreateQnnGraph(const Qnn_ContextHandle_t& context,
+  bool CreateQnnGraph(IGraphEmitter& graph_emitter,
+                      const Qnn_ContextHandle_t& context,
                       const std::string& graph_name,
                       const QnnGraph_Config_t** graph_configs = nullptr);
 

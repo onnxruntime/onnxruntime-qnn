@@ -2,8 +2,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
-#include "core/providers/qnn/builder/qnn_graph_emitter.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_graph_emitter.h"
 
 #include <filesystem>
 #include <fstream>
@@ -28,7 +28,7 @@
 #include "Saver/QnnSaverCommon.h"
 
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
-#include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_system_dlc_plugin.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -39,7 +39,7 @@
 #include "core/providers/qnn/qnn_external_resource_importer.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-#include "core/providers/qnn/builder/qnn_windows_file_mapper.h"
+#include "core/providers/qnn/runtime/qnn/qnn_windows_file_mapper.h"
 #endif
 
 // Flag to determine if Backend should do node validation for each opNode added
@@ -54,7 +54,13 @@ namespace onnxruntime {
 namespace qnn {
 
 std::unique_ptr<IGraphEmitter> QnnBackendManager::CreateGraphEmitter() {
-  return std::make_unique<QnnGraphEmitter>(*this);
+  return std::make_unique<QnnGraphEmitter>(qnn_interface_, [this](const Qnn_OpConfig_t& op) {
+    const auto validator = GetQnnValidatorBackendHandle();
+    const auto status = QnnGraphEmitter::ValidateOp(validator != nullptr ? GetQnnValidatorInterface() : GetQnnInterface(),
+                                                    validator != nullptr ? validator : GetQnnBackendHandle(), op);
+    RETURN_IF(status != QNN_SUCCESS, ("QNN backendValidateOpConfig failed with error code " + std::to_string(status)).c_str());
+    return Ort::Status();
+  });
 }
 
 void QnnBackendManager::InitializeProfilingManager(const QnnBackendManagerConfig& config) {
@@ -216,7 +222,8 @@ Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
         Qnn_GraphHandle_t graph;
         bool graph_retrieve_success = false;
         for (size_t cIdx = 0; cIdx < contexts_.size(); cIdx++) {
-          auto graph_retrieve_rt = qnn_interface_.graphRetrieve(contexts_[cIdx], graph_name.c_str(), &graph);
+          auto graph_retrieve_rt =
+              QnnGraphEmitter::RetrieveGraphHandle(qnn_interface_, contexts_[cIdx], graph_name.c_str(), &graph);
           if (QNN_SUCCESS != graph_retrieve_rt) {
             continue;
           }
@@ -3175,7 +3182,7 @@ Ort::Status QnnBackendManager::GetGraphInfoAndBinVersion(QnnSystemContext_Handle
 }
 
 void QnnBackendManager::ReleaseSpecificContextHandle(Qnn_ContextHandle_t old_context) {
-  // Remove name→handle mappings that reference this context.
+  // Remove nameâ†’handle mappings that reference this context.
   {
     std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
     for (auto it = ep_context_handle_map_.begin(); it != ep_context_handle_map_.end();) {
@@ -3190,7 +3197,7 @@ void QnnBackendManager::ReleaseSpecificContextHandle(Qnn_ContextHandle_t old_con
   // Remove from the non-owning vector.
   contexts_.erase(std::remove(contexts_.begin(), contexts_.end(), old_context), contexts_.end());
 
-  // Remove from the owning map — triggers contextFree via UniqueQnnContextHandle deleter.
+  // Remove from the owning map â€” triggers contextFree via UniqueQnnContextHandle deleter.
   context_map_.erase(old_context);
 }
 

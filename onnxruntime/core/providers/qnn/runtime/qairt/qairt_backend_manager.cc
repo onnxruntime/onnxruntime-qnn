@@ -1,9 +1,9 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 #ifdef USE_QAIRT_API
-#include "core/providers/qnn/builder/qairt_backend_manager.h"
-#include "core/providers/qnn/builder/qairt_graph_emitter.h"
-#include "core/providers/qnn/builder/qairt_type_convert.h"
+#include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_graph_emitter.h"
+#include "core/providers/qnn/runtime/qairt/qairt_type_convert.h"
 #include "QairtCpp/QairtApi.hpp"
 #include "QairtCpp/QairtBackend.hpp"
 #include "QairtCpp/QairtContext.hpp"
@@ -17,7 +17,11 @@ std::unique_ptr<IGraphEmitter> QairtBackendManager::CreateGraphEmitter() {
   return std::make_unique<QairtGraphEmitter>(shared_from_this());
 }
 
-Ort::Status QairtBackendManager::Setup() {
+Ort::Status QairtBackendManager::Setup(SetupFailure* failure) {
+  std::lock_guard<std::mutex> lock(initialization_mutex_);
+  if (failure != nullptr) {
+    *failure = SetupFailure::None;
+  }
   if (qairt_backend_) {
     return Ort::Status();
   }
@@ -26,6 +30,9 @@ Ort::Status QairtBackendManager::Setup() {
   try {
     api = std::make_unique<qairt::Api>(config_.backend_lib_path.c_str());
   } catch (const std::exception& e) {
+    if (failure != nullptr) {
+      *failure = SetupFailure::LibraryLoad;
+    }
     return MAKE_EP_FAIL(("Unable to load QAIRT backend " + config_.backend_lib_path + ": " + e.what()).c_str());
   }
 
@@ -37,12 +44,19 @@ Ort::Status QairtBackendManager::Setup() {
     qairt_backend_ = std::move(backend);
     return Ort::Status();
   } catch (const std::exception& e) {
+    if (failure != nullptr) {
+      *failure = SetupFailure::BackendInitialization;
+    }
     return MAKE_EP_FAIL(("Failed to initialize QAIRT backend " + config_.backend_lib_path + ": " + e.what()).c_str());
   }
 }
 qairt::Api& QairtBackendManager::GetApi() { return *qairt_api_; }
 qairt::Backend& QairtBackendManager::GetBackend() { return *qairt_backend_; }
 std::shared_ptr<qairt::Context> QairtBackendManager::GetContext() {
+  std::lock_guard<std::mutex> lock(initialization_mutex_);
+  if (!qairt_backend_) {
+    throw std::logic_error("QAIRT Setup must complete before context creation.");
+  }
   if (!qairt_context_) {
     auto config = qairt_api_->make<qairt::ContextConfiguration>();
     qairt_context_ = std::make_shared<qairt::Context>(qairt_backend_->createContext(config));
@@ -63,7 +77,9 @@ Ort::Status QairtBackendManager::ExportContext(std::vector<unsigned char>& buffe
   try {
     RETURN_IF(!qairt_context_, "QAIRT context has not been created.");
     buffer.resize(qairt_context_->getBinarySize());
-    if (!buffer.empty()) buffer.resize(qairt_context_->getBinary(buffer.data(), buffer.size()));
+    if (!buffer.empty()) {
+      buffer.resize(qairt_context_->getBinary(buffer.data(), buffer.size()));
+    }
     return Ort::Status();
   } catch (const std::exception& e) {
     buffer.clear();

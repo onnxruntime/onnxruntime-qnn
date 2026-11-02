@@ -1,13 +1,15 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 #ifdef USE_QAIRT_API
-#include "core/providers/qnn/builder/qairt_profiling_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_profiling_manager.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/qnn_ep_profiler.h"
 
 namespace onnxruntime::qnn {
 QairtProfilingManager::Scope::~Scope() {
-  if (owner) owner->adapter_.Release();
+  if (owner) {
+    owner->adapter_.Release();
+  }
 }
 QairtProfilingManager::QairtProfilingManager(std::shared_ptr<QairtBackendManager> backend,
                                              ProfilingLevel level, std::string path, bool framework_trace)
@@ -19,7 +21,9 @@ Ort::Status QairtProfilingManager::Acquire(const Ort::Logger&) {
 }
 Ort::Status QairtProfilingManager::Release() {
   auto lock = Lock();
-  if (consumers_) --consumers_;
+  if (consumers_) {
+    --consumers_;
+  }
   return Ort::Status();
 }
 void QairtProfilingManager::MergeOpTraceLookup(OpTraceLookup&& lookup) {
@@ -28,9 +32,13 @@ void QairtProfilingManager::MergeOpTraceLookup(OpTraceLookup&& lookup) {
 }
 Ort::Status QairtProfilingManager::Begin(Scope& scope, const std::string& graph,
                                          OrtProfilingOperation operation, QnnEpProfiler* profiler) {
-  scope.lock = Lock();
   const bool provider = level_ != ProfilingLevel::OFF && level_ != ProfilingLevel::INVALID;
-  if (!provider && !profiler) return Ort::Status();
+  if (!provider && !profiler) {
+    return Ort::Status();
+  }
+  // Only operations that share a profiling handle need the session-wide lock.
+  // Graph execution keeps its own per-graph synchronization when profiling is off.
+  scope.lock = Lock();
   scope.info.graph_name = graph;
   scope.info.ort_profiler = profiler;
   scope.info.ort_profiling_operation = operation;
@@ -45,7 +53,9 @@ Ort::Status QairtProfilingManager::AppendEvent(QnnProfile_EventId_t id, const ch
   QnnProfile_ExtendedEventData_t event = QNN_PROFILE_EXTENDED_EVENT_DATA_INIT;
   RETURN_IF(adapter_.GetExtendedEventData(id, &event) != QNN_PROFILE_NO_ERROR,
             "Unable to read QAIRT profiling event.");
-  if (writer) RETURN_IF_ERROR(writer->ProcessExtendedEvent(id, level, event));
+  if (writer) {
+    RETURN_IF_ERROR(writer->ProcessExtendedEvent(id, level, event));
+  }
 #if QNN_ORT_EP_PROFILING_API_ENABLED
   if (info.ort_profiler && event.v1.unit != QNN_PROFILE_EVENTUNIT_OBJECT) {
     EventRecord record;
@@ -82,14 +92,18 @@ Ort::Status QairtProfilingManager::AppendEvent(QnnProfile_EventId_t id, const ch
 #endif
   for (uint32_t i = 0; i < count; ++i) {
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
-    if (writer) RETURN_IF_ERROR(writer->SetParentSystemEvent(children[i], parent));
+    if (writer) {
+      RETURN_IF_ERROR(writer->SetParentSystemEvent(children[i], parent));
+    }
 #endif
     RETURN_IF_ERROR(AppendEvent(children[i], "SUB-EVENT", root_timestamp, writer, info));
   }
   return Ort::Status();
 }
 Ort::Status QairtProfilingManager::Complete(Scope& scope) {
-  if (scope.info.graph_name.empty()) return Ort::Status();
+  if (scope.info.graph_name.empty()) {
+    return Ort::Status();
+  }
   scope.info.operation_end_time_us = utils::GetTimeStampInUs();
   auto release = gsl::finally([&] { scope.profile.reset(); adapter_.Release(); scope.owner = nullptr; });
   const QnnProfile_EventId_t* roots = nullptr;
@@ -101,7 +115,9 @@ Ort::Status QairtProfilingManager::Complete(Scope& scope) {
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
     scope.info.num_events = count;
 #endif
-    if (framework_trace_ && level_ != ProfilingLevel::BASIC) scope.info.op_trace_lookup = &trace_lookup_;
+    if (framework_trace_ && level_ != ProfilingLevel::BASIC) {
+      scope.info.op_trace_lookup = &trace_lookup_;
+    }
     // The common CSV formatter consumes event values only. QNN System APIs are never called here.
     writer = std::make_unique<profile::Serializer>(scope.info, QNN_SYSTEM_INTERFACE_VER_TYPE{}, false);
     RETURN_IF_ERROR(writer->InitCsvFile());

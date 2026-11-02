@@ -34,10 +34,10 @@
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
 #ifdef USE_QAIRT_API
-#include "core/providers/qnn/builder/qairt_backend_manager.h"
-#include "core/providers/qnn/builder/qairt_profiling_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_profiling_manager.h"
 #endif
 #include "core/providers/qnn/builder/qnn_ep_input_graph_dumper.h"
 #include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
@@ -2421,21 +2421,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  // op_affinity: the GQA builder may trigger the known performance regression on HTP,
-  // so HTP sessions default to keeping GQA on CPU
-  // -- users can opt into HTP via the op_affinity config once they've validated it.
-  const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
-  if (resolved_backend == qnn::QnnBackendType::HTP) {
-    ep->model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
-  }
-
-  rt = ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);
-
-  if (!rt.IsOK()) {
-    const std::string message = "Op Affinity validation failed: " + rt.GetErrorMessage();
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
-  }
+  RETURN_IF_NOT_NULL(ep->ValidateCapabilityPreconditions(is_qnn_ctx_model));
 
   if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {
     // Create the HTP power config id (and its release timer) for the main thread.
@@ -2449,21 +2435,41 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     ep->WarnIfHnrdPathActive();
   }
 
-  // Report error if QNN CPU backend is loaded while CPU fallback is disabled
-  if (ep->disable_cpu_ep_fallback_ && ep->qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::CPU) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Qnn CPU backend is loaded while CPU fallback is disabled.");
-  }
-
-  if ((ep->context_cache_enabled_ || is_qnn_ctx_model) && !qnn::IsQpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Qnn context cache only works for HTP/DSP/GPU backend.");
-  }
-
   if (is_qnn_ctx_model) {
     ep->PartitionCtxModel(graph, graph_support_info);
     return nullptr;
   }
 
   return ep->GetOnnxGraphCapability(graph, graph_support_info, num_nodes_in_graph, is_qnn_ctx_model);
+}
+
+OrtStatus* QnnEp::ValidateCapabilityPreconditions(bool is_qnn_ctx_model) {
+  // op_affinity: the GQA builder may trigger the known performance regression on HTP,
+  // so HTP sessions default to keeping GQA on CPU
+  // -- users can opt into HTP via the op_affinity config once they've validated it.
+  const qnn::QnnBackendType resolved_backend = GetSelectedBackendType();
+  if (resolved_backend == qnn::QnnBackendType::HTP) {
+    model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
+  }
+
+  const auto rt = model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);
+
+  if (!rt.IsOK()) {
+    const std::string message = "Op Affinity validation failed: " + rt.GetErrorMessage();
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    return ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
+  }
+
+  // Report error if QNN CPU backend is loaded while CPU fallback is disabled
+  if (disable_cpu_ep_fallback_ && GetSelectedBackendType() == qnn::QnnBackendType::CPU) {
+    return ort_api.CreateStatus(ORT_EP_FAIL, "Qnn CPU backend is loaded while CPU fallback is disabled.");
+  }
+
+  if ((context_cache_enabled_ || is_qnn_ctx_model) && !qnn::IsQpuBackend(GetSelectedBackendType())) {
+    return ort_api.CreateStatus(ORT_EP_FAIL, "Qnn context cache only works for HTP/DSP/GPU backend.");
+  }
+
+  return nullptr;
 }
 
 OrtStatus* QnnEp::GetOnnxGraphCapability(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info,
@@ -3908,13 +3914,13 @@ OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevic
                                                           OrtDeviceEpIncompatibilityDetails* details) noexcept {
 #ifdef USE_QAIRT_API
   if (qairt_backend_manager_) {
-    auto status = qairt_backend_manager_->Setup();
+    qnn::QairtBackendManager::SetupFailure failure;
+    auto status = qairt_backend_manager_->Setup(&failure);
     OrtDeviceEpIncompatibilityReason reason = OrtDeviceEpIncompatibility_NONE;
     if (!status.IsOK()) {
-      const std::string_view error_message = status.GetErrorMessage();
-      if (error_message.find("Unable to load QAIRT backend") != std::string_view::npos) {
+      if (failure == qnn::QairtBackendManager::SetupFailure::LibraryLoad) {
         reason = OrtDeviceEpIncompatibility_MISSING_DEPENDENCY;
-      } else if (error_message.find("Failed to initialize QAIRT backend") != std::string_view::npos) {
+      } else if (failure == qnn::QairtBackendManager::SetupFailure::BackendInitialization) {
         reason = OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE;
       } else {
         reason = OrtDeviceEpIncompatibility_UNKNOWN;

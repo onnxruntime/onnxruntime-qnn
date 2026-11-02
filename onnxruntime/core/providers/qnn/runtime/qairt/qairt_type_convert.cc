@@ -1,4 +1,4 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
 #ifdef USE_QAIRT_API
@@ -6,14 +6,8 @@
 #include <algorithm>
 #include <limits>
 
-#include "core/providers/qnn/builder/qairt_type_convert.h"
+#include "core/providers/qnn/runtime/qairt/qairt_type_convert.h"
 #include "core/providers/qnn/builder/qnn_def.h"
-
-#define QAIRT_RETURN_IF_ERROR(expr) \
-  do {                              \
-    auto _s = (expr);               \
-    if (!_s.IsOK()) return _s;      \
-  } while (0)
 
 namespace onnxruntime {
 namespace qnn {
@@ -154,6 +148,10 @@ Ort::Status ApplyQuantizeParams(const Qnn_QuantizeParams_t& qnn_qp,
 
     case QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET: {
       const auto& aso = qnn_qp.axisScaleOffsetEncoding;
+      RETURN_IF(aso.axis < 0 || static_cast<size_t>(aso.axis) >= dimensions.size() ||
+                    aso.numScaleOffsets == 0 || aso.scaleOffset == nullptr ||
+                    aso.numScaleOffsets != dimensions[aso.axis],
+                "Invalid axis scale-offset quantization parameters.");
       auto axis_so = api.make<qairt::AxisScaleOffset>();
       axis_so.setAxis(aso.axis);
       std::vector<qairt::ScaleOffset> scale_offsets;
@@ -180,6 +178,10 @@ Ort::Status ApplyQuantizeParams(const Qnn_QuantizeParams_t& qnn_qp,
 
     case QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET: {
       const auto& baso = qnn_qp.bwAxisScaleOffsetEncoding;
+      RETURN_IF(baso.axis < 0 || static_cast<size_t>(baso.axis) >= dimensions.size() ||
+                    baso.numElements == 0 || baso.scales == nullptr ||
+                    baso.numElements != dimensions[baso.axis],
+                "Invalid bitwidth axis scale-offset quantization parameters.");
       std::vector<float> scales(baso.scales, baso.scales + baso.numElements);
       std::vector<int32_t> offsets(baso.numElements, 0);
       if (baso.offsets != nullptr) {
@@ -197,8 +199,10 @@ Ort::Status ApplyQuantizeParams(const Qnn_QuantizeParams_t& qnn_qp,
     case QNN_QUANTIZATION_ENCODING_BLOCK: {
       const auto& blk = qnn_qp.blockEncoding;
       size_t count;
-      QAIRT_RETURN_IF_ERROR(block_count(blk.blockSize, count));
-      if (!blk.scaleOffset) return MAKE_EP_FAIL("Missing block scale offsets.");
+      RETURN_IF_ERROR(block_count(blk.blockSize, count));
+      if (!blk.scaleOffset) {
+        return MAKE_EP_FAIL("Missing block scale offsets.");
+      }
       auto encoding = api.make<qairt::BlockEncoding>();
       encoding.setBlockSizes(std::vector<uint32_t>(blk.blockSize, blk.blockSize + dimensions.size()));
       std::vector<qairt::ScaleOffset> scales;
@@ -216,8 +220,10 @@ Ort::Status ApplyQuantizeParams(const Qnn_QuantizeParams_t& qnn_qp,
     case QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK: {
       const auto& bfb = qnn_qp.bwFloatBlockEncoding;
       size_t count;
-      QAIRT_RETURN_IF_ERROR(block_count(bfb.blockSize, count));
-      if (!bfb.floatScaleOffset) return MAKE_EP_FAIL("Missing float block scale offsets.");
+      RETURN_IF_ERROR(block_count(bfb.blockSize, count));
+      if (!bfb.floatScaleOffset) {
+        return MAKE_EP_FAIL("Missing float block scale offsets.");
+      }
       auto encoding = api.make<qairt::BwFloatBlockEncoding>();
       encoding.setBitwidth(bfb.bitwidth);
       encoding.setBlockSizes(std::vector<uint32_t>(bfb.blockSize, bfb.blockSize + dimensions.size()));
@@ -289,7 +295,7 @@ Ort::Status FromQnnTensor(const Qnn_Tensor_t& qnn_tensor,
   out.setDataFormat(GetQnnTensorDataFormat(qnn_tensor));
   out.setId(GetQnnTensorID(qnn_tensor));
 
-  // ponytail: must create explicit TensorProperties and assign BEFORE setting flags.
+  // Create explicit TensorProperties before assigning tensor type flags.
   // A freshly-constructed Tensor's internal props handle is NULL — the non-owning
   // accessor wraps NULL and flag setters become no-ops.
   auto props = api.make<qairt::TensorProperties>();
@@ -298,6 +304,7 @@ Ort::Status FromQnnTensor(const Qnn_Tensor_t& qnn_tensor,
 
   uint32_t rank = GetQnnTensorRank(qnn_tensor);
   uint32_t* dims = GetQnnTensorDims(qnn_tensor);
+  RETURN_IF(rank > 0 && dims == nullptr, "Tensor dimensions are missing.");
   if (rank > 0 && dims) {
     out.setDimensions(std::vector<uint32_t>(dims, dims + rank));
   }
@@ -315,7 +322,7 @@ Ort::Status FromQnnTensor(const Qnn_Tensor_t& qnn_tensor,
     out.setTensorMemory(memory);
   }
 
-  QAIRT_RETURN_IF_ERROR(ApplyQuantizeParams(GetQnnTensorQParams(qnn_tensor), api, out));
+  RETURN_IF_ERROR(ApplyQuantizeParams(GetQnnTensorQParams(qnn_tensor), api, out));
 
   return Ort::Status();
 }
@@ -326,9 +333,15 @@ Ort::Status FromQnnOpConfig(const Qnn_OpConfig_t& qnn_op,
   out = api.make<qairt::OpConfig>();
 
   const auto& v1 = qnn_op.v1;
-  if (v1.name) out.setName(v1.name);
-  if (v1.packageName) out.setPackageName(v1.packageName);
-  if (v1.typeName) out.setTypeName(v1.typeName);
+  if (v1.name) {
+    out.setName(v1.name);
+  }
+  if (v1.packageName) {
+    out.setPackageName(v1.packageName);
+  }
+  if (v1.typeName) {
+    out.setTypeName(v1.typeName);
+  }
 
   // Convert params
   std::vector<qairt::Param> params;
@@ -336,37 +349,39 @@ Ort::Status FromQnnOpConfig(const Qnn_OpConfig_t& qnn_op,
   for (uint32_t i = 0; i < v1.numOfParams; ++i) {
     const auto& qp = v1.params[i];
     auto param = api.make<qairt::Param>();
-    if (qp.name) param.setName(qp.name);
+    if (qp.name) {
+      param.setName(qp.name);
+    }
 
     if (qp.paramType == QNN_PARAMTYPE_SCALAR) {
       qairt::Scalar scalar;
-      QAIRT_RETURN_IF_ERROR(ConvertScalar(qp.scalarParam, api, scalar));
+      RETURN_IF_ERROR(ConvertScalar(qp.scalarParam, api, scalar));
       param.setScalar(scalar);
     } else if (qp.paramType == QNN_PARAMTYPE_TENSOR) {
       qairt::Tensor tensor;
-      QAIRT_RETURN_IF_ERROR(FromQnnTensor(qp.tensorParam, api, tensor));
+      RETURN_IF_ERROR(FromQnnTensor(qp.tensorParam, api, tensor));
       param.setTensor(tensor);
     }
     params.push_back(std::move(param));
   }
   out.setParams(params);
 
-  // Convert input tensors — ID-only refs, no type properties (QAIRT addNode rejects them)
+  // Validation requires complete tensor metadata, including tensor properties.
   std::vector<qairt::Tensor> inputs;
   inputs.reserve(v1.numOfInputs);
   for (uint32_t i = 0; i < v1.numOfInputs; ++i) {
     qairt::Tensor t;
-    QAIRT_RETURN_IF_ERROR(FromQnnTensor(v1.inputTensors[i], api, t));
+    RETURN_IF_ERROR(FromQnnTensor(v1.inputTensors[i], api, t));
     inputs.push_back(std::move(t));
   }
   out.setInputs(inputs);
 
-  // Convert output tensors — same: ID-only refs
+  // Convert output tensor metadata for validation.
   std::vector<qairt::Tensor> outputs;
   outputs.reserve(v1.numOfOutputs);
   for (uint32_t i = 0; i < v1.numOfOutputs; ++i) {
     qairt::Tensor t;
-    QAIRT_RETURN_IF_ERROR(FromQnnTensor(v1.outputTensors[i], api, t));
+    RETURN_IF_ERROR(FromQnnTensor(v1.outputTensors[i], api, t));
     outputs.push_back(std::move(t));
   }
   out.setOutputs(outputs);

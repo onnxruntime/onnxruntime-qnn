@@ -31,7 +31,7 @@
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
-#include "core/providers/qnn/builder/qnn_htp_power_state_guard.h"
+#include "core/providers/qnn/runtime/qnn/qnn_htp_power_state_guard.h"
 
 namespace onnxruntime {
 class QnnEpFactory;
@@ -120,6 +120,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   };
   SelectedBackendInfo GetSelectedBackendInfo() const;
   qnn::QnnBackendType GetSelectedBackendType() const;
+  OrtStatus* ValidateCapabilityPreconditions(bool is_qnn_ctx_model);
   OrtStatus* GetOnnxGraphCapability(const OrtGraph*, OrtEpGraphSupportInfo*, size_t, bool);
 #ifdef USE_QAIRT_API
   OrtStatus* GetQairtCapability(const OrtGraph*, OrtEpGraphSupportInfo*, size_t);

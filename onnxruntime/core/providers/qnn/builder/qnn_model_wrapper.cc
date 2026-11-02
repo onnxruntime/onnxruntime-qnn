@@ -12,9 +12,9 @@
 
 #include "QnnInterface.h"
 
-#include "core/providers/qnn/builder/backend_manager_interface.h"
+#include "core/providers/qnn/runtime/interfaces/backend_manager_interface.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
-#include "core/providers/qnn/builder/graph_emitter_interface.h"
+#include "core/providers/qnn/runtime/interfaces/graph_emitter_interface.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -31,12 +31,10 @@ QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
                                  const ModelSettings& model_settings,
                                  std::unordered_map<std::string, std::string>* tensor_name_overrides,
                                  OpTraceCollector* op_trace_collector,
-                                 bool is_post_layout_transform,
-                                 IGraphEmitter* graph_emitter)
+                                 bool is_post_layout_transform)
     : ort_graph_(ort_graph),
       logger_(logger),
       backend_manager_(&backend_manager),
-      graph_emitter_(graph_emitter),
       graph_inputs_(graph_inputs),
       graph_outputs_(graph_outputs),
       model_settings_(model_settings),
@@ -61,7 +59,8 @@ QnnBackendType QnnModelWrapper::GetQnnBackendType() const {
   return backend_manager_->GetBackendType();
 }
 
-bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
+bool QnnModelWrapper::CreateQnnGraph(IGraphEmitter& graph_emitter,
+                                     const Qnn_ContextHandle_t& context,
                                      const std::string& graph_name,
                                      const QnnGraph_Config_t** graph_configs) {
   if (!graph_name_.empty()) {
@@ -69,16 +68,19 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Graph" + graph_name + " already initialized.").c_str());
     return false;
   }
-  auto status = graph_emitter_->InitializeGraph(context, graph_configs);
+  auto status = graph_emitter.InitializeGraph(context, graph_configs);
   if (!status.IsOK()) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
     return false;
   }
-  status = graph_emitter_->CreateGraph(graph_name.c_str());
+  status = graph_emitter.CreateGraph(graph_name.c_str());
   if (!status.IsOK()) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
     return false;
   }
+  // QnnModel owns the emitter; the wrapper borrows it during composition only.
+  graph_emitter_ = &graph_emitter;
+  owned_graph_emitter_.reset();
   graph_name_ = graph_name;
   return true;
 }

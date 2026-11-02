@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/qnn_backend_profiling_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_profiling_manager.h"
 
 #include <string>
 

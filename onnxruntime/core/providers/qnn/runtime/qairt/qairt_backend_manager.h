@@ -1,13 +1,14 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 #pragma once
 
 #ifdef USE_QAIRT_API
 #include <memory>
+#include <mutex>
 #include "HTP/QnnHtpDevice.h"
 #include <string>
 #include <vector>
-#include "core/providers/qnn/builder/backend_manager_interface.h"
+#include "core/providers/qnn/runtime/interfaces/backend_manager_interface.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 
 namespace qairt {
@@ -20,6 +21,8 @@ class Profile;
 namespace onnxruntime::qnn {
 
 // Owns only QAIRT C++ objects. No QNN function table or C backend handles.
+// Accelerator-specific behavior (HTP, GPU, future LPAI) should be composed as
+// focused QAIRT extension services instead of adding it to IBackendManager.
 class QairtBackendManager final : public IBackendManager,
                                   public std::enable_shared_from_this<QairtBackendManager> {
  public:
@@ -40,7 +43,10 @@ class QairtBackendManager final : public IBackendManager,
   };
   Ort::Status LoadContext(std::vector<char>& buffer, std::vector<CachedGraph>& graphs, qairt::Profile* profile = nullptr);
   std::string GetSdkVersion();
-  Ort::Status Setup();
+  enum class SetupFailure { None,
+                            LibraryLoad,
+                            BackendInitialization };
+  Ort::Status Setup(SetupFailure* failure = nullptr);
   Ort::Status ValidateOp(const Qnn_OpConfig_t& op);
   Ort::Status ExportContext(std::vector<unsigned char>& buffer);
   std::string GetSystemLibraryPath() const;
@@ -55,6 +61,8 @@ class QairtBackendManager final : public IBackendManager,
 
  private:
   Config config_;
+  // Initialization is serialized; inference never holds this mutex.
+  std::mutex initialization_mutex_;
   std::unique_ptr<qairt::Api> qairt_api_;
   std::shared_ptr<qairt::Log> qairt_log_;
   std::shared_ptr<qairt::Backend> qairt_backend_;

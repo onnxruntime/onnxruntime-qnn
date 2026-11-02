@@ -17,7 +17,7 @@
 
 #if QNN_ORT_EP_PROFILING_API_ENABLED
 
-#include "core/providers/qnn/builder/qnn_backend_profiling_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_profiling_manager.h"
 #include "core/providers/qnn/qnn_ep_profiler.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"

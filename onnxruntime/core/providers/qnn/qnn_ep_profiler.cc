@@ -13,7 +13,7 @@
 #include <thread>
 #include <vector>
 
-#include "core/providers/qnn/builder/qnn_backend_profiling_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_profiling_manager.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 

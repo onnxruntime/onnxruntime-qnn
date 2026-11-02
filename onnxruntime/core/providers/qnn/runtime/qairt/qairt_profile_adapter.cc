@@ -1,8 +1,8 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
 #ifdef USE_QAIRT_API
-#include "core/providers/qnn/builder/qairt_profile_adapter.h"
+#include "core/providers/qnn/runtime/qairt/qairt_profile_adapter.h"
 
 #include "QairtCpp/System/QairtSystemProfile.hpp"
 #include <filesystem>
@@ -18,9 +18,15 @@ Ort::Status QairtProfileAdapter::WriteLog(const std::string& path, const std::st
     header.setStopTime(stop);
     header.setVisibility(qairt::SystemProfileVisibility::Public);
     auto method = qairt::SystemProfileMethodType::AppComposeGraphs;
-    if (operation == OrtProfilingOperation::EXECUTE) method = qairt::SystemProfileMethodType::BackendExecute;
-    if (operation == OrtProfilingOperation::FINALIZE) method = qairt::SystemProfileMethodType::BackendFinalize;
-    if (operation == OrtProfilingOperation::CONTEXT_LOAD) method = qairt::SystemProfileMethodType::BackendCreateFromBinary;
+    if (operation == OrtProfilingOperation::EXECUTE) {
+      method = qairt::SystemProfileMethodType::BackendExecute;
+    }
+    if (operation == OrtProfilingOperation::FINALIZE) {
+      method = qairt::SystemProfileMethodType::BackendFinalize;
+    }
+    if (operation == OrtProfilingOperation::CONTEXT_LOAD) {
+      method = qairt::SystemProfileMethodType::BackendCreateFromBinary;
+    }
     header.setMethodType(method);
     std::function<qairt::SystemProfileEventV1(QnnProfile_EventId_t)> convert = [&](QnnProfile_EventId_t id) {
       const auto& event = events_.at(id);
@@ -82,7 +88,9 @@ QnnProfile_EventId_t QairtProfileAdapter::AddEvent(qairt::ProfileEventData&& dat
       auto object = data.getBackendOpaqueObject();
       (void)object;
     } catch (const qairt::Exception& e) {
-      if (e != qairt::CommonError::NotSupported) throw;
+      if (e != qairt::CommonError::NotSupported) {
+        throw;
+      }
       ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_WARNING,
                   "QAIRT does not expose this opaque profiling payload; omitting it from profiling output.");
       return 0;
@@ -93,7 +101,9 @@ QnnProfile_EventId_t QairtProfileAdapter::AddEvent(qairt::ProfileEventData&& dat
   event.identifier = event.data.getIdentifier();
   for (auto& child : profile_->getSubEvents(event.data)) {
     const auto child_id = AddEvent(std::move(child));
-    if (child_id != 0) event.children.push_back(child_id);
+    if (child_id != 0) {
+      event.children.push_back(child_id);
+    }
   }
   return id;
 }
@@ -104,7 +114,9 @@ Qnn_ErrorHandle_t QairtProfileAdapter::GetEvents(const QnnProfile_EventId_t** id
     roots_.clear();
     for (auto& event : profile_->getEvents()) {
       const auto id = AddEvent(std::move(event));
-      if (id != 0) roots_.push_back(id);
+      if (id != 0) {
+        roots_.push_back(id);
+      }
     }
     *ids = roots_.data();
     *count = static_cast<uint32_t>(roots_.size());
@@ -118,7 +130,9 @@ Qnn_ErrorHandle_t QairtProfileAdapter::GetEvents(const QnnProfile_EventId_t** id
 Qnn_ErrorHandle_t QairtProfileAdapter::GetSubEvents(QnnProfile_EventId_t id,
                                                     const QnnProfile_EventId_t** ids, uint32_t* count) {
   const auto it = events_.find(id);
-  if (it == events_.end()) return QNN_COMMON_ERROR_INVALID_ARGUMENT;
+  if (it == events_.end()) {
+    return QNN_COMMON_ERROR_INVALID_ARGUMENT;
+  }
   *ids = it->second.children.data();
   *count = static_cast<uint32_t>(it->second.children.size());
   return QNN_PROFILE_NO_ERROR;
@@ -127,7 +141,9 @@ Qnn_ErrorHandle_t QairtProfileAdapter::GetSubEvents(QnnProfile_EventId_t id,
 Qnn_ErrorHandle_t QairtProfileAdapter::GetExtendedEventData(QnnProfile_EventId_t id,
                                                             QnnProfile_ExtendedEventData_t* out) {
   auto it = events_.find(id);
-  if (it == events_.end()) return QNN_COMMON_ERROR_INVALID_ARGUMENT;
+  if (it == events_.end()) {
+    return QNN_COMMON_ERROR_INVALID_ARGUMENT;
+  }
   try {
     auto& event = it->second;
     *out = QNN_PROFILE_EXTENDED_EVENT_DATA_INIT;
@@ -142,7 +158,9 @@ Qnn_ErrorHandle_t QairtProfileAdapter::GetExtendedEventData(QnnProfile_EventId_t
       const auto* bytes = static_cast<const unsigned char*>(data.getData());
       event.opaque_data.clear();
       if (data.getDataSize()) {
-        if (bytes == nullptr) return QNN_COMMON_ERROR_INVALID_ARGUMENT;
+        if (bytes == nullptr) {
+          return QNN_COMMON_ERROR_INVALID_ARGUMENT;
+        }
         event.opaque_data.assign(bytes, bytes + data.getDataSize());
       }
       event.file_name = object.getFileName();
@@ -189,7 +207,9 @@ Qnn_ErrorHandle_t QairtProfileAdapter::GetExtendedEventData(QnnProfile_EventId_t
         break;
       case QNN_DATATYPE_STRING: {
         const auto* text = scalar.getStringValue();
-        if (text == nullptr) return QNN_COMMON_ERROR_INVALID_ARGUMENT;
+        if (text == nullptr) {
+          return QNN_COMMON_ERROR_INVALID_ARGUMENT;
+        }
         event.string_value = text;
         value.value.stringValue = event.string_value.c_str();
         break;
@@ -207,7 +227,9 @@ Qnn_ErrorHandle_t QairtProfileAdapter::GetExtendedEventData(QnnProfile_EventId_t
 Qnn_ErrorHandle_t QairtProfileAdapter::GetEventData(QnnProfile_EventId_t id, QnnProfile_EventData_t* out) {
   QnnProfile_ExtendedEventData_t extended = QNN_PROFILE_EXTENDED_EVENT_DATA_INIT;
   const auto result = GetExtendedEventData(id, &extended);
-  if (result != QNN_PROFILE_NO_ERROR) return result;
+  if (result != QNN_PROFILE_NO_ERROR) {
+    return result;
+  }
   *out = QNN_PROFILE_EVENT_DATA_INIT;
   out->type = extended.v1.type;
   out->unit = extended.v1.unit;

@@ -1682,6 +1682,11 @@ def build_and_test():
     initialize_logging()
 
     args = parse_arguments()
+    if args.use_qairt_api:
+        if any(name != "build_ort_windows_arm64" for name in args.task):
+            raise ValueError("--use_qairt_api is currently supported only by build_ort_windows_arm64")
+        if args.build_nuget or args.build_archive or args.build_aar:
+            raise ValueError("QAIRT API builds are experimental; release packaging is not supported yet")
     ort_prebuilt_root = get_ort_prebuilt_root(args.ort_prebuilt)
     qairt_sdk_root = get_qairt_sdk_root(args.qairt_sdk)
     docker_ccache_root = get_docker_ccache_root(args.docker_ccache_root)

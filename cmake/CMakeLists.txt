@@ -83,6 +83,7 @@ option(onnxruntime_DONT_VECTORIZE "Do not vectorize operations in Eigen" OFF)
 option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
 option(onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS
        "Build QNN EP with internal symbols exported for tests. Do not use for production binaries." OFF)
+option(onnxruntime_USE_QAIRT_API "Enable QAIRT C++ API path (experimental)" OFF)
 
 # This mode must keep the QNN EP export/link configuration and its direct-access
 # test bodies in lockstep. It is consumed by both provider and unit-test targets.
@@ -504,10 +505,12 @@ if (MSVC OR ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
       file(GLOB QAIRT_LIB_FILES LIST_DIRECTORIES false "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/libQairt*.so"
                                                        "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/Qairt*.dll")
       if (${QNN_ARCH_ABI} STREQUAL "aarch64-windows-msvc" OR ${QNN_ARCH_ABI} STREQUAL "arm64x-windows-msvc")
-        list(APPEND QAIRT_LIB_FILES "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libQairtHtpV73Skel.so"
-                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libqairthtpv73.cat"
-                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libQairtHtpV81Skel.so"
-                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libqairthtpv81.cat")
+        file(GLOB QAIRT_HTP_LIB_FILES LIST_DIRECTORIES false
+             "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libQairtHtpV73Skel.so"
+             "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libqairthtpv73.cat"
+             "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libQairtHtpV81Skel.so"
+             "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libqairthtpv81.cat")
+        list(APPEND QAIRT_LIB_FILES ${QAIRT_HTP_LIB_FILES})
       endif()
       list(APPEND QNN_LIB_FILES ${QAIRT_LIB_FILES})
       message(STATUS "QAIRT lib files: " ${QAIRT_LIB_FILES})

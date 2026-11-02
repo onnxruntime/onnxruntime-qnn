@@ -37,7 +37,7 @@
 #include "gtest/gtest.h"
 
 #include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"

@@ -9,12 +9,12 @@
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
-#include "core/providers/qnn/builder/qnn_graph_emitter.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_graph_emitter.h"
 #ifdef USE_QAIRT_API
-#include "core/providers/qnn/builder/qairt_graph_emitter.h"
-#include "core/providers/qnn/builder/qairt_backend_manager.h"
-#include "core/providers/qnn/builder/qairt_profiling_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_graph_emitter.h"
+#include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_profiling_manager.h"
 #endif
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/ort_api.h"
@@ -199,6 +199,8 @@ class QnnModel {
   // Bind ORT tensors to QNN tensors and execute the graph once.
   // Returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION if an NPU crash is detected,
   // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.
+  Ort::Status BindGraphInputOutput(OrtKernelContext* context, const Ort::Logger& logger,
+                                   std::vector<Qnn_Tensor_t>& inputs, std::vector<Qnn_Tensor_t>& outputs);
   Ort::Status BindAndExecuteGraph(OrtKernelContext* context,
                                   const Ort::Logger& logger,
                                   Qnn_ErrorHandle_t& execute_status,
@@ -244,7 +246,6 @@ class QnnModel {
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
 
 #ifdef USE_QAIRT_API
-  Ort::Status ComposeQairtGraph(const QnnModelContext& context);
   Ort::Status FinalizeQairtGraph(const Ort::Logger& logger);
   Ort::Status ExecuteQairtGraph(OrtKernelContext* context, const Ort::Logger& logger, QnnEpProfiler* profiler);
   std::shared_ptr<QairtBackendManager> qairt_backend_manager_;

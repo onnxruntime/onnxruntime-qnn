@@ -1,7 +1,7 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 #ifdef USE_QAIRT_API
-#include "core/providers/qnn/builder/qairt_backend_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
 #include "QairtCpp/QairtBackend.hpp"
 #include "QairtCpp/QairtContext.hpp"
 #include "QairtCpp/QairtInfo.hpp"

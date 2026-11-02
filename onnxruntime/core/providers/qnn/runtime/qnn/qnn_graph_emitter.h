@@ -1,17 +1,16 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
 #pragma once
 
+#include <functional>
 #include <string>
 
 #include "QnnGraph.h"
 #include "QnnInterface.h"
-#include "core/providers/qnn/builder/graph_emitter_interface.h"
+#include "core/providers/qnn/runtime/interfaces/graph_emitter_interface.h"
 
 namespace onnxruntime::qnn {
-
-class QnnBackendManager;
 
 class QnnGraphProfile final : public IGraphProfile {
  public:
@@ -28,7 +27,8 @@ class QnnGraphProfile final : public IGraphProfile {
 // QnnBackendManager and QnnModel.
 class QnnGraphEmitter final : public IGraphEmitter {
  public:
-  explicit QnnGraphEmitter(const QnnBackendManager& manager);
+  using OpValidator = std::function<Ort::Status(const Qnn_OpConfig_t&)>;
+  explicit QnnGraphEmitter(const QNN_INTERFACE_VER_TYPE& qnn_interface, OpValidator validator);
   ~QnnGraphEmitter() override = default;
 
   Ort::Status InitializeGraph(Qnn_ContextHandle_t context,
@@ -49,19 +49,24 @@ class QnnGraphEmitter final : public IGraphEmitter {
 
   // Compatibility adapters for existing qnn_def unit-test entry points.
   // Keeping the SDK calls here preserves a single graph API boundary.
-  static Ort::Status CreateTensor(const QNN_INTERFACE_VER_TYPE& qnn_interface,
-                                  Qnn_GraphHandle_t graph, Qnn_Tensor_t& tensor);
-  static Ort::Status ValidateOp(const QNN_INTERFACE_VER_TYPE& qnn_interface,
-                                Qnn_BackendHandle_t backend, const Qnn_OpConfig_t& op);
-  static Ort::Status AddNode(const QNN_INTERFACE_VER_TYPE& qnn_interface,
-                             Qnn_GraphHandle_t graph, const Qnn_OpConfig_t& op);
+  static Qnn_ErrorHandle_t CreateTensor(const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                                        Qnn_GraphHandle_t graph, Qnn_Tensor_t& tensor);
+  static Qnn_ErrorHandle_t ValidateOp(const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                                      Qnn_BackendHandle_t backend, const Qnn_OpConfig_t& op);
+  static Qnn_ErrorHandle_t AddNode(const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                                   Qnn_GraphHandle_t graph, const Qnn_OpConfig_t& op);
+  static Qnn_ErrorHandle_t RetrieveGraphHandle(const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                                               Qnn_ContextHandle_t context,
+                                               const char* name,
+                                               Qnn_GraphHandle_t* graph);
 
   Qnn_GraphHandle_t Graph() const { return graph_; }
   Qnn_ContextHandle_t Context() const { return context_; }
   const std::string& Name() const { return name_; }
 
  private:
-  const QnnBackendManager& manager_;
+  const QNN_INTERFACE_VER_TYPE& qnn_interface_;
+  OpValidator validator_;
   Qnn_ContextHandle_t context_ = nullptr;
   const QnnGraph_Config_t** graph_configs_ = nullptr;
   Qnn_GraphHandle_t graph_ = nullptr;

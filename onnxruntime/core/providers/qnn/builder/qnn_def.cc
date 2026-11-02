@@ -7,9 +7,9 @@
 #include <functional>
 #include <memory>
 #include <ostream>
-#include "core/providers/qnn/builder/graph_emitter_interface.h"
+#include "core/providers/qnn/runtime/interfaces/graph_emitter_interface.h"
 
-#include "core/providers/qnn/builder/qnn_graph_emitter.h"
+#include "core/providers/qnn/runtime/qnn/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -519,11 +519,11 @@ bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
     }
   }
 
-  Ort::Status tensor_create_status = QnnGraphEmitter::CreateTensor(qnn_interface, graph, qnn_tensor);
-  if (!tensor_create_status.IsOK()) {
+  auto tensor_create_result = QnnGraphEmitter::CreateTensor(qnn_interface, graph, qnn_tensor);
+  if (tensor_create_result != QNN_TENSOR_NO_ERROR) {
     ss << "Failed to create tensor for node: " << node_name
        << " tensor_name: " << tensor_name
-       << " error: " << tensor_create_status.GetErrorMessage();
+       << " error code: " << tensor_create_result;
     error_msg = ss.str();
     return false;
   }
@@ -601,11 +601,11 @@ void QnnOpConfigWrapper::SetData(Qnn_Tensor_t* input_tensors,
 bool QnnOpConfigWrapper::QnnGraphOpValidation(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                               const Qnn_BackendHandle_t& backend_handle,
                                               std::string& error_msg) {
-  Ort::Status validation_status = QnnGraphEmitter::ValidateOp(qnn_interface, backend_handle, op_config_);
-  if (!validation_status.IsOK()) {
+  auto validation_status = QnnGraphEmitter::ValidateOp(qnn_interface, backend_handle, op_config_);
+  if (QNN_SUCCESS != validation_status) {
     std::ostringstream oss;
     oss << "QNN.backendValidateOpConfig() failed for node `" << name_ << "` of type `"
-        << type_name_ << "`: " << validation_status.GetErrorMessage() << std::endl;
+        << type_name_ << "` with error code " << validation_status << std::endl;
     error_msg = oss.str();
     return false;
   }
@@ -616,11 +616,11 @@ bool QnnOpConfigWrapper::QnnGraphOpValidation(const QNN_INTERFACE_VER_TYPE& qnn_
 bool QnnOpConfigWrapper::CreateQnnGraphOp(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                           const Qnn_GraphHandle_t& graph,
                                           std::string& error_msg) {
-  Ort::Status status = QnnGraphEmitter::AddNode(qnn_interface, graph, op_config_);
-  if (!status.IsOK()) {
+  auto status = QnnGraphEmitter::AddNode(qnn_interface, graph, op_config_);
+  if (QNN_GRAPH_NO_ERROR != status) {
     std::ostringstream oss;
     oss << "QNN.graphAddNode() failed for node `" << name_ << "` of type `" << type_name_
-        << "`: " << status.GetErrorMessage() << std::endl;
+        << "` with error code " << status << std::endl;
     error_msg = oss.str();
     return false;
   }

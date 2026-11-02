@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_htp_power_config_manager.h"
 
 namespace onnxruntime {
 namespace qnn {

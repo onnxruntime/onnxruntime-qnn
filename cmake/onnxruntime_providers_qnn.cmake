@@ -9,7 +9,6 @@
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.cc"
   )
 
-  option(onnxruntime_USE_QAIRT_API "Enable QAIRT C++ API path (experimental)" OFF)
   if(NOT onnxruntime_USE_QAIRT_API)
     list(FILTER onnxruntime_providers_qnn_ep_srcs EXCLUDE REGEX "/qairt_[^/]*\\.(cc|h)$")
   endif()

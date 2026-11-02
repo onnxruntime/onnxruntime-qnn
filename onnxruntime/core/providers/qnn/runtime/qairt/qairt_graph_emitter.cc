@@ -1,22 +1,16 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
 #ifdef USE_QAIRT_API
 
-#include "core/providers/qnn/builder/qairt_graph_emitter.h"
-#include "core/providers/qnn/builder/qairt_type_convert.h"
+#include "core/providers/qnn/runtime/qairt/qairt_graph_emitter.h"
+#include "core/providers/qnn/runtime/qairt/qairt_type_convert.h"
 #include "core/providers/qnn/builder/qnn_def.h"
-#include "core/providers/qnn/builder/qairt_backend_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
 
 #include "QairtCpp/QairtApi.hpp"
 
 #include <stdexcept>
-
-#define QAIRT_RETURN_IF_ERROR(expr) \
-  do {                              \
-    auto _s = (expr);               \
-    if (!_s.IsOK()) return _s;      \
-  } while (0)
 
 namespace onnxruntime {
 namespace qnn {
@@ -33,6 +27,9 @@ Ort::Status QairtGraphEmitter::InitializeGraph(Qnn_ContextHandle_t context,
     RETURN_IF(qairt_context_ == nullptr, "QAIRT context is not initialized.");
     qairt_graph_.reset();
     registered_tensors_.clear();
+    input_tensors_.clear();
+    output_tensors_.clear();
+    io_metadata_initialized_ = false;
     return Ort::Status();
   } catch (const std::exception& e) {
     return MAKE_EP_FAIL(e.what());
@@ -46,6 +43,10 @@ Ort::Status QairtGraphEmitter::RetrieveGraph(std::shared_ptr<qairt::Context> con
     qairt_graph_ = context->retrieveGraph(name.c_str());
     RETURN_IF(qairt_graph_ == nullptr, ("Failed to retrieve QAIRT graph: " + name).c_str());
     qairt_context_ = std::move(context);
+    registered_tensors_.clear();
+    input_tensors_.clear();
+    output_tensors_.clear();
+    io_metadata_initialized_ = false;
     return Ort::Status();
   } catch (const std::exception& e) {
     return MAKE_EP_FAIL(e.what());
@@ -72,7 +73,7 @@ Ort::Status QairtGraphEmitter::CreateTensor(Qnn_Tensor_t& tensor) {
   RETURN_IF(qairt_graph_ == nullptr, "QAIRT graph is not initialized.");
   try {
     qairt::Tensor qairt_tensor;
-    QAIRT_RETURN_IF_ERROR(qairt_convert::FromQnnTensor(tensor, manager_->GetApi(), qairt_tensor));
+    RETURN_IF_ERROR(qairt_convert::FromQnnTensor(tensor, manager_->GetApi(), qairt_tensor));
     qairt_graph_->createGraphTensor(qairt_tensor);
     // Write back the assigned tensor ID so the caller can reference it later.
     uint32_t id = static_cast<uint32_t>(qairt_tensor.getId());
@@ -99,9 +100,15 @@ Ort::Status QairtGraphEmitter::AddNode(const Qnn_OpConfig_t& op) {
     qairt::OpConfig qairt_op = manager_->GetApi().make<qairt::OpConfig>();
     const auto& v1 = op.v1;
 
-    if (v1.name) qairt_op.setName(v1.name);
-    if (v1.packageName) qairt_op.setPackageName(v1.packageName);
-    if (v1.typeName) qairt_op.setTypeName(v1.typeName);
+    if (v1.name) {
+      qairt_op.setName(v1.name);
+    }
+    if (v1.packageName) {
+      qairt_op.setPackageName(v1.packageName);
+    }
+    if (v1.typeName) {
+      qairt_op.setTypeName(v1.typeName);
+    }
 
     // Convert params
     std::vector<qairt::Param> params;
@@ -109,11 +116,13 @@ Ort::Status QairtGraphEmitter::AddNode(const Qnn_OpConfig_t& op) {
     for (uint32_t i = 0; i < v1.numOfParams; ++i) {
       const auto& qp = v1.params[i];
       auto param = manager_->GetApi().make<qairt::Param>();
-      if (qp.name) param.setName(qp.name);
+      if (qp.name) {
+        param.setName(qp.name);
+      }
 
       if (qp.paramType == QNN_PARAMTYPE_SCALAR) {
         qairt::Scalar scalar;
-        QAIRT_RETURN_IF_ERROR(qairt_convert::ConvertScalarPublic(qp.scalarParam, manager_->GetApi(), scalar));
+        RETURN_IF_ERROR(qairt_convert::ConvertScalarPublic(qp.scalarParam, manager_->GetApi(), scalar));
         param.setScalar(scalar);
       } else if (qp.paramType == QNN_PARAMTYPE_TENSOR) {
         uint32_t id = GetQnnTensorID(qp.tensorParam);
@@ -193,6 +202,9 @@ Ort::Status QairtGraphEmitter::Finalize(const IGraphProfile* profile) {
     } else {
       qairt_graph_->finalize();
     }
+    // Registered handles are needed while composing nodes only. The finalized
+    // SDK graph owns compiled state; execution has separate I/O metadata.
+    registered_tensors_.clear();
     return Ort::Status();
   } catch (const std::exception& e) {
     return MAKE_EP_FAIL(e.what());
@@ -205,22 +217,55 @@ Ort::Status QairtGraphEmitter::Execute(Qnn_Tensor_t* inputs, uint32_t n_inputs,
                                        GraphExecutionResult& result) {
   RETURN_IF(qairt_graph_ == nullptr, "QAIRT graph is not initialized.");
   try {
-    ORT_UNUSED_PARAMETER(result);
+    result.native_error_code = 0;
     RETURN_IF(profile != nullptr && profile->RuntimeKind() != GraphRuntimeKind::Qairt,
               "QAIRT graph received a profile for a different runtime.");
     const auto qairt_profile = profile == nullptr
                                    ? std::shared_ptr<qairt::Profile>{}
                                    : static_cast<const QairtGraphProfile*>(profile)->Profile();
-    std::vector<qairt::Tensor> in(n_inputs), out(n_outputs);
+    RETURN_IF((n_inputs != 0 && inputs == nullptr) || (n_outputs != 0 && outputs == nullptr),
+              "QAIRT graph tensor arrays are missing.");
+    if (!io_metadata_initialized_) {
+      std::vector<qairt::Tensor> in(n_inputs), out(n_outputs);
+      for (uint32_t i = 0; i < n_inputs; ++i) {
+        RETURN_IF_ERROR(qairt_convert::FromQnnTensor(inputs[i], manager_->GetApi(), in[i]));
+      }
+      for (uint32_t i = 0; i < n_outputs; ++i) {
+        RETURN_IF_ERROR(qairt_convert::FromQnnTensor(outputs[i], manager_->GetApi(), out[i]));
+      }
+      input_tensors_ = std::move(in);
+      output_tensors_ = std::move(out);
+      io_metadata_initialized_ = true;
+    }
+    RETURN_IF(input_tensors_.size() != n_inputs || output_tensors_.size() != n_outputs,
+              "QAIRT graph I/O counts changed after initialization.");
+    auto clear_buffers = gsl::finally([&] {
+      for (auto& tensor : input_tensors_) {
+        tensor.getClientBuffer().setData(nullptr);
+        tensor.getClientBuffer().setDataSize(0);
+      }
+      for (auto& tensor : output_tensors_) {
+        tensor.getClientBuffer().setData(nullptr);
+        tensor.getClientBuffer().setDataSize(0);
+      }
+    });
     for (uint32_t i = 0; i < n_inputs; ++i) {
-      RETURN_IF_ERROR(qairt_convert::FromQnnTensor(inputs[i], manager_->GetApi(), in[i]));
+      RETURN_IF(GetQnnTensorMemType(inputs[i]) != QNN_TENSORMEMTYPE_RAW,
+                "QAIRT registered-memory execution is not implemented.");
+      const auto& buffer = GetQnnTensorClientBuf(inputs[i]);
+      input_tensors_[i].getClientBuffer().setData(buffer.data);
+      input_tensors_[i].getClientBuffer().setDataSize(buffer.dataSize);
     }
     for (uint32_t i = 0; i < n_outputs; ++i) {
-      RETURN_IF_ERROR(qairt_convert::FromQnnTensor(outputs[i], manager_->GetApi(), out[i]));
+      RETURN_IF(GetQnnTensorMemType(outputs[i]) != QNN_TENSORMEMTYPE_RAW,
+                "QAIRT registered-memory execution is not implemented.");
+      const auto& buffer = GetQnnTensorClientBuf(outputs[i]);
+      output_tensors_[i].getClientBuffer().setData(buffer.data);
+      output_tensors_[i].getClientBuffer().setDataSize(buffer.dataSize);
     }
-    qairt_graph_->execute(in, out, qairt_profile);
+    qairt_graph_->execute(input_tensors_, output_tensors_, qairt_profile);
     for (uint32_t i = 0; i < n_outputs; ++i) {
-      SetQnnTensorClientBufSize(outputs[i], out[i].getClientBuffer().getDataSize());
+      SetQnnTensorClientBufSize(outputs[i], output_tensors_[i].getClientBuffer().getDataSize());
     }
     return Ort::Status();
   } catch (const qairt::Exception& e) {

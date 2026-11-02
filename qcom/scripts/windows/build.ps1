@@ -65,6 +65,9 @@ $RepoRoot = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.De
 . "$RepoRoot\qcom\scripts\windows\utils.ps1"
 
 $BuildRoot = (Join-Path $RepoRoot "build")
+if ($Env:ORT_BUILD_ROOT) {
+    $BuildRoot = [System.IO.Path]::GetFullPath($Env:ORT_BUILD_ROOT)
+}
 $BuildDirArch = $Arch
 
 if ($Mode -eq "generate_sln") {
