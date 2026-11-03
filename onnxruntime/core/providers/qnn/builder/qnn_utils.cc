@@ -2309,12 +2309,12 @@ static Ort::Status RequantizeBiasIfNeeded(QnnModelWrapper& qnn_model_wrapper,
       RETURN_IF_ERROR(DequantizePerChannel(new_bias_data, bias_info.shape, new_scales, new_offsets,
                                            requantized_float, bias_info.qnn_data_type, axis_opt));
 
-      const size_t num_channels = new_scales.size();
-      const size_t channel_size = num_channels > 0 ? num_elems / num_channels : num_elems;
+      const size_t new_num_channels = new_scales.size();
+      const size_t channel_size = new_num_channels > 0 ? num_elems / new_num_channels : num_elems;
       size_t clipped = 0;
       for (size_t i = 0; i < num_elems; ++i) {
-        const size_t channel = (num_channels <= 1 || channel_size == 0) ? 0 : i / channel_size;
-        const float scale = new_scales[std::min(channel, num_channels - 1)];
+        const size_t channel = (new_num_channels <= 1 || channel_size == 0) ? 0 : i / channel_size;
+        const float scale = new_scales[std::min(channel, new_num_channels - 1)];
         if (std::abs(requantized_float[i] - original_float[i]) > 0.5f * scale) {
           ++clipped;
         }
