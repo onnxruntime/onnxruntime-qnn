@@ -1,0 +1,29 @@
+From: Pratha <pratha@example.com>
+Date: Mon, 3 Nov 2026 12:00:00 +0000
+Subject: [PATCH] Register GroupNormalization schema for kMSInternalNHWCDomain
+
+Add GroupNormalization operator to the NHWC domain schema registration to support
+shape inference for GroupNormalization when layout transformation is applied.
+
+GroupNormalization opset 13+ supports NHWC layout transformation and requires
+proper schema registration for shape inference after the transformation.
+
+---
+ .../core/graph/contrib_ops/internal_nhwc_onnx_schemas.cc | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/onnxruntime/core/graph/contrib_ops/internal_nhwc_onnx_schemas.cc b/onnxruntime/core/graph/contrib_ops/internal_nhwc_onnx_schemas.cc
+index 1234567..abcdefg 100644
+--- a/onnxruntime/core/graph/contrib_ops/internal_nhwc_onnx_schemas.cc
++++ b/onnxruntime/core/graph/contrib_ops/internal_nhwc_onnx_schemas.cc
+@@ -111,6 +111,8 @@ void OpSet_Internal_NHWC_ONNX::ForEachSchema(const std::function<void(ONNX_NAMES
+   REGISTER_NHWC_SCHEMA(fn, DepthToSpace, 11);
+   REGISTER_NHWC_SCHEMA(fn, DepthToSpace, 13);
+
++  REGISTER_NHWC_SCHEMA_WITH_ACTIVATION(fn, GroupNormalization, 13);
++
+   REGISTER_NHWC_SCHEMA_WITH_ACTIVATION(fn, InstanceNormalization, 6);
+
+   REGISTER_NHWC_SCHEMA_WITH_ACTIVATION(fn, Conv, 1);
+--
+2.40.0
