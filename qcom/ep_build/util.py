@@ -151,7 +151,10 @@ def run_with_venv(
     else:
         # `source` requires paths with forward slashes
         activate_path = str((venv / Path(VENV_ACTIVATE_RELPATH)).absolute()).replace("\\", "/")
-        shell_command = f"source {activate_path} && " + (command if isinstance(command, str) else shlex.join(command))
+        # Replace the activation shell so cancellation reaches the executable (including the QDC runner).
+        shell_command = f"source {activate_path} && " + (
+            command if isinstance(command, str) else "exec " + shlex.join(command)
+        )
         full_command = [BASH_EXECUTABLE, "-c", shell_command]
     if not quiet:
         echo(f"$ {full_command if isinstance(full_command, str) else shlex.join(full_command)}")
@@ -172,7 +175,10 @@ def run_with_venv(
         env=env,
         cwd=cwd,
     )
-    with TemporarySignalHandler(lambda sig, frame: proc.send_signal(sig)):
+    with (
+        TemporarySignalHandler(lambda sig, frame: proc.send_signal(sig)),
+        TemporarySignalHandler(lambda sig, frame: proc.send_signal(sig), signal.SIGTERM),
+    ):
         outs, errs = proc.communicate()
         stdout_out = outs if stdout is not None else None
         stderr_out = errs if stderr is not None else None
