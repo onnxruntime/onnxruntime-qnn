@@ -19,10 +19,27 @@ on:
         default: true
         type: boolean
       target_os:
+        description: "The OS to test: android, linux, or windows"
         default: android
         type: string
       target_arch:
+        description: |
+          The architecture for which to build.
+          [Android] aarch64.
+          [Linux] aarch64_oe_gcc11_2.
+          [Windows] arm64.
         default: aarch64
+        type: string
+      target_py_vsn:
+        description: "Python version label of the build artifact; does not select the device's helper Python."
+        default: "None"
+        type: string
+      build_config:
+        default: Release
+        type: string
+      windows_test_mode:
+        description: "Use smoke to validate Python installation and HTP inference, or full for the CI suite."
+        default: full
         type: string
       testdata_archive_artifact_name:
         description: |
@@ -33,25 +50,45 @@ on:
   workflow_dispatch:
     inputs:
       target_os:
-        description: "The OS for which to build: android or linux"
+        description: "The OS to test: android, linux, or windows"
         default: android
         type: string
       target_arch:
         description: |
           The architecture for which to build.
-          [Android] aarch64
+          [Android] aarch64.
           [Linux] aarch64_oe_gcc11_2.
+          [Windows] arm64.
         default: aarch64
+        type: string
+      target_py_vsn:
+        description: "Python version label of the build artifact; does not select the device's helper Python."
+        default: "None"
+        type: string
+      build_config:
+        default: Release
+        type: string
+      windows_test_mode:
+        description: "Use smoke to validate Python installation and HTP inference, or full for the CI suite."
+        default: full
+        type: choice
+        options: [smoke, full]
+      testdata_archive_artifact_name:
+        description: |
+          Artifact name to download as the testdata archive before running QDC tests.
+          Empty disables the download.
+        default: ""
         type: string
 
 env:
   # The QDC results folder is a bit odd
-  QDC_RESULTS_ARCH: "${{ (inputs.target_os == 'linux' && inputs.target_arch == 'aarch64_oe_gcc11_2') && 'qualcomm_linux' || 'android' }}"
+  QDC_RESULTS_ARCH: "${{ inputs.target_os == 'windows' && 'windows' || (inputs.target_os == 'linux' && 'qualcomm_linux' || 'android') }}"
+  QDC_TEST_LABEL: "${{ inputs.target_os == 'windows' && 'htp-v81' || 'pynone' }}"
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
   test:
-    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-pynone"
+    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-${{ inputs.target_os == 'windows' && 'htp-v81' || 'pynone' }}"
     # Fork PRs cannot access the required credentials. They remain blocked until
     # a maintainer dispatches the reviewed SHA through /approve-ci.
     if: ${{ github.event.pull_request.head.repo.fork != true }}
@@ -65,6 +102,16 @@ jobs:
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}
         run: git submodule update --init --recursive
+
+      - name: Validate Windows testdata input
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.testdata_archive_artifact_name == '' }}
+        run: |
+          echo "::error::Windows QDC testing requires testdata_archive_artifact_name (normally testdata-zip)."
+          exit 1
+
+      - name: Clear previous QDC results
+        if: ${{ inputs.has_code_changes }}
+        run: rm -rf "build/qdc-${{ env.QDC_RESULTS_ARCH }}"
 
       - name: Setup JFrog CLI
         if: ${{ inputs.has_code_changes }}
@@ -80,7 +127,7 @@ jobs:
         if: ${{ inputs.has_code_changes }}
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-pyNone-tests"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-tests"
 
       - name: Download testdata from Artifactory
         if: ${{ inputs.has_code_changes && inputs.testdata_archive_artifact_name != '' }}
@@ -88,40 +135,43 @@ jobs:
         with:
           name: ${{ inputs.testdata_archive_artifact_name }}
 
-      - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} pynone
+      - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} ${{ env.QDC_TEST_LABEL }}
         if: ${{ inputs.has_code_changes }}
         env:
           QDC_API_TOKEN: ${{ secrets.QDC_API_TOKEN }}
+          QDC_WINDOWS_TEST_MODE: ${{ inputs.windows_test_mode }}
+          TMPDIR: ${{ runner.temp }}
         # Use exec so that workflow cancel signals are sent directly to build_and_test.py, which will then
         # forward them to qdc_runner.py and in-flight jobs can be aborted to preserve our QDC slots and
         # not leak huge files on the runner.
         run: >
           exec python3 qcom/build_and_test.py
+          --config ${{ inputs.build_config }}
           create_qdc_venv
           test_ort_qdc_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Cleanup QDC Runner tmp files
         if: ${{ always() && inputs.has_code_changes }}
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: |
-          echo "Cleaning $TMPDIR/QdcRunner-*"
-          rm -fr $TMPDIR/QdcRunner-*
+          rm -rf -- "$TMPDIR"/QdcRunner-*
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
         if: ${{ always() && inputs.has_code_changes }} # always run even if the previous step fails
         with:
-          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-pynone-test-results
+          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-${{ env.QDC_TEST_LABEL }}-test-results
           group_reports: false
           include_passed: true
           detailed_summary: true
           verbose_summary:  false
           report_paths: |
-            ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.results.xml
+            ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/**/*.results.xml
 
       - uses: actions/upload-artifact@v7
         if: ${{ always() && inputs.has_code_changes }} # always run even if the previous step fails
         with:
-          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} pynone Test Results
+          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} ${{ env.QDC_TEST_LABEL }} Test Results
           path: |
-            ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.results.xml
-            ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.txt
+            ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/
