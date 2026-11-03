@@ -21,14 +21,25 @@ namespace onnxruntime::qnn {
 
 class HtpSharedMemoryAllocator : public OrtAllocator {
  public:
-  explicit HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info)
-      : memory_info_(mem_info),
-        logger_(OrtLoggingManager::GetDefaultLogger()) {
+  explicit HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info,
+                                    std::shared_ptr<RpcMemLibrary> rpcmem_library = nullptr)
+      : OrtAllocator{},
+        memory_info_(mem_info),
+        logger_(OrtLoggingManager::GetDefaultLogger()),
+        rpcmem_library_(std::move(rpcmem_library)) {
+    version = ORT_API_VERSION;
     Alloc = AllocImpl;
     Free = FreeImpl;
     Info = InfoImpl;
     Reserve = AllocImpl;
+    Shrink = ShrinkImpl;
   }
+
+  ~HtpSharedMemoryAllocator();
+
+  // Bound idle backing allocations, including the QNN registrations they retain.
+  static constexpr size_t kMaxCachedBytes = 64 * 1024 * 1024;
+  static constexpr size_t kMaxCachedAllocations = 128;
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(HtpSharedMemoryAllocator);
 
@@ -40,6 +51,7 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   static void* ORT_API_CALL AllocImpl(struct OrtAllocator* this_, size_t size);
 
   static void ORT_API_CALL FreeImpl(struct OrtAllocator* this_, void* p);
+  static OrtStatus* ORT_API_CALL ShrinkImpl(struct OrtAllocator* this_) noexcept;
 
   static const struct OrtMemoryInfo* ORT_API_CALL InfoImpl(const struct OrtAllocator* this_) {
     const HtpSharedMemoryAllocator& impl = *static_cast<const HtpSharedMemoryAllocator*>(this_);
@@ -64,36 +76,54 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
 
   // Allocation clean up callback signature.
   // For a given allocation, any added clean up callbacks will be called with the allocation's base address when the
-  // allocation is freed.
+  // backing allocation is released (not when a buffer is returned to the pool).
   using AllocationCleanUpFn = std::function<void(void* allocation_base_address)>;
 
   // Adds allocation clean up callback to call when the allocation is freed.
   // `address_within_allocation` identifies the allocation. It must be an address within an allocation returned by
   // Alloc() which has not yet been freed.
   // `allocation_clean_up` is the clean up callback. The associated allocator takes ownership of the callback.
-  static Ort::Status AddAllocationCleanUp(void* address_within_allocation, AllocationCleanUpFn&& allocation_clean_up);
+  // Hooks tied to a context may be discarded after that context has expired.
+  static Ort::Status AddAllocationCleanUp(void* address_within_allocation,
+                                          AllocationCleanUpFn&& allocation_clean_up,
+                                          std::optional<std::weak_ptr<void>> owner = std::nullopt);
 
  private:
   Ort::Status GetAllocationSharedMemoryInfoForThisAllocator(void* allocation_base_address,
                                                             SharedMemoryInfo& allocation_info);
 
   Ort::Status AddAllocationCleanUpForThisAllocator(void* allocation_base_address,
-                                                   AllocationCleanUpFn&& allocation_clean_up);
+                                                   AllocationCleanUpFn&& allocation_clean_up,
+                                                   std::optional<std::weak_ptr<void>> owner);
+
+  struct AllocationCleanUpRecord {
+    AllocationCleanUpFn callback;
+    std::optional<std::weak_ptr<void>> owner;
+  };
 
   struct AllocationRecord {
     SharedMemoryInfo shared_memory_info;
-    InlinedVector<AllocationCleanUpFn, 1> clean_up_fns;
+    InlinedVector<AllocationCleanUpRecord, 1> clean_up_fns;
     // Keep the dynamic library loaded until this allocation has been freed,
     // independently of any session that may have consumed the buffer.
     std::shared_ptr<RpcMemLibrary> rpcmem_library;
+    bool in_use = true;
+    uint64_t last_free = 0;
   };
+
+  void ReleaseAllocation(void* address, AllocationRecord&& record) noexcept;
+  void ReleaseCachedAllocations(bool release_in_use = false);
 
   // allocation address -> corresponding allocation record
   InlinedHashMap<const void*, AllocationRecord> allocations_;
   std::mutex allocations_mutex_;  // synchronize access to allocations_
+  size_t cached_bytes_ = 0;
+  size_t cached_allocations_ = 0;
+  uint64_t free_sequence_ = 0;
 
   const OrtMemoryInfo* memory_info_;
   const Ort::Logger& logger_;
+  const std::shared_ptr<RpcMemLibrary> rpcmem_library_;
 };
 
 #ifdef _WIN32
