@@ -12,6 +12,7 @@
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
+#include "QnnTypes.h"
 #include "gsl/gsl"
 
 #include "gtest/gtest.h"
@@ -97,6 +98,12 @@ static void RunRandomNormalLikeTest(bool has_seed, bool explicit_dtype, bool rnl
   }
   AssertOpInQnnGraph(json_dir, "RandomNormalLike", 1);
   AssertOpInQnnGraph(json_dir, "Dequantize", 0);
+  AssertOpOutputInQnnGraph(json_dir, "RandomNormalLike", QNN_DATATYPE_FLOAT_16);
+  constexpr bool is_fp32 = std::is_same_v<OutputType, float>;
+  AssertOpInQnnGraph(json_dir, "Cast", is_fp32 ? 1 : 0);
+  if constexpr (is_fp32) {
+    AssertOpOutputInQnnGraph(json_dir, "Cast", QNN_DATATYPE_FLOAT_32);
+  }
 }
 
 TEST_F(QnnHTPBackendTests, RandomNormalLike_FP16) {
@@ -129,12 +136,12 @@ TEST_F(QnnHTPBackendTests, RandomNormalLike_FP32_ExplicitDtype) {
 
 template <typename QuantType>
 static void RunQDQRandomNormalLikeTest(bool has_input_dq, bool expose_float_output = false) {
+  const float quant_scale = sizeof(QuantType) == 2 ? 0.0005f : 0.05f;
+  const QuantType zero_point = std::is_same_v<QuantType, int8_t>
+                                   ? QuantType{0}
+                                   : static_cast<QuantType>(sizeof(QuantType) == 2 ? 10000 : 100);
   auto build_test_case = [=](ModelTestBuilder& builder) {
     const std::vector<int64_t> shape{2, 3};
-    const float quant_scale = sizeof(QuantType) == 2 ? 0.0005f : 0.05f;
-    const QuantType zero_point = std::is_same_v<QuantType, int8_t>
-                                     ? QuantType{0}
-                                     : static_cast<QuantType>(sizeof(QuantType) == 2 ? 10000 : 100);
     builder.MakeInput<float>("runtime_input", shape, std::vector<float>(6, 1.0f));
 
     std::string rnl_input = "runtime_input";
@@ -159,14 +166,42 @@ static void RunQDQRandomNormalLikeTest(bool has_input_dq, bool expose_float_outp
     }
   };
 
+  const auto* test_info = ::testing::UnitTest::GetInstance()->current_test_info();
+  const std::filesystem::path json_dir = std::string(test_info->test_suite_name()) + "_" + test_info->name();
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_dir.string();
   RunQnnModelTest(build_test_case,
                   provider_options,
                   21,  // Standard ONNX Q/DQ supports UINT16 starting at opset 21.
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs=*/false);
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  const bool native_quantized_output = !std::is_same_v<QuantType, int8_t> && !expose_float_output;
+  constexpr auto output_type = std::is_same_v<QuantType, int8_t> ? QNN_DATATYPE_SFIXED_POINT_8
+                               : sizeof(QuantType) == 2          ? QNN_DATATYPE_UFIXED_POINT_16
+                                                                 : QNN_DATATYPE_UFIXED_POINT_8;
+  AssertOpInQnnGraph(json_dir, "RandomNormalLike", 1);
+  AssertOpInQnnGraph(json_dir, "Quantize", native_quantized_output ? 0 : 1);
+  AssertOpInQnnGraph(json_dir, "Cast", native_quantized_output ? 0 : 1);
+  if (native_quantized_output) {
+    AssertOpOutputInQnnGraph(json_dir, "RandomNormalLike", output_type,
+                             std::make_pair(quant_scale, -static_cast<int32_t>(zero_point)));
+  } else {
+    AssertOpOutputInQnnGraph(json_dir, "RandomNormalLike", QNN_DATATYPE_FLOAT_16);
+    AssertOpOutputInQnnGraph(json_dir, "Cast", QNN_DATATYPE_FLOAT_32);
+    AssertOpOutputInQnnGraph(json_dir, "Quantize", output_type,
+                             std::make_pair(quant_scale, -static_cast<int32_t>(zero_point)));
+  }
 }
 
 TEST_F(QnnHTPBackendTests, RandomNormalLike_QDQ_U8_OutputOnly) {
