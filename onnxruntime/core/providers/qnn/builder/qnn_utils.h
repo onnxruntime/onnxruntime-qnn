@@ -835,6 +835,9 @@ Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
   return Ort::Status();
 }
 
+// Shared by MatMul lowering and K pre-scaling so both use the same error budget.
+bool ShouldUseSymmetricU16ForMatMul(float input1_scale);
+
 Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             const std::string& convert_input_name,
                             const std::string& convert_output_name,
