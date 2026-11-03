@@ -8,6 +8,12 @@
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
+#if defined(QNN_EP_INTERNAL_SYMBOL_ACCESS) && QNN_EP_INTERNAL_SYMBOL_ACCESS
+#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "test/providers/qnn/infra/qnn_unit_test_utils.h"
+#endif
+
 namespace onnxruntime {
 namespace test {
 
@@ -35,7 +41,7 @@ void QuantizeBlockwiseOnly(
       nullptr,  // zero_point (symmetric int4)
       raw_vals.data(),
       block_size,
-      quantize_axis == 1,  // column-wise quantization
+      quantize_axis == 1 || quantize_axis == -1,  // trailing-axis quantization
       rows,
       cols,
       cols);
@@ -46,7 +52,7 @@ void QuantizeBlockwiseOnly(
  * (rows x cols logical shape, Int4x2 packed storage). This mimics a weight that arrives
  * pre-quantized as int4 rather than packed as UInt4x2 in a uint8 buffer -- i.e. the
  * "weight_shape[1] already is the element count" case (no *2 for packed nibbles).
- * Only quantize_axis == 1 (column-wise) is supported on QNN GPU, matching QuantizeBlockwiseOnly.
+ * Only trailing-axis (column-wise) quantization is supported on QNN GPU, matching QuantizeBlockwiseOnly.
  */
 void QuantizeBlockwiseInt4Unpacked(
     const std::vector<float>& raw_vals,
@@ -238,6 +244,65 @@ static void RunGatherBlockQuantizedTest(
                   EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
+static void RunGatherBlockQuantizedScalarIndexTest(bool rank3_weights,
+                                                   bool indices_are_int32,
+                                                   bool indices_are_initializer) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto model_builder = [rank3_weights, indices_are_int32,
+                        indices_are_initializer](ModelTestBuilder& builder) {
+    constexpr int64_t kTables = 2;
+    constexpr int64_t kVocab = 128;
+    constexpr int64_t kLogicalHidden = 64;
+    constexpr int64_t kPackedHidden = kLogicalHidden * QBits / 8;
+    constexpr int64_t kBlockSize = 32;
+    constexpr int64_t kBlocks = kLogicalHidden / kBlockSize;
+    const int64_t outer = rank3_weights ? kTables : 1;
+
+    RandomValueGenerator random{1234};
+    std::vector<float> weights(random.Gaussian<float>(
+        AsSpan({outer * kVocab, kLogicalHidden}), 0.0f, 0.25f));
+    std::vector<uint8_t> packed_weights(static_cast<size_t>(outer * kVocab * kPackedHidden));
+    std::vector<float> scales(static_cast<size_t>(outer * kVocab * kBlocks));
+    QuantizeBlockwiseOnly(weights, packed_weights, scales,
+                          static_cast<int32_t>(outer * kVocab),
+                          static_cast<int32_t>(kLogicalHidden),
+                          static_cast<int32_t>(kBlockSize), 1);
+
+    const std::vector<int64_t> weight_shape = rank3_weights
+                                                  ? std::vector<int64_t>{kTables, kVocab, kPackedHidden}
+                                                  : std::vector<int64_t>{kVocab, kPackedHidden};
+    const std::vector<int64_t> scale_shape = rank3_weights
+                                                 ? std::vector<int64_t>{kTables, kVocab, kBlocks}
+                                                 : std::vector<int64_t>{kVocab, kBlocks};
+    MakeTestInput<uint8_t>(builder, "data",
+                           TestInputDef<uint8_t>(weight_shape, true, packed_weights));
+    if (indices_are_int32) {
+      MakeTestInput<int32_t>(builder, "indices",
+                             TestInputDef<int32_t>({}, indices_are_initializer, {0}));
+    } else {
+      MakeTestInput<int64_t>(builder, "indices",
+                             TestInputDef<int64_t>({}, indices_are_initializer, {0}));
+    }
+    MakeTestInput<float>(builder, "scales",
+                         TestInputDef<float>(scale_shape, true, scales));
+    builder.MakeOutput("output");
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("bits", static_cast<int64_t>(QBits)));
+    attributes.push_back(builder.MakeScalarAttribute("block_size", kBlockSize));
+    attributes.push_back(builder.MakeScalarAttribute("gather_axis", static_cast<int64_t>(0)));
+    attributes.push_back(builder.MakeScalarAttribute("quantize_axis", rank3_weights ? 2LL : 1LL));
+    builder.AddNode("gather_block_quantize", "GatherBlockQuantized",
+                    {"data", "indices", "scales"}, {"output"}, kMSDomain, attributes);
+  };
+
+  RunQnnModelTest(model_builder, provider_options, 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.05f)});
+}
+
 // =============================================================
 // Test cases
 // =============================================================
@@ -251,6 +316,15 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_Basic) {
   params.block_size = 32;
   params.gather_axis = 0;
   params.quantize_axis = 1;
+  RunGatherBlockQuantizedTest(params);
+}
+
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_NegativeQuantizeAxis) {
+  GatherBQTestParams params;
+  params.vocab_size = 128;
+  params.hidden_size = 64;
+  params.block_size = 32;
+  params.quantize_axis = -1;
   RunGatherBlockQuantizedTest(params);
 }
 
@@ -334,9 +408,8 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_UnpackedInt4Weight_LargeHidden) 
                               /*weight_is_unpacked_int4=*/true);
 }
 
-// Regression for vision embedding tables whose packed data and scales are rank 3.
-// data [2, 10240, 384] encodes logical INT4 weights [2, 10240, 768]; scales are
-// [2, 10240, 24]. Quantization is along the last axis and gathering is along axis 0.
+// Regression for embedding tables whose packed data and scales are rank 3.
+// Small dimensions keep the test focused on rank handling without excessive allocations.
 TEST_F(QnnGPUBackendTests, GatherBlockQuantized_Rank3_LastAxis) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "gpu";
@@ -344,8 +417,8 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_Rank3_LastAxis) {
 
   auto model_builder = [](ModelTestBuilder& builder) {
     constexpr int64_t kOuter = 2;
-    constexpr int64_t kVocab = 10240;
-    constexpr int64_t kLogicalHidden = 768;
+    constexpr int64_t kVocab = 128;
+    constexpr int64_t kLogicalHidden = 64;
     constexpr int64_t kPackedHidden = kLogicalHidden * QBits / 8;
     constexpr int64_t kBlockSize = 32;
     constexpr int64_t kBlocks = kLogicalHidden / kBlockSize;
@@ -377,6 +450,19 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_Rank3_LastAxis) {
   RunQnnModelTest(model_builder, provider_options, 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.05f)});
 }
+
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_ScalarIndex_Rank2Weights) {
+  RunGatherBlockQuantizedScalarIndexTest(/*rank3_weights=*/false,
+                                         /*indices_are_int32=*/false,
+                                         /*indices_are_initializer=*/false);
+}
+
+TEST_F(QnnGPUBackendTests, GatherBlockQuantized_StaticInt32ScalarIndex) {
+  RunGatherBlockQuantizedScalarIndexTest(/*rank3_weights=*/true,
+                                         /*indices_are_int32=*/true,
+                                         /*indices_are_initializer=*/true);
+}
+
 // A scalar ONNX index gathers the first rank-3 table slice and produces a rank-2
 // output. QNN Gather needs a rank-1-or-greater index, so the provider must lower
 // this to a one-element index and reshape the temporary result back to rank 2.
@@ -502,6 +588,68 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_DynamicInt32ScalarIndex_NonzeroG
   RunQnnModelTest(model_builder, provider_options, 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.05f)});
 }
+
+#if defined(QNN_EP_INTERNAL_SYMBOL_ACCESS) && QNN_EP_INTERNAL_SYMBOL_ACCESS
+
+namespace {
+
+Ort::Status ValidateGatherBlockQuantized(const qnn::IOpBuilder& builder,
+                                         const std::vector<int64_t>& weight_shape,
+                                         const std::vector<int64_t>& scale_shape,
+                                         int64_t quantize_axis) {
+  OpBuilderTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::GPU);
+
+  auto data = MakeMockIODef("data", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, weight_shape);
+  auto indices = MakeMockIODef("indices", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
+                               std::vector<int64_t>{1});
+  auto scales = MakeMockIODef("scales", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, scale_shape);
+  auto output = MakeMockIODef("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                              std::vector<int64_t>{1});
+  auto node_unit = MakeMockNodeUnit(
+      "GatherBlockQuantized", {data, indices, scales}, {output}, "gather_block_quantized_node",
+      kMSDomain, 1, 0,
+      {FakeOpAttr::MakeInt64("bits", 4),
+       FakeOpAttr::MakeInt64("block_size", 32),
+       FakeOpAttr::MakeInt64("gather_axis", 0),
+       FakeOpAttr::MakeInt64("quantize_axis", quantize_axis)});
+
+  return builder.IsOpSupported(*wrapper, node_unit, ctx.ort_logger);
+}
+
+}  // namespace
+
+TEST(QnnUnit_GatherBlockQuantized_ComponentTest, RejectsUnsupportedWeightRanks) {
+  const qnn::IOpBuilder* builder = qnn::GetOpBuilder("GatherBlockQuantized");
+  ASSERT_NE(builder, nullptr);
+
+  EXPECT_NE(ValidateGatherBlockQuantized(*builder, {16}, {1}, 0), Ort::Status());
+  EXPECT_NE(ValidateGatherBlockQuantized(*builder, {1, 2, 4, 16}, {1, 2, 4, 1}, 3), Ort::Status());
+}
+
+TEST(QnnUnit_GatherBlockQuantized_ComponentTest, RejectsMismatchedWeightAndScaleRanks) {
+  const qnn::IOpBuilder* builder = qnn::GetOpBuilder("GatherBlockQuantized");
+  ASSERT_NE(builder, nullptr);
+
+  EXPECT_NE(ValidateGatherBlockQuantized(*builder, {4, 16}, {4, 1, 1}, 1), Ort::Status());
+}
+
+TEST(QnnUnit_GatherBlockQuantized_ComponentTest, RejectsMismatchedNonQuantizedDimensions) {
+  const qnn::IOpBuilder* builder = qnn::GetOpBuilder("GatherBlockQuantized");
+  ASSERT_NE(builder, nullptr);
+
+  EXPECT_NE(ValidateGatherBlockQuantized(*builder, {4, 16}, {3, 1}, 1), Ort::Status());
+}
+
+TEST(QnnUnit_GatherBlockQuantized_ComponentTest, RejectsPackedWeightExtentMismatch) {
+  const qnn::IOpBuilder* builder = qnn::GetOpBuilder("GatherBlockQuantized");
+  ASSERT_NE(builder, nullptr);
+
+  EXPECT_NE(ValidateGatherBlockQuantized(*builder, {4, 17}, {4, 2}, 1), Ort::Status());
+}
+
+#endif  // defined(QNN_EP_INTERNAL_SYMBOL_ACCESS) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 // Negative test: GatherBlockQuantized is GPU-only. On the CPU backend the op
 // must be rejected by IsOpSupported and fall back (no node assigned to QNN EP).
