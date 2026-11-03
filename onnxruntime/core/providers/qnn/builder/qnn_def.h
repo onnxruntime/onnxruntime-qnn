@@ -85,6 +85,12 @@ namespace qnn {
 #endif
 #endif
 
+// This local option is validated with QAIRT 2.51 (QNN API 2.40) headers.
+// Conservatively reject it when building with older SDKs.
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
+#define QNN_HTP_INIT_ACCELERATION_AVAILABLE
+#endif
+
 // HTP native BQ support starts from QAIRT 2.51 (QNN API 2.40).
 #if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
 #define QNN_HTP_NATIVE_BQ_AVAILABLE

@@ -144,6 +144,9 @@ struct QnnBackendManagerConfig {
   // Caps the reused IO buffer size at context load. 0 = SDK default.
   uint64_t reused_io_limit_mb = 0;
   bool configure_host_mode = false;
+  // Opt-in context-binary loading options. Both are off by default.
+  bool htp_mapped_direct = false;
+  bool htp_init_acceleration = false;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -180,6 +183,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         skip_qnn_version_check_(config.skip_qnn_version_check),
         skip_backend_op_validation_(config.skip_backend_op_validation),
         configure_host_mode_(config.configure_host_mode),
+        htp_mapped_direct_(config.htp_mapped_direct),
+        htp_init_acceleration_(config.htp_init_acceleration),
         htp_power_config_manager_(power::HtpPowerConfigManager()),
         api_ptrs_(api_ptrs),
         logger_ptr_(&logger) {}
@@ -343,6 +348,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void SetQnnBackendType(uint32_t backend_id);
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
+  bool HasSameInitOptions(bool mapped_direct, bool init_acceleration) const {
+    return htp_mapped_direct_ == mapped_direct && htp_init_acceleration_ == init_acceleration;
+  }
 
   void SetQnnAllocatorType(QnnAllocatorType allocator_type) { qnn_allocator_type_ = allocator_type; }
   QnnAllocatorType GetQnnAllocatorType() const { return qnn_allocator_type_; }
@@ -801,6 +809,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // op validation falls back to the serializer's generic checks (see SetupBackend).
   bool skip_backend_op_validation_ = false;
   bool configure_host_mode_ = false;
+  const bool htp_mapped_direct_;
+  const bool htp_init_acceleration_;
 
   power::HtpPowerConfigManager htp_power_config_manager_;
 

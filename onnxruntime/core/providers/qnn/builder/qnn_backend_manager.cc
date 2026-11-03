@@ -1340,6 +1340,20 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
     int64_t max_spill_fill_size,
     Qnn_ContextHandle_t first_group_handle,
     QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t>& configs_builder) {
+  RETURN_IF((htp_mapped_direct_ || htp_init_acceleration_) && qnn_backend_type_ != QnnBackendType::HTP,
+            "HTP init options require the HTP backend.");
+#ifdef QNN_HTP_INIT_ACCELERATION_AVAILABLE
+  if (htp_init_acceleration_) {
+    auto* custom = configs_builder.PushCustomConfig().get();
+    custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION;
+    custom->initAcceleration = true;
+    auto* config = configs_builder.PushConfig().get();
+    config->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    config->customConfig = custom;
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "HTP init acceleration enabled for context deserialization.");
+  }
+#endif
+
   gsl::not_null<QnnContext_Config_t*> priority_cfg = configs_builder.PushConfig();
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, *priority_cfg));
 
@@ -1388,7 +1402,21 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
   Qnn_ErrorHandle_t rt = QNN_SUCCESS;
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  if (use_file_mapping && file_mapper_) {
+  if (use_file_mapping && file_mapper_ && htp_mapped_direct_) {
+    // The manager owns the complete read-only file mapping. Reuse its bytes for
+    // the ordinary QNN API; this does NOT request DMA/zero-copy weight mapping.
+    RETURN_IF(io_dispatch.HasReadCallback() || bin_buffer == nullptr || buffer_length == 0,
+              "Invalid mapped-direct context source.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                    "HTP mapped-direct: contextCreateFromBinary using the mapped file buffer.");
+    rt = qnn_interface_.contextCreateFromBinary(backend_handle_, device_handle_, context_configs,
+                                                bin_buffer, static_cast<Qnn_ContextBinarySize_t>(buffer_length),
+                                                &context, profile_handle);
+    if (rt != QNN_SUCCESS) {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                      "HTP mapped-direct failed. Retrying with direct read.");
+    }
+  } else if (use_file_mapping && file_mapper_) {
     RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinaryWithCallback,
               "Invalid function pointer for contextCreateFromBinaryWithCallback.");
 
@@ -1476,7 +1504,7 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
                                               blob_version,
                                               graph_count,
                                               &graphs_info));
-    if (!MinVersionMet(blob_version, {3, 3, 3})) {
+    if (!htp_mapped_direct_ && !MinVersionMet(blob_version, {3, 3, 3})) {
       std::string version_str = std::to_string(blob_version.major) + "." +
                                 std::to_string(blob_version.minor) + "." +
                                 std::to_string(blob_version.patch);
@@ -2047,7 +2075,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
-  if (use_file_mapping && !MinVersionMet(blob_version, {3, 3, 3})) {
+  if (use_file_mapping && !htp_mapped_direct_ && !MinVersionMet(blob_version, {3, 3, 3})) {
     std::string version_str(std::to_string(blob_version.major) + "." + std::to_string(blob_version.minor) + "." + std::to_string(blob_version.patch));
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,

@@ -1550,6 +1550,30 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                     false,
                                                     logger_);
 
+  // These are local, opt-in provider options, not application environment variables.
+  const auto parse_init_option = [&](const char* name) {
+    std::string value;
+    GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey(name), "0", value);
+    if (value != "0" && value != "1") {
+      const std::string message = std::string(name) + " must be 0 or 1.";
+      LOG_AND_THROW_ERROR(logger_, message.c_str());
+    }
+    return value == "1";
+  };
+  const bool htp_mapped_direct = parse_init_option("htp_mapped_direct");
+  const bool htp_init_acceleration = parse_init_option("htp_init_acceleration");
+#ifndef QNN_HTP_INIT_ACCELERATION_AVAILABLE
+  if (htp_init_acceleration) {
+    LOG_AND_THROW_ERROR(logger_, "htp_init_acceleration requires a provider built with QAIRT 2.51 or newer headers.");
+  }
+#endif
+  if (htp_mapped_direct && !enable_file_mapped_weights_) {
+    LOG_AND_THROW_ERROR(logger_, "htp_mapped_direct requires enabled, supported file mapping and an external context binary.");
+  }
+  if ((htp_mapped_direct || htp_init_acceleration) && htp_share_resource_optimization_ == 1) {
+    LOG_AND_THROW_ERROR(logger_, "HTP init options support sequential context loading, not htp_share_resource_optimization=1.");
+  }
+
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exists
   // so that all graphs from later sessions will be compiled into the same QNN context. Keep the result from a single lookup:
   // another session may clear the singleton, but this session must retain the manager it adopted.
@@ -1576,7 +1600,9 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                      enable_framework_op_trace_,
                                      skip_backend_op_validation,
                                      reused_io_limit_mb,
-                                     enable_htp_cross_device_prepare},
+                                     enable_htp_cross_device_prepare,
+                                     htp_mapped_direct,
+                                     htp_init_acceleration},
         static_cast<const ApiPtrs&>(*this), logger_);
   }
 
@@ -1637,6 +1663,9 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   }
 
   if (reusing_shared_backend_manager) {
+    if (!qnn_backend_manager_->HasSameInitOptions(htp_mapped_direct, htp_init_acceleration)) {
+      LOG_AND_THROW_ERROR(logger_, "Cannot share a QNN backend manager with different HTP init options.");
+    }
     const auto shared_allocator_type = qnn_backend_manager_->GetQnnAllocatorType();
     if (shared_allocator_type != qnn_allocator_type_) {
       const std::string message =
@@ -1732,6 +1761,9 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
 
   // File mapping and encryption are mutually exclusive: an App-provided read callback replaces
   // the on-disk read, so file mapping must be off when a read callback is registered.
+  if (htp_mapped_direct && io_dispatch_->HasReadCallback()) {
+    LOG_AND_THROW_ERROR(logger_, "htp_mapped_direct cannot bypass an EPContext read/decryption callback.");
+  }
   if (enable_file_mapped_weights_ && io_dispatch_->HasReadCallback()) {
     enable_file_mapped_weights_ = false;
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
