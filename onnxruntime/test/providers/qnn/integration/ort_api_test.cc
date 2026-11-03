@@ -60,6 +60,8 @@ class QnnInteg_OrtApiTest : public ::testing::Test {
 
 #if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
 static bool MakeLinuxArm64V68QdqSessionOptions(const RegisteredQnnEp& ep, Ort::SessionOptions& out_opts) {
+  // Initialize fresh options through the same HTP helper as SetUp(), with the
+  // extra V68 QDQ settings. session_opts_ already has an EP appended by SetUp().
   // V68 needs graph-I/O quantization disabled so the QDQ Conv group is
   // partitioned as one QNN graph. Keep this V68-specific setting out of the
   // shared HTP session-options helper used by unrelated integration tests.
