@@ -961,11 +961,13 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationS16Output_StaticWeight) {
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8) {
-  RunDynamicInput1QuantErrorTest("low_error", 0.0f, 60.0f, QNN_DATATYPE_UFIXED_POINT_8);
+  // For [0, 40], the U8 half-step is 40 / 255 / 2, below the 0.10 budget.
+  RunDynamicInput1QuantErrorTest("low_error", 0.0f, 40.0f, QNN_DATATYPE_UFIXED_POINT_8);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_HighQuantErrorUsesSymmetricU16) {
-  RunDynamicInput1QuantErrorTest("high_error", 0.0f, 80.0f, QNN_DATATYPE_UFIXED_POINT_16);
+  // For [0, 60], the U8 half-step is between 0.10 and 0.15, exercising the restored budget.
+  RunDynamicInput1QuantErrorTest("high_error", 0.0f, 60.0f, QNN_DATATYPE_UFIXED_POINT_16);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16SymmetricDynamicInput1_PassesThrough) {

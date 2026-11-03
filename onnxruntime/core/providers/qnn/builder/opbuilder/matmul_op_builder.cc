@@ -19,16 +19,6 @@ namespace onnxruntime {
 namespace qnn {
 
 namespace {
-bool ShouldUseSymmetricU16ForMatMul(float input1_scale) {
-  constexpr float kMaximumValueQuantError = 0.15f;
-
-  // Re-encoding U16 as U8 increases the value-domain quantization step from
-  // input1_scale to input1_scale * 65535 / 255. A value can move
-  // by at most half of that U8 step when it is rounded. Keep symmetric U16
-  // when that error exceeds the 15% value-domain budget.
-  const float u8_half_step = input1_scale * 65535.0f / 255.0f / 2.0f;
-  return u8_half_step > kMaximumValueQuantError;
-}
 // Detects a block-quantized MatMul weight (ONNX MatMul input[1]).
 // Accepts weight rank 2–4: shape [..., K, N] where any leading dims beyond K/N must equal 1
 // (i.e. reshapeable to [1, 1, K, N]). Per ONNX opset 21 the scale has the same rank as the
@@ -407,7 +397,7 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
       constexpr int32_t kSymmetricU16Offset = -32768;
       if (quant_param.scaleOffsetEncoding.offset != kSymmetricU16Offset) {
         const bool use_symmetric_u16 =
-            ShouldUseSymmetricU16ForMatMul(quant_param.scaleOffsetEncoding.scale);
+            utils::ShouldUseSymmetricU16ForMatMul(quant_param.scaleOffsetEncoding.scale);
         RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
                                                convert_input_name,
                                                convert_output_name,
