@@ -102,8 +102,9 @@ inline std::unique_ptr<qnn::QnnModelWrapper> MakeSnapshotWrapperHtpJson(
 
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+  ctx.graph_emitter = ctx.backend_manager.Get()->CreateGraphEmitter();
 
-  if (!wrapper->CreateQnnGraph(htp.context_handle, "test_graph", nullptr)) {
+  if (!wrapper->CreateQnnGraph(*ctx.graph_emitter, htp.context_handle, "test_graph", nullptr)) {
     return nullptr;
   }
   return wrapper;

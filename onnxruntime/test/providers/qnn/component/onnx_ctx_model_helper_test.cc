@@ -25,7 +25,7 @@
 #include "HTP/QnnHtpDevice.h"
 
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"

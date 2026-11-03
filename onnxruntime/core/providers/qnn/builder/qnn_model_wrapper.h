@@ -4,6 +4,7 @@
 #pragma once
 
 #include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -22,9 +23,9 @@ namespace qnn {
 
 // Forward declarations
 class BF16ConversionGuard;
+class IBackendManager;
+class IGraphEmitter;
 class OpTraceCollector;
-// Prevent QnnBackendManager change triggering op builder rebuild on incremental build.
-class QnnBackendManager;
 
 // Stores information about an ONNX input or output tensor.
 // Filled out by QnnModelWrapper::GetTensorInfo()
@@ -54,7 +55,7 @@ class QnnModelWrapper {
   QnnModelWrapper(const OrtGraph& ort_graph,
                   const ApiPtrs& api_ptrs,
                   const Ort::Logger& logger,
-                  const QnnBackendManager& qnn_backend_manager,
+                  IBackendManager& backend_manager,
                   const GraphInputOutputInfo& graph_inputs,
                   const GraphInputOutputInfo& graph_outputs,
                   const ModelSettings& model_settings,
@@ -63,13 +64,14 @@ class QnnModelWrapper {
                   bool is_post_layout_transform = false);
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
-  ~QnnModelWrapper() = default;
+  ~QnnModelWrapper();
 
   const ModelSettings& GetModelSettings() const { return model_settings_; }
 
   QnnHtpDevice_Arch_t GetHtpArch() const;
 
-  bool CreateQnnGraph(const Qnn_ContextHandle_t& context,
+  bool CreateQnnGraph(IGraphEmitter& graph_emitter,
+                      const Qnn_ContextHandle_t& context,
                       const std::string& graph_name,
                       const QnnGraph_Config_t** graph_configs = nullptr);
 
@@ -108,11 +110,7 @@ class QnnModelWrapper {
 
   bool ComposeQnnGraph(bool build_json_qnn_graph = false);
 
-  Qnn_GraphHandle_t GetQnnGraph() const { return graph_; }
-
   std::string GetQnnGraphName() const { return graph_name_; }
-
-  Qnn_ContextHandle_t GetQnnGraphContext() const { return graph_context_; }
 
   std::vector<QnnTensorWrapper>&& GetGraphInputTensorWrappers() {
     GetGraphInputOutputTensorWrapper(graph_inputs_.names, model_input_tensor_wrappers_);
@@ -566,11 +564,10 @@ class QnnModelWrapper {
 
   const OrtGraph& ort_graph_;
   const Ort::Logger& logger_;
-  const QnnBackendManager& qnn_backend_manager_;
-  Qnn_GraphHandle_t graph_ = nullptr;
+  IBackendManager* backend_manager_ = nullptr;
+  std::unique_ptr<IGraphEmitter> owned_graph_emitter_;
+  IGraphEmitter* graph_emitter_ = nullptr;
   std::string graph_name_ = "";
-  // QNN context that holds the QNN graph referenced by `graph_`
-  Qnn_ContextHandle_t graph_context_ = nullptr;
 
   std::vector<QnnTensorWrapper> model_input_tensor_wrappers_;
   std::vector<QnnTensorWrapper> model_output_tensor_wrappers_;

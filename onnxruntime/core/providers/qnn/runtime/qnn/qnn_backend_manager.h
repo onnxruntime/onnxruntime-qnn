@@ -31,21 +31,22 @@
 #include "System/QnnSystemInterface.h"
 
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
+#include "core/providers/qnn/runtime/interfaces/backend_manager_interface.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/op_package/op_package.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
-#include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_context_mem_handle_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
-#include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_htp_power_config_manager.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
-#include "core/providers/qnn/builder/qnn_backend_profiling_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_profiling_manager.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/rpcmem_library.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-#include "core/providers/qnn/builder/qnn_file_mapping_interface.h"
+#include "core/providers/qnn/runtime/qnn/qnn_file_mapping_interface.h"
 #endif
 
 namespace onnxruntime {
@@ -146,7 +147,8 @@ struct QnnBackendManagerConfig {
   bool configure_host_mode = false;
 };
 
-class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
+class QnnBackendManager : public IBackendManager,
+                          public std::enable_shared_from_this<QnnBackendManager> {
   friend class QnnBackendSystemDlcPlugin;
 
  private:
@@ -343,6 +345,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void SetQnnBackendType(uint32_t backend_id);
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
+  BackendRuntimeKind GetRuntimeKind() const override { return BackendRuntimeKind::Qnn; }
+  QnnBackendType GetBackendType() const override { return qnn_backend_type_; }
+  std::unique_ptr<IGraphEmitter> CreateGraphEmitter() override;
 
   void SetQnnAllocatorType(QnnAllocatorType allocator_type) { qnn_allocator_type_ = allocator_type; }
   QnnAllocatorType GetQnnAllocatorType() const { return qnn_allocator_type_; }
@@ -351,9 +356,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const std::string& GetSdkVersion() { return sdk_build_version_; }
 
-  QnnHtpDevice_Arch_t GetHtpArch() const { return htp_arch_internal_; }
+  QnnHtpDevice_Arch_t GetHtpArch() const override { return htp_arch_internal_; }
 
-  uint32_t GetSocModel() const { return soc_model_; }
+  uint32_t GetSocModel() const override { return soc_model_; }
 
   uint32_t GetVtcmSize() const { return vtcm_size_internal_; }
 

@@ -15,7 +15,7 @@
 
 #include "test/providers/qnn/infra/qnn_test_windows_compat.h"
 
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
 #include "core/providers/qnn/shared_context.h"
 
 #ifdef _WIN32

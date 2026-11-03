@@ -7,7 +7,9 @@
 #include <functional>
 #include <memory>
 #include <ostream>
+#include "core/providers/qnn/runtime/interfaces/graph_emitter_interface.h"
 
+#include "core/providers/qnn/runtime/qnn/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -517,7 +519,7 @@ bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
     }
   }
 
-  auto tensor_create_result = qnn_interface.tensorCreateGraphTensor(graph, &qnn_tensor);
+  auto tensor_create_result = QnnGraphEmitter::CreateTensor(qnn_interface, graph, qnn_tensor);
   if (tensor_create_result != QNN_TENSOR_NO_ERROR) {
     ss << "Failed to create tensor for node: " << node_name
        << " tensor_name: " << tensor_name
@@ -599,7 +601,7 @@ void QnnOpConfigWrapper::SetData(Qnn_Tensor_t* input_tensors,
 bool QnnOpConfigWrapper::QnnGraphOpValidation(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                               const Qnn_BackendHandle_t& backend_handle,
                                               std::string& error_msg) {
-  auto validation_status = qnn_interface.backendValidateOpConfig(backend_handle, op_config_);
+  auto validation_status = QnnGraphEmitter::ValidateOp(qnn_interface, backend_handle, op_config_);
   if (QNN_SUCCESS != validation_status) {
     std::ostringstream oss;
     oss << "QNN.backendValidateOpConfig() failed for node `" << name_ << "` of type `"
@@ -614,13 +616,126 @@ bool QnnOpConfigWrapper::QnnGraphOpValidation(const QNN_INTERFACE_VER_TYPE& qnn_
 bool QnnOpConfigWrapper::CreateQnnGraphOp(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                           const Qnn_GraphHandle_t& graph,
                                           std::string& error_msg) {
-  auto status = qnn_interface.graphAddNode(graph, op_config_);
+  auto status = QnnGraphEmitter::AddNode(qnn_interface, graph, op_config_);
   if (QNN_GRAPH_NO_ERROR != status) {
     std::ostringstream oss;
     oss << "QNN.graphAddNode() failed for node `" << name_ << "` of type `" << type_name_
         << "` with error code " << status << std::endl;
     error_msg = oss.str();
     return false;
+  }
+
+  return true;
+}
+
+// IGraphEmitter overload: routes tensor creation through the abstract emitter.
+bool CreateTensorInQnnGraph(IGraphEmitter& emitter,
+                            const std::string& node_name,
+                            const std::string& tensor_name,
+                            Qnn_Tensor_t& qnn_tensor,
+                            std::unordered_map<std::string, uint32_t>& tensors_created_table,
+                            std::string& error_msg) {
+  auto existing = tensors_created_table.find(tensor_name);
+  if (existing != tensors_created_table.end()) {
+    SetQnnTensorID(qnn_tensor, existing->second);
+    return true;
+  }
+
+  auto qnn_data_type = GetQnnTensorDataType(qnn_tensor);
+  size_t data_size = utils::GetElementSizeByType(qnn_data_type);
+
+  std::stringstream ss;
+  if (0 == data_size) {
+    ss << "Invalid QNN data type provided, "
+       << qnn_data_type << ", for tensor " << tensor_name
+       << " on node " << node_name;
+    error_msg = ss.str();
+    return false;
+  }
+
+  auto qnn_tensor_type = GetQnnTensorType(qnn_tensor);
+  if (qnn_tensor_type == QNN_TENSOR_TYPE_STATIC) {
+    if (GetQnnTensorMemType(qnn_tensor) != QNN_TENSORMEMTYPE_RAW) {
+      ss << "Expected raw memType in provided static tensor "
+         << tensor_name << "for node " << node_name;
+      error_msg = ss.str();
+      return false;
+    }
+    const auto qnn_tensor_size = utils::GetQnnTensorDataSizeInBytes(qnn_tensor);
+    auto qnn_tensor_buf_size = GetQnnTensorClientBuf(qnn_tensor).dataSize;
+    if (qnn_tensor_size != qnn_tensor_buf_size) {
+      ss << "Data length mismatch for static tensor. node_name: " << node_name
+         << " tensor_name: " << tensor_name
+         << ". size calculated from shape: " << qnn_tensor_size
+         << ", tensor.clientBuf.dataSize: " << qnn_tensor_buf_size;
+      error_msg = ss.str();
+      return false;
+    }
+  }
+
+  Ort::Status s = emitter.CreateTensor(qnn_tensor);
+  if (!s.IsOK()) {
+    ss << "Failed to create tensor for node: " << node_name
+       << " tensor_name: " << tensor_name
+       << " error: " << s.GetErrorMessage();
+    error_msg = ss.str();
+    return false;
+  }
+
+  tensors_created_table.emplace(tensor_name, GetQnnTensorID(qnn_tensor));
+  return true;
+}
+
+// IGraphEmitter overload: routes op validation through the abstract emitter.
+bool QnnOpConfigWrapper::QnnGraphOpValidation(IGraphEmitter& emitter,
+                                              std::string& error_msg) {
+  Ort::Status s = emitter.ValidateOp(op_config_);
+  if (!s.IsOK()) {
+    std::ostringstream oss;
+    oss << "QNN.backendValidateOpConfig() failed for node `" << name_ << "` of type `"
+        << type_name_ << "`: " << s.GetErrorMessage() << std::endl;
+    error_msg = oss.str();
+    return false;
+  }
+  return true;
+}
+
+// IGraphEmitter overload: routes graphAddNode through the abstract emitter.
+bool QnnOpConfigWrapper::CreateQnnGraphOp(IGraphEmitter& emitter,
+                                          std::string& error_msg) {
+  Ort::Status s = emitter.AddNode(op_config_);
+  if (!s.IsOK()) {
+    std::ostringstream oss;
+    oss << "QNN.graphAddNode() failed for node `" << name_ << "` of type `" << type_name_
+        << "`: " << s.GetErrorMessage() << std::endl;
+    error_msg = oss.str();
+    return false;
+  }
+  return true;
+}
+
+// IGraphEmitter overload for QnnParamWrapper::CreateQnnGraphParam.
+bool QnnParamWrapper::CreateQnnGraphParam(IGraphEmitter& emitter,
+                                          const std::string& node_name,
+                                          std::unordered_map<std::string, uint32_t>& tensors_created_table,
+                                          std::string& error_msg) {
+  std::stringstream ss;
+  switch (qnn_param_.paramType) {
+    case QNN_PARAMTYPE_TENSOR: {
+      return CreateTensorInQnnGraph(emitter, node_name, tensor_name_,
+                                    qnn_param_.tensorParam, tensors_created_table, error_msg);
+    }
+    case QNN_PARAMTYPE_SCALAR: {
+      ss << "Add scalar parameter: " << name_;
+      error_msg = ss.str();
+      return true;
+    }
+    default: {
+      ss << "Unknown param type passed for param: "
+         << name_ << " on node: " << node_name;
+      error_msg = ss.str();
+      return true;
+    }
   }
 
   return true;

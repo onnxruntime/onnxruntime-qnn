@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "core/providers/qnn/builder/qnn_file_mapping_interface.h"
+#include "core/providers/qnn/runtime/qnn/qnn_file_mapping_interface.h"
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
 #include <memory>

@@ -13,7 +13,7 @@
 #include "HTP/QnnHtpDevice.h"
 #include "System/QnnSystemInterface.h"
 
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/ort_api.h"
 #include "test/providers/qnn/infra/qnn_test_logger.h"
@@ -53,6 +53,7 @@ class StubBackendManager {
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(StubBackendManager);
 
+  qnn::QnnBackendManager* Get() { return manager_.get(); }
   const qnn::QnnBackendManager* Get() const { return manager_.get(); }
 
   // Non-const access for components that take a mutable QnnBackendManager*

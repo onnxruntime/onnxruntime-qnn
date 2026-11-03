@@ -34,7 +34,7 @@
 #include <HTP/QnnHtpDevice.h>
 #include <HTP/QnnHtpPerfInfrastructure.h>
 
-#include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_htp_power_config_manager.h"
 #include "core/providers/qnn/ort_api.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"

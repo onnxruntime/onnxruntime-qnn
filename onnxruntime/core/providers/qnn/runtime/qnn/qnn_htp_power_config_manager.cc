@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
-#include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_htp_power_config_manager.h"
 
 #include <algorithm>
 #include <vector>

@@ -31,15 +31,20 @@
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
-#include "core/providers/qnn/builder/qnn_htp_power_state_guard.h"
+#include "core/providers/qnn/runtime/qnn/qnn_htp_power_state_guard.h"
 
 namespace onnxruntime {
 class QnnEpFactory;
 
 // Forward declaration for QnnBackendManager, GenieBackendManager
 namespace qnn {
+class IBackendManager;
 class QnnBackendManager;
 class GenieBackendManager;
+#ifdef USE_QAIRT_API
+class QairtBackendManager;
+class QairtProfilingManager;
+#endif
 }  // namespace qnn
 
 class QnnEp : public OrtEp, public ApiPtrs {
@@ -108,6 +113,24 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                    const OrtNode** fused_nodes,
                                    size_t count);
 
+  struct SelectedBackendInfo {
+    qnn::QnnBackendType backend_type;
+    QnnHtpDevice_Arch_t htp_arch;
+    uint32_t soc_model;
+  };
+  SelectedBackendInfo GetSelectedBackendInfo() const;
+  qnn::QnnBackendType GetSelectedBackendType() const;
+  OrtStatus* ValidateCapabilityPreconditions(bool is_qnn_ctx_model);
+  OrtStatus* GetOnnxGraphCapability(const OrtGraph*, OrtEpGraphSupportInfo*, size_t, bool);
+#ifdef USE_QAIRT_API
+  OrtStatus* ValidateQairtProviderOptions();
+  OrtStatus* GetQairtCapability(const OrtGraph*, OrtEpGraphSupportInfo*, size_t);
+  OrtStatus* CompileQairtModels(const OrtGraph**, const OrtNode**, size_t, OrtNodeComputeInfo**, OrtNode**);
+  OrtStatus* OnQairtRunStart(const OrtRunOptions*);
+#if QNN_ORT_EP_PROFILING_API_ENABLED
+  OrtStatus* CreateQairtProfiler(OrtEpProfilerImpl**);
+#endif
+#endif
   OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                const size_t node_unit_size,
@@ -246,7 +269,14 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::unordered_map<uint64_t, int> model_metadef_id_;
 
   // QNN-related.
+  std::shared_ptr<qnn::IBackendManager> backend_manager_;
   std::shared_ptr<qnn::QnnBackendManager> qnn_backend_manager_;
+#ifdef USE_QAIRT_API
+  std::shared_ptr<qnn::QairtBackendManager> qairt_backend_manager_;
+  std::shared_ptr<qnn::QairtProfilingManager> qairt_profiling_manager_;
+  bool qairt_requires_shared_memory_ = false;
+  bool qairt_has_op_packages_ = false;
+#endif
   std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models_;
 
   // Configurations for HTP backend.

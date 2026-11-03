@@ -11,6 +11,7 @@
 #include "QnnTypes.h"
 
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/runtime/qnn/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
@@ -18,6 +19,17 @@ namespace onnxruntime {
 namespace test {
 
 namespace {
+
+Qnn_ErrorHandle_t StubErrorGetMessage(Qnn_ErrorHandle_t, const char** message) {
+  *message = "stub QNN error";
+  return QNN_SUCCESS;
+}
+
+Qnn_ErrorHandle_t StubCreateCompositionGraph(Qnn_ContextHandle_t context, const char*,
+                                             const QnnGraph_Config_t**, Qnn_GraphHandle_t* graph) {
+  *graph = reinterpret_cast<Qnn_GraphHandle_t>(context);
+  return QNN_GRAPH_NO_ERROR;
+}
 
 // Context for constructing a QnnModelWrapper in function-level unit tests.
 //
@@ -50,6 +62,11 @@ struct QnnModelWrapperTestContext : public OrtApiStubContext {
 
   QNN_INTERFACE_VER_TYPE& qnn_interface = backend_manager.QnnInterface();
   Qnn_BackendHandle_t& backend_handle = backend_manager.BackendHandle();
+  qnn::QnnGraphEmitter graph_emitter{qnn_interface, [this](const Qnn_OpConfig_t& op) {
+                                       const auto status = qnn::QnnGraphEmitter::ValidateOp(qnn_interface, backend_handle, op);
+                                       RETURN_IF(status != QNN_SUCCESS, "Stub operation validation failed.");
+                                       return Ort::Status();
+                                     }};
 
   // No validator interface in unit tests — validator_backend_handle stays null so
   // ValidateQnnNode routes through qnn_interface / backend_handle. Tests that want
@@ -74,6 +91,15 @@ struct QnnModelWrapperTestContext : public OrtApiStubContext {
         input_info,
         output_info,
         settings);
+  }
+
+  bool InitializeCompositionGraph(qnn::QnnModelWrapper& wrapper) {
+    qnn_interface.graphCreate = StubCreateCompositionGraph;
+    // Match the production lifecycle: initialize the emitter before composing
+    // tensors and nodes. This context owns it for the wrapper's full lifetime.
+    return wrapper.CreateQnnGraph(graph_emitter,
+                                  reinterpret_cast<Qnn_ContextHandle_t>(&fake_graph_sentinel_),
+                                  "composition_test");
   }
 };
 
@@ -199,6 +225,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_EmptyOpList_ReturnsFalse) {
   QnnModelWrapperTestContext ctx;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   EXPECT_FALSE(wrapper->ComposeQnnGraph());
 }
@@ -652,7 +679,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_NullContext_ReturnsFalse) {
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  EXPECT_FALSE(wrapper->CreateQnnGraph(nullptr, "my_graph"));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, nullptr, "my_graph"));
 }
 
 // ── CreateQnnNode ─────────────────────────────────────────────────────────
@@ -701,6 +728,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_NativeTensors_Succeeds) {
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // No graph I/O names — RegisterGraphInputOutputInOrder is a no-op loop.
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
@@ -722,6 +750,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_DuplicateNodeNames_AreRenamed) {
   ctx.qnn_interface.graphAddNode = StubGraphAddNodeCaptureNames;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper input("input", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -763,6 +792,7 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_AppTypeIOTensors_
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -785,6 +815,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_WithScalarParam_Succeeds) {
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -822,6 +853,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16Enabled_ProcessesConversions)
   qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // FP32 graph I/O tensors — BF16 conversion will insert Cast ops around the main op.
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
@@ -867,7 +899,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_EmptyName_ReturnsFalse) {
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_FALSE(wrapper->CreateQnnGraph(fake_ctx, ""));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, ""));
 }
 
 // First call succeeds (graphCreate stub sets graph_ non-null); second call returns false
@@ -880,8 +912,8 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_AlreadyInitialized_ReturnsFalse) {
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_TRUE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
-  EXPECT_FALSE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
+  EXPECT_TRUE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
 }
 
 // CreateQnnNode with do_op_validation=true and BF16 disabled calls backendValidateOpConfig.
@@ -913,6 +945,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_MissingInputTensor_ReturnsFalse) 
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // Add only the output tensor; "nonexistent_in" is never added to the map.
   qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
@@ -932,6 +965,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_MissingParam_ReturnsFalse) {
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -963,6 +997,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_NativeIntermediateInput_Conv
   qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // "mid" is a NATIVE FP32 tensor that is NOT a graph input or output.
   // ProcessBF16InputConversion hits the NATIVE && FP32 branch and converts it in-place.
@@ -995,6 +1030,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_NativeFP32Output_ConvertedIn
   qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // "inp": APP_WRITE FP32 graph input → ProcessBF16InputConversion inserts FP32→BF16 cast.
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
@@ -1023,6 +1059,7 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_WrongType_SkipsPr
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -1049,6 +1086,7 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_AlreadyCreated_Sk
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -1080,6 +1118,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_CalledTwice_CastTensorReused
   qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -1112,6 +1151,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_StaticNonConstantInput_AddsC
   qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // "inp": STATIC FP32, not a graph input or constant → hits STATIC non-constant branch.
   // Provide a client buffer matching the tensor size (4 floats = 16 bytes) to pass the
@@ -1153,6 +1193,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_GraphAddNodeFails_ReturnsFalse) {
   ctx.qnn_interface.graphAddNode = StubGraphAddNodeFail;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -1177,6 +1218,7 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_TensorCreateFails
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateFail;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // "inp" must be in model_tensors_map_ as APP_WRITE so all pre-checks pass before the SDK call.
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
@@ -1197,6 +1239,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BuildJson_Succeeds) {
   ctx.qnn_interface.graphAddNode = StubGraphAddNode;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -1221,6 +1264,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_ProcessBF16Conversions_Input
   qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // Add "out" but intentionally omit "missing_inp" to trigger the BF16 input-not-found failure.
   qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
@@ -1245,6 +1289,7 @@ TEST(QnnUnit_ModelWrapperTest, RegisterGraphInputOutputInOrder_OffloadIoQuant_Se
   // Non-null overrides with an entry for "inp" → GetTensorNameOverride("inp") returns non-null.
   std::unordered_map<std::string, std::string> overrides{{"inp", "inp_orig"}};
   auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -1266,6 +1311,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_MissingOutputTensor_ReturnsFalse)
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // Add "inp" but NOT "out_missing" — CreateQnnInputOutputTensors for outputs will fail.
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
@@ -1304,11 +1350,12 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveFail
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.graphCreate = StubGraphCreateFail;
   ctx.qnn_interface.graphRetrieve = StubGraphRetrieveFail;
+  ctx.qnn_interface.errorGetMessage = StubErrorGetMessage;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_FALSE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
 }
 
 // graphCreate fails but graphRetrieve succeeds → lines ~38-39, ~47-49 are hit → return true.
@@ -1320,7 +1367,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveSucc
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_TRUE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
+  EXPECT_TRUE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
 }
 
 // Tensor IS in model_tensors_map_ but tensorCreateGraphTensor fails during the main compose loop
@@ -1332,6 +1379,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_InputTensorCreate_InMainLoop_Fail
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateFail;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
@@ -1352,6 +1400,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_ParamTensorCreate_InMainLoop_Fail
   ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateFail;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // TENSOR-type param: CreateQnnGraphParam → CreateTensorInQnnGraph → tensorCreateGraphTensor.
   // Data size must match: 1 element × sizeof(uint32_t) = 4 bytes for QNN_DATATYPE_UINT_32.
@@ -1382,6 +1431,7 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_BF16_NativeBF16Input_ElseBranch_S
   qnn::ModelSettings settings{};
   settings.htp_bf16_enable = true;
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+  ASSERT_TRUE(ctx.InitializeCompositionGraph(*wrapper));
 
   // NATIVE BF16 tensors: is_graph_input_or_init=true for "inp" but dtype≠FP32 →
   // none of the first three BF16 conditions match → else branch at line ~323.

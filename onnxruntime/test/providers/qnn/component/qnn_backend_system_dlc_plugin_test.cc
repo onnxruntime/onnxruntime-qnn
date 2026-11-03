@@ -42,8 +42,8 @@
 #include "System/QnnSystemContext.h"
 #include "System/QnnSystemInterface.h"
 
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
-#include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_system_dlc_plugin.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/ort_api.h"
 

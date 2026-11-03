@@ -1,6 +1,7 @@
 // Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
 // Licensed under the MIT License.
 #pragma once
+#include <functional>
 
 #include <cstdint>
 
@@ -70,6 +71,15 @@ struct EventRecord {
 //     and execute extraction paths can run on different threads.
 class QnnEpProfiler : public OrtEpProfilerImpl {
  public:
+  // Backend ownership stays with the session; the profiler only requests collection.
+  struct BackendCallbacks {
+    std::function<Ort::Status(const Ort::Logger&)> acquire;
+    std::function<Ort::Status()> release;
+    std::function<std::unique_lock<std::recursive_mutex>()> lock;
+    std::function<Ort::Status(profile::ProfilingInfo&, const Ort::Logger&)> extract;
+  };
+  QnnEpProfiler(const OrtEpApi& ep_api, const OrtApi& ort_api,
+                const Ort::Logger& logger, BackendCallbacks backend);
   QnnEpProfiler(const OrtEpApi& ep_api,
                 const OrtApi& ort_api,
                 const Ort::Logger& logger,
@@ -107,8 +117,8 @@ class QnnEpProfiler : public OrtEpProfilerImpl {
   Ort::Status DrainExecuteProfilingExtractions(std::vector<profile::ProfilingInfo> profiling_infos);
   class OrtProfilingConsumer {
    public:
-    explicit OrtProfilingConsumer(QnnBackendProfilingManager& profiling_manager)
-        : profiling_manager_(profiling_manager) {}
+    explicit OrtProfilingConsumer(const BackendCallbacks& backend)
+        : backend_(backend) {}
     ~OrtProfilingConsumer() { ORT_IGNORE_RETURN_VALUE(Reset()); }
 
     ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OrtProfilingConsumer);
@@ -117,14 +127,14 @@ class QnnEpProfiler : public OrtEpProfilerImpl {
     Ort::Status Reset();
 
    private:
-    QnnBackendProfilingManager& profiling_manager_;
+    const BackendCallbacks& backend_;
     bool active_ = false;
   };
 
   const OrtEpApi& ep_api_;
   const OrtApi& ort_api_;
   const Ort::Logger& logger_;
-  QnnBackendProfilingManager& profiling_manager_;
+  BackendCallbacks backend_;
   OrtProfilingConsumer ort_profiling_consumer_;
   std::shared_ptr<ProfilerLifetimeToken> lifetime_token_;
 

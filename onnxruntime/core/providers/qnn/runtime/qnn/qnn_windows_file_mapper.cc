@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/qnn_windows_file_mapper.h"
+#include "core/providers/qnn/runtime/qnn/qnn_windows_file_mapper.h"
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
 #include <wil/filesystem.h>

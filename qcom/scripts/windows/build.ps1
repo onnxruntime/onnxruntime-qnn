@@ -48,11 +48,15 @@ param (
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Build QNN EP with internal symbols exported for tests. Not for production.")]
-    [bool]$QnnInternalTestSymbols = $false,
+    [bool]$QnnInternalTestSymbols = ($Env:ORT_QNN_INTERNAL_TEST_SYMBOLS -eq "1"),
 
     [Parameter(Mandatory = $true,
                HelpMessage = "Python virtual environment to activate.")]
-    [string]$PyVEnv
+    [string]$PyVEnv,
+
+    [Parameter(Mandatory = $false,
+               HelpMessage = "Enable QAIRT C++ API path (experimental).")]
+    [switch]$UseQairtApi
 )
 
 $RepoRoot = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)\..\..\..").Path
@@ -61,6 +65,9 @@ $RepoRoot = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.De
 . "$RepoRoot\qcom\scripts\windows\utils.ps1"
 
 $BuildRoot = (Join-Path $RepoRoot "build")
+if ($Env:ORT_BUILD_ROOT) {
+    $BuildRoot = [System.IO.Path]::GetFullPath($Env:ORT_BUILD_ROOT)
+}
 $BuildDirArch = $Arch
 
 if ($Mode -eq "generate_sln") {
@@ -114,6 +121,21 @@ else {
     }
 }
 
+# Regenerate when switching API modes in an existing build directory.
+$QairtApiCachePath = Join-Path (Join-Path $BuildDir $Config) "CMakeCache.txt"
+$CachedUseQairtApi = $false
+if (Test-Path -LiteralPath $QairtApiCachePath) {
+    $QairtApiCacheEntry = Select-String -LiteralPath $QairtApiCachePath `
+        -Pattern '^onnxruntime_USE_QAIRT_API:[^=]+=(.*)$' | Select-Object -First 1
+    if ($QairtApiCacheEntry) {
+        $CachedUseQairtApi = $QairtApiCacheEntry.Matches[0].Groups[1].Value -notmatch `
+            '^(|0|OFF|NO|FALSE|N|IGNORE|NOTFOUND|.*-NOTFOUND)$'
+    }
+}
+if ($CachedUseQairtApi -ne [bool]$UseQairtApi) {
+    $BuildIsDirty = $true
+}
+
 $BinDir = Join-Path $BuildDir $Config
 if ($CMakeGenerator -ne "Ninja") {
     # Multi-config generators add an extra config directory.
@@ -143,6 +165,10 @@ $CommonArgs = `
     "--cmake_generator", $CMakeGenerator, `
     "--config", $Config, `
     "--parallel"
+if ($Env:ORT_BUILD_ROOT) {
+    $CmakeDepsMirrorDir = Join-Path $BuildRoot "mirror"
+    $CommonArgs += "--cmake_deps_mirror_dir", $CmakeDepsMirrorDir
+}
 
 # Use static MSVC runtime for builds to eliminate MSVCP140.dll and
 # VCRUNTIME140.dll dependencies from the shipping QNN EP DLL.
@@ -151,6 +177,11 @@ if ($Arch -in @("aarch64", "arm64", "arm64ec", "x86_64")) {
 }
 
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
+if ($UseQairtApi) {
+    $QnnArgs += "--cmake_extra_defines", "onnxruntime_USE_QAIRT_API=ON"
+} else {
+    $QnnArgs += "--cmake_extra_defines", "onnxruntime_USE_QAIRT_API=OFF"
+}
 if ($OrtPrebuiltRoot -ne "") {
     $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
     $QnnArgs += "--ort_home"
@@ -302,7 +333,11 @@ else {
     if ($GenerateBuild -or $DoBuild) {
         try {
             Assert-Success -ErrorMessage "Failed to fetch CMake dependencies" {
-                python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+                if ($Env:ORT_BUILD_ROOT) {
+                    python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py" --mirror-dir $CmakeDepsMirrorDir
+                } else {
+                    python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+                }
             }
             $BuildBatPath = (Join-Path $RepoRoot "build.bat")
 

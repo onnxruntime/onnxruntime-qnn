@@ -34,7 +34,11 @@
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
+#ifdef USE_QAIRT_API
+#include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_profiling_manager.h"
+#endif
 #include "core/providers/qnn/builder/qnn_ep_input_graph_dumper.h"
 #include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
@@ -83,6 +87,17 @@ constexpr const char* kQnnOpAffinityKey = "op_affinity";
 static std::optional<qnn::QnnBackendType> InferBackendTypeFromPath(const std::string& backend_path) {
   const std::string filename = std::filesystem::path(backend_path).filename().string();
 
+#ifdef USE_QAIRT_API
+  if (filename == MakeSharedLibraryPath("QairtCpu")) {
+    return qnn::QnnBackendType::CPU;
+  }
+  if (filename == MakeSharedLibraryPath("QairtGpu")) {
+    return qnn::QnnBackendType::GPU;
+  }
+  if (filename == MakeSharedLibraryPath("QairtHtp")) {
+    return qnn::QnnBackendType::HTP;
+  }
+#endif
   if (filename == kDefaultCpuBackendPath) {
     return qnn::QnnBackendType::CPU;
   }
@@ -94,6 +109,37 @@ static std::optional<qnn::QnnBackendType> InferBackendTypeFromPath(const std::st
   }
   return std::nullopt;
 }
+
+#ifdef USE_QAIRT_API
+struct QairtBackendSelection {
+  std::string library_path;
+  qnn::QnnBackendType backend_type;
+};
+
+static std::optional<QairtBackendSelection> ResolveQairtBackend(const std::string& backend_path) {
+  const auto backend_type = InferBackendTypeFromPath(backend_path);
+  if (!backend_type.has_value()) {
+    return std::nullopt;
+  }
+
+  std::filesystem::path qairt_path(backend_path);
+  switch (*backend_type) {
+    case qnn::QnnBackendType::CPU:
+      qairt_path.replace_filename(MakeSharedLibraryPath("QairtCpu"));
+      break;
+    case qnn::QnnBackendType::GPU:
+      qairt_path.replace_filename(MakeSharedLibraryPath("QairtGpu"));
+      break;
+    case qnn::QnnBackendType::HTP:
+      qairt_path.replace_filename(MakeSharedLibraryPath("QairtHtp"));
+      break;
+    default:
+      return std::nullopt;
+  }
+
+  return QairtBackendSelection{qairt_path.string(), *backend_type};
+}
+#endif
 // Strictly parses an integer without throwing or modifying `out` on failure.
 // std::from_chars rejects leading whitespace and reports overflow for the target type.
 template <typename T>
@@ -1550,179 +1596,207 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                     false,
                                                     logger_);
 
-  // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exists
-  // so that all graphs from later sessions will be compiled into the same QNN context. Keep the result from a single lookup:
-  // another session may clear the singleton, but this session must retain the manager it adopted.
-  const bool use_shared_backend_mgr =
-      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1);
-  const auto shared_qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
-  const bool reusing_shared_backend_manager = use_shared_backend_mgr && shared_qnn_backend_manager != nullptr;
-  if (reusing_shared_backend_manager) {
-    qnn_backend_manager_ = shared_qnn_backend_manager;
-  } else {
-    qnn_backend_manager_ = qnn::QnnBackendManager::Create(
-        qnn::QnnBackendManagerConfig{backend_path,
-                                     profiling_level_etw,
-                                     profiling_level,
-                                     profiling_file_path,
-                                     context_priority,
-                                     std::move(qnn_serializer_config),
-                                     device_id_,
-                                     htp_graph_configs_.htp_num_cores,
-                                     htp_arch,
-                                     soc_model,
-                                     op_packages,
-                                     skip_qnn_version_check,
-                                     enable_framework_op_trace_,
-                                     skip_backend_op_validation,
-                                     reused_io_limit_mb,
-                                     enable_htp_cross_device_prepare},
-        static_cast<const ApiPtrs&>(*this), logger_);
-  }
-
-  // Initialize compatibility manager with backend manager.
-  qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
-
-  // Choose EP allocator. Must be done after creating the backend manager.
-  static const std::string QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_htp_shared_memory_allocator";
-  if (ParseBoolOption(ort_api,
-                      session_options_,
-                      FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
-                      false,
-                      logger_)) {
-    model_settings_.htp_shared_memory = true;
-
-    // RPCMEM is only needed by an inference session using the shared memory allocator.
-    // A context-generation session only needs to preserve the MEMHANDLE graph I/O contract.
-    if (!context_cache_enabled_) {
-      std::string rpcmem_error;
-      rpcmem_library_ = qnn::RpcMemLibraryManager::GetOrCreate(rpcmem_error);
-      if (rpcmem_library_ == nullptr) {
-        const std::string message =
-            "Unable to load RPCMEM for HTP shared memory allocator: " + rpcmem_error;
-        LOG_AND_THROW_ERROR(logger_, message.c_str());
-      } else {
-        qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
-      }
+#ifdef USE_QAIRT_API
+  const auto backend_filename = std::filesystem::path(backend_path).filename().string();
+  const bool requires_qnn_backend = qnn_serializer_config || backend_filename == kDefaultIrBackendPath ||
+                                    backend_filename == kDefaultSaverBackendPath ||
+                                    backend_filename == MakeSharedLibraryPath("QnnMockSSR");
+  const auto qairt_selection = requires_qnn_backend ? std::nullopt : ResolveQairtBackend(backend_path);
+  if (qairt_selection.has_value()) {
+    qairt_backend_manager_ = std::make_shared<qnn::QairtBackendManager>(
+        qnn::QairtBackendManager::Config{qairt_selection->library_path,
+                                         qairt_selection->backend_type,
+                                         htp_arch,
+                                         soc_model});
+    backend_manager_ = qairt_backend_manager_;
+    qairt_profiling_manager_ = std::make_shared<qnn::QairtProfilingManager>(
+        qairt_backend_manager_, profiling_level, profiling_file_path, enable_framework_op_trace_);
+    // Unsupported session requests are checked before creating any SDK resources.
+    qairt_requires_shared_memory_ = ParseBoolOption(ort_api, session_options_,
+                                                    FormatEPConfigKey("enable_htp_shared_memory_allocator"), false, logger_) ||
+                                    ParseBoolOption(ort_api, session_options_, FormatEPConfigKey("enable_dx12_shared_memory_allocator"), false, logger_);
+    qairt_has_op_packages_ = !op_packages.empty();
+    // Capability failures can be treated as CPU fallback by ORT. Reject
+    // unsupported explicit session options while creating the EP instead.
+    Ort::ThrowOnError(ValidateQairtProviderOptions());
+  } else
+#endif
+  {
+    // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exists
+    // so that all graphs from later sessions will be compiled into the same QNN context. Keep the result from a single lookup:
+    // another session may clear the singleton, but this session must retain the manager it adopted.
+    const bool use_shared_backend_mgr =
+        ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ == 1);
+    const auto shared_qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
+    const bool reusing_shared_backend_manager = use_shared_backend_mgr && shared_qnn_backend_manager != nullptr;
+    if (reusing_shared_backend_manager) {
+      qnn_backend_manager_ = shared_qnn_backend_manager;
     } else {
-      ORT_CXX_LOGF(logger_,
-                   ORT_LOGGING_LEVEL_INFO,
-                   "Context cache is enabled in this session (via %s); the HTP shared memory allocator will be "
-                   "disabled as no allocations are expected to be made.",
-                   kOrtSessionOptionEpContextEnable);
+      qnn_backend_manager_ = qnn::QnnBackendManager::Create(
+          qnn::QnnBackendManagerConfig{backend_path,
+                                       profiling_level_etw,
+                                       profiling_level,
+                                       profiling_file_path,
+                                       context_priority,
+                                       std::move(qnn_serializer_config),
+                                       device_id_,
+                                       htp_graph_configs_.htp_num_cores,
+                                       htp_arch,
+                                       soc_model,
+                                       op_packages,
+                                       skip_qnn_version_check,
+                                       enable_framework_op_trace_,
+                                       skip_backend_op_validation,
+                                       reused_io_limit_mb,
+                                       enable_htp_cross_device_prepare},
+          static_cast<const ApiPtrs&>(*this), logger_);
     }
-  }
+    backend_manager_ = qnn_backend_manager_;
 
-  static const std::string QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_dx12_shared_memory_allocator";
-  if (ParseBoolOption(ort_api,
-                      session_options_,
-                      FormatEPConfigKey(QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED),
-                      false,
-                      logger_)) {
-    if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
-      ORT_CXX_LOGF(logger_,
-                   ORT_LOGGING_LEVEL_WARNING,
-                   "QNN allocator already set to type: %s. Option '%s' will be ignored.",
-                   qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data(),
-                   QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED.c_str());
-    } else {
-      if (qnn_backend_manager_->IsDx12SharedMemoryAllocatorSupported()) {
-        qnn_allocator_type_ = qnn::QnnAllocatorType::DX12_SHARED;
+    // Initialize compatibility manager with backend manager.
+    qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
+
+    // Choose EP allocator. Must be done after creating the backend manager.
+    static const std::string QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_htp_shared_memory_allocator";
+    if (ParseBoolOption(ort_api,
+                        session_options_,
+                        FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
+                        false,
+                        logger_)) {
+      model_settings_.htp_shared_memory = true;
+
+      // RPCMEM is only needed by an inference session using the shared memory allocator.
+      // A context-generation session only needs to preserve the MEMHANDLE graph I/O contract.
+      if (!context_cache_enabled_) {
+        std::string rpcmem_error;
+        rpcmem_library_ = qnn::RpcMemLibraryManager::GetOrCreate(rpcmem_error);
+        if (rpcmem_library_ == nullptr) {
+          const std::string message =
+              "Unable to load RPCMEM for HTP shared memory allocator: " + rpcmem_error;
+          LOG_AND_THROW_ERROR(logger_, message.c_str());
+        } else {
+          qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
+        }
       } else {
         ORT_CXX_LOGF(logger_,
-                     ORT_LOGGING_LEVEL_WARNING,
-                     "Dx12SharedMemoryAllocator was requested, but it is not supported.");
+                     ORT_LOGGING_LEVEL_INFO,
+                     "Context cache is enabled in this session (via %s); the HTP shared memory allocator will be "
+                     "disabled as no allocations are expected to be made.",
+                     kOrtSessionOptionEpContextEnable);
       }
     }
-  }
 
-  if (reusing_shared_backend_manager) {
-    const auto shared_allocator_type = qnn_backend_manager_->GetQnnAllocatorType();
-    if (shared_allocator_type != qnn_allocator_type_) {
-      const std::string message =
-          "Cannot share QNN backend manager with a different shared-memory allocator mode. "
-          "The existing shared manager uses '" +
-          std::string{qnn::QnnAllocatorTypeToString(shared_allocator_type)} +
-          "', but this session requested '" +
-          std::string{qnn::QnnAllocatorTypeToString(qnn_allocator_type_)} + "'.";
-      LOG_AND_THROW_ERROR(logger_, message.c_str());
+    static const std::string QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_dx12_shared_memory_allocator";
+    if (ParseBoolOption(ort_api,
+                        session_options_,
+                        FormatEPConfigKey(QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED),
+                        false,
+                        logger_)) {
+      if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+        ORT_CXX_LOGF(logger_,
+                     ORT_LOGGING_LEVEL_WARNING,
+                     "QNN allocator already set to type: %s. Option '%s' will be ignored.",
+                     qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data(),
+                     QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED.c_str());
+      } else {
+        if (qnn_backend_manager_->IsDx12SharedMemoryAllocatorSupported()) {
+          qnn_allocator_type_ = qnn::QnnAllocatorType::DX12_SHARED;
+        } else {
+          ORT_CXX_LOGF(logger_,
+                       ORT_LOGGING_LEVEL_WARNING,
+                       "Dx12SharedMemoryAllocator was requested, but it is not supported.");
+        }
+      }
     }
 
-    // Update the shared manager only after all compatibility checks pass. If
-    // construction fails, it must keep the logger owned by the existing session.
-    qnn_backend_manager_->ResetLogger(logger_);
-  } else {
-    // An allocator mode belongs to the QNN context. A manager that is later
-    // shared must retain this first session's mode instead of allowing a
-    // subsequent session to overwrite it.
-    qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
+    if (reusing_shared_backend_manager) {
+      const auto shared_allocator_type = qnn_backend_manager_->GetQnnAllocatorType();
+      if (shared_allocator_type != qnn_allocator_type_) {
+        const std::string message =
+            "Cannot share QNN backend manager with a different shared-memory allocator mode. "
+            "The existing shared manager uses '" +
+            std::string{qnn::QnnAllocatorTypeToString(shared_allocator_type)} +
+            "', but this session requested '" +
+            std::string{qnn::QnnAllocatorTypeToString(qnn_allocator_type_)} + "'.";
+        LOG_AND_THROW_ERROR(logger_, message.c_str());
+      }
 
-    // Publish only after fixing the allocator mode so later sessions can reuse it.
-    if (htp_share_resource_optimization_ == 1) {
-      SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
+      // Update the shared manager only after all compatibility checks pass. If
+      // construction fails, it must keep the logger owned by the existing session.
+      qnn_backend_manager_->ResetLogger(logger_);
+    } else {
+      // An allocator mode belongs to the QNN context. A manager that is later
+      // shared must retain this first session's mode instead of allowing a
+      // subsequent session to overwrite it.
+      qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
+
+      // Publish only after fixing the allocator mode so later sessions can reuse it.
+      if (htp_share_resource_optimization_ == 1) {
+        SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
+      }
     }
-  }
-  // Clear the singleton only after allocator compatibility and logger ownership are settled.
-  // Async context callbacks retain the initiating manager and do not depend on this shared slot.
-  if (stop_share_ep_contexts_) {
-    SharedContext::GetInstance().ResetSharedQnnBackendManager();
-  }
-  if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
-    ORT_CXX_LOGF(logger_,
-                 ORT_LOGGING_LEVEL_VERBOSE,
-                 "QNN allocator set to type: %s.",
-                 qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data());
-  }
+    // Clear the singleton only after allocator compatibility and logger ownership are settled.
+    // Async context callbacks retain the initiating manager and do not depend on this shared slot.
+    if (stop_share_ep_contexts_) {
+      SharedContext::GetInstance().ResetSharedQnnBackendManager();
+    }
+    if (qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+      ORT_CXX_LOGF(logger_,
+                   ORT_LOGGING_LEVEL_VERBOSE,
+                   "QNN allocator set to type: %s.",
+                   qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data());
+    }
 
 #if defined(_WIN32)
-  if (qnn::QnnTelemetry::SupportsETW()) {
-    auto& etwRegistrationManager = qnn::QnnTelemetry::Instance();
-    // Register callback for ETW capture state (rundown)
-    callback_ETWSink_provider_ = qnn::QnnTelemetry::EtwInternalCallback(
-        [&etwRegistrationManager, this](
-            LPCGUID SourceId,
-            ULONG IsEnabled,
-            UCHAR Level,
-            ULONGLONG MatchAnyKeyword,
-            ULONGLONG MatchAllKeyword,
-            PEVENT_FILTER_DESCRIPTOR FilterData,
-            PVOID CallbackContext) {
-          ORT_UNUSED_PARAMETER(SourceId);
-          ORT_UNUSED_PARAMETER(MatchAnyKeyword);
-          ORT_UNUSED_PARAMETER(MatchAllKeyword);
-          ORT_UNUSED_PARAMETER(FilterData);
-          ORT_UNUSED_PARAMETER(CallbackContext);
+    if (qnn::QnnTelemetry::SupportsETW()) {
+      auto& etwRegistrationManager = qnn::QnnTelemetry::Instance();
+      // Register callback for ETW capture state (rundown)
+      callback_ETWSink_provider_ = qnn::QnnTelemetry::EtwInternalCallback(
+          [&etwRegistrationManager, this](
+              LPCGUID SourceId,
+              ULONG IsEnabled,
+              UCHAR Level,
+              ULONGLONG MatchAnyKeyword,
+              ULONGLONG MatchAllKeyword,
+              PEVENT_FILTER_DESCRIPTOR FilterData,
+              PVOID CallbackContext) {
+            ORT_UNUSED_PARAMETER(SourceId);
+            ORT_UNUSED_PARAMETER(MatchAnyKeyword);
+            ORT_UNUSED_PARAMETER(MatchAllKeyword);
+            ORT_UNUSED_PARAMETER(FilterData);
+            ORT_UNUSED_PARAMETER(CallbackContext);
 
-          if (IsEnabled == EVENT_CONTROL_CODE_ENABLE_PROVIDER) {
-            if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Logs)) != 0) {
-              auto ortETWSeverity = etwRegistrationManager.MapLevelToOrtLoggingLevel();
-              (void)qnn_backend_manager_->ResetQnnLogLevel(ortETWSeverity);
-            }
-            if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Profiling)) != 0) {
-              if (Level != 0) {
-                // Commenting out Dynamic QNN Profiling for now
-                // There seems to be a crash in 3rd party QC QnnHtp.dll with this.
-                // Repro Scenario - start ETW tracing prior to session creation.
-                //    Then disable/enable ETW Tracing with the code below uncommented a few times
-                // auto profiling_level_etw = GetProfilingLevelFromETWLevel(Level);
-                // (void)qnn_backend_manager_->GetProfilingManager().SetProfilingLevelETW(profiling_level_etw, logger_);
-                //
-                // NOTE(1/2/2025): It is possible that the above was not working in part because it is using the
-                // *logging ETW* subsystem to modify profiling, which should use an entirely different
-                // ETW provider (see QnnTelemetry). Should add callbacks for profiling to the QnnTelemetry ETW provider.
+            if (IsEnabled == EVENT_CONTROL_CODE_ENABLE_PROVIDER) {
+              if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Logs)) != 0) {
+                auto ortETWSeverity = etwRegistrationManager.MapLevelToOrtLoggingLevel();
+                (void)qnn_backend_manager_->ResetQnnLogLevel(ortETWSeverity);
+              }
+              if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Profiling)) != 0) {
+                if (Level != 0) {
+                  // Commenting out Dynamic QNN Profiling for now
+                  // There seems to be a crash in 3rd party QC QnnHtp.dll with this.
+                  // Repro Scenario - start ETW tracing prior to session creation.
+                  //    Then disable/enable ETW Tracing with the code below uncommented a few times
+                  // auto profiling_level_etw = GetProfilingLevelFromETWLevel(Level);
+                  // (void)qnn_backend_manager_->GetProfilingManager().SetProfilingLevelETW(profiling_level_etw, logger_);
+                  //
+                  // NOTE(1/2/2025): It is possible that the above was not working in part because it is using the
+                  // *logging ETW* subsystem to modify profiling, which should use an entirely different
+                  // ETW provider (see QnnTelemetry). Should add callbacks for profiling to the QnnTelemetry ETW provider.
+                }
               }
             }
-          }
 
-          if (IsEnabled == EVENT_CONTROL_CODE_DISABLE_PROVIDER) {
-            // (void)qnn_backend_manager_->GetProfilingManager().SetProfilingLevelETW(qnn::ProfilingLevel::INVALID,
-            //                                                                        logger_);
-            (void)qnn_backend_manager_->ResetQnnLogLevel(std::nullopt);
-          }
-        });
-    etwRegistrationManager.RegisterInternalCallback(callback_ETWSink_provider_);
-  }
+            if (IsEnabled == EVENT_CONTROL_CODE_DISABLE_PROVIDER) {
+              // (void)qnn_backend_manager_->GetProfilingManager().SetProfilingLevelETW(qnn::ProfilingLevel::INVALID,
+              //                                                                        logger_);
+              (void)qnn_backend_manager_->ResetQnnLogLevel(std::nullopt);
+            }
+          });
+      etwRegistrationManager.RegisterInternalCallback(callback_ETWSink_provider_);
+    }
 #endif
+  }
 
   // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
   // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
@@ -1784,6 +1858,11 @@ OrtStatus* ORT_API_CALL QnnEp::CreateProfilerImpl(OrtEp* this_ptr,
                                                   OrtEpProfilerImpl** profiler) noexcept {
   *profiler = nullptr;
   auto* ep = static_cast<QnnEp*>(this_ptr);
+#ifdef USE_QAIRT_API
+  if (ep->qairt_backend_manager_) {
+    return ep->CreateQairtProfiler(profiler);
+  }
+#endif
   if (!ep->qnn_backend_manager_) {
     return nullptr;
   }
@@ -1885,16 +1964,17 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   qnn::GraphInputOutputInfo model_outputs;
   init_input_output_info(model_outputs.names, model_outputs.indices, graph_outputs);
 
-  auto qnn_model_wrapper = qnn::QnnModelWrapper(*graph,
-                                                static_cast<const ApiPtrs&>(*this),
-                                                logger_,
-                                                *qnn_backend_manager_,
-                                                model_inputs,
-                                                model_outputs,
-                                                model_settings_,
-                                                &tensor_name_overrides_,
-                                                /*op_trace_collector=*/nullptr,
-                                                /*is_post_layout_transform=*/is_post_layout_transform_);
+  auto wrapper = std::make_unique<qnn::QnnModelWrapper>(*graph,
+                                                        static_cast<const ApiPtrs&>(*this),
+                                                        logger_,
+                                                        *backend_manager_,
+                                                        model_inputs,
+                                                        model_outputs,
+                                                        model_settings_,
+                                                        &tensor_name_overrides_,
+                                                        /*op_trace_collector=*/nullptr,
+                                                        /*is_post_layout_transform=*/is_post_layout_transform_);
+  auto& qnn_model_wrapper = *wrapper;
 
   std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
   qnn_node_groups.reserve(node_unit_size);
@@ -2259,6 +2339,12 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                   : "GetCapability pass 1 (pre-Layout-Transform; post-LT-gated fusions dormant)");
   auto post_lt_marker = gsl::finally([ep] { ep->is_post_layout_transform_ = true; });
 
+#ifdef USE_QAIRT_API
+  if (ep->qairt_backend_manager_) {
+    return ep->GetQairtCapability(graph, graph_support_info, num_nodes_in_graph);
+  }
+#endif
+
   // Genie Pathway
   if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
 #if defined(_WIN32) && QNN_ARCH_ARM64
@@ -2354,21 +2440,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  // op_affinity: the GQA builder may trigger the known performance regression on HTP,
-  // so HTP sessions default to keeping GQA on CPU
-  // -- users can opt into HTP via the op_affinity config once they've validated it.
-  const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
-  if (resolved_backend == qnn::QnnBackendType::HTP) {
-    ep->model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
-  }
-
-  rt = ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);
-
-  if (!rt.IsOK()) {
-    const std::string message = "Op Affinity validation failed: " + rt.GetErrorMessage();
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
-  }
+  RETURN_IF_NOT_NULL(ep->ValidateCapabilityPreconditions(is_qnn_ctx_model));
 
   if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {
     // Create the HTP power config id (and its release timer) for the main thread.
@@ -2382,20 +2454,46 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     ep->WarnIfHnrdPathActive();
   }
 
-  // Report error if QNN CPU backend is loaded while CPU fallback is disabled
-  if (ep->disable_cpu_ep_fallback_ && ep->qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::CPU) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Qnn CPU backend is loaded while CPU fallback is disabled.");
-  }
-
-  if ((ep->context_cache_enabled_ || is_qnn_ctx_model) && !qnn::IsQpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Qnn context cache only works for HTP/DSP/GPU backend.");
-  }
-
   if (is_qnn_ctx_model) {
     ep->PartitionCtxModel(graph, graph_support_info);
     return nullptr;
   }
 
+  return ep->GetOnnxGraphCapability(graph, graph_support_info, num_nodes_in_graph, is_qnn_ctx_model);
+}
+
+OrtStatus* QnnEp::ValidateCapabilityPreconditions(bool is_qnn_ctx_model) {
+  // op_affinity: the GQA builder may trigger the known performance regression on HTP,
+  // so HTP sessions default to keeping GQA on CPU
+  // -- users can opt into HTP via the op_affinity config once they've validated it.
+  const qnn::QnnBackendType resolved_backend = GetSelectedBackendType();
+  if (resolved_backend == qnn::QnnBackendType::HTP) {
+    model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
+  }
+
+  const auto rt = model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);
+
+  if (!rt.IsOK()) {
+    const std::string message = "Op Affinity validation failed: " + rt.GetErrorMessage();
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    return ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
+  }
+
+  // Report error if QNN CPU backend is loaded while CPU fallback is disabled
+  if (disable_cpu_ep_fallback_ && GetSelectedBackendType() == qnn::QnnBackendType::CPU) {
+    return ort_api.CreateStatus(ORT_EP_FAIL, "Qnn CPU backend is loaded while CPU fallback is disabled.");
+  }
+
+  if ((context_cache_enabled_ || is_qnn_ctx_model) && !qnn::IsQpuBackend(GetSelectedBackendType())) {
+    return ort_api.CreateStatus(ORT_EP_FAIL, "Qnn context cache only works for HTP/DSP/GPU backend.");
+  }
+
+  return nullptr;
+}
+
+OrtStatus* QnnEp::GetOnnxGraphCapability(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info,
+                                         size_t num_nodes_in_graph, bool is_qnn_ctx_model) {
+  auto* ep = this;
   // Reset the flag in case there are patterns rejected in the first GetCapability pass but supported in the second.
   if (ep->is_post_layout_transform_) {
     ep->has_unsupported_nodes_wo_cpu_fallback_ = false;
@@ -3148,11 +3246,10 @@ OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
 }
 
 void QnnEp::AppendSingleSocTrace() {
+  const auto backend_info = GetSelectedBackendInfo();
   // Single-SoC path: encode from live backend state.
-  if (qnn::IsNpuBackend(qnn_backend_manager_->GetQnnBackendType())) {
-    op_trace_builder_.AppendSoc(qnn_backend_manager_->GetHtpArch(),
-                                qnn_backend_manager_->GetSocModel(),
-                                device_id_);
+  if (qnn::IsNpuBackend(backend_info.backend_type)) {
+    op_trace_builder_.AppendSoc(backend_info.htp_arch, backend_info.soc_model, device_id_);
   } else {
     // Non-NPU backends have no arch/soc_model; pass the QNN "unknown" sentinels.
     op_trace_builder_.AppendSoc(QNN_HTP_DEVICE_ARCH_NONE, QNN_SOC_MODEL_UNKNOWN, device_id_);
@@ -3166,10 +3263,20 @@ void QnnEp::AppendMultiSocTraces() {
   }
 }
 
+QnnEp::SelectedBackendInfo QnnEp::GetSelectedBackendInfo() const {
+  return {backend_manager_->GetBackendType(),
+          backend_manager_->GetHtpArch(),
+          backend_manager_->GetSocModel()};
+}
+
+qnn::QnnBackendType QnnEp::GetSelectedBackendType() const {
+  return GetSelectedBackendInfo().backend_type;
+}
+
 void QnnEp::WriteFrameworkOpTrace(const OrtGraph* primary_graph) {
   std::string model_name = std::filesystem::path(GetModelPathString(primary_graph, ort_api)).filename().u8string();
   op_trace_builder_.FinalizeAndWrite(model_name,
-                                     qnn::QnnBackendTypeToString(qnn_backend_manager_->GetQnnBackendType()),
+                                     qnn::QnnBackendTypeToString(GetSelectedBackendType()),
                                      std::filesystem::path(framework_op_trace_dir_) / "qnn_op_trace.json",
                                      logger_);
 }
@@ -3181,6 +3288,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+#ifdef USE_QAIRT_API
+  if (ep->qairt_backend_manager_) {
+    return ep->CompileQairtModels(graphs, fused_nodes, count, node_compute_infos, ep_context_nodes);
+  }
+#endif
 
   // Early fail without actual compile and make session initialization immediately terminate.
   if (ep->has_unsupported_nodes_wo_cpu_fallback_) {
@@ -3304,6 +3416,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                 "prepare_only mode: context saved. Releasing QNN device resources.");
     ep->qnn_models_.clear();
+    // Both pointers share ownership of the selected QNN manager.
+    ep->backend_manager_.reset();
     ep->qnn_backend_manager_.reset();
   }
 
@@ -3550,6 +3664,11 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
 
 OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const ::OrtRunOptions* run_options) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+#ifdef USE_QAIRT_API
+  if (ep->qairt_backend_manager_) {
+    return ep->OnQairtRunStart(run_options);
+  }
+#endif
 
   if (ep->prepare_only_) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
@@ -3586,6 +3705,11 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
                                             _In_ const ::OrtRunOptions* /*run_options*/,
                                             _In_ bool /*sync_stream*/) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+#ifdef USE_QAIRT_API
+  if (ep->qairt_backend_manager_) {
+    return nullptr;
+  }
+#endif
 
   if (ep->prepare_only_) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
@@ -3612,6 +3736,15 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
                                                    _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept {
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+#ifdef USE_QAIRT_API
+  if (ep->qairt_backend_manager_) {
+    // The factory advertises this host allocator independently of the SDK backend.
+    // ORT requires an allocator for advertised memory even when zero-copy binding is disabled.
+    if (memory_info && ep->ort_api.MemoryInfoGetDeviceMemType(memory_info) == OrtDeviceMemoryType_HOST_ACCESSIBLE)
+      return qnn::HtpSharedMemoryAllocator::Create(ep->ort_api, memory_info, allocator);
+    return nullptr;
+  }
+#endif
 
   if (memory_info == nullptr) {
     return nullptr;
@@ -3673,6 +3806,12 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                      _In_reads_(num_options) const char* const* option_values,
                                                      _In_ size_t num_options) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+#ifdef USE_QAIRT_API
+  if (ep->qairt_backend_manager_) {
+    return num_options ? ep->ort_api.CreateStatus(ORT_EP_FAIL, "QAIRT dynamic options require backend-extension support.")
+                       : nullptr;
+  }
+#endif
 
   if (ep->prepare_only_) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
@@ -3741,6 +3880,12 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
 
 const char* ORT_API_CALL QnnEp::GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp* this_ptr,
                                                                       _In_ const OrtGraph* /*graph*/) noexcept {
+#ifdef USE_QAIRT_API
+  if (static_cast<QnnEp*>(this_ptr)->qairt_backend_manager_) {
+    return "";
+  }
+#endif
+
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   Ort::Status status = ep->qnn_cache_compatibility_manager_->SerializeCompatibilityInfo(ep->compatibility_info_,
@@ -3762,6 +3907,13 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
                                                          size_t /*num_devices*/,
                                                          const char* compatibility_info,
                                                          OrtCompiledModelCompatibility* model_compatibility) noexcept {
+#ifdef USE_QAIRT_API
+  if (qairt_backend_manager_) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return nullptr;
+  }
+#endif
+
   std::string info_string(compatibility_info);
   if (info_string.empty()) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "No compatibility info to be validated.");
@@ -3849,6 +4001,29 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
 
 OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* /*hw*/,
                                                           OrtDeviceEpIncompatibilityDetails* details) noexcept {
+#ifdef USE_QAIRT_API
+  if (qairt_backend_manager_) {
+    qnn::QairtBackendManager::SetupFailure failure;
+    auto status = qairt_backend_manager_->Setup(&failure);
+    OrtDeviceEpIncompatibilityReason reason = OrtDeviceEpIncompatibility_NONE;
+    if (!status.IsOK()) {
+      if (failure == qnn::QairtBackendManager::SetupFailure::LibraryLoad) {
+        reason = OrtDeviceEpIncompatibility_MISSING_DEPENDENCY;
+      } else if (failure == qnn::QairtBackendManager::SetupFailure::BackendInitialization) {
+        reason = OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE;
+      } else {
+        reason = OrtDeviceEpIncompatibility_UNKNOWN;
+      }
+    }
+    const int32_t error_code = status.IsOK() ? static_cast<int32_t>(ORT_OK)
+                                             : static_cast<int32_t>(status.GetErrorCode());
+    return ep_api.DeviceEpIncompatibilityDetails_SetDetails(details,
+                                                            reason,
+                                                            error_code,
+                                                            status.IsOK() ? nullptr : status.GetErrorMessage().c_str());
+  }
+#endif
+
   // This function is always called by temporary QnnEp, so no need to check if backend is already setup.
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
   Ort::Status status = qnn_backend_manager_->SetupBackend(false, false, false, false, false, nullptr, dummy_map);

@@ -48,6 +48,16 @@ ONNX Runtime QNN EP has been built and tested with the following SDK version com
 
 > **Note**: ONNX Runtime QNN EP 2.8.0 was built and tested with ORT 1.29.0 but it is compatible with ORT >= 1.24.1
 
+## Experimental QAIRT C++ API build
+
+`--use_qairt_api` enables `onnxruntime_USE_QAIRT_API` (default OFF) for the Windows ARM64 developer build. It maps recognized HTP/GPU/CPU libraries to the QAIRT API; IR, Saver, DSP, LPAI and custom QNN libraries retain the QNN API path. This is an internal integration build, not a release wheel, NuGet or archive configuration. Unsupported build tasks and packaging requests reject the flag explicitly.
+
+QAIRT currently supports basic fresh compilation, execution, EPContext export/load and profiling. Shared memory, op packages, shared/multi-SoC contexts, prepare-only/prepare-and-load, HTP custom graph/power options, dynamic options and DLC execution are rejected. `num_graph_prepare_threads` must be 1 on the QAIRT path; QNN retains its existing parallel preparation. Internal configuration callbacks cover backend/device/context/graph creation and post-retrieve setup, and persistent-binary configurations retain serialized storage for the context lifetime. Accelerator-specific implementations and QAIRT LPAI routing remain follow-up work.
+
+QAIRT-generated models do not yet contain ORT compiled-model compatibility metadata. QAIRT SDK binary loading performs its own checks, but that does not replace ORT preflight SoC/SDK compatibility validation. Cross-SDK and cross-API context compatibility must be tested explicitly; it is not guaranteed by this build flag.
+
+For local builds, `ORT_BUILD_ROOT` may point to an external build-output directory.
+
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
 

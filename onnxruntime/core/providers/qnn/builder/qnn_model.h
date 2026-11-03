@@ -9,7 +9,13 @@
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_backend_manager.h"
+#include "core/providers/qnn/runtime/qnn/qnn_graph_emitter.h"
+#ifdef USE_QAIRT_API
+#include "core/providers/qnn/runtime/qairt/qairt_graph_emitter.h"
+#include "core/providers/qnn/runtime/qairt/qairt_backend_manager.h"
+#include "core/providers/qnn/runtime/qairt/qairt_profiling_manager.h"
+#endif
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/rpcmem_library.h"
@@ -51,9 +57,23 @@ class QnnModel {
   QnnModel(QnnBackendManager* qnn_backend_manager,
            const ApiPtrs& api_ptrs)
       : qnn_backend_manager_(qnn_backend_manager),
+        backend_manager_(qnn_backend_manager),
+        graph_emitter_(qnn_backend_manager->CreateGraphEmitter()),
         api_ptrs_(api_ptrs) {
-    qnn_backend_type_ = qnn_backend_manager_->GetQnnBackendType();
+    qnn_backend_type_ = backend_manager_->GetBackendType();
   }
+
+#ifdef USE_QAIRT_API
+  Ort::Status LoadQairtGraph(QairtBackendManager::CachedGraph&& graph);
+  QnnModel(std::shared_ptr<QairtBackendManager> backend, std::shared_ptr<QairtProfilingManager> profiler,
+           const ApiPtrs& api_ptrs)
+      : qnn_backend_type_(backend->GetBackendType()),
+        qairt_backend_manager_(std::move(backend)),
+        qairt_profiler_(std::move(profiler)),
+        backend_manager_(qairt_backend_manager_.get()),
+        graph_emitter_(qairt_backend_manager_->CreateGraphEmitter()),
+        api_ptrs_(api_ptrs) {}
+#endif
 
   ~QnnModel() = default;
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModel);
@@ -179,6 +199,8 @@ class QnnModel {
   // Bind ORT tensors to QNN tensors and execute the graph once.
   // Returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION if an NPU crash is detected,
   // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.
+  Ort::Status BindGraphInputOutput(OrtKernelContext* context, const Ort::Logger& logger,
+                                   std::vector<Qnn_Tensor_t>& inputs, std::vector<Qnn_Tensor_t>& outputs);
   Ort::Status BindAndExecuteGraph(OrtKernelContext* context,
                                   const Ort::Logger& logger,
                                   Qnn_ErrorHandle_t& execute_status,
@@ -210,6 +232,11 @@ class QnnModel {
   }
 
  private:
+  QnnGraphEmitter& QnnGraph() { return static_cast<QnnGraphEmitter&>(*graph_emitter_); }
+#ifdef USE_QAIRT_API
+  QairtGraphEmitter& QairtGraph() { return static_cast<QairtGraphEmitter&>(*graph_emitter_); }
+#endif
+
   std::unique_ptr<GraphInfo> graph_info_;
   QnnBackendManager* qnn_backend_manager_ = nullptr;
   GraphInputOutputInfo graph_inputs_;
@@ -218,6 +245,15 @@ class QnnModel {
   std::vector<QnnTensorInfo> qnn_output_infos_;
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
 
+#ifdef USE_QAIRT_API
+  Ort::Status FinalizeQairtGraph(const Ort::Logger& logger);
+  Ort::Status ExecuteQairtGraph(OrtKernelContext* context, const Ort::Logger& logger, QnnEpProfiler* profiler);
+  std::shared_ptr<QairtBackendManager> qairt_backend_manager_;
+  std::shared_ptr<QairtProfilingManager> qairt_profiler_;
+
+#endif
+  IBackendManager* backend_manager_ = nullptr;
+  std::unique_ptr<IGraphEmitter> graph_emitter_;
   // Mutex acquired during graph execution to support multi-threaded inference of a single session.
   std::mutex graph_exec_mutex_;
   const ApiPtrs api_ptrs_;

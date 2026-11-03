@@ -135,6 +135,7 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         build_as_x: bool = False,
         build_nuget: bool = False,
         build_archive: bool = False,
+        use_qairt_api: bool = False,
         qnn_internal_test_symbols: bool = False,
     ) -> None:
         cmd = [
@@ -165,6 +166,9 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
 
         if build_archive:
             cmd.extend(["-BuildArchive", "1"])
+
+        if use_qairt_api:
+            cmd.append("-UseQairtApi")
 
         if qnn_internal_test_symbols:
             cmd.extend(["-QnnInternalTestSymbols", "1"])
