@@ -230,46 +230,10 @@ jobs:
           $summary = Join-Path `
             "build/windows-$env:BUILD_DIR_ARCH/$env:BUILD_CONFIG_DIR" `
             "snapshot_accuracy_results/accuracy_gate_summary.txt"
-          if (-not (Test-Path -LiteralPath $summary)) {
-            throw "Accuracy gate summary was not produced: $summary"
+          & python.exe qcom/scripts/all/verify_accuracy_routing.py "--summary=$summary"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Snapshot/accuracy routing verification failed (exit $LASTEXITCODE)."
           }
-
-          # Read lines individually so Windows CRLF endings do not affect the
-          # anchored matches below.
-          $lines = Get-Content -LiteralPath $summary
-          $versionLine = $lines | Where-Object { $_ -match '^\[VERSION\]' } | Select-Object -First 1
-          if (-not $versionLine) {
-            throw "Accuracy gate summary did not contain a version verdict."
-          }
-
-          $routingLine = $lines | Where-Object { $_ -match '^\[ROUTING\]' } | Select-Object -First 1
-          if ($routingLine -notmatch '^\[ROUTING\] (\d+) accuracy case\(s\): run (\d+), skip (\d+)\.$') {
-            throw "Accuracy gate summary did not contain a valid routing tally."
-          }
-          $totalCount = [int]$Matches[1]
-          $runCount = [int]$Matches[2]
-          $skipCount = [int]$Matches[3]
-          if (($runCount + $skipCount) -ne $totalCount) {
-            throw "Accuracy gate routing tally is inconsistent."
-          }
-
-          if ($versionLine -match '-> MATCH$') {
-            if ($skipCount -eq 0) {
-              throw "Matched goldens did not selectively skip any accuracy cases."
-            }
-            Write-Host "Verified matched snapshot-golden gating with $skipCount skipped accuracy case(s)."
-            exit 0
-          }
-
-          if ($versionLine -match '-> MISMATCH/absent => full accuracy run$') {
-            if ($runCount -ne $totalCount -or $skipCount -ne 0) {
-              throw "Version-mismatched or absent goldens did not fall back to the full accuracy suite."
-            }
-            Write-Host "Verified full-accuracy fallback with all $totalCount accuracy case(s) executed."
-            exit 0
-          }
-
-          throw "Accuracy gate summary contained an unknown version verdict: $versionLine"
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
