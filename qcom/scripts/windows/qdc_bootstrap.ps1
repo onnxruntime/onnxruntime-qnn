@@ -102,8 +102,10 @@ try {
         Write-Host "Reusing registered Python: $PythonExe"
     } elseif (-not (Test-Path -LiteralPath $PythonExe)) {
         $InstallArgs = @(
-            "/quiet", "/norestart", "/log", "`"$(Join-Path $LogDir 'python-install_stdout.txt')`"",
-            "InstallAllUsers=0", "TargetDir=`"$PythonRoot`"", "Include_launcher=0", "Include_pip=0",
+            "/quiet", "/norestart", "/log", "`"$(Join-Path $LogDir 'python-install.log')`"",
+            # QDC runs as SYSTEM; use machine installation rather than per-user MSI
+            # registration in SYSTEM's incomplete user profile.
+            "InstallAllUsers=1", "TargetDir=`"$PythonRoot`"", "Include_launcher=0", "Include_pip=0",
             "Include_doc=0", "Include_tcltk=0", "Include_test=0", "Shortcuts=0", "AssociateFiles=0",
             "PrependPath=0"
         )
@@ -142,19 +144,58 @@ try {
     $ProbeXml = Join-Path $LogDir "htp-smoke.results.xml"
     $ProbeLog = Join-Path $LogDir "htp-smoke_stdout.txt"
     $ProbeErrorLog = Join-Path $LogDir "htp-smoke-stderr_stdout.txt"
+    $ProbeExitCodeFile = Join-Path $LogDir "htp-smoke.exitcode.txt"
+    $ProbeWrapper = Join-Path $LogDir "run-htp-smoke.cmd"
+    $ProbeExecutable = Join-Path $BinaryRoot "onnxruntime_provider_test.exe"
     $env:ORT_UNIT_TEST_MAIN_LOG_LEVEL = "1"
-    $Probe = Start-Process -FilePath (Join-Path $BinaryRoot "onnxruntime_provider_test.exe") `
-        -WorkingDirectory $BinaryRoot -ArgumentList @(
-            "--gtest_filter=QnnHTPBackendTests.$ProbeTest", "`"--gtest_output=xml:$ProbeXml`""
-        ) -RedirectStandardOutput $ProbeLog -RedirectStandardError $ProbeErrorLog -PassThru
+    @"
+@echo off
+"$ProbeExecutable" --gtest_filter=QnnHTPBackendTests.$ProbeTest "--gtest_output=xml:$ProbeXml"
+set "PROBE_EXIT_CODE=%ERRORLEVEL%"
+> "$ProbeExitCodeFile" echo %PROBE_EXIT_CODE%
+exit /b %PROBE_EXIT_CODE%
+"@ | Set-Content -LiteralPath $ProbeWrapper -Encoding Ascii
+    $Probe = Start-Process -FilePath $env:ComSpec -WorkingDirectory $BinaryRoot `
+        -ArgumentList @("/d", "/s", "/c", "`"$ProbeWrapper`"") `
+        -RedirectStandardOutput $ProbeLog -RedirectStandardError $ProbeErrorLog -PassThru
     if (-not $Probe.WaitForExit(300000)) {
         & taskkill.exe /PID $Probe.Id /T /F
         throw "HTP smoke test timed out after 5 minutes."
     }
     Get-Content -LiteralPath $ProbeLog | Out-Host
     Get-Content -LiteralPath $ProbeErrorLog | Out-Host
-    if ($Probe.ExitCode -ne 0) {
-        throw "HTP smoke test failed with exit code $($Probe.ExitCode)."
+    # Capture the process state before interpreting it. This is needed to diagnose
+    # the observed QDC session where a completed smoke test exposed no ExitCode.
+    $ProbeExitCode = $null
+    $ProbeExitCodeReadError = $null
+    try {
+        $ProbeExitCode = $Probe.ExitCode
+    } catch {
+        $ProbeExitCodeReadError = $_.Exception.Message
+    }
+    $ProbeExitCodeValue = if ($null -eq $ProbeExitCode) {
+        "<null>"
+    } elseif ([string]::IsNullOrWhiteSpace([string]$ProbeExitCode)) {
+        "<empty>"
+    } else {
+        $ProbeExitCode
+    }
+    $ProbeExitCodeType = if ($null -eq $ProbeExitCode) { "<null>" } else { $ProbeExitCode.GetType().FullName }
+    $ProbeExitCodeError = if ($ProbeExitCodeReadError) { $ProbeExitCodeReadError } else { "<none>" }
+    $ProbeDiagnostic = "HTP smoke process diagnostic: Type=$($Probe.GetType().FullName); PID=$($Probe.Id); " +
+        "HasExited=$($Probe.HasExited); ExitCodeRaw=$ProbeExitCodeValue; ExitCodeType=$ProbeExitCodeType; " +
+        "ExitCodeReadError=$ProbeExitCodeError"
+    Write-Host $ProbeDiagnostic
+
+    # Persist the child's ERRORLEVEL because QDC can expose a completed Process
+    # whose ExitCode property is null. Require both this marker and the JUnit
+    # report so a post-test crash cannot be mistaken for a pass.
+    if (-not (Test-Path -LiteralPath $ProbeExitCodeFile -PathType Leaf)) {
+        throw "HTP smoke exit-code marker is missing: $ProbeExitCodeFile"
+    }
+    $ProbeChildExitCode = (Get-Content -LiteralPath $ProbeExitCodeFile -Raw).Trim()
+    if ($ProbeChildExitCode -ne "0") {
+        throw "HTP smoke test failed with exit code marker '$ProbeChildExitCode'."
     }
     Assert-HtpResults -Report $ProbeXml -RequiredTest $ProbeTest
     $ProbeOutput = Get-Content -LiteralPath $ProbeLog -Raw
@@ -192,7 +233,7 @@ try {
         try {
             $Cleanup = Start-Process -FilePath $Installer -ArgumentList @(
                 "/quiet", "/uninstall", "/norestart", "/log",
-                "`"$(Join-Path $LogDir 'python-uninstall_stdout.txt')`""
+                "`"$(Join-Path $LogDir 'python-uninstall.log')`""
             ) -PassThru
             if (-not $Cleanup.WaitForExit(300000)) {
                 & taskkill.exe /PID $Cleanup.Id /T /F
