@@ -64,6 +64,10 @@ R_UNMAPPED = "unmapped"  # no paired snapshot case exists
 R_VERSION = "version-mismatch"  # Level-0 global override
 
 
+class SnapshotInputError(ValueError):
+    """The snapshot report cannot be trusted as routing evidence."""
+
+
 @dataclass
 class CaseDecision:
     suite: str
@@ -139,13 +143,28 @@ def load_snapshot_results(json_path: str) -> dict[tuple[str, str], str]:
     Keys use the snapshot suite name as-emitted; mapping to accuracy suites
     happens in compute_run_set via derive_accuracy_suite.
     """
-    with open(json_path) as f:
-        data = json.load(f)
+    try:
+        with open(json_path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SnapshotInputError(f"cannot read snapshot results {json_path}: {exc}") from exc
+
+    if not isinstance(data, dict) or not isinstance(data.get("testsuites"), list):
+        raise SnapshotInputError(f"snapshot results {json_path} did not contain a valid testsuites array")
+
     out: dict[tuple[str, str], str] = {}
-    for suite in data.get("testsuites", []):
+    for suite in data["testsuites"]:
+        if not isinstance(suite, dict) or not isinstance(suite.get("testsuite", []), list):
+            raise SnapshotInputError(f"snapshot results {json_path} contained an invalid test suite")
         suite_name = suite.get("name", "")
+        if not isinstance(suite_name, str) or not suite_name:
+            raise SnapshotInputError(f"snapshot results {json_path} contained an invalid suite name")
         for tc in suite.get("testsuite", []):
+            if not isinstance(tc, dict):
+                raise SnapshotInputError(f"snapshot results {json_path} contained an invalid testcase")
             name = tc.get("name", "")
+            if not isinstance(name, str) or not name:
+                raise SnapshotInputError(f"snapshot results {json_path} contained an invalid testcase name")
             out[(suite_name, name)] = classify_testcase(tc)
     return out
 
@@ -299,7 +318,10 @@ def run_gate(
     """End-to-end gate: load inputs, resolve versions, compute decisions."""
     snapshot_map: dict[tuple[str, str], str] = {}
     if snapshot_json and os.path.isfile(snapshot_json):
-        snapshot_map = load_snapshot_results(snapshot_json)
+        try:
+            snapshot_map = load_snapshot_results(snapshot_json)
+        except SnapshotInputError as exc:
+            print(f"WARNING: {exc}; running accuracy for every unverified case.", file=sys.stderr)
 
     if current is None:
         current = detect_current_versions()

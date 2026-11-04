@@ -9,26 +9,20 @@ param(
     $OnnxModelsRoot = $null
 )
 
-# Internal-symbol validation runs normal CTest first, then gives the snapshot
-# and accuracy tiers their required two-pass routing semantics. The golden store
-# is intentionally consumed only through QNN_UT_SNAPSHOT_GOLDEN_DIR; a separate
-# producer flow provisions it.
+# Windows owns the baseline CTest setup; the shared runner owns the
+# snapshot-to-accuracy lifecycle used by every platform and golden producer.
 $ErrorActionPreference = "Stop"
 
 $RootDir = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)").Path
 $RepoRoot = (Resolve-Path -Path (Join-Path $RootDir "..\..\.."))
 $BaselineRunner = Join-Path $RootDir "run_tests.ps1"
-$GateScript = Join-Path $RepoRoot "qcom\scripts\all\accuracy_gate.py"
-$VersionResolver = Join-Path $RepoRoot "qcom\scripts\all\resolve_tool_versions.sh"
+$SharedRunner = Join-Path $RepoRoot "qcom\scripts\all\run_snapshot_accuracy.sh"
 
-if (-not (Test-Path $BaselineRunner)) {
+if (-not (Test-Path -LiteralPath $BaselineRunner)) {
     throw "$BaselineRunner not found"
 }
-if (-not (Test-Path $GateScript)) {
-    throw "$GateScript not found"
-}
-if (-not (Test-Path $VersionResolver)) {
-    throw "$VersionResolver not found"
+if (-not (Test-Path -LiteralPath $SharedRunner)) {
+    throw "$SharedRunner not found"
 }
 if ($env:QNN_UT_SNAPSHOT_GOLDEN_UPDATE -eq "1") {
     throw "QNN_UT_SNAPSHOT_GOLDEN_UPDATE=1 is not allowed in validation. Use the dedicated golden producer."
@@ -39,18 +33,8 @@ if (-not $?) {
     throw "Baseline Windows test runner failed."
 }
 
-$ProviderTestExe = Join-Path $RootDir "onnxruntime_provider_test.exe"
-if (-not (Test-Path $ProviderTestExe)) {
-    $ProviderTestExe = Join-Path (Join-Path $RootDir $Config) "onnxruntime_provider_test.exe"
-}
-if (-not (Test-Path $ProviderTestExe)) {
-    throw "onnxruntime_provider_test.exe not found under $RootDir"
-}
-
-# Producer and consumer must use identical version strings. Resolve them from
-# the built binary through the same shared helper that stamps golden manifests.
 $GitBash = Join-Path $env:ProgramW6432 "Git\bin\bash.exe"
-if (-not (Test-Path $GitBash)) {
+if (-not (Test-Path -LiteralPath $GitBash)) {
     throw "Git Bash was not found under $GitBash"
 }
 
@@ -64,94 +48,14 @@ function ConvertTo-GitBashPath {
     $ConvertedPath.Trim()
 }
 
-$ProviderBinDir = Split-Path -Parent $ProviderTestExe
-$ProviderBinDirBash = ConvertTo-GitBashPath -Path $ProviderBinDir
-$VersionResolverBash = ConvertTo-GitBashPath -Path $VersionResolver
+$RootDirBash = ConvertTo-GitBashPath -Path $RootDir
+$SharedRunnerBash = ConvertTo-GitBashPath -Path $SharedRunner
 
-Remove-Item Env:QNN_UT_QAIRT_VERSION -ErrorAction SilentlyContinue
-Remove-Item Env:QNN_UT_ORT_VERSION -ErrorAction SilentlyContinue
-
-$ResolvedVersions = & $GitBash $VersionResolverBash "--bin-dir=$ProviderBinDirBash" both
-$VersionResolverExit = $LASTEXITCODE
-if ($VersionResolverExit -eq 0) {
-    foreach ($VersionLine in $ResolvedVersions) {
-        if ($VersionLine -match '^(qairt|ort)=(.+)$') {
-            if ($Matches[1] -eq "qairt") {
-                $env:QNN_UT_QAIRT_VERSION = $Matches[2].Trim()
-            }
-            else {
-                $env:QNN_UT_ORT_VERSION = $Matches[2].Trim()
-            }
-        }
-    }
-    if (-not $env:QNN_UT_QAIRT_VERSION -or -not $env:QNN_UT_ORT_VERSION) {
-        throw "Version resolver returned incomplete QAIRT/ORT versions."
-    }
-    Write-Host "Resolved tool versions: qairt=$env:QNN_UT_QAIRT_VERSION ort=$env:QNN_UT_ORT_VERSION"
-}
-elseif ($VersionResolverExit -eq 3) {
-    Write-Warning "QAIRT/ORT versions could not be resolved; the gate will run all accuracy tests."
-}
-else {
-    throw "Tool version resolver failed (exit $VersionResolverExit)."
-}
-
-# Windows x86 uses the QNN CPU attach point for the HTP emulator. The baseline
-# runner also sets this, but keep the direct invocations self-contained.
+# The shared runner invokes native Python and QNN test binaries from Git Bash.
+$env:PYTHON_BIN = "python.exe"
 $env:ORT_QNN_ENABLE_CPU_BACKEND = "1"
 
-$ResultsDir = Join-Path $RootDir "snapshot_accuracy_results"
-$SnapshotJson = Join-Path $ResultsDir "snapshot_results.json"
-$AccuracyJson = Join-Path $ResultsDir "accuracy_results.json"
-$AccuracyList = Join-Path $ResultsDir "accuracy_tests.txt"
-$AccuracyFilterFile = Join-Path $ResultsDir "accuracy_filter.txt"
-$GateSummary = Join-Path $ResultsDir "accuracy_gate_summary.txt"
-
-New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
-Remove-Item -LiteralPath $SnapshotJson, $AccuracyJson, $AccuracyList, $AccuracyFilterFile, $GateSummary `
-    -Force -ErrorAction SilentlyContinue
-
-$GoldenRoot = $env:QNN_UT_SNAPSHOT_GOLDEN_DIR
-if ($GoldenRoot) {
-    Write-Host "Snapshot golden store: $GoldenRoot"
-}
-else {
-    Write-Warning "QNN_UT_SNAPSHOT_GOLDEN_DIR is unset; snapshots will route all accuracy tests."
-}
-
-Write-Host "--=-=-=- Running QNN snapshot tests -=--=-=-"
-& $ProviderTestExe "--gtest_filter=QnnSnapshot_*" "--gtest_output=json:$SnapshotJson"
-$SnapshotExit = $LASTEXITCODE
-if ($SnapshotExit -ne 0) {
-    Write-Warning "Snapshot tests exited $SnapshotExit. The accuracy gate will treat affected or unreported cases as unverified."
-}
-
-$AccuracyTests = & $ProviderTestExe "--gtest_list_tests" "--gtest_filter=QnnAcc_*"
-$AccuracyListExit = $LASTEXITCODE
-$AccuracyTests | Set-Content -LiteralPath $AccuracyList -Encoding ascii
-if ($AccuracyListExit -ne 0) {
-    throw "Failed to list QnnAcc_* tests (exit $AccuracyListExit)."
-}
-
-Write-Host "--=-=-=- Routing QNN accuracy tests from snapshot results -=--=-=-"
-& python $GateScript `
-    "--snapshot-json=$SnapshotJson" `
-    "--golden-root=$GoldenRoot" `
-    "--accuracy-list-file=$AccuracyList" `
-    "--emit-filter-file=$AccuracyFilterFile" `
-    "--emit-summary-file=$GateSummary"
+& $GitBash $SharedRunnerBash "--build-dir=$RootDirBash"
 if ($LASTEXITCODE -ne 0) {
-    throw "accuracy_gate.py failed."
-}
-
-$AccuracyFilter = (Get-Content -LiteralPath $AccuracyFilterFile -Raw).Trim()
-if (-not $AccuracyFilter) {
-    throw "accuracy_gate.py did not emit an accuracy filter."
-}
-
-Write-Host "--=-=-=- Running routed QNN accuracy tests -=--=-=-"
-Write-Host "Accuracy filter: $AccuracyFilter"
-& $ProviderTestExe "--gtest_filter=$AccuracyFilter" "--gtest_output=json:$AccuracyJson"
-if ($LASTEXITCODE -ne 0) {
-    throw "Routed QnnAcc_* tests failed. See $AccuracyJson"
+    throw "Shared snapshot/accuracy runner failed (exit $LASTEXITCODE)."
 }

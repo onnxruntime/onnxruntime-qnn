@@ -179,8 +179,8 @@ jobs:
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
           ${{ inputs.upload_test_archive == true && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
 
-      - name: Setup JFrog CLI for snapshot goldens
-        if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner && env.SNAPSHOT_GOLDEN_PROFILE != '' && env.BUILD_ARTIFACTORY_REPO != '' }}
+      - name: Setup JFrog CLI
+        if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' && (env.SNAPSHOT_GOLDEN_PROFILE == '' || (inputs.run_tests && inputs.build_test_same_runner)) }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
@@ -230,7 +230,12 @@ jobs:
           $summary = Join-Path `
             "build/windows-$env:BUILD_DIR_ARCH/$env:BUILD_CONFIG_DIR" `
             "snapshot_accuracy_results/accuracy_gate_summary.txt"
-          & python.exe qcom/scripts/all/verify_accuracy_routing.py "--summary=$summary"
+          $accuracyResults = Join-Path `
+            "build/windows-$env:BUILD_DIR_ARCH/$env:BUILD_CONFIG_DIR" `
+            "snapshot_accuracy_results/accuracy_results.json"
+          & python.exe qcom/scripts/all/verify_accuracy_routing.py `
+            "--summary=$summary" `
+            "--accuracy-results=$accuracyResults"
           if ($LASTEXITCODE -ne 0) {
             throw "Snapshot/accuracy routing verification failed (exit $LASTEXITCODE)."
           }
@@ -258,16 +263,6 @@ jobs:
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
       # Artifactory steps are no-ops on fork PRs (secrets unavailable); the build still compiles the change.
-      - name: Setup JFrog CLI
-        if: ${{ inputs.has_code_changes && env.SNAPSHOT_GOLDEN_PROFILE == '' && env.BUILD_ARTIFACTORY_REPO != '' }}
-        uses: jfrog/setup-jfrog-cli@v5
-        with:
-          disable-auto-build-publish: true
-          disable-job-summary: true
-        env:
-          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
-          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
-
       - name: Upload Test Archive to Artifactory
         if: ${{ inputs.has_code_changes && inputs.upload_test_archive && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
