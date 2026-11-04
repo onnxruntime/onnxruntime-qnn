@@ -73,9 +73,9 @@ std::vector<std::string> ResolveGraphInputOutputOrder(
 bool QnnModel::GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::Logger& /* logger */) {
   bool rt = true;
 
-  graph_info_ = std::make_unique<GraphInfo>(model_wrapper.GetQnnGraph(),
+  graph_info_ = std::make_unique<GraphInfo>(qnn_graph_emitter_->Graph(),
                                             model_wrapper.GetQnnGraphName(),
-                                            model_wrapper.GetQnnGraphContext(),
+                                            qnn_graph_emitter_->Context(),
                                             std::move(model_wrapper.GetGraphInputTensorWrappers()),
                                             std::move(model_wrapper.GetGraphOutputTensorWrappers()));
 
@@ -546,12 +546,19 @@ Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& log
   return Ort::Status();
 }
 
+Ort::Status QnnModel::RetrieveGraph(GraphInfo& graph_info, Qnn_ContextHandle_t context) {
+  // RetrieveGraph leaves the emitter unchanged on failure, so metadata remains
+  // attached to the same graph/context pair until a replacement succeeds.
+  RETURN_IF_ERROR(qnn_graph_emitter_->RetrieveGraph(context, graph_info.Name()));
+  graph_info.ResetHandles(qnn_graph_emitter_->Graph(), qnn_graph_emitter_->Context());
+  return Ort::Status();
+}
+
 Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpContextIoDispatch& io_dispatch) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
               ("SSR recovery: reloading QNN context for graph: " + graph_info_->Name()).c_str());
 
   Qnn_ContextHandle_t old_context = graph_info_->GraphContext();
-  std::string graph_name = graph_info_->Name();
 
   // Clear tensor I/O metadata (will be rebuilt after recovery).
   qnn_input_infos_.clear();
@@ -578,11 +585,8 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
     }
   }  // release recovery_lock
 
-  // Retrieve our graph from the (new or reused) context.
-  RETURN_IF_ERROR(qnn_graph_emitter_->RetrieveGraph(new_context, graph_name));
-
-  // Update graph_info_ with the new handles (tensor metadata is preserved).
-  graph_info_->ResetHandles(qnn_graph_emitter_->Graph(), qnn_graph_emitter_->Context());
+  // Retrieve our graph and replace both handle pairs (tensor metadata is preserved).
+  RETURN_IF_ERROR(RetrieveGraph(*graph_info_, new_context));
 
   // Re-build the tensor I/O metadata against the new graph handles.
   RETURN_IF_ERROR(SetupQnnInputOutput(logger));
@@ -1156,13 +1160,13 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
     output_tensor_wrappers.push_back(std::move(tensorwrapper));
   }
 
-  RETURN_IF_ERROR(qnn_graph_emitter_->RetrieveGraph(context, graph_name));
-
-  graph_info_ = std::make_unique<GraphInfo>(qnn_graph_emitter_->Graph(),
-                                            graph_name,
-                                            qnn_graph_emitter_->Context(),
-                                            std::move(input_tensor_wrappers),
-                                            std::move(output_tensor_wrappers));
+  auto graph_info = std::make_unique<GraphInfo>(nullptr,
+                                                graph_name,
+                                                nullptr,
+                                                std::move(input_tensor_wrappers),
+                                                std::move(output_tensor_wrappers));
+  RETURN_IF_ERROR(RetrieveGraph(*graph_info, context));
+  graph_info_ = std::move(graph_info);
 
   return Ort::Status();
 }

@@ -178,6 +178,10 @@ class QnnModel {
                                  const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map) const;
   bool GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::Logger& logger);
 
+  // Replace the emitter and metadata handle pairs together after successful retrieval.
+  // Used by both cached-context loading and SSR recovery.
+  Ort::Status RetrieveGraph(GraphInfo& graph_info, Qnn_ContextHandle_t context);
+
   // Bind ORT tensors to QNN tensors and execute the graph once.
   // Returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION if an NPU crash is detected,
   // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.

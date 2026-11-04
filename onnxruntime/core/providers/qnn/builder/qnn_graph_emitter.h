@@ -18,9 +18,10 @@ class QnnGraphEmitter final {
  public:
   explicit QnnGraphEmitter(const QNN_INTERFACE_VER_TYPE& qnn_interface);
 
-  void SetCreateInfo(Qnn_ContextHandle_t context,
-                     const QnnGraph_Config_t** graph_configs);
-  Ort::Status CreateGraph(const char* name);
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnGraphEmitter);
+
+  Ort::Status CreateGraph(Qnn_ContextHandle_t context, const char* name,
+                          const QnnGraph_Config_t** graph_configs = nullptr);
   Ort::Status RetrieveGraph(Qnn_ContextHandle_t context, const std::string& name);
   Ort::Status Finalize(Qnn_ProfileHandle_t profile);
   Qnn_ErrorHandle_t Execute(Qnn_Tensor_t* inputs, uint32_t num_inputs,
@@ -47,7 +48,6 @@ class QnnGraphEmitter final {
  private:
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   Qnn_ContextHandle_t context_ = nullptr;
-  const QnnGraph_Config_t** graph_configs_ = nullptr;
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string name_;
 };

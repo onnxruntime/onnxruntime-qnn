@@ -64,7 +64,7 @@ class QnnModelWrapper {
                   bool is_post_layout_transform = false);
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
-  ~QnnModelWrapper();
+  ~QnnModelWrapper() = default;
 
   const ModelSettings& GetModelSettings() const { return model_settings_; }
 

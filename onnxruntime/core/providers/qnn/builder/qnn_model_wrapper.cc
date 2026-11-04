@@ -48,8 +48,6 @@ QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
          (qnn_backend_manager_.GetQnnValidatorInterface().backendValidateOpConfig == nullptr));
 }
 
-QnnModelWrapper::~QnnModelWrapper() = default;
-
 QnnHtpDevice_Arch_t QnnModelWrapper::GetHtpArch() const {
   return qnn_backend_manager_.GetHtpArch();
 }
@@ -67,8 +65,7 @@ bool QnnModelWrapper::CreateQnnGraph(QnnGraphEmitter& graph_emitter,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Graph" + graph_name + " already initialized.").c_str());
     return false;
   }
-  graph_emitter.SetCreateInfo(context, graph_configs);
-  const Ort::Status status = graph_emitter.CreateGraph(graph_name.c_str());
+  const Ort::Status status = graph_emitter.CreateGraph(context, graph_name.c_str(), graph_configs);
   if (!status.IsOK()) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
     return false;

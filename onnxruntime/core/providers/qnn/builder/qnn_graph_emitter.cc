@@ -10,23 +10,17 @@ namespace onnxruntime::qnn {
 QnnGraphEmitter::QnnGraphEmitter(const QNN_INTERFACE_VER_TYPE& qnn_interface)
     : qnn_interface_(qnn_interface) {}
 
-void QnnGraphEmitter::SetCreateInfo(Qnn_ContextHandle_t context,
-                                    const QnnGraph_Config_t** graph_configs) {
-  context_ = context;
-  graph_configs_ = graph_configs;
-  graph_ = nullptr;
-  name_.clear();
-}
-
-Ort::Status QnnGraphEmitter::CreateGraph(const char* name) {
-  RETURN_IF(context_ == nullptr, "Invalid Qnn context.");
+Ort::Status QnnGraphEmitter::CreateGraph(Qnn_ContextHandle_t context, const char* name,
+                                         const QnnGraph_Config_t** graph_configs) {
+  RETURN_IF(context == nullptr, "Invalid Qnn context.");
   RETURN_IF(name == nullptr || name[0] == '\0', "Empty graph name.");
   RETURN_IF(graph_ != nullptr, "A QNN emitter already owns a graph.");
 
-  auto status = qnn_interface_.graphCreate(context_, name, graph_configs_, &graph_);
-  if (status != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-    status = RetrieveGraphHandle(qnn_interface_, context_, name, &graph_);
-    if (status != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
+  Qnn_GraphHandle_t graph = nullptr;
+  auto status = qnn_interface_.graphCreate(context, name, graph_configs, &graph);
+  if (status != QNN_GRAPH_NO_ERROR || graph == nullptr) {
+    status = RetrieveGraphHandle(qnn_interface_, context, name, &graph);
+    if (status != QNN_GRAPH_NO_ERROR || graph == nullptr) {
       return MAKE_EP_FAIL(("Failed to create Qnn graph: " + std::string{name} + ". " +
                            utils::FormatQnnError(qnn_interface_, status))
                               .c_str());
@@ -34,6 +28,8 @@ Ort::Status QnnGraphEmitter::CreateGraph(const char* name) {
   }
 
   name_ = name;
+  context_ = context;
+  graph_ = graph;
   return Ort::Status();
 }
 
@@ -48,10 +44,9 @@ Ort::Status QnnGraphEmitter::RetrieveGraph(Qnn_ContextHandle_t context, const st
              utils::FormatQnnError(qnn_interface_, status))
                 .c_str());
 
+  name_ = name;
   context_ = context;
   graph_ = graph;
-  name_ = name;
-  graph_configs_ = nullptr;
   return Ort::Status();
 }
 
