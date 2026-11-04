@@ -29,8 +29,6 @@
 #       [--force-accuracy] \
 #       [--filter=Clip,Conv]
 
-REPO_ROOT=$(git rev-parse --show-toplevel)
-
 set -euo pipefail
 if [ "${BASH_VERSINFO:-0}" -gt 3 ]; then
     shopt -s inherit_errexit
@@ -38,6 +36,9 @@ fi
 if [ -n "${ORT_BUILD_XTRACE:-}" ]; then
     set -x
 fi
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "${script_dir}/../../.." && pwd)"
 
 log_info() {
     printf "%s\n" "$*" >&2
@@ -64,8 +65,8 @@ filter_groups=""
 force_accuracy=false
 generate_goldens=false
 python_bin="${PYTHON_BIN:-python3}"
-gate_script="${REPO_ROOT}/qcom/scripts/all/accuracy_gate.py"
-version_resolver="${REPO_ROOT}/qcom/scripts/all/resolve_tool_versions.sh"
+gate_script="${repo_root}/qcom/scripts/all/accuracy_gate.py"
+version_resolver="${repo_root}/qcom/scripts/all/resolve_tool_versions.sh"
 
 for arg in "$@"; do
     case "${arg}" in

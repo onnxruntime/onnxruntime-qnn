@@ -91,7 +91,13 @@ output_path.write_text(json.dumps({{"testsuites": testsuites}}))
     return build_dir, bin_dir, fake_bin
 
 
-def run_runner(build_dir: Path, fake_bin: Path, *args: str, extra_env: dict[str, str] | None = None):
+def run_runner(
+    build_dir: Path,
+    fake_bin: Path,
+    *args: str,
+    extra_env: dict[str, str] | None = None,
+    cwd: Path | None = None,
+):
     env = os.environ | {
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
         "PYTHON_BIN": sys.executable,
@@ -100,7 +106,7 @@ def run_runner(build_dir: Path, fake_bin: Path, *args: str, extra_env: dict[str,
         env.update(extra_env)
     return subprocess.run(
         [str(BASH), to_bash_path(SCRIPT), f"--build-dir={to_bash_path(build_dir)}", *args],
-        cwd=SCRIPT.parents[3],
+        cwd=cwd or SCRIPT.parents[3],
         env=env,
         capture_output=True,
         text=True,
@@ -135,6 +141,22 @@ def test_normal_validation_uses_shared_gate_full_accuracy_fallback(tmp_path: Pat
     assert "run 1, skip 0" in summary
     accuracy = json.loads((results_dir / "accuracy_results.json").read_text())
     assert len(accuracy["testsuites"][0]["testsuite"]) == 1
+
+
+def test_resolves_shared_helpers_independently_of_caller_cwd(tmp_path: Path) -> None:
+    build_dir, _, fake_bin = create_fake_windows_build(tmp_path)
+    staged_cwd = tmp_path / "staged"
+    staged_cwd.mkdir()
+    write_executable(fake_bin / "git", "#!/usr/bin/env bash\nexit 99\n")
+
+    result = run_runner(
+        build_dir,
+        fake_bin,
+        extra_env={"QNN_UT_QAIRT_VERSION": "2.51.0", "QNN_UT_ORT_VERSION": "1.30.0"},
+        cwd=staged_cwd,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_normal_validation_skips_accuracy_for_matched_snapshot(tmp_path: Path) -> None:
