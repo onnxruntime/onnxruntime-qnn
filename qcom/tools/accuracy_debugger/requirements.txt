@@ -1,0 +1,13 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+# Runtime requirements for qcom.tools.accuracy_debugger (top-level packages only).
+# Versions match the environment the tool was validated in (Python 3.14.6).
+
+onnx==1.23.2
+onnxruntime==1.30.0
+onnxruntime-qnn==2.7.0
+numpy==2.5.4
+pandas==3.1.0
+pydantic==2.14.1
+matplotlib==3.11.2
