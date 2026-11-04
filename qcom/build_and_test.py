@@ -1447,7 +1447,12 @@ class TaskLibrary:
                     extra_args=[
                         f"--config={self.__config}",
                         f"--windows-test-mode={os.environ.get('QDC_WINDOWS_TEST_MODE', 'full')}",
-                        "--job-timeout-minutes=90",
+                        # Full Windows execution runs CTest plus four model suites. Keep the
+                        # device-job allowance separate from the QDC queue admission timeout.
+                        "--job-timeout-minutes=180",
+                        # A preceding full Windows run can occupy the single QDC target for
+                        # around 2 hours. Allow one normal run plus setup time to clear.
+                        "--queue-timeout-minutes=150",
                     ],
                 )
             )

@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree
 
 import yaml
 from extract_testdata import MAPPING, extract_to_staging
@@ -16,6 +17,35 @@ from package_manager import PACKAGE_CONFIG, FileCache, PackageManager
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_PACKAGE = "python_312_windows_arm64"
+
+
+def validate_windows_results(log_dir: Path) -> None:
+    """Require device outcome evidence even when QDC reports transport success."""
+    reports = list(log_dir.rglob("*.results.xml"))
+    bootstrap_passed = False
+    for report in reports:
+        try:
+            root = ElementTree.parse(report).getroot()
+            if root.tag not in ("testsuites", "testsuite"):
+                raise ValueError("Expected a JUnit testsuite or testsuites root")
+            for node in root.iter():
+                if node.tag in ("failure", "error") or any(
+                    int(node.get(attribute, "0")) != 0 for attribute in ("failures", "errors")
+                ):
+                    raise ValueError("Reported test failure or error")
+            if report.name == "bootstrap.results.xml":
+                cases = list(root.iter("testcase"))
+                bootstrap_passed = (
+                    len(cases) == 1
+                    and cases[0].get("name") == "BootstrapAndTests"
+                    and (cases[0].get("classname") == "QDCWindows" and cases[0].find("skipped") is None)
+                )
+                if not bootstrap_passed:
+                    raise ValueError("Bootstrap did not report a completed test")
+        except (ElementTree.ParseError, ValueError) as error:
+            raise ValueError(f"Invalid or failed Windows QDC report {report}: {error}") from error
+    if not bootstrap_passed:
+        raise ValueError("Windows QDC bootstrap.results.xml is missing")
 
 
 def fetch_python_installer() -> tuple[Path, dict[str, str]]:

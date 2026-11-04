@@ -9,7 +9,7 @@ import zipfile
 
 import pytest
 import qdc_windows_payload
-from qdc_windows_payload import prepare_windows_payload
+from qdc_windows_payload import prepare_windows_payload, validate_windows_results
 
 
 @pytest.fixture
@@ -146,3 +146,51 @@ def test_missing_testdata_handle_is_rejected(tmp_path, payload_inputs):
             archive.writestr(f"{handle}/sentinel.txt", handle)
     with pytest.raises(ValueError, match="missing node"):
         prepare_windows_payload(source, tmp_path / "output", **payload_inputs)
+
+
+@pytest.fixture
+def windows_results(tmp_path):
+    logs = tmp_path / "nested" / "QDC_logs"
+    logs.mkdir(parents=True)
+    (logs / "bootstrap.results.xml").write_text(
+        '<testsuites><testsuite tests="1" failures="0"><testcase classname="QDCWindows" '
+        'name="BootstrapAndTests" /></testsuite></testsuites>'
+    )
+    return tmp_path
+
+
+def test_valid_windows_results(windows_results):
+    validate_windows_results(windows_results)
+
+
+@pytest.mark.parametrize(
+    "report",
+    (
+        '<testsuites failures="1" />',
+        '<testsuite errors="1" />',
+        '<testsuite><testcase><failure message="inference failed" /></testcase></testsuite>',
+        '<testsuite><testcase><error message="setup failed" /></testcase></testsuite>',
+        '<testsuite failures="unknown" />',
+        "<testsuite",
+        "<unexpected />",
+    ),
+)
+def test_failed_or_invalid_windows_results(windows_results, report):
+    (windows_results / "provider.results.xml").write_text(report)
+    with pytest.raises(ValueError, match="Invalid or failed"):
+        validate_windows_results(windows_results)
+
+
+def test_missing_bootstrap_results(tmp_path):
+    (tmp_path / "provider.results.xml").write_text('<testsuite tests="1" failures="0" />')
+    with pytest.raises(ValueError, match="bootstrap.results.xml is missing"):
+        validate_windows_results(tmp_path)
+
+
+def test_skipped_bootstrap_results(windows_results):
+    report = windows_results / "nested/QDC_logs/bootstrap.results.xml"
+    report.write_text(
+        '<testsuite><testcase classname="QDCWindows" name="BootstrapAndTests"><skipped /></testcase></testsuite>'
+    )
+    with pytest.raises(ValueError, match="Bootstrap did not report a completed test"):
+        validate_windows_results(windows_results)

@@ -27,7 +27,7 @@ from extract_testdata import MAPPING as _TESTDATA_MAPPING
 from extract_testdata import extract_to_staging
 from package_manager import PackageManager
 from prettytable import PrettyTable
-from qdc_windows_payload import prepare_windows_payload
+from qdc_windows_payload import prepare_windows_payload, validate_windows_results
 from qualcomm_device_cloud_sdk import Client
 from qualcomm_device_cloud_sdk.api.artifacts import (
     post_artifacts_start_upload,
@@ -565,8 +565,17 @@ class QdcRunner:
             if status != RunStatus.ABORTED:
                 logging.info(f"Downloading log files to {log_dir}.")
                 self._client.download_logs(job_id, log_dir)
+                if platform == Platform.WINDOWS:
+                    try:
+                        validate_windows_results(log_dir)
+                    except ValueError as error:
+                        logging.error("%s", error)
+                        return RunStatus.FAILED
             return status
 
+        if platform == Platform.WINDOWS and status == RunStatus.SUCCESS:
+            logging.error("Windows QDC requires downloaded JUnit reports to verify device execution.")
+            return RunStatus.FAILED
         return status
 
     def _schedule_tests(self, test_runs: TestRuns, tests: list[TestConfig]) -> None:
