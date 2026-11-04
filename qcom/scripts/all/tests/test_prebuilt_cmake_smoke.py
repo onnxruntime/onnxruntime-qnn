@@ -69,6 +69,7 @@ class PrebuiltCmakeSmokeTest(unittest.TestCase):
                         str(sdk),
                         task,
                     ],
+                    check=False,
                     capture_output=True,
                     text=True,
                     timeout=120,
