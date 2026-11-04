@@ -1593,8 +1593,6 @@ def get_docker_ccache_root(root_from_args: Path | None) -> Path | None:
     return ccache_root
 
 
-
-
 def get_qairt_sdk_root(root_from_args: Path | None) -> Path | None:
     qairt_sdk: Path | None = None
     if root_from_args is not None:
