@@ -90,7 +90,9 @@ jobs:
           grep -q SetupBackend_InvalidPath_ReturnsError "${results_dir}/invalid-path-inventory.txt"
           if ! timeout 5m "${test_bin}" "--gtest_filter=${filter}" \
             "--gtest_output=xml:${results_dir}/invalid-path.xml" 2>&1 | tee "${results_dir}/invalid-path.log"; then
-            failures=1
+            # Stop on a startup/standalone regression; preserve its log instead
+            # of running the full device suite with invalid initialization.
+            exit 1
           fi
           "${test_bin}" --gtest_list_tests '--gtest_filter=QnnUnit_*:QnnInteg_*' | tee "${results_dir}/tier-inventory.txt"
           # Retain the regular CI Accuracy exclusion; include all component,
