@@ -1,0 +1,109 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal ARM64 QNN Internal-UT Validation
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-linux-arm64:
+    runs-on: [self-hosted, X64, Linux, Build]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Enable internal symbols in this disposable validation checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("qcom/scripts/linux/build.sh")
+          text = path.read_text()
+          needle = "enable_qnn_internal_test_symbols=\n"
+          if text.count(needle) != 1:
+              raise SystemExit("Could not locate the internal-symbol build default")
+          path.write_text(text.replace(needle, "enable_qnn_internal_test_symbols=1\n", 1))
+
+          path = Path("qcom/ep_build/tasks/build.py")
+          text = path.read_text()
+          needle = 'venv_path=DOCKER_REPO_ROOT / "build" / "venv.build",'
+          if text.count(needle) != 1:
+              raise SystemExit("Could not locate the manylinux build venv")
+          path.write_text(text.replace(needle, 'venv_path=Path("/ort_caches/packages/internal-ut-venv.build"),', 1))
+          PY
+      - name: Build and archive Linux ARM64 internal-symbol tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 qcom/build_and_test.py --target-py-version None build_ort_linux_aarch64_manylinux_2_34
+          python3 qcom/build_and_test.py --target-py-version None \
+            create_venv archive_ort_linux_aarch64_manylinux_2_34 archive_testdata --only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qnn-test-only-init-linux-arm64-inputs
+          path: |
+            build/onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2
+            build/onnxruntime-testdata.tar.bz2
+          if-no-files-found: error
+
+  test-linux-arm64:
+    needs: build-linux-arm64
+    runs-on: [self-hosted, ARM64, Linux, Test]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/download-artifact@v4
+        with:
+          name: qnn-test-only-init-linux-arm64-inputs
+          path: build
+      - name: Extract test archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 qcom/build_and_test.py --target-py-version None \
+            create_venv extract_ort_linux_aarch64_manylinux_2_34 --only
+      - name: Validate standalone invalid-path and shuffled unit, integration, and legacy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          results_dir="${GITHUB_WORKSPACE}/test-only-init-results"
+          mkdir -p "${results_dir}"
+          test_bin="$(find build/linux-aarch64_manylinux_2_34/Release -type f -name onnxruntime_provider_test -print -quit)"
+          test -n "${test_bin}" || { echo "onnxruntime_provider_test not found"; exit 1; }
+          test_bin="$(realpath "${test_bin}")"
+          test_dir="$(dirname "${test_bin}")"
+          export LD_LIBRARY_PATH="${test_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+          cd "${test_dir}"
+          # Exercise test_main's own setup, without a CI-provided ADSP path.
+          unset ADSP_LIBRARY_PATH
+          failures=0
+          filter='QnnUnit_BackendManagerTest.SetupBackend_InvalidPath_ReturnsError'
+          "${test_bin}" --gtest_list_tests "--gtest_filter=${filter}" | tee "${results_dir}/invalid-path-inventory.txt"
+          grep -q SetupBackend_InvalidPath_ReturnsError "${results_dir}/invalid-path-inventory.txt"
+          if ! timeout 5m "${test_bin}" "--gtest_filter=${filter}" \
+            "--gtest_output=xml:${results_dir}/invalid-path.xml" 2>&1 | tee "${results_dir}/invalid-path.log"; then
+            failures=1
+          fi
+          "${test_bin}" --gtest_list_tests '--gtest_filter=QnnUnit_*:QnnInteg_*' | tee "${results_dir}/tier-inventory.txt"
+          # Retain the regular CI Accuracy exclusion; include all component,
+          # snapshot, integration, and legacy registrations in this run.
+          if ! timeout 45m "${test_bin}" '--gtest_filter=-QnnAcc_*' \
+            --gtest_shuffle --gtest_random_seed=861 \
+            "--gtest_output=xml:${results_dir}/full.xml" 2>&1 | tee "${results_dir}/full.log"; then
+            failures=1
+          fi
+          exit "${failures}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qnn-test-only-init-linux-arm64-results
+          path: test-only-init-results
+          if-no-files-found: warn
