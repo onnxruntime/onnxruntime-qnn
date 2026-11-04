@@ -333,25 +333,34 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     // tf_half_pixel_for_nn uses Resize+StridedSlice (nearest+floor only, validated above),
     // so skip the HTP-specific nearest_mode restrictions for this transformation mode.
     if (is_npu_backend && !is_tf_half_pixel_for_nn) {
-      // QNN Resize on HTP only supports the following nearest_mode values:
-      // - QNN 2.19: "round_prefer_floor" or "floor"
-      // - QNN 2.20 (API version 2.14): adds "round_prefer_ceil" (align_corners only)
-#if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR >= 14
-      RETURN_IF_NOT(nearest_mode == "round_prefer_ceil" || nearest_mode == "floor",
-                    ("QNN EP: Resize on the NPU does not support nearest_mode " + nearest_mode).c_str());
+      // "ceil" is not supported by either generic Resize or ResizeNearestNeighbor on HTP.
+      RETURN_IF(nearest_mode == "ceil",
+                ("QNN EP: Resize on the NPU does not support nearest_mode 'ceil'."));
 
-      // QNN HTP Resize only supports "round_prefer_ceil" if transformation_mode is "align_corners".
-      RETURN_IF(nearest_mode == "round_prefer_ceil" && transformation_mode != "align_corners",
-                "QNN EP: Resize on the NPU only supports 'round_prefer_ceil' if "
-                "transformation mode is 'align_corners'");
-#else
-      RETURN_IF_NOT(nearest_mode == "round_prefer_floor" || nearest_mode == "floor",
-                    ("QNN EP: Resize on the NPU does not support nearest_mode " + nearest_mode).c_str());
-#endif
-      // QNN HTP Resize does not support "floor" with "pytorch_half_pixel".
-      RETURN_IF(nearest_mode == "floor" && transformation_mode == "pytorch_half_pixel",
-                "QNN EP: Resize on the NPU does not support the combination of nearest_mode == 'floor' "
-                " and transformation_mode == 'pytorch_half_pixel'.");
+      // pytorch_half_pixel: no valid nearest combination exists on HTP.
+      //   - generic Resize: floor is the only accepted nearest_mode, but floor+pytorch_half_pixel
+      //     is explicitly rejected by HTP (see constraint below).
+      //   - ResizeNearestNeighbor: has no boolean param for pytorch_half_pixel semantics.
+      RETURN_IF(transformation_mode == "pytorch_half_pixel",
+                "QNN EP: Resize on the NPU does not support nearest mode with "
+                "pytorch_half_pixel transformation mode.");
+
+      // asymmetric: only "floor" is supported via generic Resize.
+      // ResizeNearestNeighbor has no boolean param equivalent for asymmetric.
+      if (transformation_mode == "asymmetric") {
+        RETURN_IF_NOT(nearest_mode == "floor",
+                      ("QNN EP: Resize on the NPU with asymmetric transformation mode only supports "
+                       "nearest_mode 'floor', got '" +
+                       nearest_mode + "'.")
+                          .c_str());
+      }
+
+      // half_pixel and align_corners: "floor", "round_prefer_floor", and "round_prefer_ceil" are
+      // all supported. Combinations that generic Resize rejects on HTP are routed to
+      // ResizeNearestNeighbor in ProcessAttributesAndOutputs:
+      //   - align_corners + floor          -> ResizeNearestNeighbor(align_corners=true)
+      //   - half_pixel + round_prefer_ceil -> ResizeNearestNeighbor(half_pixel_centers=true)
+      //   - half_pixel + round_prefer_floor-> ResizeNearestNeighbor(half_pixel_centers=true)
     }
   }
 
@@ -469,6 +478,54 @@ Ort::Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     // IsOpSupported guarantees rank == 4, interp_mode == "nearest", and nearest_mode == "floor".
     assert(interp_mode == "nearest");
     return ProcessTfHalfPixelForNN(qnn_model_wrapper, node_unit, input_names, logger, do_op_validation);
+  }
+
+  // For certain nearest-mode configurations on HTP, QNN's generic Resize op imposes constraints
+  // that differ from ONNX semantics. Route these to ResizeNearestNeighbor, which accepts
+  // align_corners and half_pixel_centers as boolean params without an explicit nearest_mode:
+  //   - align_corners + floor (and all non-round_prefer_ceil on SDK < 2.20)
+  //       -> ResizeNearestNeighbor(align_corners=true)
+  //   - half_pixel + round_prefer_ceil
+  //       -> ResizeNearestNeighbor(half_pixel_centers=true)
+  //   - half_pixel + round_prefer_floor
+  //       -> ResizeNearestNeighbor(half_pixel_centers=true)
+  if (interp_mode == "nearest" && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    bool use_resize_nn = false;
+    bool nn_align_corners = false;
+    bool nn_half_pixel_centers = false;
+
+    if (transformation_mode == "align_corners") {
+#if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR >= 14
+      // SDK >= 2.20: generic Resize accepts round_prefer_ceil + align_corners directly.
+      // Every other nearest_mode (e.g. floor) is not valid on HTP generic Resize with
+      // align_corners, so fall back to ResizeNearestNeighbor.
+      use_resize_nn = (nearest_mode != "round_prefer_ceil");
+#else
+      // SDK < 2.20: generic Resize does not support round_prefer_ceil at all;
+      // always use ResizeNearestNeighbor for align_corners.
+      use_resize_nn = true;
+#endif
+      nn_align_corners = true;
+    } else if (transformation_mode == "half_pixel" && nearest_mode != "floor") {
+      // half_pixel + floor is valid on generic Resize. All other nearest_modes
+      // (round_prefer_ceil, round_prefer_floor) require ResizeNearestNeighbor.
+      use_resize_nn = true;
+      nn_half_pixel_centers = true;
+    }
+
+    if (use_resize_nn) {
+      RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         nn_align_corners,
+                                         QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_ALIGN_CORNERS,
+                                         param_tensor_names));
+      RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                         nn_half_pixel_centers,
+                                         QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_HALF_PIXEL_CENTERS,
+                                         param_tensor_names));
+      return ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names),
+                            std::move(param_tensor_names), logger, do_op_validation,
+                            QNN_OP_RESIZE_NEAREST_NEIGHBOR);
+    }
   }
 
   // Parameter 'transformation_mode'

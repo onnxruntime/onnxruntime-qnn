@@ -789,12 +789,13 @@ static void RunQDQResizeNearestAndAssertQnnOp(const std::vector<int64_t>& input_
   AssertOpInQnnGraph(graph_dir, forbidden_qnn_op, 0);
 }
 
-// Locks removal of ResizeNearestNeighbor for rank-4 nearest + floor + align_corners.
-// Previously this configuration routed to ResizeNearestNeighbor; it must now emit Resize.
-TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestAlignCornersFloor_EmitsResize) {
+// Locks that rank-4 nearest + floor + align_corners routes to ResizeNearestNeighbor.
+// QNN HTP generic Resize only accepts round_prefer_ceil with align_corners; floor is
+// handled by ResizeNearestNeighbor(align_corners=true).
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestAlignCornersFloor_EmitsResizeNearestNeighbor) {
   RunQDQResizeNearestAndAssertQnnOp(/*input_shape=*/{1, 3, 4, 4}, /*output_shape=*/{1, 3, 8, 8},
-                                    "align_corners", "floor", /*expected=*/"Resize",
-                                    /*forbidden=*/"ResizeNearestNeighbor",
+                                    "align_corners", "floor", /*expected=*/"ResizeNearestNeighbor",
+                                    /*forbidden=*/"Resize",
                                     "resize_nearest_ac_floor_qnn_graph");
 }
 
@@ -837,23 +838,25 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearAsymmetric) {
 }
 
 // Test 2x QDQ Resize mode: "nearest", coordinate_transformation_mode: "half_pixel", nearest_mode: "round_prefer_floor"
-// Not supported on QNN HTP: the generic Resize op only supports "floor" or "round_prefer_ceil"
-// (with align_corners) on QNN SDK >= 2.20. Previously this was supported via ResizeNearestNeighbor.
-TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestHalfPixelRoundPreferFloor_Unsupported) {
+// Maps to QNN's ResizeNearestNeighbor operator (half_pixel_centers=true).
+// QNN HTP generic Resize only accepts "floor" with half_pixel; round_prefer_floor is
+// handled by the legacy op.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestHalfPixelRoundPreferFloor) {
   std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
   RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                               {1, 3, 8, 8}, "nearest", "half_pixel", "round_prefer_floor",
-                              ExpectedEPNodeAssignment::None);
+                              ExpectedEPNodeAssignment::All);
 }
 
 // Test 2x QDQ Resize mode: "nearest", coordinate_transformation_mode: "half_pixel", nearest_mode: "round_prefer_ceil"
-// Not supported on QNN HTP: the generic Resize op only supports "round_prefer_ceil" when
-// transformation_mode is "align_corners". Previously this was supported via ResizeNearestNeighbor.
-TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestHalfPixelRoundPreferCeil_Unsupported) {
+// Maps to QNN's ResizeNearestNeighbor operator (half_pixel_centers=true).
+// QNN HTP generic Resize only accepts "round_prefer_ceil" with align_corners; half_pixel +
+// round_prefer_ceil is handled by the legacy op.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestHalfPixelRoundPreferCeil) {
   std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
   RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                               {1, 3, 8, 8}, "nearest", "half_pixel", "round_prefer_ceil",
-                              ExpectedEPNodeAssignment::None);
+                              ExpectedEPNodeAssignment::All);
 }
 
 // Test 2x QDQ Resize mode: "nearest", coordinate_transformation_mode: "align_corners", nearest_mode: "round_prefer_ceil"
