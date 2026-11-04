@@ -359,8 +359,8 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
   }
 
   RETURN_IF_ERROR(utils::AddNormalizedIndicesTensor(qnn_model_wrapper, std::move(indices_info), indices_name,
-                                                     std::move(qnn_indices_bytes), logger, input_names,
-                                                     do_op_validation));
+                                                    std::move(qnn_indices_bytes), logger, input_names,
+                                                    do_op_validation));
 
   if (scalar_indices) {
     const std::string& indices_input_name = input_names.back();

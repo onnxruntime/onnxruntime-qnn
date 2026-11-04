@@ -294,7 +294,8 @@ static void RunGatherBlockQuantizedScalarIndexTest(bool rank3_weights,
     attributes.push_back(builder.MakeScalarAttribute("bits", static_cast<int64_t>(QBits)));
     attributes.push_back(builder.MakeScalarAttribute("block_size", kBlockSize));
     attributes.push_back(builder.MakeScalarAttribute("gather_axis", static_cast<int64_t>(0)));
-    attributes.push_back(builder.MakeScalarAttribute("quantize_axis", rank3_weights ? 2LL : 1LL));
+    attributes.push_back(builder.MakeScalarAttribute(
+        "quantize_axis", static_cast<int64_t>(rank3_weights ? 2 : 1)));
     builder.AddNode("gather_block_quantize", "GatherBlockQuantized",
                     {"data", "indices", "scales"}, {"output"}, kMSDomain, attributes);
   };
