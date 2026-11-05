@@ -1351,7 +1351,15 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     model_settings_.offload_graph_io_quantization = false;
   }
 
-  if (enable_file_mapped_weights_ && !use_ordinary_context_binary_loading_ && !rpcmem_library_) {
+  // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
+  // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
+  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
+                                                            runtime_capabilities,
+                                                            &logger_);
+
+  // Callback output uses ordinary loading; only native DMA loading needs this RPCMem setup.
+  if (enable_file_mapped_weights_ && !use_ordinary_context_binary_loading_ &&
+      !io_dispatch_->HasReadCallback() && !rpcmem_library_) {
     // Attempt to init rpcmem_library_ if needed. If this fails, then
     // disable file mapped weights and proceed with normal operation
     std::string rpcmem_error;
@@ -1751,12 +1759,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     etwRegistrationManager.RegisterInternalCallback(callback_ETWSink_provider_);
   }
 #endif
-
-  // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
-  // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
-  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
-                                                            runtime_capabilities,
-                                                            &logger_);
 }
 
 QnnEp::~QnnEp() {
