@@ -38,9 +38,10 @@
 #if defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
 namespace {
 
-// Chromium transports the DXCore device ID as an unprefixed hexadecimal uint32.
+// Parses a serialized ORT hardware device ID from EP factory environment configuration.
+// Chromium supplies the selected device's ID as an unprefixed hexadecimal uint32.
 // Also accept the conventional 0x prefix, while rejecting partial and overflow parses.
-bool ParseHardwareDeviceId(std::string_view text, uint32_t& device_id) {
+bool ParseOrtHardwareDeviceId(std::string_view text, uint32_t& device_id) {
   if (text.size() >= 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
     text.remove_prefix(2);
   }
@@ -230,19 +231,19 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
       const std::string key = "ep_factory." + factory->ep_name_ + ".qnn_hardware_device_id";
       if (const char* value = factory->ort_api.GetKeyValue(entries.get(), key.c_str())) {
         uint32_t parsed = 0;
-        if (!ParseHardwareDeviceId(value, parsed)) {
+        if (!ParseOrtHardwareDeviceId(value, parsed)) {
           return factory->ort_api.CreateStatus(
               ORT_INVALID_ARGUMENT, (key + " must be a hexadecimal uint32 hardware device ID.").c_str());
         }
         configured_npu_device_id = parsed;
       }
-      const std::string target_key = "ep_factory." + factory->ep_name_ + ".qnn_target_architecture";
-      if (const char* value = factory->ort_api.GetKeyValue(entries.get(), target_key.c_str())) {
+      const std::string qnn_target_arch_key = "ep_factory." + factory->ep_name_ + ".qnn_target_architecture";
+      if (const char* value = factory->ort_api.GetKeyValue(entries.get(), qnn_target_arch_key.c_str())) {
         // This value is a numeric QNN SoC model, not an HTP architecture. The
         // selected virtual device later maps it to the corresponding htp_arch.
         if (!qnn::soc::ParseSocModelTarget(value)) {
           return factory->ort_api.CreateStatus(
-              ORT_INVALID_ARGUMENT, (target_key + " must be a nonzero decimal QNN SoC model, e.g. 60.").c_str());
+              ORT_INVALID_ARGUMENT, (qnn_target_arch_key + " must be a nonzero decimal QNN SoC model, e.g. 60.").c_str());
         }
         if (!configured_npu_device_id.has_value()) {
           return factory->ort_api.CreateStatus(
@@ -264,8 +265,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
         metadata, factory->ort_api.ReleaseKeyValuePairs);
     if (!target.empty()) factory->ort_api.AddKeyValuePair(metadata, "target_architecture", target.c_str());
     OrtEpDevice* ep_device = nullptr;
-    OrtStatus* status = factory->ep_api.CreateEpDevice(factory, device, metadata, nullptr, &ep_device);
-    if (status) return status;
+    RETURN_IF_NOT_NULL(factory->ep_api.CreateEpDevice(factory, device, metadata, nullptr, &ep_device));
 
     // Advertise HOST_ACCESSIBLE memory for NPU devices so OrtEnv can create a
     // QnnHtpShared allocator before a QNN session exists. Loading RPCMEM is deferred
@@ -273,7 +273,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     const auto device_type = factory->ort_api.HardwareDevice_Type(device);
     if (device_type == OrtHardwareDeviceType_NPU &&
         factory->host_accessible_memory_info_ != nullptr) {
-      status = factory->ep_api.EpDevice_AddAllocatorInfo(
+      OrtStatus* status = factory->ep_api.EpDevice_AddAllocatorInfo(
           ep_device, factory->host_accessible_memory_info_.get());
       if (status != nullptr) {
         factory->ep_api.ReleaseEpDevice(ep_device);
@@ -314,7 +314,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   };
 
   bool has_npu_hw_device = false;
-  uint32_t npu_device_id = 0;  // DXCore device_id of the real NPU, propagated to virtual NPU for WebNN matching.
+  uint32_t npu_device_id = 0;  // DXCore device_id of the physical NPU, propagated to virtual NPU for WebNN matching.
   std::string discovered_target;
 #if defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
   // Device discovery runs before the caller chooses the QNN GPU or NPU backend.
@@ -359,10 +359,11 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
 
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices &&
       !use_supplied_virtual_device) {
-    const bool has_real_undetected_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
+    // Platform checks can identify a physical NPU that ORT Core did not enumerate.
+    const bool has_physical_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
 
     bool allow_host_virtual_devices = false;
-    if (!has_real_undetected_npu) {
+    if (!has_physical_npu) {
       OrtKeyValuePairs* env_config = nullptr;
       RETURN_IF_NOT_NULL(factory->ep_api.GetEnvConfigEntries(&env_config));
       std::unique_ptr<OrtKeyValuePairs, decltype(factory->ort_api.ReleaseKeyValuePairs)> entries(
@@ -373,13 +374,13 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
       }
     }
 
-    const bool synthesize_npu = has_real_undetected_npu || allow_host_virtual_devices;
+    const bool synthesize_npu = has_physical_npu || allow_host_virtual_devices;
 
     if (synthesize_npu) {
       // ORT Core didn't enumerate an NPU OrtHardwareDevice; synthesize one.
-      // A real-but-undetected NPU is executable. Otherwise, the environment has
-      // explicitly allowed a compile-only virtual device with no local hardware.
-      const bool is_virtual = !has_real_undetected_npu;
+      // A physical NPU identified by platform checks is executable. Otherwise, the
+      // environment has explicitly allowed a compile-only virtual device with no local hardware.
+      const bool is_virtual = !has_physical_npu;
       OrtHardwareDevice* synthesized_npu_hw_device = nullptr;
       RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, synthesized_npu_hw_device, is_virtual,
                                           npu_device_id));

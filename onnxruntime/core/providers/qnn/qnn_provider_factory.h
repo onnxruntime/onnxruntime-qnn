@@ -84,9 +84,10 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   std::vector<OrtEpDevice*> ep_devices_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
-  // Retain synthesized devices for every successful discovery call. OrtEpDevice
-  // borrows its hardware device, so later discovery must not invalidate earlier
-  // returned devices. Failed discovery rolls back only that call's additions.
+  // Retain synthesized hardware devices for every successful discovery call.
+  // Returned OrtEpDevice objects reference factory-owned OrtHardwareDevice objects,
+  // so later discovery must not invalidate previously returned devices.
+  // Failed discovery rolls back only that call's additions.
   std::vector<HardwareDeviceUniquePtr> synthesized_hw_devices_;
 
   // Custom op domains reported to ORT via GetCustomOpDomains. Holds both the qti_aisw block-op
