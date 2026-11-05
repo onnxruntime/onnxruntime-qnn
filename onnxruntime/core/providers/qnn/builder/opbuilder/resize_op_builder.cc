@@ -376,7 +376,7 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
       // All other combos must CPU-fallback here.
       if (input_rank != 4) {
         const bool valid_for_generic_resize =
-            (nearest_mode == "floor") ||
+            (nearest_mode == "floor" && transformation_mode != "align_corners") ||
 #if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR >= 14
             (nearest_mode == "round_prefer_ceil" && transformation_mode == "align_corners");
 #else
