@@ -118,6 +118,47 @@ jobs:
                   2>&1 | tee "${results_dir}/gdb-backtrace.log" || true
               else
                 echo 'gdb is not installed on this test runner' | tee "${results_dir}/gdb-backtrace.log"
+                # Diagnostic-only signal tracer: reuse the failed binary and
+                # record its native stack without changing logger state.
+                if command -v cc >/dev/null 2>&1; then
+                  cat > "${results_dir}/crash-stack.c" <<'C'
+          #define _GNU_SOURCE
+          #include <execinfo.h>
+          #include <signal.h>
+          #include <stdio.h>
+          #include <ucontext.h>
+          #include <unistd.h>
+
+          static void trace_crash(int sig, siginfo_t* info, void* context) {
+            void* frames[24];
+            dprintf(STDERR_FILENO, "signal=%d fault_address=%p\n", sig, info->si_addr);
+          #if defined(__aarch64__)
+            const ucontext_t* state = (const ucontext_t*)context;
+            dprintf(STDERR_FILENO, "pc=%llx x0=%llx x1=%llx\n",
+                    (unsigned long long)state->uc_mcontext.pc,
+                    (unsigned long long)state->uc_mcontext.regs[0],
+                    (unsigned long long)state->uc_mcontext.regs[1]);
+          #else
+            (void)context;
+          #endif
+            backtrace_symbols_fd(frames, backtrace(frames, 24), STDERR_FILENO);
+            _exit(128 + sig);
+          }
+
+          __attribute__((constructor)) static void install_trace(void) {
+            struct sigaction action = {0};
+            action.sa_sigaction = trace_crash;
+            action.sa_flags = SA_SIGINFO;
+            sigemptyset(&action.sa_mask);
+            sigaction(SIGSEGV, &action, NULL);
+          }
+          C
+                  cc -shared -fPIC -O0 -g -o "${results_dir}/crash-stack.so" "${results_dir}/crash-stack.c"
+                  LD_PRELOAD="${results_dir}/crash-stack.so" timeout 2m "${test_bin}" "--gtest_filter=${filter}" \
+                    2>&1 | tee "${results_dir}/native-backtrace.log" || true
+                else
+                  echo 'No C compiler is installed; native stack unavailable' | tee "${results_dir}/native-backtrace.log"
+                fi
               fi
             fi
             exit 1
