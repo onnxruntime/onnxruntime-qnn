@@ -362,11 +362,12 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     }
   }
 
-  if (allow_virtual_devices && num_ep_devices < max_ep_devices && !has_npu_hw_device) {
+  if (num_ep_devices < max_ep_devices && !has_npu_hw_device) {
     // On older platforms, DXCore does not discover the physical NPU device. Check for that case and
     // and synthesize a non-virtual NPU device if applicable.
-    const bool has_real_undetected_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
-    const bool is_virtual = !has_real_undetected_npu;
+    const bool has_real_undetected_npu = !configured_hardware_device_id.has_value() &&
+                                         (qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice());
+    const bool is_virtual = allow_virtual_devices && !has_real_undetected_npu;
 
     OrtHardwareDevice* synthesized_npu_hw_device = nullptr;
     RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU,
