@@ -169,7 +169,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   OrtNodeAttrHelper node_helper(*main_context_node);
   bool is_embed_mode = node_helper.Get(EMBED_MODE, true);
   bool is_multi_soc_ep_context = node_helper.Get(IS_MULTI_SOC_EP_CONTEXT, false);
-  RETURN_IF((use_ordinary_loading || enable_htp_init_acceleration) &&
+  RETURN_IF((use_ordinary_loading || enable_htp_init_acceleration || io_dispatch.SourceMappingIsEnabled()) &&
                 (is_embed_mode || is_multi_soc_ep_context),
             "Context binary loading overrides require an external, single-SoC EPContext binary.");
   if (is_embed_mode) {
@@ -220,7 +220,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   // through SDK loading and metadata extraction.
   if (io_dispatch.HasReadCallback()) {
     EpContextBuffer decrypted;
-    RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted));
+    RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted, context_binary_path_str));
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(decrypted.data(),
                                                                static_cast<uint64_t>(decrypted.size()),
                                                                context_binary_path_str,
