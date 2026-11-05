@@ -5,12 +5,23 @@ name: Qualcomm Internal ARM64 QNN Internal-UT Validation
 
 permissions:
   contents: read
+  actions: read
 
 on:
   workflow_dispatch:
+    inputs:
+      reuse_build_run:
+        description: "Reuse test inputs from a previous validation run instead of rebuilding"
+        type: string
+        default: ""
+      diagnostics_only:
+        description: "Run only the standalone case and capture its crash stack on failure"
+        type: boolean
+        default: false
 
 jobs:
   build-linux-arm64:
+    if: ${{ inputs.reuse_build_run == '' }}
     runs-on: [self-hosted, X64, Linux, Build]
     steps:
       - uses: actions/checkout@v6
@@ -54,6 +65,7 @@ jobs:
 
   test-linux-arm64:
     needs: build-linux-arm64
+    if: ${{ always() && !cancelled() && (needs.build-linux-arm64.result == 'success' || inputs.reuse_build_run != '') }}
     runs-on: [self-hosted, ARM64, Linux, Test]
     timeout-minutes: 60
     steps:
@@ -64,6 +76,8 @@ jobs:
         with:
           name: qnn-test-only-init-linux-arm64-inputs
           path: build
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.reuse_build_run || github.run_id }}
       - name: Extract test archives
         shell: bash
         run: |
@@ -72,8 +86,11 @@ jobs:
             create_venv extract_ort_linux_aarch64_manylinux_2_34 --only
       - name: Validate standalone invalid-path and shuffled unit, integration, and legacy tests
         shell: bash
+        env:
+          QNN_DIAGNOSTICS_ONLY: ${{ inputs.diagnostics_only && '1' || '0' }}
         run: |
           set -euo pipefail
+          ulimit -c 0
           results_dir="${GITHUB_WORKSPACE}/test-only-init-results"
           mkdir -p "${results_dir}"
           test_bin="$(find build/linux-aarch64_manylinux_2_34/Release -type f -name onnxruntime_provider_test -print -quit)"
@@ -92,7 +109,21 @@ jobs:
             "--gtest_output=xml:${results_dir}/invalid-path.xml" 2>&1 | tee "${results_dir}/invalid-path.log"; then
             # Stop on a startup/standalone regression; preserve its log instead
             # of running the full device suite with invalid initialization.
+            if [ "${QNN_DIAGNOSTICS_ONLY}" = "1" ]; then
+              if command -v gdb >/dev/null 2>&1; then
+                timeout 2m gdb -q -batch \
+                  -ex 'set pagination off' -ex run -ex 'bt 12' \
+                  -ex 'info registers x0 x1 pc' \
+                  --args "${test_bin}" "--gtest_filter=${filter}" \
+                  2>&1 | tee "${results_dir}/gdb-backtrace.log" || true
+              else
+                echo 'gdb is not installed on this test runner' | tee "${results_dir}/gdb-backtrace.log"
+              fi
+            fi
             exit 1
+          fi
+          if [ "${QNN_DIAGNOSTICS_ONLY}" = "1" ]; then
+            exit 0
           fi
           "${test_bin}" --gtest_list_tests '--gtest_filter=QnnUnit_*:QnnInteg_*' | tee "${results_dir}/tier-inventory.txt"
           # Retain the regular CI Accuracy exclusion; include all component,
