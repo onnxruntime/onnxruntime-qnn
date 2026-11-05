@@ -39,6 +39,12 @@ namespace qnn {
 #define ORT_QNN_HTP_MATMUL_LUT_SUPPORTED 0
 #endif
 
+// Qualified initialization-acceleration build scope is QAIRT SDK 2.50+.
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 50))
+#define QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+#endif
+
 // HTP Graph Splitting (Graph Program Executor) requires QAIRT SDK 2.49+.
 #if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
     (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 49))
@@ -413,7 +419,10 @@ class QnnTensorWrapper {
               "Cached context tensor rank exceeds the supported limit");
     RETURN_IF(shape_rank > 0 && shape_data == nullptr,
               "Cached context tensor dimensions are null");
-    dimensions_.assign(shape_data, shape_data + shape_rank);
+    dimensions_.clear();
+    if (shape_rank > 0) {
+      dimensions_.assign(shape_data, shape_data + shape_rank);
+    }
     SetQnnTensorDim(qnn_tensor_, dimensions_);
 
     SetQnnTensorMemType(qnn_tensor_, GetQnnTensorMemType(qnn_tensor));

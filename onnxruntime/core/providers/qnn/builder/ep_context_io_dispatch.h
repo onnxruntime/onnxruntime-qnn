@@ -4,13 +4,38 @@
 #pragma once
 
 #include <string>
-#include <vector>
+#include <memory>
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/ort_api_runtime_capabilities.h"
 
 namespace onnxruntime {
 namespace qnn {
+
+// Retains callback output together with its allocator; adoption never copies
+// the context binary. Copies share ownership until the last consumer releases it.
+class EpContextBuffer {
+ public:
+  char* data() const noexcept { return data_.get(); }
+  size_t size() const noexcept { return data_ ? size_ : 0; }
+  void Adopt(void* data, size_t size, std::shared_ptr<OrtAllocator> allocator) {
+    data_ = std::shared_ptr<char>(static_cast<char*>(data),
+                                  [allocator](char* ptr) { allocator->Free(allocator.get(), ptr); });
+    size_ = size;
+  }
+  void AllocateUninitialized(size_t size) {
+    auto allocator = std::make_shared<Ort::AllocatorWithDefaultOptions>();
+    void* data = allocator->Alloc(size);
+    if (size != 0 && data == nullptr) {
+      ORT_CXX_API_THROW("Failed to allocate context binary buffer.", ORT_FAIL);
+    }
+    Adopt(data, size, std::shared_ptr<OrtAllocator>(allocator, *allocator));
+  }
+
+ private:
+  std::shared_ptr<char> data_;
+  size_t size_ = 0;
+};
 
 // Owns the App-provided EPContext read/write callbacks resolved from a session options object.
 // Constructed once per session by QnnEp; not thread-safe (callers must serialize concurrent
@@ -51,8 +76,9 @@ class EpContextIoDispatch {
   bool HasReadCallback() const noexcept;
   bool HasWriteCallback() const noexcept;
 
-  // Precondition: HasReadCallback(). Fills `out` with the decrypted bytes.
-  Ort::Status Read(const std::string& file_name, std::vector<char>& out) const;
+  // Precondition: HasReadCallback(). Adopts successful output without copying.
+  // On callback error, application cleanup and `out` remain unchanged.
+  Ort::Status Read(const std::string& file_name, EpContextBuffer& out) const;
 
   // Precondition: HasWriteCallback(). Logs INFO with byte count on success.
   Ort::Status Write(const std::string& name,

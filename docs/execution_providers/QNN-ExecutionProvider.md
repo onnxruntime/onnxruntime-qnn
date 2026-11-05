@@ -342,6 +342,22 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'0'|Default. File-mapped weights enabled (when supported).|
 |'1'|Disable file-mapped weight loading. File-mapped weights are only available on Windows ARM64 with QNN API >= 2.32; this option is ignored on other platforms.|
 
+|`"context_binary_loading_mode"`|Description|
+|---|---|
+|'default'|Default. Preserve the native DMA loading policy when supported. If DMA context creation fails, reuse the acquired buffer with ordinary context creation.|
+|'ordinary'|Use `contextCreateFromBinary` directly. On Windows ARM64, `disable_file_mapped_weights=0` still acquires a CPU file view, independent of FastRPC/DMA support. The view is released after context loading and metadata extraction. Requires an external, single-SoC EPContext model; incompatible with `htp_share_resource_optimization=1` (including its legacy alias).|
+
+|`"htp_context_init_acceleration"`|Description|
+|---|---|
+|'0'|Default. Leave the SDK initialization-acceleration setting disabled.|
+|'1'|Set QNN HTP `INIT_ACCELERATION` for initial context restoration, allowing the SDK to use all DSP hardware threads for deserialization. Qualified with QAIRT SDK 2.50+ headers; requires runtime support, the HTP backend, and an external, single-SoC EPContext model. Incompatible with `htp_share_resource_optimization=1` (including its legacy alias). Unsupported settings fail explicitly; ORT does not retry with acceleration disabled. SSR recovery retains its existing configuration.|
+
+EPContext read callbacks take priority over native file mapping. Successful callback output is passed to ordinary context creation without an additional whole-binary copy and remains alive through metadata extraction. The application owns ciphertext acquisition and decryption: enabling file-mapped weights does not automatically map or decrypt callback-managed files, and callback output is not automatically imported through DMA. No callback registration or ABI changes are required.
+
+Initialization validation for these loading changes covers ordinary context creation for initial external, single-SoC EPContext models. Native default-DMA failed-create and shared-context recovery paths are not qualified by this validation: the existing failed-create cleanup can deregister mappings belonging to other live contexts on the same backend manager. Retrying with the acquired bytes avoids another read but does not establish safe DMA cleanup. Select `context_binary_loading_mode=ordinary` to use the validated loading path.
+
+These two options use session configuration keys `ep.qnn.context_binary_loading_mode` and `ep.qnn.htp_context_init_acceleration`. Their values are passed per load rather than stored as shared-backend policy. An already loaded shared context is reused without deserializing it again.
+
 |`"htp_bf16_enable"`|Description|
 |---|---|
 |'0'|Default. Disabled.|

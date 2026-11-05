@@ -33,9 +33,7 @@ static void UnmapFile(void* addr) noexcept {
 
 Ort::Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& bin_filepath,
                                                             void** mapped_data_ptr) {
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("Creating context bin file mapping for " + bin_filepath).c_str());
-
-  RETURN_IF(bin_filepath.empty(), "Context bin file path is empty");
+  RETURN_IF(mapped_data_ptr == nullptr, "Context bin mapping output pointer is null");
 
   std::lock_guard<std::mutex> lock(map_mutex_);
   auto map_it = mapped_memory_ptrs_.find(bin_filepath);
@@ -46,6 +44,18 @@ Ort::Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& b
                 ("Found existing mapview memory pointer (" + utils::PtrToString(mapped_data_ptr) + ") for context bin file: " + bin_filepath).c_str());
     return Ort::Status();
   }
+
+  std::shared_ptr<char> mapped_memory;
+  RETURN_IF_ERROR(MapContextBinary(bin_filepath, mapped_memory));
+  *mapped_data_ptr = mapped_memory.get();
+  mapped_memory_ptrs_.emplace(bin_filepath, std::move(mapped_memory));
+  return Ort::Status();
+}
+
+Ort::Status WindowsFileMapper::MapContextBinary(const std::string& bin_filepath,
+                                                std::shared_ptr<char>& mapped_memory) {
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("Creating context bin file mapping for " + bin_filepath).c_str());
+  RETURN_IF(bin_filepath.empty(), "Context bin file path is empty");
 
   std::wstring bin_filepath_wstr(bin_filepath.begin(), bin_filepath.end());
   wil::unique_hfile file_handle{CreateFile2(bin_filepath_wstr.c_str(),
@@ -61,13 +71,13 @@ Ort::Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& b
   ORT_CXX_LOG(logger_,
               ORT_LOGGING_LEVEL_VERBOSE, ("Created file handle (" + utils::PtrToString(file_handle.get()) + ") for context bin: " + bin_filepath).c_str());
 
-  wil::unique_hfile file_mapping_handle{CreateFileMappingW(file_handle.get(),
-                                                           nullptr,
-                                                           PAGE_READONLY,
-                                                           0x00,
-                                                           0x00,
-                                                           nullptr)};
-  if (file_mapping_handle.get() == INVALID_HANDLE_VALUE) {
+  wil::unique_handle file_mapping_handle{CreateFileMappingW(file_handle.get(),
+                                                            nullptr,
+                                                            PAGE_READONLY,
+                                                            0x00,
+                                                            0x00,
+                                                            nullptr)};
+  if (!file_mapping_handle) {
     const auto error_code = GetLastError();
     return MAKE_FAIL(("Failed to create file mapping handle for context bin" + bin_filepath + ". Error code: " + std::to_string(error_code) + ", \"" + std::system_category().message(error_code) + "\"").c_str());
   }
@@ -89,13 +99,8 @@ Ort::Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& b
               ORT_LOGGING_LEVEL_INFO,
               ("Created mapview pointer with address " + utils::PtrToString(mapped_base_ptr) + " for context bin " + bin_filepath).c_str());
 
-  MappedMemoryPtr mapped_memory_ptr{reinterpret_cast<char*>(mapped_base_ptr),
-                                    [mapped_base_ptr](void*) {
-                                      UnmapFile(mapped_base_ptr);
-                                    }};
-
-  *mapped_data_ptr = mapped_memory_ptr.get();
-  mapped_memory_ptrs_.emplace(bin_filepath, std::move(mapped_memory_ptr));
+  mapped_memory = std::shared_ptr<char>(reinterpret_cast<char*>(mapped_base_ptr),
+                                        [](char* ptr) { UnmapFile(ptr); });
 
   return Ort::Status();
 }

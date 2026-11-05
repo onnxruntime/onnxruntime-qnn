@@ -68,7 +68,9 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      QnnModelLookupTable& qnn_models,
                                      int64_t max_spill_fill_size,
                                      const qnn::EpContextIoDispatch& io_dispatch,
-                                     const Ort::Logger* logger = nullptr);
+                                     const Ort::Logger* logger = nullptr,
+                                     bool use_ordinary_loading = false,
+                                     bool enable_htp_init_acceleration = false);
 
 Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
                                    const OrtApi& ort_api,
@@ -83,7 +85,9 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                     QnnModelLookupTable& qnn_models,
                                     const Ort::Logger& logger,
                                     int64_t max_spill_fill_size,
-                                    const qnn::EpContextIoDispatch& io_dispatch);
+                                    const qnn::EpContextIoDispatch& io_dispatch,
+                                    bool use_ordinary_loading = false,
+                                    bool enable_htp_init_acceleration = false);
 
 Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                  size_t count,

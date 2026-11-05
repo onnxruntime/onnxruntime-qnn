@@ -12,6 +12,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -951,6 +952,33 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   }
 #endif
 
+  std::string context_binary_loading_mode;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("context_binary_loading_mode"),
+                                 "default", context_binary_loading_mode);
+  if (context_binary_loading_mode != "default" && context_binary_loading_mode != "ordinary") {
+    throw std::runtime_error("context_binary_loading_mode must be 'default' or 'ordinary'.");
+  }
+  use_ordinary_context_binary_loading_ = context_binary_loading_mode == "ordinary";
+  if (use_ordinary_context_binary_loading_ && htp_share_resource_optimization_ == 1) {
+    throw std::runtime_error("context_binary_loading_mode=ordinary does not support htp_share_resource_optimization=1.");
+  }
+
+  std::string init_acceleration;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("htp_context_init_acceleration"),
+                                 "0", init_acceleration);
+  if (init_acceleration != "0" && init_acceleration != "1") {
+    throw std::runtime_error("htp_context_init_acceleration must be '0' or '1'.");
+  }
+  enable_htp_context_init_acceleration_ = init_acceleration == "1";
+#ifndef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+  if (enable_htp_context_init_acceleration_) {
+    throw std::runtime_error("htp_context_init_acceleration=1 requires a provider built with QAIRT 2.50 or newer.");
+  }
+#endif
+  if (enable_htp_context_init_acceleration_ && htp_share_resource_optimization_ == 1) {
+    throw std::runtime_error("htp_context_init_acceleration=1 does not support htp_share_resource_optimization=1.");
+  }
+
   std::string disable_file_mapped_weights_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("disable_file_mapped_weights"), "0", disable_file_mapped_weights_str);
   if (disable_file_mapped_weights_str == "1") {
@@ -1323,7 +1351,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     model_settings_.offload_graph_io_quantization = false;
   }
 
-  if (enable_file_mapped_weights_ && !rpcmem_library_) {
+  if (enable_file_mapped_weights_ && !use_ordinary_context_binary_loading_ && !rpcmem_library_) {
     // Attempt to init rpcmem_library_ if needed. If this fails, then
     // disable file mapped weights and proceed with normal operation
     std::string rpcmem_error;
@@ -1729,14 +1757,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
                                                             runtime_capabilities,
                                                             &logger_);
-
-  // File mapping and encryption are mutually exclusive: an App-provided read callback replaces
-  // the on-disk read, so file mapping must be off when a read callback is registered.
-  if (enable_file_mapped_weights_ && io_dispatch_->HasReadCallback()) {
-    enable_file_mapped_weights_ = false;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "EPContext read callback registered; disabling file mapping for this session.");
-  }
 }
 
 QnnEp::~QnnEp() {
@@ -2955,7 +2975,9 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
                                                   qnn_models,
                                                   logger_,
                                                   max_spill_fill_size,
-                                                  *io_dispatch_));
+                                                  *io_dispatch_,
+                                                  use_ordinary_context_binary_loading_,
+                                                  enable_htp_context_init_acceleration_));
   }
 
   std::string graph_name;

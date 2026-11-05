@@ -236,6 +236,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool prepare_and_load_ = false;
   bool enable_spill_fill_buffer_ = false;
   bool enable_file_mapped_weights_ = true;
+  bool use_ordinary_context_binary_loading_ = false;
+  bool enable_htp_context_init_acceleration_ = false;
 #if defined(_WIN32)
   uint8_t num_graph_prepare_threads_ = 8;
   qnn::QnnTelemetry::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
