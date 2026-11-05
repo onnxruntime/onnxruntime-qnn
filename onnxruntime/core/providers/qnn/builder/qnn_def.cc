@@ -8,6 +8,7 @@
 #include <memory>
 #include <ostream>
 
+#include "core/providers/qnn/builder/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -517,7 +518,7 @@ bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
     }
   }
 
-  auto tensor_create_result = qnn_interface.tensorCreateGraphTensor(graph, &qnn_tensor);
+  auto tensor_create_result = QnnGraphEmitter::CreateTensor(qnn_interface, graph, qnn_tensor);
   if (tensor_create_result != QNN_TENSOR_NO_ERROR) {
     ss << "Failed to create tensor for node: " << node_name
        << " tensor_name: " << tensor_name
@@ -599,7 +600,7 @@ void QnnOpConfigWrapper::SetData(Qnn_Tensor_t* input_tensors,
 bool QnnOpConfigWrapper::QnnGraphOpValidation(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                               const Qnn_BackendHandle_t& backend_handle,
                                               std::string& error_msg) {
-  auto validation_status = qnn_interface.backendValidateOpConfig(backend_handle, op_config_);
+  auto validation_status = QnnGraphEmitter::ValidateOp(qnn_interface, backend_handle, op_config_);
   if (QNN_SUCCESS != validation_status) {
     std::ostringstream oss;
     oss << "QNN.backendValidateOpConfig() failed for node `" << name_ << "` of type `"
@@ -614,7 +615,7 @@ bool QnnOpConfigWrapper::QnnGraphOpValidation(const QNN_INTERFACE_VER_TYPE& qnn_
 bool QnnOpConfigWrapper::CreateQnnGraphOp(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                           const Qnn_GraphHandle_t& graph,
                                           std::string& error_msg) {
-  auto status = qnn_interface.graphAddNode(graph, op_config_);
+  auto status = QnnGraphEmitter::AddNode(qnn_interface, graph, op_config_);
   if (QNN_GRAPH_NO_ERROR != status) {
     std::ostringstream oss;
     oss << "QNN.graphAddNode() failed for node `" << name_ << "` of type `" << type_name_
