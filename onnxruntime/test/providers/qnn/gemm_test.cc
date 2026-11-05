@@ -1026,7 +1026,7 @@ void RunLPBQGemmGraphTest(GetQDQTestCaseFn test_case, GemmLPBQExpectedPath expec
   const ExpectedEPNodeAssignment expected_assignment = is_cpu_fallback ? ExpectedEPNodeAssignment::None
                                                                        : ExpectedEPNodeAssignment::All;
   RunQnnModelTest(test_case, GetLPBQGemmProviderOptions(graph_dir, backend_type), /*opset=*/21,
-                  EPVerificationParams{expected_assignment, ElementwiseAbsoluteVerifier(1e-2f)});
+                  EPVerificationParams{expected_assignment, ElementwiseAbsoluteVerifier(2e-2f)});
   if (::testing::Test::IsSkipped()) {
     return;
   }

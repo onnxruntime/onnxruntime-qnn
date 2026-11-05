@@ -349,7 +349,8 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                     .c_str());
   }
 
-  // LPBQ weight: translate to QNN Conv2D with 1×1 filters.
+  // LPBQ Gemm→Conv2D: activation is 4-D, weight is [1,1,K,N] with BLOCKWISE_EXPANSION.
+  // Conv2D outputs INT16 directly.
   if (plan.lowering == Lowering::kLPBQ) {
     return ProcessInputsForLPBQGemm(qnn_model_wrapper, node_unit, trans_a, trans_b, beta, logger,
                                     input_names, do_op_validation);
