@@ -882,6 +882,45 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestAsymmetricCeil_Unsupported) {
                               ExpectedEPNodeAssignment::None);
 }
 
+// Rank-3 nearest + half_pixel + floor: valid on HTP generic Resize (floor is always supported).
+// Verifies rank-3 inputs are not incorrectly blocked by the rank-4 ResizeNearestNeighbor gate.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestHalfPixelFloor_Rank3) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 12);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4}, false, input_data),
+                              {1, 3, 8}, "nearest", "half_pixel", "floor",
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Rank-3 nearest + half_pixel + round_prefer_floor: not supported on HTP.
+// ResizeNearestNeighbor is rank-4 only; generic Resize does not accept round_prefer_floor
+// with half_pixel on SDK >= 2.20. Must CPU-fallback cleanly via IsOpSupported.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestHalfPixelRoundPreferFloor_Rank3_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 12);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4}, false, input_data),
+                              {1, 3, 8}, "nearest", "half_pixel", "round_prefer_floor",
+                              ExpectedEPNodeAssignment::None);
+}
+
+// Rank-3 nearest + half_pixel + round_prefer_ceil: not supported on HTP.
+// ResizeNearestNeighbor is rank-4 only; generic Resize only accepts round_prefer_ceil
+// with align_corners. Must CPU-fallback cleanly via IsOpSupported.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestHalfPixelRoundPreferCeil_Rank3_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 12);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4}, false, input_data),
+                              {1, 3, 8}, "nearest", "half_pixel", "round_prefer_ceil",
+                              ExpectedEPNodeAssignment::None);
+}
+
+// Rank-3 nearest + align_corners + floor: not supported on HTP.
+// ResizeNearestNeighbor is rank-4 only; generic Resize only accepts round_prefer_ceil
+// with align_corners. Must CPU-fallback cleanly via IsOpSupported.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestAlignCornersFloor_Rank3_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 12);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4}, false, input_data),
+                              {1, 3, 8}, "nearest", "align_corners", "floor",
+                              ExpectedEPNodeAssignment::None);
+}
+
 // Test 3x QDQ Resize mode: "nearest", coordinate_transformation_mode: "asymmetric", nearest_mode: "floor".
 // Maps to QNN's Resize operator.
 TEST_F(QnnHTPBackendTests, ResizeU8_3xNearestAsymmetricFloor) {

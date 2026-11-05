@@ -42,6 +42,14 @@ class ResizeOpBuilder : public BaseOpBuilder {
                                           const Ort::Logger& logger,
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
+  Ort::Status OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
+                                       const OrtNodeUnit& node_unit,
+                                       const Ort::Logger& logger,
+                                       const std::vector<std::string>& input_names,
+                                       size_t output_index,
+                                       Qnn_DataType_t qnn_data_type,
+                                       QnnQuantParamsWrapper& quant_param) const override ORT_MUST_USE_RESULT;
+
  private:
   // Handles tf_half_pixel_for_nn coordinate transformation mode via Resize(2x, ASYMMETRIC) +
   // StridedSlice. Member function (not free function) because it calls the protected
@@ -356,11 +364,30 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
       }
 
       // half_pixel and align_corners: "floor", "round_prefer_floor", and "round_prefer_ceil" are
-      // all supported. Combinations that generic Resize rejects on HTP are routed to
-      // ResizeNearestNeighbor in ProcessAttributesAndOutputs:
+      // all supported for rank-4 input. Combinations that generic Resize rejects on HTP are routed
+      // to ResizeNearestNeighbor in ProcessAttributesAndOutputs:
       //   - align_corners + floor          -> ResizeNearestNeighbor(align_corners=true)
       //   - half_pixel + round_prefer_ceil -> ResizeNearestNeighbor(half_pixel_centers=true)
       //   - half_pixel + round_prefer_floor-> ResizeNearestNeighbor(half_pixel_centers=true)
+      //
+      // For rank != 4, ResizeNearestNeighbor cannot be used (rank-4 only op).
+      // HTP generic Resize only supports floor for all CTMs, plus round_prefer_ceil
+      // with align_corners (SDK >= 2.20) or round_prefer_floor (SDK < 2.20).
+      // All other combos must CPU-fallback here.
+      if (input_rank != 4) {
+        const bool valid_for_generic_resize =
+            (nearest_mode == "floor") ||
+#if QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR >= 14
+            (nearest_mode == "round_prefer_ceil" && transformation_mode == "align_corners");
+#else
+            (nearest_mode == "round_prefer_floor");
+#endif
+        RETURN_IF_NOT(valid_for_generic_resize,
+                      ("QNN EP: Resize on the NPU does not support nearest_mode '" + nearest_mode +
+                       "' with transformation_mode '" + transformation_mode +
+                       "' for non-rank-4 input.")
+                          .c_str());
+      }
     }
   }
 
@@ -489,7 +516,13 @@ Ort::Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   //       -> ResizeNearestNeighbor(half_pixel_centers=true)
   //   - half_pixel + round_prefer_floor
   //       -> ResizeNearestNeighbor(half_pixel_centers=true)
-  if (interp_mode == "nearest" && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+  std::vector<uint32_t> input_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape),
+                "QNN EP: Cannot get shape for Resize input");
+  const size_t input_rank = input_shape.size();
+
+  if (interp_mode == "nearest" && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      input_rank == 4) {
     bool use_resize_nn = false;
     bool nn_align_corners = false;
     bool nn_half_pixel_centers = false;
@@ -568,6 +601,23 @@ Ort::Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   return ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), std::move(param_tensor_names),
                         logger, do_op_validation, "Resize");
+}
+
+Ort::Status ResizeOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
+                                                      const OrtNodeUnit& node_unit,
+                                                      const Ort::Logger& logger,
+                                                      const std::vector<std::string>& input_names,
+                                                      size_t output_index,
+                                                      Qnn_DataType_t qnn_data_type,
+                                                      QnnQuantParamsWrapper& quant_param) const {
+  if (!quant_param.IsPerTensor()) {
+    return Ort::Status();
+  }
+
+  // Force Resize op's output to use the same quantization parameters as the input if nearly equal.
+  // This helps the HTP backend employ certain optimizations.
+  return SetOutputQParamEqualToInputIfNearlyEqual(qnn_model_wrapper, node_unit, logger, input_names,
+                                                  0 /*input_index*/, output_index, qnn_data_type, quant_param);
 }
 
 void CreateResizeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
