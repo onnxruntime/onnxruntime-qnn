@@ -366,7 +366,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   if (num_ep_devices < max_ep_devices && !has_npu_hw_device) {
     // On older platforms, DXCore does not discover the physical NPU device. Check for that case and
     // synthesize a non-virtual NPU device if applicable.
-    const bool has_physical_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
+    const bool has_physical_npu = !configured_hardware_device_id.has_value() && (qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice());
     if (has_physical_npu || allow_virtual_devices) {
       const bool is_virtual = !has_physical_npu;
 
