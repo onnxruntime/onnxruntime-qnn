@@ -8,7 +8,10 @@
 #include <optional>
 #include <string>
 #include <filesystem>
+#include <fstream>
 #include <variant>
+
+#include "nlohmann/json.hpp"
 
 #include "onnxruntime_session_options_config_keys.h"
 
@@ -56,6 +59,80 @@ static void RunOpTestOnCPU(const std::string& op_type,
                   provider_options,
                   opset_version,
                   EPVerificationParams{expected_ep_assignment});
+}
+
+// Reduced from SegFormer-Base's first MLP, retaining its topology and tensor shapes.
+// Weight values do not cause the layout regression; use deterministic nonuniform data.
+// Verify the HTP lowering with the IR backend so this test does not require a device.
+TEST_F(QnnIRBackendTests, SegFormerMlp_Gelu) {
+  const std::filesystem::path dump_dir = "SegFormerMlp_Gelu";
+  std::filesystem::remove_all(dump_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(dump_dir));
+  auto cleanup = gsl::finally([&dump_dir]() { std::filesystem::remove_all(dump_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["skip_backend_op_validation"] = "1";
+  provider_options["dump_qnn_ir_dlc"] = "1";
+  provider_options["dump_qnn_ir_dlc_dir"] = dump_dir.string();
+#if defined(_WIN32)
+  provider_options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+  provider_options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = dump_dir.string();
+
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(
+      model, [](ModelTestBuilder& builder) {
+        builder.MakeInput<float>("linear_4", {1, 16384, 128}, GetFloatDataInRange(-1.0f, 1.0f, 16384 * 128));
+        builder.MakeInitializer<float>("dwconv_weight", {128, 1, 3, 3}, GetFloatDataInRange(-0.1f, 0.1f, 128 * 9));
+        builder.MakeInitializer<float>("dwconv_bias", {128}, GetFloatDataInRange(-0.01f, 0.01f, 128));
+        builder.MakeInitializer<float>("dense_weight", {128, 32}, GetFloatDataInRange(-0.1f, 0.1f, 128 * 32));
+        builder.MakeInitializer<float>("dense_bias", {32}, GetFloatDataInRange(-0.01f, 0.01f, 32));
+        builder.MakeInitializer<int64_t>("spatial_shape", {4}, {1, 128, 128, 128});
+        builder.MakeInitializer<int64_t>("sequence_shape", {3}, {1, 128, 16384});
+
+        const auto perm = builder.MakeIntsAttribute("perm", {0, 2, 1});
+        const auto allowzero = builder.MakeScalarAttribute("allowzero", int64_t{1});
+        builder.AddNode("transpose_in", "Transpose", {"linear_4"}, {"channels_first"}, kOnnxDomain, {perm});
+        builder.AddNode("reshape_in", "Reshape", {"channels_first", "spatial_shape"}, {"spatial"}, kOnnxDomain, {allowzero});
+        builder.AddNode("dwconv", "Conv", {"spatial", "dwconv_weight", "dwconv_bias"}, {"conv_out"}, kOnnxDomain,
+                        {builder.MakeScalarAttribute("group", int64_t{128}),
+                         builder.MakeIntsAttribute("pads", {1, 1, 1, 1}),
+                         builder.MakeIntsAttribute("kernel_shape", {3, 3})});
+        builder.AddNode("reshape_out", "Reshape", {"conv_out", "sequence_shape"}, {"sequence"}, kOnnxDomain, {allowzero});
+        builder.AddNode("transpose_out", "Transpose", {"sequence"}, {"channels_last"}, kOnnxDomain, {perm});
+        builder.AddNode("gelu", "Gelu", {"channels_last"}, {"gelu_out"});
+        builder.AddNode("dense", "MatMul", {"gelu_out", "dense_weight"}, {"dense_out"});
+        builder.AddNode("bias", "Add", {"dense_out", "dense_bias"}, {"linear_5"});
+        builder.MakeOutput<float>("linear_5", std::vector<int64_t>{1, 16384, 32});
+      },
+      21);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions session_options;
+  session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+  RegisterQnnEpLibrary(registered_ep_device, session_options, "QNNExecutionProvider", provider_options);
+  Ort::Session session(*GetOrtEnv(), model->model_data.data(), model->model_data.size(), session_options);
+
+  AssertOpInQnnGraph(dump_dir, "Gelu", 1);
+  EXPECT_EQ(session.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(),
+            (std::vector<int64_t>{1, 16384, 32}));
+  for (const auto& file : std::filesystem::directory_iterator(dump_dir)) {
+    if (file.path().extension() != ".json" || file.path().stem().string().find("_tensor_log") != std::string::npos) {
+      continue;
+    }
+    std::ifstream stream(file.path());
+    const auto graph = nlohmann::json::parse(stream);
+    for (const auto& node : graph["graph"]["nodes"]) {
+      if (node["type"] == "Gelu") {
+        AssertTensorShapeInQnnGraph(dump_dir, node["input_names"][0].get<std::string>(), {16384, 128});
+        AssertTensorShapeInQnnGraph(dump_dir, node["output_names"][0].get<std::string>(), {16384, 128});
+      }
+    }
+  }
 }
 
 // Test float DepthToSpace on the QNN CPU backend.
