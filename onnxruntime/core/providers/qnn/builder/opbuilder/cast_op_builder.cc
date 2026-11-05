@@ -294,7 +294,13 @@ Ort::Status CastOpBuilder::EmitUInt8ToFloatViaInt32Decomposition(QnnModelWrapper
                 "Cannot get shape for uint8-to-float Cast input.");
 
   // 2. Register the INT_32 intermediate native tensor.
-  const std::string int32_name = utils::NodeUnitBaseName(node_unit) + "_u8tof_int32";
+  // NodeUnitBaseName gives a deterministic base but does not check the model's tensor namespace.
+  // Bump a counter suffix until the name is free to avoid aliasing a pre-existing tensor.
+  const std::string int32_base = utils::NodeUnitBaseName(node_unit) + "_u8tof_int32";
+  std::string int32_name = int32_base;
+  for (int i = 1; qnn_model_wrapper.IsQnnTensorWrapperExist(int32_name); ++i) {
+    int32_name = int32_base + "_" + std::to_string(i);
+  }
   QnnTensorWrapper int32_wrapper(int32_name,
                                  QNN_TENSOR_TYPE_NATIVE,
                                  QNN_DATATYPE_INT_32,
