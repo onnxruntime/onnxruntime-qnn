@@ -195,6 +195,23 @@ jobs:
                   cc -shared -fPIC -O0 -g -o "${results_dir}/crash-stack.so" "${results_dir}/crash-stack.c"
                   LD_PRELOAD="${results_dir}/crash-stack.so" timeout 2m "${test_bin}" "--gtest_filter=${filter}" \
                     2>&1 | tee "${results_dir}/native-backtrace.log" || true
+                  if command -v addr2line >/dev/null 2>&1; then
+                    python3 - "${results_dir}" <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+
+          results = Path(sys.argv[1])
+          with (results / "symbolized-backtrace.log").open("w") as output:
+              for line in (results / "native-backtrace.log").read_text().splitlines():
+                  match = re.match(r"(.+\.so(?:\.\d+)?)\(\+(0x[0-9a-f]+)\)", line)
+                  if match:
+                      output.write(line + "\n")
+                      output.flush()
+                      subprocess.run(["addr2line", "-C", "-f", "-e", *match.groups()], stdout=output, check=True)
+          PY
+                  fi
                 else
                   echo 'No C compiler is installed; native stack unavailable' | tee "${results_dir}/native-backtrace.log"
                 fi
