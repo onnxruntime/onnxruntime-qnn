@@ -18,10 +18,14 @@ on:
         description: "Run only the standalone case and capture its crash stack on failure"
         type: boolean
         default: false
+      rebuild_provider:
+        description: "Rebuild only QNN EP and use it with the unchanged prebuilt tests"
+        type: boolean
+        default: false
 
 jobs:
   build-linux-arm64:
-    if: ${{ inputs.reuse_build_run == '' }}
+    if: ${{ inputs.reuse_build_run == '' || inputs.rebuild_provider }}
     runs-on: [self-hosted, X64, Linux, Build]
     steps:
       - uses: actions/checkout@v6
@@ -29,10 +33,13 @@ jobs:
           submodules: recursive
       - name: Enable internal symbols in this disposable validation checkout
         shell: bash
+        env:
+          QNN_PROVIDER_ONLY: ${{ inputs.rebuild_provider && '1' || '0' }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import os
 
           path = Path("qcom/scripts/linux/build.sh")
           text = path.read_text()
@@ -40,6 +47,12 @@ jobs:
           if text.count(needle) != 1:
               raise SystemExit("Could not locate the internal-symbol build default")
           path.write_text(text.replace(needle, "enable_qnn_internal_test_symbols=1\n", 1))
+          if os.environ["QNN_PROVIDER_ONLY"] == "1":
+              text = path.read_text()
+              needle = '"${package_args[@]}"'
+              if text.count(needle) != 1:
+                  raise SystemExit("Could not locate the CMake build invocation")
+              path.write_text(text.replace(needle, needle + ' --targets onnxruntime_providers_qnn', 1))
 
           path = Path("qcom/ep_build/tasks/build.py")
           text = path.read_text()
@@ -50,22 +63,35 @@ jobs:
           PY
       - name: Build and archive Linux ARM64 internal-symbol tests
         shell: bash
+        env:
+          QNN_PROVIDER_ONLY: ${{ inputs.rebuild_provider && '1' || '0' }}
         run: |
           set -euo pipefail
           python3 qcom/build_and_test.py --target-py-version None build_ort_linux_aarch64_manylinux_2_34
+          if [ "${QNN_PROVIDER_ONLY}" = "1" ]; then
+            test -f build/linux-aarch64_manylinux_2_34/Release/libonnxruntime_providers_qnn.so
+            exit 0
+          fi
           python3 qcom/build_and_test.py --target-py-version None \
             create_venv archive_ort_linux_aarch64_manylinux_2_34 archive_testdata --only
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.rebuild_provider }}
         with:
           name: qnn-test-only-init-linux-arm64-inputs
           path: |
             build/onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2
             build/onnxruntime-testdata.tar.bz2
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.rebuild_provider }}
+        with:
+          name: qnn-rebuilt-provider
+          path: build/linux-aarch64_manylinux_2_34/Release/libonnxruntime_providers_qnn.so
+          if-no-files-found: error
 
   test-linux-arm64:
     needs: build-linux-arm64
-    if: ${{ always() && !cancelled() && (needs.build-linux-arm64.result == 'success' || inputs.reuse_build_run != '') }}
+    if: ${{ always() && !cancelled() && (needs.build-linux-arm64.result == 'success' || (inputs.reuse_build_run != '' && !inputs.rebuild_provider)) }}
     runs-on: [self-hosted, ARM64, Linux, Test]
     timeout-minutes: 60
     steps:
@@ -84,6 +110,19 @@ jobs:
           set -euo pipefail
           python3 qcom/build_and_test.py --target-py-version None \
             create_venv extract_ort_linux_aarch64_manylinux_2_34 --only
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.rebuild_provider }}
+        with:
+          name: qnn-rebuilt-provider
+          path: rebuilt-provider
+      - name: Replace only the QNN shared library for this validation
+        if: ${{ inputs.rebuild_provider }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_bin="$(find build/linux-aarch64_manylinux_2_34/Release -type f -name onnxruntime_provider_test -print -quit)"
+          test -n "${test_bin}"
+          cp rebuilt-provider/libonnxruntime_providers_qnn.so "$(dirname "${test_bin}")/libonnxruntime_providers_qnn.so"
       - name: Validate standalone invalid-path and shuffled unit, integration, and legacy tests
         shell: bash
         env:
