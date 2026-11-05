@@ -21,6 +21,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "QnnInterface.h"
 #include "HTP/QnnHtpDevice.h"
 

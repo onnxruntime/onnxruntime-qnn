@@ -5,29 +5,14 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
-#ifdef _WIN32
-extern "C" const OrtApi* ORT_API_CALL QnnUnit_SetOrtApiForTesting(const OrtApi* api) noexcept;
-extern "C" void ORT_API_CALL QnnUnit_RestoreOrtApiForTesting(const OrtApi* previous) noexcept;
-#endif
+#include "qnn_module_state_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
 namespace {
 
 #ifdef _WIN32
-struct ProviderDllOrtApiInitializer {
-  ProviderDllOrtApiInitializer() {
-    previous_ = QnnUnit_SetOrtApiForTesting(&Ort::GetApi());
-  }
-
-  ~ProviderDllOrtApiInitializer() {
-    QnnUnit_RestoreOrtApiForTesting(previous_);
-  }
-
-  const OrtApi* previous_ = nullptr;
-};
-
-ProviderDllOrtApiInitializer g_provider_dll_ort_api_initializer;
+ScopedProviderModuleOrtApiOverride g_provider_dll_ort_api_initializer{&Ort::GetApi()};
 #endif
 
 // Friend-injection helper: instantiating PrivateMember<Tag, Member> injects a

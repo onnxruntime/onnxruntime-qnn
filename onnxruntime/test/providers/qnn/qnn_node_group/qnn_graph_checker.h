@@ -28,6 +28,9 @@ void AssertOpWithNameInQnnGraph(const std::filesystem::path& dump_dir,
 void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
                                  uint32_t expected_data_type);
 
+// Count APP_WRITE tensors to detect parameters left outside a QDQ group.
+void AssertQnnGraphInputCount(const std::filesystem::path& dump_dir, size_t expected_count);
+
 // Asserts that a node with the exact `node_name` does not appear in
 // the compiled QNN graph JSON (root["graph"]["nodes"]).
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,

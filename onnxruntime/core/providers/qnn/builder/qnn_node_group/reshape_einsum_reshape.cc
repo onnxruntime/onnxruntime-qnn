@@ -5,6 +5,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -19,13 +20,30 @@
 namespace onnxruntime {
 namespace qnn {
 
-constexpr size_t kEinsumRank6 = 6;
-constexpr std::array<uint32_t, 6> kEinsumPerm6{0, 5, 1, 3, 2, 4};
-constexpr auto RearrangeShape6 = [](const std::vector<uint32_t>& shape) {
-  return std::vector<uint32_t>{shape[0], shape[5], shape[1] * shape[3], shape[2] * shape[4]};
+namespace {
+
+constexpr size_t kReshapeEinsumReshapeInputRank = 6;
+constexpr std::array<uint32_t, kReshapeEinsumReshapeInputRank> kEinsumPerm6{0, 5, 1, 3, 2, 4};
+
+struct ReshapeEinsumReshapeShapes {
+  std::array<uint32_t, 2> block_size;
+  std::array<uint32_t, 4> reshape_input;
+  std::array<uint32_t, 4> depth_to_space_output;
+  std::array<uint32_t, 4> post_reshape_output;
 };
 
-namespace {
+std::optional<ReshapeEinsumReshapeShapes> DeriveReshapeEinsumReshapeShapes(
+    const std::vector<uint32_t>& input_shape) {
+  if (input_shape.size() != kReshapeEinsumReshapeInputRank) {
+    return std::nullopt;
+  }
+
+  return ReshapeEinsumReshapeShapes{
+      {input_shape[3], input_shape[4]},
+      {input_shape[0], input_shape[1], input_shape[2], input_shape[3] * input_shape[4] * input_shape[5]},
+      {input_shape[0], input_shape[1] * input_shape[3], input_shape[2] * input_shape[4], input_shape[5]},
+      {input_shape[0], input_shape[5], input_shape[1] * input_shape[3], input_shape[2] * input_shape[4]}};
+}
 
 bool IsEquationEqualToTranspose(std::string equation, std::vector<uint32_t>& perm) {
   equation.erase(std::remove(equation.begin(), equation.end(), ' '), equation.end());
@@ -91,22 +109,19 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   // Get the 6D pre-reshape output shape — used by both validate and create paths.
   TensorInfo pre_reshape_output_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(pre_reshape_output_def, pre_reshape_output_info));
+  const auto derived_shapes = DeriveReshapeEinsumReshapeShapes(pre_reshape_output_info.shape);
+  RETURN_IF_NOT(derived_shapes.has_value(),
+                "Reshape-Einsum-Reshape fusion requires a rank-6 Einsum input");
   // If any QDQ node exists, the previous matching will fail and thus it is guaranteed not quantized.
   assert(!pre_reshape_output_info.quant_param.IsQuantized());
 
   // 4D reshape output shape: collapse last 3 dims for DepthToSpace input.
-  const std::vector<uint32_t> reshape4d_shape = {
-      pre_reshape_output_info.shape[0],
-      pre_reshape_output_info.shape[1],
-      pre_reshape_output_info.shape[2],
-      pre_reshape_output_info.shape[3] * pre_reshape_output_info.shape[4] * pre_reshape_output_info.shape[5]};
+  const std::vector<uint32_t> reshape4d_shape(derived_shapes->reshape_input.begin(),
+                                              derived_shapes->reshape_input.end());
 
   // D2S output shape.
-  const std::vector<uint32_t> d2s_out_shape = {
-      pre_reshape_output_info.shape[0],
-      pre_reshape_output_info.shape[1] * pre_reshape_output_info.shape[3],
-      pre_reshape_output_info.shape[2] * pre_reshape_output_info.shape[4],
-      pre_reshape_output_info.shape[5]};
+  const std::vector<uint32_t> d2s_out_shape(derived_shapes->depth_to_space_output.begin(),
+                                            derived_shapes->depth_to_space_output.end());
 
   if (do_op_validation) {
     // Validate path: build tensors/params on the stack and call ValidateQnnNode directly.
@@ -142,7 +157,8 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     QnnParamWrapper block_size_param(einsum_node_unit.Index(), einsum_node_unit.Name(),
                                      QNN_OP_DEPTH_TO_SPACE_PARAM_BLOCK_SIZE,
                                      {2},
-                                     {pre_reshape_output_info.shape[3], pre_reshape_output_info.shape[4]});
+                                     std::vector<uint32_t>(derived_shapes->block_size.begin(),
+                                                           derived_shapes->block_size.end()));
     Qnn_Scalar_t mode_scalar = {};
     mode_scalar.dataType = QNN_DATATYPE_UINT_32;
     mode_scalar.uint32Value = static_cast<uint32_t>(QNN_OP_DEPTH_TO_SPACE_MODE_DCR);
@@ -218,7 +234,8 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                    einsum_node_unit.Name(),
                                    QNN_OP_DEPTH_TO_SPACE_PARAM_BLOCK_SIZE,
                                    {2},
-                                   {pre_reshape_output_info.shape[3], pre_reshape_output_info.shape[4]});
+                                   std::vector<uint32_t>(derived_shapes->block_size.begin(),
+                                                         derived_shapes->block_size.end()));
   const std::string block_size_param_name = block_size_param.GetParamTensorName();
   RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(block_size_param)), "Failed to add param.");
 
@@ -237,11 +254,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   assert(!einsum_output_info.quant_param.IsQuantized());
 
   // Calculate D2S output shape.
-  std::vector<uint32_t> d2s_output_shape = {
-      pre_reshape_output_info.shape[0],
-      pre_reshape_output_info.shape[1] * pre_reshape_output_info.shape[3],
-      pre_reshape_output_info.shape[2] * pre_reshape_output_info.shape[4],
-      pre_reshape_output_info.shape[5]};
+  std::vector<uint32_t> d2s_output_shape(d2s_out_shape);
   QnnTensorWrapper d2s_output_wrapper(einsum_node_unit.Outputs()[0].name,
                                       QNN_TENSOR_TYPE_NATIVE,
                                       einsum_output_info.qnn_data_type,
@@ -323,7 +336,7 @@ std::unique_ptr<IQnnNodeGroup> ReshapeEinsumReshapeNodeGroup::TryFusion(
   }
 
   const std::string equation = OrtNodeAttrHelper(einsum_node_unit).Get("equation", std::string(""));
-  std::vector<uint32_t> perm(kEinsumRank6, kEinsumRank6);
+  std::vector<uint32_t> perm(kReshapeEinsumReshapeInputRank, kReshapeEinsumReshapeInputRank);
   if (!IsEquationEqualToTranspose(equation, perm)) {
     return nullptr;
   }
@@ -340,6 +353,10 @@ std::unique_ptr<IQnnNodeGroup> ReshapeEinsumReshapeNodeGroup::TryFusion(
 
   std::vector<uint32_t> pre_reshape_output_shape;
   if (!qnn_model_wrapper.GetOnnxShape(pre_reshape_node_unit->Outputs()[0].shape, pre_reshape_output_shape)) {
+    return nullptr;
+  }
+  const auto derived_shapes = DeriveReshapeEinsumReshapeShapes(pre_reshape_output_shape);
+  if (!derived_shapes.has_value()) {
     return nullptr;
   }
 
@@ -360,7 +377,8 @@ std::unique_ptr<IQnnNodeGroup> ReshapeEinsumReshapeNodeGroup::TryFusion(
 
   // Check perm and shape as expected.
   if (perm != std::vector<uint32_t>(kEinsumPerm6.begin(), kEinsumPerm6.end()) ||
-      post_reshape_output_shape != RearrangeShape6(pre_reshape_output_shape)) {
+      post_reshape_output_shape != std::vector<uint32_t>(derived_shapes->post_reshape_output.begin(),
+                                                         derived_shapes->post_reshape_output.end())) {
     return nullptr;
   }
 

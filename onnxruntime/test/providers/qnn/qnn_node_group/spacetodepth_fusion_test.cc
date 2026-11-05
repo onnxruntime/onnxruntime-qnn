@@ -913,21 +913,29 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_InvalidRank5Perm_NotFused) {
                                                                         {0, 1, 2, 3, 4}, true, true));
 }
 
-// Tripwire: truly-bare RTR (no side layout-sensitive op) is currently unreachable
-// for SpaceToDepthFusion. Pass 1 sees rank-6 R/T/R as unsupported per-node and
-// returns empty capabilities; ORT elides Layout Transformer and never issues
-// pass 2, so the post-LT-gated fusion never fires and QNN takes nothing. When
-// ORT ever changes this (unconditional pass 2, or HTP support for rank-6 R/T/R),
-// Assignment::None will fail — forcing us to update the fusion gate or delete
-// this tripwire.
-TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_TrulyBareRTR_Float_CRD_NotFused) {
+// Fallback contract: SpaceToDepthFusion refuses a truly-bare RTR before Layout
+// Transform (see spacetodepth_fusion.cc), and with no side layout-sensitive op
+// ORT elides the Layout Transformer and never issues pass 2. The rank-6 R/T/R
+// must still be claimed -- by Rank6ToRank5Fusion, which reduces it to an exact
+// rank-5 view. Previously this pair was excluded by a permutation deny-list in
+// that fusion, so the pattern fell back to the CPU.
+//
+// This stays a tripwire on the *other* side of the handover: it fails if
+// SpaceToDepthFusion starts claiming bare RTR pre-LT (it would then own the
+// nodes and the rank-5 reduction would no longer be exercised), and if the
+// rank-5 view ever stops being numerically exact the verifier below catches it.
+// S2D keeping ownership when Layout Transform *does* run is covered separately
+// by SpaceToDepthFusion_BareRTR_Float_CRD, which asserts a real SpaceToDepth op
+// lands in the QNN graph.
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_BareRTR_CRD_Rank5Fallback) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   RunQnnModelTest(BuildBareRTRSpaceToDepthTestCase({1, 3, 4, 4}, 2, 2, {0, 1, 3, 5, 2, 4},
                                                    /*add_side_conv=*/false),
                   GetProviderOptions("htp"),
                   /*opset_version=*/13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::None});
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(1e-2f)});
 }
 
 // Bare-RTR DCR structural coverage; disabled — HTP's SpaceToDepth DCR kernel mismatches

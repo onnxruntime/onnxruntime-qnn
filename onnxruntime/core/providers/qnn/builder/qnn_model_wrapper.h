@@ -41,6 +41,7 @@ struct ModelSettings {
   bool htp_shared_memory = false;
   bool htp_bf16_enable = false;
   bool enable_block_quant_weight_optimization = false;
+  bool use_native_matmul = false;
   bool enable_htp_monolithic_lstm = false;
   OpAffinityMap op_affinity;  // default-constructed = unconfigured; always safe to query.
 };
@@ -278,6 +279,9 @@ class QnnModelWrapper {
                              bool is_for_input = true,
                              bool is_for_output = false);
 
+  // Adds a Transpose node. A non-identity, shape-changing perm that only reorders size-1
+  // dimensions is lowered to an equivalent Reshape to work around a QNN HTP miscomputation.
+  // See https://github.com/onnxruntime/onnxruntime-qnn/issues/1020.
   Ort::Status AddTransposeNode(size_t node_index,
                                const std::string& input_name,
                                const std::string& output_name,
@@ -352,6 +356,15 @@ class QnnModelWrapper {
     return AddTransposeNode(node_index, input_name, output_name, input_shape, transpose_perm, output_shape,
                             tensor_data_type, quantize_param, do_op_validation, is_for_input, is_for_output);
   }
+
+  // Registers a static bias initializer tensor with the given shape and quant params.
+  // Used when bias data is already correctly quantized and only needs to be registered.
+  Ort::Status AddStaticBiasTensor(const std::string& bias_name,
+                                  const std::vector<uint32_t>& bias_shape,
+                                  Qnn_DataType_t data_type,
+                                  QnnQuantParamsWrapper quant_params,
+                                  std::vector<uint8_t> bias_data,
+                                  std::vector<std::string>& input_names);
 
   Ort::Status UnpackInitializerData(const OrtValueInfo* initializer,
                                     std::vector<uint8_t>& unpacked_tensor,

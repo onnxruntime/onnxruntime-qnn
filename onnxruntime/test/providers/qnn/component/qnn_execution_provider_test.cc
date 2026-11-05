@@ -319,10 +319,10 @@ class QnnUnit_ExecutionProviderTest : public ::testing::Test {
   void SetUp() override {
     // Reset the SharedContext singleton's shared QnnBackendManager so that
     // tests that modify it don't interfere with each other.
-    SharedContext::GetInstance().ResetSharedQnnBackendManager();
+    ResetSharedBackendManagerForTest();
   }
   void TearDown() override {
-    SharedContext::GetInstance().ResetSharedQnnBackendManager();
+    ResetSharedBackendManagerForTest();
   }
 };
 
@@ -707,9 +707,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SharedBackendManagerWithDifferentAllo
   // The host-only test cannot load RPCMEM to create a real HTP_SHARED owner.
   // Set the shared manager's mode directly to emulate an existing opted-in
   // session before constructing a second session that requests NONE.
-  auto shared_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
-  ASSERT_NE(shared_manager, nullptr);
-  shared_manager->SetQnnAllocatorType(qnn::QnnAllocatorType::HTP_SHARED);
+  ASSERT_TRUE(SetSharedBackendManagerAllocatorForTest(qnn::QnnAllocatorType::HTP_SHARED));
 
   EpStubContext consumer_ctx;
   consumer_ctx.session_config[EPKey("htp_share_resource_optimization")] = "1";
@@ -1326,6 +1324,23 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphSplittingNumPrepareThreads_OldSd
                "QAIRT SDK < 2.51");
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_UseNativeMatMulEnabled_Succeeds) {
+  EpStubContext ctx;
+  ctx.session_config[EPKey("use_native_matmul")] = "1";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_UseNativeMatMulInvalidValue_LogsVerbose) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("use_native_matmul")] = "x";
+  auto factory = MakeFactory(ctx);
+  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Invalid value for ep.qnnexecutionprovider.use_native_matmul");
+}
+
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresNegative_Succeeds) {
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
@@ -1462,6 +1477,9 @@ TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_EmptyString_Logs
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_NonEmptyOnX86Host_LogsSkipAndReturnsNotApplicable) {
+#if QNN_ARCH_ARM64
+  GTEST_SKIP() << "Compatibility validation is only skipped on x86 hosts.";
+#endif
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   auto factory = MakeFactory(ctx);
@@ -1480,6 +1498,27 @@ TEST_F(QnnUnit_ExecutionProviderTest, ValidateCompatibilityInfo_NonEmptyOnX86Hos
   EXPECT_EQ(s, nullptr);
   EXPECT_EQ(compat, OrtCompiledModelCompatibility_EP_NOT_APPLICABLE);
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Skip compatibility validation on x86 platforms.");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest,
+       ValidateCompatibilityInfo_MalformedOnArm64_LogsDeserializationFailureAndReturnsNotApplicable) {
+#if !QNN_ARCH_ARM64
+  GTEST_SKIP() << "Compatibility-info parsing is only reached on ARM64 hosts.";
+#endif
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+
+  OrtCompiledModelCompatibility compat = OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL;
+  OrtStatus* s;
+  {
+    UseGlobalEpStubs use(ctx);
+    s = ep->ValidateCompiledModelCompatibilityInfo(nullptr, 0, "not:valid:compatibility:info", &compat);
+  }
+  EXPECT_EQ(s, nullptr);
+  EXPECT_EQ(compat, OrtCompiledModelCompatibility_EP_NOT_APPLICABLE);
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Skip compatibility validation due to deserialization failure:");
 }
 
 // ===========================================================================

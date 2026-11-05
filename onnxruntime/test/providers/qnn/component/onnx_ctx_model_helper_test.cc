@@ -20,6 +20,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "HTP/QnnHtpDevice.h"
 
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
@@ -658,7 +660,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_WrongOpType_Return
   FakeNode node{"relu", "Relu", "", 13, {}, {}};
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
-                                         qnn::EpContextIoDispatch(nullptr));
+                                         qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
 }
 
@@ -670,7 +672,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedEmptyPath_
   node.attrs[EMBED_MODE] = &embed_mode;
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
-                                         qnn::EpContextIoDispatch(nullptr));
+                                         qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
   // Pin the specific guard: without this the terminal is_regular_file() check
   // catches every path case, so the test would pass even if the empty-path
@@ -693,7 +695,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedAbsolutePa
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
-                                         qnn::EpContextIoDispatch(nullptr));
+                                         qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
   // Pin the absolute-path (directory-traversal) guard: removing it lets the
   // path fall through to the "does not exist" check, which this substring
@@ -712,7 +714,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedDotDotPath
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
-                                         qnn::EpContextIoDispatch(nullptr));
+                                         qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
   // Pin the ".." guard by both code and message. Removing it lets the path
   // fall through to the terminal "does not exist" check (also ORT_INVALID_GRAPH),
@@ -734,7 +736,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedFileNotFou
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
-                                         qnn::EpContextIoDispatch(nullptr));
+                                         qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
 }
 
@@ -841,7 +843,7 @@ int64_t RunCreateEpCtxAndCaptureMultiSoc(bool enable_multi_soc_ep_context) {
   unsigned char buffer[] = {0x1, 0x2, 0x3, 0x4};
   std::basic_string<ORTCHAR_T> context_model_path;  // unused in embed mode
   std::unordered_map<std::string, std::string> no_overrides;
-  qnn::EpContextIoDispatch dummy_io_dispatch(nullptr);
+  qnn::EpContextIoDispatch dummy_io_dispatch;
 
   auto status = CreateEPContextNodes(&fused_node, 1, &ep_context_node,
                                      ctx.ort_api, ctx.editor_api,

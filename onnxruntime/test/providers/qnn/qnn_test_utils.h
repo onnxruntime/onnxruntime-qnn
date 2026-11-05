@@ -1208,8 +1208,11 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                                  std::function<void(const Ort::Session&)>* qnn_ep_graph_checker = nullptr,
-                                 Ort::CustomOpDomain* custom_op_domain = nullptr) {
-  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
+                                 Ort::CustomOpDomain* custom_op_domain = nullptr,
+                                 bool skip_v68_qdq = true) {
+  if (skip_v68_qdq) {
+    CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
+  }
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -1670,7 +1673,7 @@ inline void MakeTestInput(ModelTestBuilder& builder,
 //
 // i.e., initial bias => manual quantization (int32) => DQ => final float bias
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder, const std::string& name, const TestInputDef<float>& bias_def, float bias_scale,
-                                 bool use_contrib_qdq = false);
+                                 bool use_contrib_qdq = false, int32_t bias_zero_point = 0);
 
 /**
  * Returns a function that builds a model with a single operator with N inputs type InputType1 and M inputs
@@ -1995,8 +1998,11 @@ class QnnHTPBackendTests : public ::testing::Test {
 #endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
   }
 
+  // Initializes and caches QNN HTP platform attributes without requiring this test fixture's SetUp().
+  static Ort::Status EnsurePlatformAttributes(const Ort::Logger& logger);
+
   // Query QNN platform attributes by directly calling QNN APIs
-  Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
+  static Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
 
   static std::optional<QnnHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.
   static BackendSupport cached_htp_support_;                                               // Set by the first test using this fixture.

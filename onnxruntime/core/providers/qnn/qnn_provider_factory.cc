@@ -5,22 +5,26 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
 #include <iostream>
 #include <optional>
 #include <utility>
 
+#include "QnnCommon.h"
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
-#include "QnnCommon.h"
+#include "onnxruntime_env_config_keys.h"
 
+#include "core/providers/qnn/custom_op/qnn_custom_op_domain_registry.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_data_transfer.h"
 #include "core/providers/qnn/soc_utility/soc_utils.h"
-#include "core/providers/qnn/custom_op/qnn_custom_op_domain_registry.h"
 #include "qnn_ep_min_ort_api_version.h"
 
 #ifdef _WIN32
@@ -49,9 +53,9 @@ static const std::unordered_map<OrtHardwareDeviceType, std::string> kSupportedBa
     {OrtHardwareDeviceType_GPU, "gpu"},
 };
 
-// x86 advertises CPU always (HTP emulator); arm64 is opt-in via ORT_QNN_ENABLE_CPU_BACKEND (tests).
+// x86 advertises CPU always (HTP emulator); ARM64/ARM64EC opt in via ORT_QNN_ENABLE_CPU_BACKEND (tests).
 static bool QnnCpuBackendEnabled() {
-#if !defined(__aarch64__) && !defined(_M_ARM64)
+#if !QNN_ARCH_ARM64
   return true;  // x86 host: CPU backend is the HTP emulator.
 #else
   static const bool enabled = []() {
@@ -126,7 +130,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   OrtMemoryInfo* mem_info = nullptr;
   auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
                                              OrtMemoryInfoDeviceType_CPU,
-                                             /*vendor*/ 0x5143,
+                                             qnn::kQualcommPciVendorId,
                                              /*device_id*/ 0,
                                              OrtDeviceMemoryType_HOST_ACCESSIBLE,
                                              /*alignment*/ 0,
@@ -201,8 +205,9 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
                                      OrtHardwareDevice*& device,
                                      const bool is_virtual = true) {
     OrtKeyValuePairs* hw_metadata = nullptr;
+    factory->ort_api.CreateKeyValuePairs(&hw_metadata);
+    factory->ort_api.AddKeyValuePair(hw_metadata, "Description", "Qualcomm NPU");
     if (is_virtual) {
-      factory->ort_api.CreateKeyValuePairs(&hw_metadata);
       factory->ort_api.AddKeyValuePair(hw_metadata, kOrtHardwareDevice_MetadataKey_IsVirtual, "1");
     }
 
@@ -238,21 +243,34 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
   }
 
   if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
-    bool synthesize_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
+    const bool has_real_undetected_npu = qnn::soc::GetSocId() != 0 || qnn::soc::HasFastRpcCdspDevice();
+
+    bool allow_virtual_devices = false;
+    if (!has_real_undetected_npu) {
+      OrtKeyValuePairs* env_config = nullptr;
+      RETURN_IF_NOT_NULL(factory->ep_api.GetEnvConfigEntries(&env_config));
+      std::unique_ptr<OrtKeyValuePairs, decltype(factory->ort_api.ReleaseKeyValuePairs)> entries(
+          env_config, factory->ort_api.ReleaseKeyValuePairs);
+      if (entries) {
+        const char* allow = factory->ort_api.GetKeyValue(entries.get(), kOrtEnvAllowVirtualDevices);
+        allow_virtual_devices = allow != nullptr && std::strcmp(allow, "1") == 0;
+      }
+    }
+
+    const bool synthesize_npu = has_real_undetected_npu || allow_virtual_devices;
 
     if (synthesize_npu) {
       // ORT Core didn't enumerate an NPU OrtHardwareDevice; synthesize one.
-      // Triggers: WoS without DXCore enumeration (Makena), Qualcomm Linux arm64 (/dev/fastrpc-cdsp*),
-      // or Qualcomm Android arm64 (ro.soc.manufacturer == QTI).
-      OrtHardwareDevice* undetected_npu_hw_device = nullptr;
-      RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, undetected_npu_hw_device, false));
-      factory->undetected_npu_hw_device_ = HardwareDeviceUniquePtr(
-          undetected_npu_hw_device,
+      // A real-but-undetected NPU is executable. Otherwise, the environment has
+      // explicitly allowed a compile-only virtual device with no local hardware.
+      const bool is_virtual = !has_real_undetected_npu;
+      OrtHardwareDevice* synthesized_npu_hw_device = nullptr;
+      RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, synthesized_npu_hw_device, is_virtual));
+      factory->synthesized_npu_hw_device_ = HardwareDeviceUniquePtr(
+          synthesized_npu_hw_device,
           FuncDeleter<OrtHardwareDevice>{factory->ep_api.ReleaseHardwareDevice});
 
-      RETURN_IF_NOT_NULL(create_ep_device(factory->undetected_npu_hw_device_.get()));
-    } else {
-      // Enable originally expected usage of virtual hardware device for cross-platform compilation if necessary.
+      RETURN_IF_NOT_NULL(create_ep_device(factory->synthesized_npu_hw_device_.get()));
     }
   }
 
@@ -450,9 +468,18 @@ void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, Ort
   }
 }
 
-OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* /* this_ptr */,
+OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* this_ptr,
                                                              OrtDataTransferImpl** data_transfer) noexcept {
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
   *data_transfer = nullptr;
+
+  try {
+    *data_transfer = new qnn::QnnHostAccessibleDataTransfer(factory->ort_api, factory->ep_api);
+  } catch (const std::exception& e) {
+    return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
+  } catch (...) {
+    return factory->ort_api.CreateStatus(ORT_FAIL, "Failed to create QNN data transfer.");
+  }
 
   return nullptr;
 }
@@ -741,17 +768,16 @@ OrtStatus* CreateEpFactories(const char* registration_name,
   // Factory could use registration_name or define its own EP name.
   std::unique_ptr<onnxruntime::QnnEpFactory> factory;
   try {
-    factory = std::make_unique<onnxruntime::QnnEpFactory>(registration_name,
-                                                          onnxruntime::ApiPtrs{*ort_api,
-                                                                               *ep_api,
-                                                                               *model_editor_api});
+    factory = std::make_unique<onnxruntime::QnnEpFactory>(
+        registration_name,
+        onnxruntime::ApiPtrs{*ort_api, *ep_api, *model_editor_api,
+                             onnxruntime::OrtApiRuntimeCapabilities(requested_api_version)});
   } catch (const std::exception& e) {
     return ort_api->CreateStatus(ORT_FAIL, e.what());
   } catch (...) {
     return ort_api->CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP factory.");
   }
 
-  factory->effective_api_version_ = requested_api_version;
   factories[0] = factory.release();
   *num_factories = 1;
 

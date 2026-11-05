@@ -145,6 +145,37 @@ void AssertOpWithNameInQnnGraph(const std::filesystem::path& dump_dir,
                      << name_substring << "' in " << json_path;
 }
 
+void AssertQnnGraphInputCount(const std::filesystem::path& dump_dir, size_t expected_count) {
+  if (::testing::Test::IsSkipped()) {
+    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
+  }
+  std::filesystem::path json_path;
+  ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path))
+      << "No QNN JSON graph file found in " << dump_dir;
+
+  nlohmann::json root;
+  ASSERT_TRUE(ParseQnnJsonGraph(json_path, root))
+      << "Failed to parse QNN JSON graph: " << json_path;
+  ASSERT_TRUE(root.is_object() && root.contains("graph") && root["graph"].is_object() &&
+              root["graph"].contains("tensors") && root["graph"]["tensors"].is_object())
+      << "JSON missing 'graph.tensors' object in: " << json_path;
+
+  constexpr uint32_t kAppWrite = static_cast<uint32_t>(QNN_TENSOR_TYPE_APP_WRITE);
+  size_t input_count = 0;
+  try {
+    for (const auto& [tensor_name, tensor] : root["graph"]["tensors"].items()) {
+      if (tensor.is_object() && tensor.contains("type") && tensor["type"].is_number_unsigned() &&
+          tensor["type"].get<uint32_t>() == kAppWrite) {
+        ++input_count;
+      }
+    }
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to iterate QNN graph tensors in " << json_path << ": " << ex.what();
+  }
+
+  EXPECT_EQ(input_count, expected_count) << "Unexpected QNN graph input count in " << json_path;
+}
+
 void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
                                  uint32_t expected_data_type) {
   std::filesystem::path json_path;

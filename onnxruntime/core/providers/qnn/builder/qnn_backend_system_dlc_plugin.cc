@@ -246,6 +246,7 @@ Ort::Status QnnBackendSystemDlcPlugin::GetDlcMaxSpillFillBufferSize(uint64_t& ma
       if (graphs_info[graph_idx].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
         auto htp_graph_info = reinterpret_cast<QnnHtpSystemContext_GraphBlobInfo_t*>(
             graphs_info[graph_idx].graphInfoV3.graphBlobInfo);
+        RETURN_IF(htp_graph_info == nullptr, "DLC HTP graph info is null.");
         if (htp_graph_info->version == QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_VERSION_V1) {
           auto spill_fill_buffer_size = htp_graph_info->contextBinaryGraphBlobInfoV1.spillFillBufferSize;
           max_spill_fill_buffer_size = spill_fill_buffer_size > max_spill_fill_buffer_size ? spill_fill_buffer_size

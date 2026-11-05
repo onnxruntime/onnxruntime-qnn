@@ -8,19 +8,23 @@ namespace qnn {
 
 #if ORT_API_HAS_EPCONTEXT_ENCRYPTION
 
-EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* session_options,
+EpContextIoDispatch::EpContextIoDispatch() noexcept : config_{nullptr} {}
+
+EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& session_options,
+                                         const OrtApiRuntimeCapabilities& runtime_capabilities,
                                          const Ort::Logger* logger) noexcept
     : config_{nullptr} {
-  // A null session options pointer is used by code paths that do not have an
-  // application session (including the context-model helper unit tests). There
-  // cannot be application callbacks in that case, and wrapping nullptr in
-  // ConstSessionOptions would still try to resolve the experimental v28 API.
-  if (session_options == nullptr) {
+  // The named capability is negotiated with the actual runtime, not inferred from the
+  // compile-time ORT_API_VERSION. Skip APIs absent from an older runtime's OrtApi struct.
+  if (!runtime_capabilities.SupportsEpContextEncryption()) {
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_WARNING,
+                    "ORT runtime API version is below 28 (v1.28). EPContext encryption "
+                    "callbacks are unavailable; upgrade to onnxruntime >= 1.28 to enable.");
     return;
   }
 
   try {
-    config_ = Ort::Experimental::EpContextConfig(Ort::ConstSessionOptions(session_options));
+    config_ = Ort::Experimental::EpContextConfig(Ort::ConstSessionOptions(&session_options));
   } catch (const Ort::Exception& e) {
     // Can't distinguish "app didn't ask" from "runtime/build API skew" here, so only warn.
     ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_WARNING,
@@ -60,6 +64,8 @@ bool EpContextIoDispatch::HasWriteCallback() const noexcept {
 }
 
 Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<char>& out) const {
+  RETURN_IF_NOT(HasReadCallback(), "EPContext read callback is unavailable.");
+
   Ort::AllocatorWithDefaultOptions allocator;
   void* data = nullptr;
   size_t data_size = 0;
@@ -83,6 +89,8 @@ Ort::Status EpContextIoDispatch::Write(const std::string& name,
                                        const void* buffer,
                                        size_t buffer_size,
                                        const Ort::Logger& logger) const {
+  RETURN_IF_NOT(HasWriteCallback(), "EPContext write callback is unavailable.");
+
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
               ("EPContext data forwarded to App write callback: " + name).c_str());
   if (auto* s = write_fn_(write_state_, name.c_str(), buffer, buffer_size)) {
@@ -97,7 +105,10 @@ Ort::Status EpContextIoDispatch::Write(const std::string& name,
 
 #else  // ORT_API_HAS_EPCONTEXT_ENCRYPTION — stub for pre-v28 ORT
 
-EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions* /*session_options*/,
+EpContextIoDispatch::EpContextIoDispatch() noexcept {}
+
+EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& /*session_options*/,
+                                         const OrtApiRuntimeCapabilities& /*runtime_capabilities*/,
                                          const Ort::Logger* /*logger*/) noexcept {}
 
 bool EpContextIoDispatch::HasReadCallback() const noexcept { return false; }
