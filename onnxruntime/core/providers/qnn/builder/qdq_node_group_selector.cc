@@ -1515,10 +1515,10 @@ bool OrtPadNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api
   }
 }
 
-bool OrtInstanceAndLayerNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
-                                                              const OrtNode* redundant_clip_node,
-                                                              const std::vector<const OrtNode*>& dq_nodes,
-                                                              const std::vector<const OrtNode*>& q_nodes) const {
+bool OrtNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+                                              const OrtNode* redundant_clip_node,
+                                              const std::vector<const OrtNode*>& dq_nodes,
+                                              const std::vector<const OrtNode*>& q_nodes) const {
   if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes)) {
     return false;
   }
@@ -2031,11 +2031,12 @@ void OrtSelectorManager::CreateSelectors() {
       {"StatefulGru", {}}};
   ort_selectors_.RegisterSelector(gru_ops, std::make_unique<OrtGRUNodeGroupSelector>());
 
-  // Register instance and layer normalization ops
-  OrtOpVersionsAndSelector::OpVersionsMap instance_layer_norm_ops = {
+  // Register normalization ops
+  OrtOpVersionsAndSelector::OpVersionsMap normalization_ops = {
+      {"GroupNormalization", {21}},
       {"InstanceNormalization", {}},
       {"LayerNormalization", {}}};
-  ort_selectors_.RegisterSelector(instance_layer_norm_ops, std::make_unique<OrtInstanceAndLayerNormalizationNodeGroupSelector>());
+  ort_selectors_.RegisterSelector(normalization_ops, std::make_unique<OrtNormalizationNodeGroupSelector>());
 
   // Register batch normalization ops
   OrtOpVersionsAndSelector::OpVersionsMap batch_norm_ops = {
