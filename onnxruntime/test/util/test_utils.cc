@@ -13,6 +13,7 @@
 #include "gmock/gmock.h"
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_session_options_config_keys.h"
+#include "core/providers/qnn/qnn_pipeline_metrics.h"
 
 #include "test/util/include/asserts.h"
 #include "test/util/include/test/test_environment.h"
@@ -327,7 +328,11 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
     if (custom_op_domain != nullptr) {
       cpu_so.Add(*custom_op_domain);
     }
+    const auto cpu_session_start = qnn::pipeline_metrics::Clock::now();
     Ort::Session cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), cpu_so);
+    qnn::pipeline_metrics::Record("cpu_session_create",
+                                  qnn::pipeline_metrics::Clock::now() - cpu_session_start,
+                                  {{"source", "RunAndVerifyOutputsWithEP"}});
 
     size_t output_count = cpu_session.GetOutputCount();
     output_names.reserve(output_count);
@@ -340,7 +345,11 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
 
     Ort::RunOptions cpu_run_options;
     cpu_run_options.SetRunTag(log_id.data());
+    const auto cpu_inference_start = qnn::pipeline_metrics::Clock::now();
     RunWithEP(cpu_session, cpu_run_options, feeds, expected_fetches);
+    qnn::pipeline_metrics::Record("cpu_inference",
+                                  qnn::pipeline_metrics::Clock::now() - cpu_inference_start,
+                                  {{"source", "RunAndVerifyOutputsWithEP"}});
   }
 
   if (params.graph_verifier) {
@@ -348,7 +357,11 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   }
 
   // Run with EP and verify the result
+  const auto ep_session_start = qnn::pipeline_metrics::Clock::now();
   Ort::Session ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
+  qnn::pipeline_metrics::Record("ep_session_create",
+                                qnn::pipeline_metrics::Clock::now() - ep_session_start,
+                                {{"provider", provider_type}, {"source", "RunAndVerifyOutputsWithEP"}});
 
   ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(ort_session, provider_type, params.ep_node_assignment));
 
@@ -356,10 +369,18 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   ort_run_options.SetRunTag(log_id.data());
 
   std::vector<Ort::Value> fetches;
+  const auto ep_inference_start = qnn::pipeline_metrics::Clock::now();
   RunWithEP(ort_session, ort_run_options, feeds, fetches);
+  qnn::pipeline_metrics::Record("ep_inference",
+                                qnn::pipeline_metrics::Clock::now() - ep_inference_start,
+                                {{"provider", provider_type}, {"source", "RunAndVerifyOutputsWithEP"}});
 
   if (verify_outputs) {
+    const auto comparison_start = qnn::pipeline_metrics::Clock::now();
     VerifyOutputs(output_names, expected_fetches, fetches, params.tensor_verifier);
+    qnn::pipeline_metrics::Record("output_comparison",
+                                  qnn::pipeline_metrics::Clock::now() - comparison_start,
+                                  {{"source", "RunAndVerifyOutputsWithEP"}});
   }
 
   if (params.graph_verifier) {

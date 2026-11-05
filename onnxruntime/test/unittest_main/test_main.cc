@@ -29,6 +29,9 @@
 #include "onnxruntime_env_config_keys.h"
 
 #include "test/util/env_var_utils.h"
+#if defined(USE_QNN)
+#include "core/providers/qnn/qnn_pipeline_metrics.h"
+#endif
 
 std::unique_ptr<Ort::Env> ort_env;
 
@@ -37,6 +40,26 @@ namespace env_var_names {
 // Set ORT log level to the specified numeric log level.
 constexpr const char* kLogLevel = "ORT_UNIT_TEST_MAIN_LOG_LEVEL";
 }  // namespace env_var_names
+
+#if defined(USE_QNN)
+class QnnPipelineMetricsTestListener final : public ::testing::EmptyTestEventListener {
+ public:
+  void OnTestStart(const ::testing::TestInfo& test_info) override {
+    onnxruntime::qnn::pipeline_metrics::Record(
+        "test_start", {},
+        {{"suite", test_info.test_suite_name()}, {"test", test_info.name()}});
+  }
+
+  void OnTestEnd(const ::testing::TestInfo& test_info) override {
+    const auto* result = test_info.result();
+    const char* status = result->Skipped() ? "skipped" : result->Passed() ? "passed"
+                                                                          : "failed";
+    onnxruntime::qnn::pipeline_metrics::Record(
+        "test_end", std::chrono::milliseconds(result->elapsed_time()),
+        {{"suite", test_info.test_suite_name()}, {"test", test_info.name()}, {"status", status}});
+  }
+};
+#endif
 
 // ortenv_setup() and ortenv_teardown() are used by onnxruntime/test/xctest/xcgtest.mm so can't be file local
 extern "C" void ortenv_setup() {
@@ -116,6 +139,11 @@ int TEST_MAIN(int argc, char** argv) {
 
     {
       auto& test_listeners = ::testing::UnitTest::GetInstance()->listeners();
+#if defined(USE_QNN)
+      if (onnxruntime::qnn::pipeline_metrics::Enabled()) {
+        test_listeners.Append(new QnnPipelineMetricsTestListener());
+      }
+#endif
       auto test_listeners_to_add = MakeTestEventListeners();
       for (auto& test_listener_to_add : test_listeners_to_add) {
         test_listeners.Append(test_listener_to_add.release());

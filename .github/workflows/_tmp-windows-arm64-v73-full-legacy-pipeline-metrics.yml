@@ -1,0 +1,232 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: "TEMP DO NOT MERGE - Windows ARM64 v73 legacy pipeline metrics"
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - dev/yuhuchua/qnn-utils-copyright-asan-validation
+  workflow_dispatch:
+    inputs:
+      run_control:
+        description: "Run a second full suite without metrics output"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  METRICS_BASE_SHA: 5c7b5d1fc4366085148cb1fffb65db112965e74c
+  TEST_FILTER: "QnnCPUBackendTests.*:QnnHTPBackendTests.*:QnnGPUBackendTests.*:QnnIRBackendTests.*"
+
+jobs:
+  build:
+    name: Build instrumented Windows ARM64 Release archive
+    runs-on: [self-hosted, Windows, X64, Build]
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Verify fixed source baseline
+        shell: powershell
+        run: |
+          $base = git merge-base HEAD "${env:METRICS_BASE_SHA}"
+          if ($base -ne $env:METRICS_BASE_SHA) {
+            throw "Experiment branch is not based directly on $env:METRICS_BASE_SHA (merge-base=$base)."
+          }
+          git rev-parse HEAD
+          git status --short
+
+      - name: Initialize submodules
+        run: git submodule update --init --recursive
+
+      - name: Build and archive Windows ARM64 Release tests
+        run: >
+          python.exe qcom/build_and_test.py
+          --target-py-version None
+          --config Release
+          archive_ort_windows_arm64
+
+      - name: Upload instrumented test archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-arm64-v73-legacy-pipeline-metrics-tests
+          retention-days: 7
+          if-no-files-found: error
+          path: build/onnxruntime-tests-windows-arm64.zip
+
+  measure:
+    name: Measure full legacy suite on Windows ARM64 v73
+    needs: build
+    runs-on: [self-hosted, Windows, arm64, Test]
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Download instrumented test archive
+        uses: actions/download-artifact@v7
+        with:
+          name: windows-arm64-v73-legacy-pipeline-metrics-tests
+          path: build
+
+      - name: Extract test archive
+        run: |
+          Expand-Archive `
+            -Path "${{ github.workspace }}\build\onnxruntime-tests-windows-arm64.zip" `
+            -DestinationPath "${{ github.workspace }}" `
+            -Force
+
+      - name: Run full legacy suite with pipeline instrumentation
+        id: instrumented
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $providerTest = Get-ChildItem "${{ github.workspace }}\build\windows-arm64" -Recurse `
+            -Filter onnxruntime_provider_test.exe | `
+            Where-Object { $_.FullName -match '\\Release(\\Release)?\\onnxruntime_provider_test\.exe$' } | `
+            Select-Object -First 1
+          if (-not $providerTest) {
+            throw 'onnxruntime_provider_test.exe was not found in the extracted archive.'
+          }
+
+          $binDir = $providerTest.Directory.FullName
+          $outDir = Join-Path $binDir 'pipeline_metrics_windows_arm64_v73'
+          $summaryDir = Join-Path $outDir 'summary'
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+          $listPath = Join-Path $outDir 'windows_arm64_v73_legacy_test_list.txt'
+          $metricsJsonl = Join-Path $outDir 'windows_arm64_v73_metrics.jsonl'
+          $gtestJson = Join-Path $outDir 'windows_arm64_v73_gtest.json'
+          $runLog = Join-Path $outDir 'windows_arm64_v73_run.log'
+          $summaryLog = Join-Path $outDir 'windows_arm64_v73_summary.log'
+          $environmentNote = Join-Path $outDir 'environment.txt'
+
+          Remove-Item $metricsJsonl, $gtestJson -ErrorAction SilentlyContinue
+          $env:ORT_DISABLE_TELEMETRY = '1'
+          $env:ORT_QNN_ENABLE_CPU_BACKEND = '1'
+          $env:QNN_PIPELINE_METRICS_PATH = $metricsJsonl
+          $env:PATH = "$binDir;$env:PATH"
+
+          Push-Location $binDir
+          try {
+            $listOutput = & $providerTest.FullName `
+              "--gtest_list_tests" `
+              "--gtest_filter=$env:TEST_FILTER"
+            if ($LASTEXITCODE -ne 0) {
+              throw "GTest listing failed with exit code $LASTEXITCODE."
+            }
+            $listOutput | Set-Content -Encoding utf8 $listPath
+            $listedCount = ($listOutput | Where-Object { $_ -match '^\s{2}\S' }).Count
+            Write-Host "Listed legacy tests: $listedCount"
+            if ($listedCount -ne 2132) {
+              throw "Expected 2132 listed legacy tests at the fixed baseline; found $listedCount."
+            }
+
+            & $providerTest.FullName `
+              "--gtest_filter=$env:TEST_FILTER" `
+              "--gtest_output=json:$gtestJson" `
+              '--gtest_brief=1' `
+              '--gtest_color=no' 2>&1 | `
+              Tee-Object -FilePath $runLog
+            $runExitCode = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+
+          if (-not (Test-Path $gtestJson)) {
+            throw 'Instrumented run did not produce GTest JSON.'
+          }
+          if (-not (Test-Path $metricsJsonl) -or (Get-Item $metricsJsonl).Length -eq 0) {
+            throw 'Instrumented run did not produce metrics JSONL.'
+          }
+
+          python.exe qcom/scripts/linux/summarize_qnn_pipeline_metrics.py `
+            $metricsJsonl `
+            --gtest-json $gtestJson `
+            --output-dir $summaryDir 2>&1 | `
+            Tee-Object -FilePath $summaryLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "Metrics summarization failed with exit code $LASTEXITCODE."
+          }
+          if (-not (Select-String -Path $summaryLog -Pattern 'unattributed=0' -Quiet)) {
+            throw 'Metrics contain unattributed events; inspect the uploaded raw artifacts.'
+          }
+
+          @(
+            "experiment_head=$(git rev-parse HEAD)"
+            "source_baseline=$env:METRICS_BASE_SHA"
+            "host_architecture=$env:PROCESSOR_ARCHITECTURE"
+            'target_platform=windows-arm64'
+            'expected_htp_arch=v73'
+            'build_config=Release'
+            'coverage_instrumentation=OFF'
+            'qnn_internal_test_symbols=OFF'
+            "provider_test=$($providerTest.FullName)"
+            "test_filter=$env:TEST_FILTER"
+            "listed_tests=$listedCount"
+            "run_exit_code=$runExitCode"
+          ) | Set-Content -Encoding utf8 $environmentNote
+
+          if ($runExitCode -ne 0) {
+            throw "Full legacy suite failed with exit code $runExitCode."
+          }
+
+      - name: Run no-output control suite
+        if: ${{ inputs.run_control == true }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $providerTest = Get-ChildItem "${{ github.workspace }}\build\windows-arm64" -Recurse `
+            -Filter onnxruntime_provider_test.exe | `
+            Where-Object { $_.FullName -match '\\Release(\\Release)?\\onnxruntime_provider_test\.exe$' } | `
+            Select-Object -First 1
+          if (-not $providerTest) {
+            throw 'onnxruntime_provider_test.exe was not found.'
+          }
+
+          $binDir = $providerTest.Directory.FullName
+          $outDir = Join-Path $binDir 'pipeline_metrics_windows_arm64_v73'
+          $controlJson = Join-Path $outDir 'windows_arm64_v73_control_gtest.json'
+          $controlLog = Join-Path $outDir 'windows_arm64_v73_control.log'
+          Remove-Item Env:QNN_PIPELINE_METRICS_PATH -ErrorAction SilentlyContinue
+          $env:ORT_DISABLE_TELEMETRY = '1'
+          $env:ORT_QNN_ENABLE_CPU_BACKEND = '1'
+          $env:PATH = "$binDir;$env:PATH"
+
+          Push-Location $binDir
+          try {
+            & $providerTest.FullName `
+              "--gtest_filter=$env:TEST_FILTER" `
+              "--gtest_output=json:$controlJson" `
+              '--gtest_brief=1' `
+              '--gtest_color=no' 2>&1 | `
+              Tee-Object -FilePath $controlLog
+            $controlExitCode = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          if ($controlExitCode -ne 0) {
+            throw "Control suite failed with exit code $controlExitCode."
+          }
+
+      - name: Upload Stage 2 metrics artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-arm64-v73-full-legacy-pipeline-metrics
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            build/windows-arm64/**/pipeline_metrics_windows_arm64_v73/**

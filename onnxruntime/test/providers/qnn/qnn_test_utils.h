@@ -17,6 +17,7 @@
 #include <unordered_map>
 
 #include "test/util/env_var_utils.h"
+#include "core/providers/qnn/qnn_pipeline_metrics.h"
 
 #include "test/unittest_util/qdq_test_utils.h"
 #include "test/util/include/test_utils.h"
@@ -1349,6 +1350,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
+    const auto comparison_start = qnn::pipeline_metrics::Clock::now();
     VerifyQDQOutput(cpu_qdq_outputs,
                     qnn_qdq_outputs,
                     cpu_f32_outputs,
@@ -1356,6 +1358,9 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                     output_vals,
                     output_types,
                     tolerance);
+    qnn::pipeline_metrics::Record("output_comparison",
+                                  qnn::pipeline_metrics::Clock::now() - comparison_start,
+                                  {{"source", "TestQDQModelAccuracy"}});
   }
 }
 
@@ -1597,7 +1602,11 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
+    const auto comparison_start = qnn::pipeline_metrics::Clock::now();
     VerifyFp16Output(cpu_f16_outputs, qnn_f16_outputs, output_vals, output_types, tolerance);
+    qnn::pipeline_metrics::Record("output_comparison",
+                                  qnn::pipeline_metrics::Clock::now() - comparison_start,
+                                  {{"source", "TestFp16ModelAccuracy"}});
   }
 }
 
