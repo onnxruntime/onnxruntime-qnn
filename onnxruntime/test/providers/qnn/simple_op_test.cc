@@ -2480,6 +2480,40 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
                   false);
 }
 
+// Standalone per-channel DequantizeLinear on a static S8 tensor. The dynamic Add input prevents
+// the graph from becoming constant while keeping the DQ separate from Conv/MatMul/Gemm fusion.
+// Shape [2, 4] with axis 0 maps to axisDim=2, axisStride=4, preAxisSize=1 in QNN GPU.
+TEST_F(QnnGPUBackendTests, DequantizeLinear_PerChannelStaticInput) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "gpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto build_test_case = [](ModelTestBuilder& builder) {
+    const std::vector<int64_t> shape = {2, 4};
+    builder.MakeInput<float>("addend", shape,
+                             {0.25f, 0.25f, 0.25f, 0.25f,
+                              0.25f, 0.25f, 0.25f, 0.25f});
+    builder.MakeInitializer<int8_t>("quantized_weight", shape,
+                                    {-4, -2, 0, 2,
+                                     -2, 2, 6, 10});
+
+    const std::vector<float> scales = {0.5f, 0.25f};
+    const std::vector<int8_t> zero_points = {0, -2};
+    builder.AddDequantizeLinearNode<int8_t>(
+        "per_channel_dq", "quantized_weight", scales, zero_points, "dequantized_weight",
+        {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0))});
+
+    builder.MakeOutput("Y");
+    builder.AddNode("add", "Add", {"dequantized_weight", "addend"}, {"Y"});
+  };
+
+  RunQnnModelTest(build_test_case,
+                  provider_options,
+                  21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                                       ElementwiseAbsoluteVerifier(1e-5f)});
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
