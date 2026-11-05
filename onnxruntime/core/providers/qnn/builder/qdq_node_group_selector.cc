@@ -1170,12 +1170,12 @@ static bool IsConvertActivationToOutputGroup(const OrtGraph* graph, const OrtApi
          IsQOrDQScalePositiveConstantScalar(graph, ort_api, dq_node);
 }
 
-// Float activation with a weight-only DQ of a constant per-channel initializer. QNN takes the weight as a
-// static quantized tensor, whereas a standalone per-channel DQ is unsupported and would leave the weight
-// as a graph input.
+// Float activation with a weight-only DQ of a constant per-channel initializer. Backends that support the
+// mixed float-activation/quantized-weight configuration can absorb the DQ into the consuming operation.
 static bool IsPerChannelConstantWeightOnlyGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
                                                 const std::vector<const OrtNode*>& dq_nodes,
-                                                const std::vector<const OrtNode*>& q_nodes) {
+                                                const std::vector<const OrtNode*>& q_nodes,
+                                                qnn::QnnBackendType backend_type) {
   if (dq_nodes.size() != 1 || !q_nodes.empty()) {
     return false;
   }
@@ -1207,6 +1207,16 @@ static bool IsPerChannelConstantWeightOnlyGroup(const OrtGraph* graph, const Ort
   if (GetInitializerFromValueInfo(graph, ort_api, dq_inputs[0]) == nullptr) {
     return false;
   }
+
+  // QNN GPU cannot consume the float-activation + signed INT8 weight mix produced by absorbing this DQ.
+  // Reject that datatype before classifying the weight's quantization granularity.
+  if (qnn::IsGpuBackend(backend_type)) {
+    const auto weight_type = GetNodeInputDataType(dq_nodes[0], ort_api, 0);
+    if (weight_type.has_value() && weight_type.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
+      return false;
+    }
+  }
+
   std::vector<int64_t> scale_shape;
   return GetValueInfoShape(ort_api, dq_inputs[1], scale_shape) && scale_shape.size() == 1 && scale_shape[0] > 1;
 }
@@ -1215,7 +1225,7 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
                                      const OrtNode* redundant_clip_node,
                                      const std::vector<const OrtNode*>& dq_nodes,
                                      const std::vector<const OrtNode*>& q_nodes) const {
-  if (IsPerChannelConstantWeightOnlyGroup(graph, ort_api, node, dq_nodes, q_nodes)) {
+  if (IsPerChannelConstantWeightOnlyGroup(graph, ort_api, node, dq_nodes, q_nodes, backend_type_)) {
     return true;
   }
   // Conv allows the bias (input[2]) to lack a DQ node; inputs[0] (data) and inputs[1] (weight)
@@ -1360,7 +1370,7 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
                                        const OrtNode* redundant_clip_node,
                                        const std::vector<const OrtNode*>& dq_nodes,
                                        const std::vector<const OrtNode*>& q_nodes) const {
-  if (IsPerChannelConstantWeightOnlyGroup(graph, ort_api, node, dq_nodes, q_nodes)) {
+  if (IsPerChannelConstantWeightOnlyGroup(graph, ort_api, node, dq_nodes, q_nodes, backend_type_)) {
     return true;
   }
   if (dq_nodes.size() != 2) {
@@ -1891,12 +1901,12 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 }
 
 // Implementation of OrtSelectorManager constructor and related functions
-OrtSelectorManager::OrtSelectorManager() {
-  CreateSelectors();
+OrtSelectorManager::OrtSelectorManager(qnn::QnnBackendType backend_type) {
+  CreateSelectors(backend_type);
   InitializeSelectorsMap();
 }
 
-void OrtSelectorManager::CreateSelectors() {
+void OrtSelectorManager::CreateSelectors(qnn::QnnBackendType backend_type) {
   // Register selectors for different op types
 
   // Register misc ops
@@ -1998,12 +2008,12 @@ void OrtSelectorManager::CreateSelectors() {
   // Register conv ops
   OrtOpVersionsAndSelector::OpVersionsMap conv_ops = {
       {"Conv", {}}};
-  ort_selectors_.RegisterSelector(conv_ops, std::make_unique<OrtConvNodeGroupSelector>());
+  ort_selectors_.RegisterSelector(conv_ops, std::make_unique<OrtConvNodeGroupSelector>(backend_type));
 
   // Register conv transpose ops
   OrtOpVersionsAndSelector::OpVersionsMap conv_transpose_ops = {
       {"ConvTranspose", {}}};
-  ort_selectors_.RegisterSelector(conv_transpose_ops, std::make_unique<OrtConvNodeGroupSelector>());
+  ort_selectors_.RegisterSelector(conv_transpose_ops, std::make_unique<OrtConvNodeGroupSelector>(backend_type));
 
   // Register einsum ops
   OrtOpVersionsAndSelector::OpVersionsMap einsum_ops = {
@@ -2018,7 +2028,7 @@ void OrtSelectorManager::CreateSelectors() {
   // Register matmul ops
   OrtOpVersionsAndSelector::OpVersionsMap matmul_ops = {
       {"MatMul", {}}};
-  ort_selectors_.RegisterSelector(matmul_ops, std::make_unique<OrtMatMulNodeGroupSelector>());
+  ort_selectors_.RegisterSelector(matmul_ops, std::make_unique<OrtMatMulNodeGroupSelector>(backend_type));
 
   // Register gemm ops
   OrtOpVersionsAndSelector::OpVersionsMap gemm_ops = {
@@ -2172,7 +2182,8 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
 
 // Implementation of GetQDQNodeUnits for OrtGraph
 std::pair<std::vector<std::unique_ptr<OrtNodeUnit>>, std::unordered_map<const OrtNode*, const OrtNodeUnit*>>
-GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& logger) {
+GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& logger,
+                   qnn::QnnBackendType backend_type) {
   std::vector<std::unique_ptr<OrtNodeUnit>> node_unit_holder;
   std::unordered_map<const OrtNode*, const OrtNodeUnit*> node_unit_map;
 
@@ -2197,7 +2208,7 @@ GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& log
   };
 
   // Get QDQ NodeUnits first
-  QDQ::OrtSelectorManager selector_mgr;
+  QDQ::OrtSelectorManager selector_mgr(backend_type);
 
   const auto qdq_selections = selector_mgr.GetOrtQDQSelections(graph, ort_api, logger);
   for (const auto& qdq_selection : qdq_selections) {

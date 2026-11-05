@@ -88,7 +88,9 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     bool is_per_chan_quant = false;
     int64_t quant_axis = 0;
     RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(node_unit.Inputs()[0], is_per_chan_quant, quant_axis));
-    RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone DQ op with per-channel quantization");
+
+    RETURN_IF(is_per_chan_quant && !IsGpuBackend(qnn_backend_type),
+              "QNN EP does not support a standalone DQ op with per-channel quantization on this backend");
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].name)) {
