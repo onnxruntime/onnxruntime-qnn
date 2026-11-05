@@ -20,6 +20,7 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_ep_profiler.h"
+#include "core/providers/qnn/qnn_pipeline_metrics.h"
 #include "core/providers/qnn/builder/qdq_node_group_selector.h"
 #include "core/providers/qnn/shared_context.h"
 #ifdef _WIN32
@@ -260,6 +261,7 @@ const OrtNodeUnit& QnnModel::GetNodeUnit(const OrtNode* node,
 }
 
 Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
+  const auto compose_metric_start = qnn::pipeline_metrics::Clock::now();
   utils::UniqueNameGenerator().Reset();
 
   RETURN_IF(context.onnx_input_names == nullptr, "onnx_input_names is required for ComposeGraph");
@@ -339,6 +341,9 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
 
   const bool build_json_graph = !context.json_qnn_graph_path.empty();
   RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
+  qnn::pipeline_metrics::Record("qnn_graph_translation_compose",
+                                qnn::pipeline_metrics::Clock::now() - compose_metric_start,
+                                {{"graph", graph_name}});
 
   profiling_scope.Complete(profiling_info);
 
@@ -394,9 +399,14 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
       ProfilingMethodType::FINALIZE,
       profiling_scope));
 
+  const auto finalize_metric_start = qnn::pipeline_metrics::Clock::now();
   Qnn_ErrorHandle_t status = qnn_backend_manager_->GetQnnInterface().graphFinalize(graph_info_->Graph(),
                                                                                    profiling_scope.Handle(),
                                                                                    nullptr);
+  const std::string finalize_status = std::to_string(status);
+  qnn::pipeline_metrics::Record("qnn_graph_finalize",
+                                qnn::pipeline_metrics::Clock::now() - finalize_metric_start,
+                                {{"graph", graph_info_->Name()}, {"status", finalize_status}});
 
   profiling_scope.Complete(profiling_info);
 
@@ -756,6 +766,7 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 
   RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
 
+  const auto execute_metric_start = qnn::pipeline_metrics::Clock::now();
   execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
                                               qnn_inputs.data(),
                                               static_cast<uint32_t>(qnn_inputs.size()),
@@ -763,6 +774,10 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
                                               static_cast<uint32_t>(qnn_outputs.size()),
                                               profile_backend_handle,
                                               nullptr);
+  const std::string execute_status_string = std::to_string(execute_status);
+  qnn::pipeline_metrics::Record("qnn_graph_execute",
+                                qnn::pipeline_metrics::Clock::now() - execute_metric_start,
+                                {{"graph", graph_info_->Name()}, {"status", execute_status_string}});
 
   profiling_scope.Complete(profiling_info);
 

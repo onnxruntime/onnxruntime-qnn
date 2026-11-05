@@ -51,6 +51,7 @@
 #include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/builder/qdq_node_group_selector.h"
 #include "core/providers/qnn/qnn_ep_partition_utils.h"
+#include "core/providers/qnn/qnn_pipeline_metrics.h"
 #include "core/providers/qnn/soc_utility/soc_utils.h"
 
 // Forward declarations for NodeUnit-related classes
@@ -2217,6 +2218,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  const OrtGraph* graph,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  qnn::pipeline_metrics::Scope capability_metric("qnn_capability_partition");
 
   // Best-effort diagnostic dump of the ONNX graph the EP just received.
   // Fires before any subgraph / EPContext / Genie / backend-setup early
@@ -3181,6 +3183,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  qnn::pipeline_metrics::Scope compile_metric("qnn_compile_total");
 
   // Early fail without actual compile and make session initialization immediately terminate.
   if (ep->has_unsupported_nodes_wo_cpu_fallback_) {

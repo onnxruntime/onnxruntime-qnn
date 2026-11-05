@@ -8,6 +8,7 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include "test/providers/qnn/qnn_test_utils.h"
+#include "core/providers/qnn/qnn_pipeline_metrics.h"
 #include <cassert>
 #include <cstring>
 #include <limits>
@@ -373,7 +374,11 @@ void InferenceModelCPU(const std::string& model_data,
     session_options.SetGraphOptimizationLevel(graph_optimization_level.value());
   }
 
+  const auto session_start = qnn::pipeline_metrics::Clock::now();
   Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
+  qnn::pipeline_metrics::Record("cpu_session_create",
+                                qnn::pipeline_metrics::Clock::now() - session_start,
+                                {{"source", "InferenceModelCPU"}});
 
   // Prepare inputs using public API
   std::vector<std::string> ort_input_names = session.GetInputNames();
@@ -401,6 +406,7 @@ void InferenceModelCPU(const std::string& model_data,
   }
 
   // Run inference
+  const auto inference_start = qnn::pipeline_metrics::Clock::now();
   output_vals = session.Run(
       Ort::RunOptions{nullptr},
       ort_input_names_cstr.data(),
@@ -408,6 +414,9 @@ void InferenceModelCPU(const std::string& model_data,
       ort_inputs.size(),
       ort_output_names_cstr.data(),
       ort_output_names_cstr.size());
+  qnn::pipeline_metrics::Record("cpu_inference",
+                                qnn::pipeline_metrics::Clock::now() - inference_start,
+                                {{"source", "InferenceModelCPU"}});
 }
 
 void InferenceModel(const std::string& model_data,
@@ -449,15 +458,23 @@ void InferenceModel(const std::string& model_data,
 
   auto provider_type = "QNNExecutionProvider";
   session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  const auto session_start = qnn::pipeline_metrics::Clock::now();
   ScopedOrtSession scoped(std::move(registered_ep_device),
                           Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
+  qnn::pipeline_metrics::Record("ep_session_create",
+                                qnn::pipeline_metrics::Clock::now() - session_start,
+                                {{"provider", provider_type}, {"source", "InferenceModel"}});
   ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), provider_type, expected_ep_assignment));
 
   if (graph_checker) {
     (*graph_checker)(scoped.session());
   }
 
+  const auto inference_start = qnn::pipeline_metrics::Clock::now();
   RunWithEP(scoped.session(), ort_run_options, feeds, output_vals);
+  qnn::pipeline_metrics::Record("ep_inference",
+                                qnn::pipeline_metrics::Clock::now() - inference_start,
+                                {{"provider", provider_type}, {"source", "InferenceModel"}});
 }
 
 void VerifyQnnEpModelAssignment(const std::string& model_data,
@@ -482,8 +499,12 @@ void VerifyQnnEpModelAssignment(const std::string& model_data,
   // Create the session (loads + compiles the model) and verify EP node assignment. Inference is
   // intentionally not run: these tests assert node-to-EP assignment only. The qti_aisw block ops
   // have no CPU kernel, so there is no meaningful CPU reference to compare against.
+  const auto session_start = qnn::pipeline_metrics::Clock::now();
   ScopedOrtSession scoped(std::move(registered_ep_device),
                           Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
+  qnn::pipeline_metrics::Record("ep_session_create",
+                                qnn::pipeline_metrics::Clock::now() - session_start,
+                                {{"provider", registration_name}, {"source", "VerifyQnnEpModelAssignment"}});
   ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), registration_name, expected_ep_assignment));
 }
 
