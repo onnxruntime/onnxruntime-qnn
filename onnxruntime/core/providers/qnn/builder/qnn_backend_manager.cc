@@ -9,6 +9,7 @@
 #include <functional>
 #include <gsl/gsl>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -520,8 +521,19 @@ Ort::Status QnnBackendManager::SetGlobalConfig() {
               "Failed to set global config without QnnGlobalConfig_set API.");
 
     configs.push_back(nullptr);
-    Qnn_ErrorHandle_t result = qnn_interface_.globalConfigSet(configs.data());
-    RETURN_IF(result != QNN_SUCCESS, ("Failed to set global config. Error: " + QnnErrorHandleToString(result)).c_str());
+
+    static std::mutex called_global_config_set_fns_mutex;
+    static std::unordered_set<QnnGlobalConfig_SetFn_t> called_global_config_set_fns;
+    std::lock_guard<std::mutex> lock(called_global_config_set_fns_mutex);
+
+    // The HTP backend requires that the QnnGlobalConfig_t options only be set through QnnGlobalConfig_set once.
+    // To accomodate this, track already-called QnnGlobalConfig_set function ptrs.
+    if (!IsNpuBackend(GetQnnBackendType()) ||
+        called_global_config_set_fns.find(qnn_interface_.globalConfigSet) == called_global_config_set_fns.end()) {
+      Qnn_ErrorHandle_t result = qnn_interface_.globalConfigSet(configs.data());
+      RETURN_IF(result != QNN_SUCCESS, ("Failed to set global config. Error: " + QnnErrorHandleToString(result)).c_str());
+      called_global_config_set_fns.insert(qnn_interface_.globalConfigSet);
+    }
   }
 
   return Ort::Status();
