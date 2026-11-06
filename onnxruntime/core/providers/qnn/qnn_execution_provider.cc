@@ -912,7 +912,8 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     ParseQnnContextPriority(context_priority_str, context_priority, logger_);
   }
 
-  // HTP share resource optimization
+  // HTP shared resource optimization levels: 0 disables sharing, 1 shares
+  // sequential graphs without VA optimization, and 2 also optimizes VA usage.
   std::string htp_share_resource_optimization_str;
   GetSessionConfigEntryOrDefault(ort_api,
                                  session_options_,
@@ -924,18 +925,27 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   GetSessionConfigEntryOrDefault(ort_api,
                                  session_options_,
                                  FormatEPConfigKey("enable_vtcm_backup_buffer_sharing"),
-                                 "0",
+                                 "",
                                  enable_vtcm_backup_buffer_sharing_str);
 
-  if (htp_share_resource_optimization_str == "0" || htp_share_resource_optimization_str == "1") {
-    // htp_share_resource_optimization overrides enable_vtcm_backup_buffer_sharing regardless of its value
-    htp_share_resource_optimization_ = std::stoi(htp_share_resource_optimization_str);
-  } else if (!htp_share_resource_optimization_str.empty()) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_ERROR,
-                ("Invalid value entered for htp_share_resource_optimization: " + htp_share_resource_optimization_str + ", only 0 or 1 are allowed.").c_str());
+  if (!enable_vtcm_backup_buffer_sharing_str.empty()) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "enable_vtcm_backup_buffer_sharing is deprecated. Use htp_share_resource_optimization instead.");
+  }
+
+  if (!htp_share_resource_optimization_str.empty()) {
+    // An explicit level, including 0, takes precedence over the deprecated VTCM sharing option.
+    if (htp_share_resource_optimization_str == "0" ||
+        htp_share_resource_optimization_str == "1" ||
+        htp_share_resource_optimization_str == "2") {
+      htp_share_resource_optimization_ = std::stoi(htp_share_resource_optimization_str);
+    } else {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
+                  ("Invalid value entered for htp_share_resource_optimization: " +
+                   htp_share_resource_optimization_str + ", only 0, 1 or 2 are allowed.")
+                      .c_str());
+    }
   } else if (enable_vtcm_backup_buffer_sharing_str == "1") {
-    // htp_share_resource_optimization not set, fall back to enable_vtcm_backup_buffer_sharing
     htp_share_resource_optimization_ = 1;
   }
 
@@ -944,7 +954,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
               ("htp_share_resource_optimization: " + std::to_string(htp_share_resource_optimization_)).c_str());
 
 #if QNN_API_VERSION_MAJOR < 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR < 26))
-  if (htp_share_resource_optimization_ != -1) {
+  if (htp_share_resource_optimization_ > 0) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
                 "User specified htp_share_resource_optimization but QNN API version is older than 2.26.");
@@ -1215,7 +1225,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                 "Inference will not work as expected!");
   }
 
-  if (qnn_context_embed_mode_ && htp_share_resource_optimization_ != -1) {
+  if (qnn_context_embed_mode_ && htp_share_resource_optimization_ > 0) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_ERROR,
                 "[EP context generation:] HTP share resource optimization enabled conflict with EP context embed mode. "
@@ -1554,7 +1564,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   // so that all graphs from later sessions will be compiled into the same QNN context. Keep the result from a single lookup:
   // another session may clear the singleton, but this session must retain the manager it adopted.
   const bool use_shared_backend_mgr =
-      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ != -1);
+      ((context_cache_enabled_ && share_ep_contexts_) || htp_share_resource_optimization_ > 0);
   const auto shared_qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
   const bool reusing_shared_backend_manager = use_shared_backend_mgr && shared_qnn_backend_manager != nullptr;
   if (reusing_shared_backend_manager) {
@@ -1658,7 +1668,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     qnn_backend_manager_->SetQnnAllocatorType(qnn_allocator_type_);
 
     // Publish only after fixing the allocator mode so later sessions can reuse it.
-    if (htp_share_resource_optimization_ != -1) {
+    if (htp_share_resource_optimization_ > 0) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
   }
@@ -2289,7 +2299,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> context_bin_map;
-  if (ep->htp_share_resource_optimization_ != -1) {
+  if (ep->htp_share_resource_optimization_ > 0) {
     std::unordered_set<const OrtNode*> ep_ctx_nodes;
     GetMainEPCtxNodes(graph, ep->ort_api, ep_ctx_nodes, ep->logger_);
 
@@ -3795,9 +3805,9 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   //
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
   // HTP resource sharing creates contexts during SetupBackend and requires
-  // graph-derived context_bin_map data, so only the default (-1) configuration
+  // graph-derived context_bin_map data, so only the default (0) configuration
   // can reuse the compatibility backend.
-  bool compatibility_backend_isreusable = htp_share_resource_optimization_ == -1;
+  bool compatibility_backend_isreusable = htp_share_resource_optimization_ == 0;
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
     Ort::Status setup_status = Ort::Status();
@@ -3805,7 +3815,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
       setup_status = qnn_backend_manager_->SetupBackend(/*load_from_cached_context*/ true,
                                                         /*need_load_system_lib*/ true,
                                                         /*share_ep_contexts*/ false,
-                                                        /*htp_share_resource_optimization*/ -1,
+                                                        /*htp_share_resource_optimization*/ 0,
                                                         enable_file_mapped_weights_,
                                                         rpcmem_library_,
                                                         dummy_map);
@@ -3815,7 +3825,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
       // supported. SetupBackend cleaned up its failed attempt, so retry with
       // the original isolated probe configuration.
       compatibility_backend_isreusable = false;
-      setup_status = qnn_backend_manager_->SetupBackend(true, true, false, -1, false, nullptr, dummy_map);
+      setup_status = qnn_backend_manager_->SetupBackend(true, true, false, 0, false, nullptr, dummy_map);
     }
     if (!setup_status.IsOK()) {
       ORT_CXX_LOG(logger_,
@@ -3854,7 +3864,7 @@ OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevic
   Ort::Status status = qnn_backend_manager_->SetupBackend(/*load_from_cached_context=*/false,
                                                           /*need_load_system_lib=*/false,
                                                           /*share_ep_contexts=*/false,
-                                                          /*htp_share_resource_optimization=*/-1,
+                                                          /*htp_share_resource_optimization=*/0,
                                                           /*enable_file_mapped_weights=*/false,
                                                           /*rpcmem_library=*/nullptr,
                                                           dummy_map);

@@ -1512,7 +1512,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   QnnHtpContext_CustomConfig_t context_config_resource_sharing_opt_type;
   context_config_resource_sharing_opt_type.option = QNN_HTP_CONTEXT_CONFIG_OPTION_SHARE_RESOURCES_OPTIMIZATION_TYPE;
   context_config_resource_sharing_opt_type.shareResOptType =
-      htp_share_resource_optimization_ == 0 ? SEQUENTIAL_WITH_VA_OPTIMIZATION
+      htp_share_resource_optimization_ == 2 ? SEQUENTIAL_WITH_VA_OPTIMIZATION
                                             : SEQUENTIAL_WITHOUT_VA_OPTIMIZATION;
   QnnContext_Config_t resource_sharing_opt_type_config;
   resource_sharing_opt_type_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
@@ -2065,7 +2065,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
   Qnn_ContextHandle_t context = nullptr;
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
-  if (htp_share_resource_optimization_ != -1) {
+  if (htp_share_resource_optimization_ > 0) {
     {
       std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
       auto context_it = ep_context_handle_map_.find(node_name);
@@ -2169,7 +2169,7 @@ Ort::Status QnnBackendManager::SetupBackend(
                       "backend manager; disabling file mapping for this session.");
     }
 
-    if (htp_share_resource_optimization_ != -1) {
+    if (htp_share_resource_optimization_ > 0) {
       // If a context bin filepath has not been processed yet,
       // then a new context must be created for the set of context bins
       bool context_exists = false;
@@ -2337,14 +2337,14 @@ Ort::Status QnnBackendManager::SetupBackend(
 #endif
   }
 
-  if (status.IsOK() && (htp_share_resource_optimization_ != -1 || !load_from_cached_context)) {
-    if (htp_share_resource_optimization_ != -1 && enable_htp_graph_splitting) {
+  if (status.IsOK() && (htp_share_resource_optimization_ > 0 || !load_from_cached_context)) {
+    if (htp_share_resource_optimization_ > 0 && enable_htp_graph_splitting) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
                       "enable_htp_graph_splitting is not compatible with htp_share_resource_optimization "
                       "(VTCM sharing path uses QnnContext_createFromBinaryListAsync which does not accept "
                       "graph-splitting configs). Graph splitting will be ignored for this session.");
     }
-    status = htp_share_resource_optimization_ != -1
+    status = htp_share_resource_optimization_ > 0
                  ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
                                                                io_dispatch)
                  : CreateContext(enable_htp_weight_sharing,

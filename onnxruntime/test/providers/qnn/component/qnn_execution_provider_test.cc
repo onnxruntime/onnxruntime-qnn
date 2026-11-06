@@ -721,31 +721,57 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_SharedBackendManagerWithDifferentAllo
   }
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpShareResourceOptInvalid_LogsError) {
-  EpStubContext ctx;
-  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
-  ctx.session_config[EPKey("htp_share_resource_optimization")] = "2";
-  auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
-               "Invalid value entered for htp_share_resource_optimization: 2, only 0 or 1 are allowed.");
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpSharedResourceOptimizationInvalid_LogsError) {
+  for (const char* invalid_value : {"-1", "3", "abc", "1abc", "+1", " 1"}) {
+    SCOPED_TRACE(invalid_value);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("htp_share_resource_optimization")] = invalid_value;
+    ctx.session_config[EPKey("enable_vtcm_backup_buffer_sharing")] = "1";
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+                 std::string("Invalid value entered for htp_share_resource_optimization: ") +
+                     invalid_value + ", only 0, 1 or 2 are allowed.");
+    EXPECT_FALSE(SetSharedBackendManagerAllocatorForTest(qnn::QnnAllocatorType::NONE));
+  }
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpShareResourceOptWithVa_OverridesLegacyOption) {
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpSharedResourceOptimizationDefault_DisablesSharing) {
   EpStubContext ctx;
   ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
-  ctx.session_config[EPKey("htp_share_resource_optimization")] = "0";
-  ctx.session_config[EPKey("enable_vtcm_backup_buffer_sharing")] = "1";
   auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  auto ep = MakeEp(*factory, ctx);
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE, "htp_share_resource_optimization: 0");
+  EXPECT_FALSE(SetSharedBackendManagerAllocatorForTest(qnn::QnnAllocatorType::NONE));
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpSharedResourceOptimizationLevels_OverrideLegacyOption) {
+  for (const char* level : {"0", "1", "2"}) {
+    SCOPED_TRACE(level);
+    ResetSharedBackendManagerForTest();
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("htp_share_resource_optimization")] = level;
+    ctx.session_config[EPKey("enable_vtcm_backup_buffer_sharing")] = "1";
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 std::string("htp_share_resource_optimization: ") + level);
+    EXPECT_EQ(SetSharedBackendManagerAllocatorForTest(qnn::QnnAllocatorType::NONE),
+              std::string(level) != "0");
+  }
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableVtcmBackupBufferSharing_Succeeds) {
   EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
   ctx.session_config[EPKey("enable_vtcm_backup_buffer_sharing")] = "1";
   auto factory = MakeFactory(ctx);
-  EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  auto ep = MakeEp(*factory, ctx);
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "enable_vtcm_backup_buffer_sharing is deprecated.");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE, "htp_share_resource_optimization: 1");
+  EXPECT_TRUE(SetSharedBackendManagerAllocatorForTest(qnn::QnnAllocatorType::NONE));
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DeviceIdNegative_LogsError) {

@@ -149,6 +149,8 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'0'|Default. Disabled.|
 |'1'|Enable VTCM backup buffer sharing across sessions. Requires QNN API version >= 2.26. Conflicts with `ep.context_embed_mode`.|
 
+**Deprecated:** Use `htp_share_resource_optimization` instead. Legacy `'1'` maps to level `'1'`; legacy `'0'` maps to level `'0'`. The legacy option is used only when `htp_share_resource_optimization` is omitted.
+
 |`"htp_reused_io_limit_mb"`|Description|
 |---|---|
 |Size in MB (string)|Tells QNN HTP the maximum I/O your app actually keeps registered at any one time, instead of assuming every graph's I/O is live at once. Used for memory estimation and DSP PD placement when loading a context binary; a tighter value can avoid PD placement failures (QNN error 1002). See [Reused IO Limit](#reused-io-limit) below for how to choose a value (it differs between the per-context and group paths). Defaults to "0" (QNN estimates using the total I/O size of all graphs in the context). Requires QAIRT 2.45 or later (QNN API >= 2.34).|
@@ -333,11 +335,15 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 
 |`"htp_share_resource_optimization"`|Description|
 |---|---|
-|Not specified|Default. Falls back to `enable_vtcm_backup_buffer_sharing`; HTP resource sharing remains disabled unless the legacy option is set to `'1'`.|
-|'0'|Enable HTP resource sharing for sequential graph execution with virtual address and memory optimization. Requires QNN API version >= 2.26.|
+|'0'|Default. Disable HTP resource sharing. An explicit `'0'` overrides `enable_vtcm_backup_buffer_sharing`.|
 |'1'|Enable HTP resource sharing for sequential graph execution with memory optimization but without virtual address optimization. Requires QNN API version >= 2.26.|
+|'2'|Enable HTP resource sharing for sequential graph execution with virtual address and memory optimization (most aggressive). Requires QNN API version >= 2.26.|
 
-**Note:** When specified, `htp_share_resource_optimization` supersedes `enable_vtcm_backup_buffer_sharing`. Prefer `htp_share_resource_optimization`.
+When this option is omitted, the level defaults to `'0'` unless the deprecated `enable_vtcm_backup_buffer_sharing` option is set to `'1'`. Levels `'1'` and `'2'` require sequential graph execution and conflict with `ep.context_embed_mode`.
+
+**Deprecated compatibility option:** `enable_vtcm_backup_buffer_sharing` remains supported for existing applications and emits a deprecation warning. Its value `'1'` maps to optimization level `'1'`; otherwise sharing remains disabled. Prefer `htp_share_resource_optimization`.
+
+**Precedence:** An explicit `htp_share_resource_optimization`, including `'0'`, takes precedence over `enable_vtcm_backup_buffer_sharing`. An invalid explicit value logs an error and leaves sharing disabled; it does not fall back to the deprecated option.
 
 |`"disable_file_mapped_weights"`|Description|
 |---|---|
@@ -453,13 +459,13 @@ When loading a context binary, QNN EP also emits the total number of QNN graphs 
 
 The per-QNN-graph estimates show the I/O sizes; the `I/O` field is that QNN graph's I/O size. Sum or take the max over the QNN graphs your app uses concurrently, per the rules above.
 
-**Per-context vs. group scope** — the scope depends on whether `htp_share_resource_optimization` is set:
+**Per-context vs. group scope** — the scope depends on the effective `htp_share_resource_optimization`, including the deprecated VTCM-option mapping:
 
 For example, consider 4 contexts, each containing 1 QNN graph with 100 MB I/O. If the app maps the I/O for only 1 QNN graph at a time across all 4 contexts, its actual peak is 100 MB.
 
-- **Default (`htp_share_resource_optimization` not set):** QNN adds up the limits configured on independently loaded contexts. The app knows this context count from the context binaries / EP-context models it loads. Set `25` on each context in the example above so QNN totals 100 MB. Contexts with different I/O sizes or mapping lifetimes do not need equal values.
+- **Level `0` (default):** QNN adds up the limits configured on independently loaded contexts. The app knows this context count from the context binaries / EP-context models it loads. Set `25` on each context in the example above so QNN totals 100 MB. Contexts with different I/O sizes or mapping lifetimes do not need equal values.
 
-- **`htp_share_resource_optimization=0` or `1`:** the value is a single group-level property shared by all contexts, so set it to the peak directly → `100` for the same example.
+- **Level `1` or `2`:** the value is a single group-level property shared by all contexts, so set it to the peak directly → `100` for the same example.
 
 **Warning**: this value is a *hint* for memory estimation, not an enforced limit. QNN does not stop you from using more I/O at runtime than you configured, but exceeding it may cause undefined behavior (e.g. a `memRegister` failure due to running out of space). Set it to a value your actual runtime I/O will not exceed. When using this option purely to work around a context load failure (rather than from a known buffer budget), the safe value is model-dependent and has not been validated across all models; a value verified safe for one model is not guaranteed safe for another. Verify empirically for your model before relying on a specific value in production.
 

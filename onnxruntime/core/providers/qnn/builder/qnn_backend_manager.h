@@ -765,7 +765,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
-  int htp_share_resource_optimization_ = -1;
+  int htp_share_resource_optimization_ = 0;
   uint64_t reused_io_limit_mb_ = 0;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
