@@ -20,7 +20,7 @@ namespace onnxruntime {
 namespace qnn {
 
 class WindowsFileMapper : public FileMappingInterface {
-  using MappedMemoryPtr = std::unique_ptr<char[], std::function<void(void*)>>;
+  using MappedMemoryPtr = std::shared_ptr<char>;
 
  public:
   explicit WindowsFileMapper(const Ort::Logger& logger);
@@ -30,6 +30,15 @@ class WindowsFileMapper : public FileMappingInterface {
   // mapview pointer of the file mapping
   Ort::Status GetContextBinMappedMemoryPtr(const std::string& bin_filepath,
                                            void** mapped_data_ptr) override;
+
+  // Creates an independently owned read-only view. Context-binary paths use UTF-8.
+  Ort::Status MapContextBinary(const std::string& bin_filepath,
+                               std::shared_ptr<char>& mapped_memory);
+
+  // Returns the size of the same opened file backing the view.
+  Ort::Status MapContextBinary(const std::string& bin_filepath,
+                               std::shared_ptr<char>& mapped_memory,
+                               size_t& mapped_bytes);
 
  private:
   // A container of smart pointers of mapview memory pointers to mapped context bins

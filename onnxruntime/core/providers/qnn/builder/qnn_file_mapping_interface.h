@@ -17,6 +17,7 @@ class FileMappingInterface {
  public:
   virtual ~FileMappingInterface() = default;
 
+  // Context-binary paths use UTF-8, including on Windows.
   virtual Ort::Status GetContextBinMappedMemoryPtr(const std::string& bin_filepath,
                                                    void** mapped_data_ptr) = 0;
 };

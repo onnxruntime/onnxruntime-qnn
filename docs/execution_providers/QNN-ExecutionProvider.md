@@ -1393,6 +1393,21 @@ If no callback is registered, the EP uses the legacy plaintext behavior.
 - The cipher itself is entirely the application's responsibility — ORT and the QNN EP only provide
   the callback plumbing.
 
+### Provider-owned source mapping for context read callbacks
+
+The private session option `ep.qnn.context_binary_decrypt_source_mapping` enables provider-owned source file mapping for an application read/decrypt callback.
+
+| Value | Behavior |
+|---|---|
+|`0`|Default. The application reads the source through its existing callback.|
+|`1`|The provider maps the source file and passes its read-only data to a source-aware callback.|
+
+This feature requires Windows ARM64/HTP, an external single-SoC EPContext, and explicit application registration using [qnn_context_decrypt_source.h](../../onnxruntime/core/providers/qnn/builder/qnn_context_decrypt_source.h). Embedded contexts, multi-SoC/list loading, and Genie/DLC models are unsupported.
+
+Register the provider, create a binding with `QnnEpCreateDecryptSourceBinding`, and register the returned read bridge and binding through the existing EPContext read-callback API. Keep the provider module, binding, and application state alive until all referencing options and sessions are released; then call `QnnEpReleaseDecryptSourceBinding`.
+
+The callback must finish reading the source before returning and allocate independent decoded output using the supplied allocator. Source mapping is independent of `disable_file_mapped_weights`: it maps the source for CPU access. Callback output is copied into the provider's existing context buffer and loaded through the ordinary QNN context loading API; native weight mapping is disabled when a read callback is registered.
+
 ## Parallel Graph Preparation
 For general context, please read the [QNN context binary cache feature](#qnn-context-binary-cache-feature) section above.
 
