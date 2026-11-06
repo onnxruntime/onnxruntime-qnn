@@ -390,7 +390,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, ShouldConvertDataLayout_Upsample_Returns1)
   EXPECT_EQ(should_convert, 1);
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, ShouldConvertDataLayout_GroupNormalization_Returns1) {
+TEST_F(QnnUnit_ExecutionProviderTest, ShouldConvertDataLayout_GroupNormalization_Returns0) {
   EpStubContext ctx;
   auto factory = MakeFactory(ctx);
   auto ep = MakeEp(*factory, ctx);
@@ -401,7 +401,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, ShouldConvertDataLayout_GroupNormalization
       ep_ptr, "", "GroupNormalization",
       OrtEpDataLayout::OrtEpDataLayout_NHWC, &should_convert);
   EXPECT_EQ(s, nullptr);
-  EXPECT_EQ(should_convert, 1);
+  EXPECT_EQ(should_convert, 0);
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, ShouldConvertDataLayout_RoiAlign_Returns1) {
