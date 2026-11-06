@@ -22,6 +22,17 @@ namespace onnxruntime {
 namespace qnn {
 namespace utils {
 
+bool ShouldUseSymmetricU16ForMatMul(float input1_scale) {
+  constexpr float kMaximumValueQuantError = 0.15f;
+
+  // Re-encoding U16 as U8 increases the value-domain quantization step from
+  // input1_scale to input1_scale * 65535 / 255. A value can move
+  // by at most half of that U8 step when it is rounded. Keep symmetric U16
+  // when that error exceeds the 15% value-domain budget.
+  const float u8_half_step = input1_scale * 65535.0f / 255.0f / 2.0f;
+  return u8_half_step > kMaximumValueQuantError;
+}
+
 void UniqueNameGeneratorImpl::Reset() {
   std::lock_guard<std::mutex> lock(mutex_);
   counter_.clear();
