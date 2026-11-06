@@ -1637,7 +1637,12 @@ Ort::Status TwoDimensionTranspose(size_t rows,
                                   gsl::span<uint8_t> output_buffer) {
   RETURN_IF_NOT(elem_byte_size != 0, "Expected a non-zero element byte size");
 
-  const size_t num_bytes = rows * cols * elem_byte_size;
+  RETURN_IF(rows != 0 && cols > std::numeric_limits<size_t>::max() / rows,
+            "Transpose shape element count overflows size_t");
+  const size_t element_count = rows * cols;
+  RETURN_IF(element_count != 0 && elem_byte_size > std::numeric_limits<size_t>::max() / element_count,
+            "Transpose byte count overflows size_t");
+  const size_t num_bytes = element_count * elem_byte_size;
   RETURN_IF_NOT(input_buffer.size() == num_bytes && output_buffer.size() == num_bytes,
                 "Expected both transpose buffers to hold rows * cols * elem_byte_size bytes");
 
@@ -1665,6 +1670,20 @@ Ort::Status TwoDimensionTranspose(size_t rows,
       }
       break;
   }
+
+  return Ort::Status();
+}
+
+Ort::Status ValidateTwoDimensionTransposeInput(gsl::span<const uint32_t> data_shape,
+                                               size_t data_size) {
+  RETURN_IF_NOT(data_shape.size() == 2, "Expected shape of rank 2");
+
+  const size_t rows = data_shape[0];
+  const size_t cols = data_shape[1];
+  RETURN_IF(rows != 0 && cols > std::numeric_limits<size_t>::max() / rows,
+            "Transpose shape element count overflows size_t");
+  RETURN_IF_NOT(data_size == rows * cols,
+                "Transpose data size does not match rows * cols");
 
   return Ort::Status();
 }
@@ -1697,6 +1716,12 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
 
   const size_t rows = data_shape[0];
   const size_t cols = data_shape[1];
+  RETURN_IF(rows != 0 && cols > std::numeric_limits<size_t>::max() / rows,
+            "Transpose shape element count overflows size_t");
+  const size_t element_count = rows * cols;
+  RETURN_IF(element_count != 0 && elem_byte_size > std::numeric_limits<size_t>::max() / element_count,
+            "Transpose byte count overflows size_t");
+  const size_t num_bytes = element_count * elem_byte_size;
 
   if (skip_output_data_copy) {  // Only shape & dtype validation are needed, no need for real tensor
     ORT_CXX_LOG(logger,
@@ -1704,7 +1729,7 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                 "Only shape and dtype validation are required, so we can use dummy tensor to avoid heavy memcpy.");
     // Callers still size their QNN tensor from this buffer, so keep the byte count and skip only the
     // initializer read and the transpose itself.
-    transposed_data.assign(rows * cols * elem_byte_size, 0);
+    transposed_data.assign(num_bytes, 0);
     data_shape = std::move(output_shape);  // Update parameter with final transposed shape
     return Ort::Status();
   }
