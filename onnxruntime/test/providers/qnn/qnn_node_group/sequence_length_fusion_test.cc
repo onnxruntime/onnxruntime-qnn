@@ -119,6 +119,9 @@ TEST_F(QnnHTPBackendTests, SequenceLengthFusion_N3) {
   AssertOpInQnnGraph(json_dir, "Reshape", 1);              // {1,...,1} → {1}
   AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 1);  // zero mask
   AssertOpInQnnGraph(json_dir, "Cast", 1);                 // float → int64
+  // QNN registers the output as {1} (HTP rejects rank-0 tensors); ORT's buffer
+  // copy is correct because both {} and {1} are 8 bytes for int64.
+  AssertTensorShapeInQnnGraph(json_dir, "length", {1u});
 }
 
 // Edge case: N=1.
@@ -249,6 +252,123 @@ TEST_F(QnnHTPBackendTests, SequenceLengthFusion_Float16Elements) {
   AssertOpInQnnGraph(json_dir, "Cast", 1);                 // float16 → int64
 }
 
+// One element is a static initializer; the other is a runtime graph input.
+// Exercises the tensor-registration path in AddToModelBuilder where
+// IsQnnTensorWrapperExist returns true for the initializer (already registered
+// as STATIC by QnnModelWrapper before partition ops run).
+TEST_F(QnnHTPBackendTests, SequenceLengthFusion_InitializerElement) {
+  const std::filesystem::path json_dir = "SequenceLengthFusion_InitializerElement";
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  ProviderOptions opts = GetHTPProviderOptions();
+  opts["dump_json_qnn_graph"] = "1";
+  opts["json_qnn_graph_dir"] = json_dir.string();
+
+  auto build_fn = [](ModelTestBuilder& builder) -> void {
+    // elem_0: static initializer (STATIC tensor in QNN).
+    auto init_def = TestInputDef<float>({2, 3}, /*is_initializer=*/true,
+                                        std::vector<float>(6, 1.0f));
+    MakeTestInput(builder, "elem_0", init_def);
+    // elem_1: runtime graph input (APP_WRITE tensor in QNN).
+    auto dyn_def = TestInputDef<float>({2, 3}, /*is_initializer=*/false, -1.0f, 1.0f);
+    MakeTestInput(builder, "elem_1", dyn_def);
+    builder.AddNode("sc", "SequenceConstruct", {"elem_0", "elem_1"}, {"seq"});
+    builder.MakeOutput<int64_t>("length", std::vector<int64_t>{});
+    builder.AddNode("sl", "SequenceLength", {"seq"}, {"length"});
+  };
+
+  RunQnnModelTest(build_fn, opts, /*opset=*/11,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+
+  if (!HasQnnJsonGraph(json_dir)) {
+    GTEST_SKIP() << "QNN HTP graph dump unavailable; structural assertions skipped.";
+  }
+  AssertOpInQnnGraph(json_dir, "ReduceSum", 2);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 2);  // N-1=1 chain + 1 final
+  AssertOpInQnnGraph(json_dir, "Reshape", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 1);
+  AssertOpInQnnGraph(json_dir, "Cast", 1);
+}
+
+// Element tensors come from upstream Relu ops in the same QNN partition.
+// Exercises the NATIVE tensor path: AddToModelBuilder must not re-register
+// tensors already emitted by an upstream op's AddToModelBuilder.
+TEST_F(QnnHTPBackendTests, SequenceLengthFusion_ElementFromUpstreamOp) {
+  const std::filesystem::path json_dir = "SequenceLengthFusion_ElementFromUpstreamOp";
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  ProviderOptions opts = GetHTPProviderOptions();
+  opts["dump_json_qnn_graph"] = "1";
+  opts["json_qnn_graph_dir"] = json_dir.string();
+
+  auto build_fn = [](ModelTestBuilder& builder) -> void {
+    for (int i = 0; i < 2; ++i) {
+      const std::string in_name = "raw_" + std::to_string(i);
+      const std::string relu_out = "elem_" + std::to_string(i);
+      auto def = TestInputDef<float>({2, 3}, /*is_initializer=*/false, 0.0f, 1.0f);
+      MakeTestInput(builder, in_name, def);
+      builder.AddNode("relu_" + std::to_string(i), "Relu", {in_name}, {relu_out});
+    }
+    builder.AddNode("sc", "SequenceConstruct", {"elem_0", "elem_1"}, {"seq"});
+    builder.MakeOutput<int64_t>("length", std::vector<int64_t>{});
+    builder.AddNode("sl", "SequenceLength", {"seq"}, {"length"});
+  };
+
+  RunQnnModelTest(build_fn, opts, /*opset=*/11,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+
+  if (!HasQnnJsonGraph(json_dir)) {
+    GTEST_SKIP() << "QNN HTP graph dump unavailable; structural assertions skipped.";
+  }
+  AssertOpInQnnGraph(json_dir, "Relu", 2);
+  AssertOpInQnnGraph(json_dir, "ReduceSum", 2);
+  AssertOpInQnnGraph(json_dir, "ElementWiseAdd", 2);  // N-1=1 chain + 1 final
+  AssertOpInQnnGraph(json_dir, "Reshape", 1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", 1);
+  AssertOpInQnnGraph(json_dir, "Cast", 1);
+}
+
+// HTP-backend rejection: int64 element dtype falls back to CPU EP on HTP too.
+// Distinguishes intentional guard rejection from CPU-only backend validation failure.
+TEST_F(QnnHTPBackendTests, SequenceLengthFusion_HTPFallback_UnsupportedDtype) {
+  ProviderOptions opts = GetHTPProviderOptions();
+
+  auto build_fn = [](ModelTestBuilder& builder) -> void {
+    auto def = TestInputDef<int64_t>({2, 3}, /*is_initializer=*/false, 0LL, 9LL);
+    MakeTestInput(builder, "elem_0", def);
+    MakeTestInput(builder, "elem_1", def);
+    builder.AddNode("sc", "SequenceConstruct", {"elem_0", "elem_1"}, {"seq"});
+    builder.MakeOutput<int64_t>("length", std::vector<int64_t>{});
+    builder.AddNode("sl", "SequenceLength", {"seq"}, {"length"});
+  };
+
+  RunQnnModelTest(build_fn, opts, /*opset=*/11,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None});
+}
+
+// HTP-backend rejection: sequence fan-out falls back to CPU EP on HTP too.
+TEST_F(QnnHTPBackendTests, SequenceLengthFusion_HTPFallback_SequenceFanOut) {
+  ProviderOptions opts = GetHTPProviderOptions();
+
+  auto build_fn = [](ModelTestBuilder& builder) -> void {
+    auto def = TestInputDef<float>({2, 3}, /*is_initializer=*/false, -1.0f, 1.0f);
+    MakeTestInput(builder, "elem_0", def);
+    MakeTestInput(builder, "elem_1", def);
+    builder.AddNode("sc", "SequenceConstruct", {"elem_0", "elem_1"}, {"seq"});
+    builder.MakeOutput<int64_t>("len1", std::vector<int64_t>{});
+    builder.MakeOutput<int64_t>("len2", std::vector<int64_t>{});
+    builder.AddNode("sl1", "SequenceLength", {"seq"}, {"len1"});
+    builder.AddNode("sl2", "SequenceLength", {"seq"}, {"len2"});
+  };
+
+  RunQnnModelTest(build_fn, opts, /*opset=*/11,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None});
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // ---------------------------------------------------------------------------
@@ -315,9 +435,10 @@ TEST_F(QnnCPUBackendTests, SequenceLengthFusion_CpuFallback_HeterogeneousShapes)
                   EPVerificationParams{ExpectedEPNodeAssignment::None});
 }
 
-// Scalar elements (rank-0, shape {}) must be rejected: the Concat step
-// computes stacked_shape[0] *= N which is out-of-bounds for an empty shape
-// vector.  TryFusion rejects rank-0 inputs and falls back to CPU EP.
+// Scalar elements (rank-0, shape {}) must be rejected: ReduceSum requires
+// at least one axis to reduce over.  TryFusion checks the raw shape before
+// calling GetOnnxShape (which would silently convert {} to {1}) and returns
+// nullptr → CPU EP.
 TEST_F(QnnCPUBackendTests, SequenceLengthFusion_CpuFallback_ScalarElements) {
   ProviderOptions opts;
   opts["backend_type"] = "cpu";
@@ -352,6 +473,55 @@ TEST_F(QnnCPUBackendTests, SequenceLengthFusion_CpuFallback_SequenceFanOut) {
     builder.MakeOutput<int64_t>("len2", std::vector<int64_t>{});
     builder.AddNode("sl1", "SequenceLength", {"seq"}, {"len1"});
     builder.AddNode("sl2", "SequenceLength", {"seq"}, {"len2"});
+  };
+
+  RunQnnModelTest(build_fn, opts, /*opset=*/11,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None});
+}
+
+// elem_0 has shape {1}; elem_1 has shape {} (scalar).  Without a per-element
+// raw-shape check, GetOnnxShape would convert {} to {1} and both shapes would
+// compare equal, causing the fusion to fire incorrectly.  TryFusion must check
+// the raw shape of every element before calling GetOnnxShape.
+TEST_F(QnnCPUBackendTests, SequenceLengthFusion_CpuFallback_LaterScalarElement) {
+  ProviderOptions opts;
+  opts["backend_type"] = "cpu";
+
+  auto build_fn = [](ModelTestBuilder& builder) -> void {
+    // elem_0: shape {1} — non-scalar, passes the first raw-shape check.
+    auto def1 = TestInputDef<float>({1}, /*is_initializer=*/false, -1.0f, 1.0f);
+    MakeTestInput(builder, "elem_0", def1);
+    // elem_1: shape {} (scalar) — must be rejected by the per-element raw-shape check.
+    auto def2 = TestInputDef<float>({}, /*is_initializer=*/false, -1.0f, 1.0f);
+    MakeTestInput(builder, "elem_1", def2);
+    builder.AddNode("sc", "SequenceConstruct", {"elem_0", "elem_1"}, {"seq"});
+    builder.MakeOutput<int64_t>("length", std::vector<int64_t>{});
+    builder.AddNode("sl", "SequenceLength", {"seq"}, {"length"});
+  };
+
+  RunQnnModelTest(build_fn, opts, /*opset=*/11,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None});
+}
+
+// SequenceConstruct output is consumed by both SequenceLength and SequenceAt
+// (mixed-type fan-out).  FindUniqueSequenceConsumer counts two raw consumers
+// and returns nullptr for both fusion attempts → all nodes fall back to CPU EP.
+TEST_F(QnnCPUBackendTests, SequenceLengthFusion_CpuFallback_MixedConsumerFanOut) {
+  ProviderOptions opts;
+  opts["backend_type"] = "cpu";
+
+  auto build_fn = [](ModelTestBuilder& builder) -> void {
+    auto def = TestInputDef<float>({2, 3}, /*is_initializer=*/false, -1.0f, 1.0f);
+    MakeTestInput(builder, "elem_0", def);
+    MakeTestInput(builder, "elem_1", def);
+    MakeTestInput(builder, "elem_2", def);
+    builder.AddNode("sc", "SequenceConstruct",
+                    {"elem_0", "elem_1", "elem_2"}, {"seq"});
+    builder.MakeScalarInitializer<int64_t>("pos", 0LL);
+    builder.MakeOutput<int64_t>("length", std::vector<int64_t>{});
+    builder.MakeOutput<float>("elem_out", std::vector<int64_t>{2, 3});
+    builder.AddNode("sl", "SequenceLength", {"seq"}, {"length"});
+    builder.AddNode("sa", "SequenceAt", {"seq", "pos"}, {"elem_out"});
   };
 
   RunQnnModelTest(build_fn, opts, /*opset=*/11,

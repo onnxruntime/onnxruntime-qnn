@@ -116,8 +116,15 @@ std::unique_ptr<IQnnNodeGroup> SequenceLengthFusion::TryFusion(
       if (d == 0) return nullptr;  // zero-dimension element
     }
     for (size_t i = 1; i < N; ++i) {
+      // The raw-shape scalar check must precede GetOnnxShape for the same reason as elem_0:
+      // GetOnnxShape converts {} to {1}, so a scalar element at position i would spuriously
+      // match first_shape={1} without this guard.
+      const auto& raw_shape_i = seq_construct_unit.Inputs()[i].shape;
+      if (raw_shape_i.has_value() && raw_shape_i->empty()) {
+        return nullptr;  // scalar element at position i: no axes to reduce over
+      }
       std::vector<uint32_t> shape_i;
-      if (!qnn_model_wrapper.GetOnnxShape(seq_construct_unit.Inputs()[i].shape, shape_i) ||
+      if (!qnn_model_wrapper.GetOnnxShape(raw_shape_i, shape_i) ||
           shape_i != first_shape) {
         return nullptr;  // heterogeneous or dynamic
       }
