@@ -1341,6 +1341,25 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                          FormatEPConfigKey("dump_json_qnn_graph"),
                                          false,
                                          logger_);
+  static constexpr const char* kDumpQnnGraphGoldenMetadata = "dump_qnn_graph_golden_metadata";
+  dump_qnn_graph_golden_metadata_ = ParseBoolOption(ort_api,
+                                                    session_options_,
+                                                    FormatEPConfigKey(kDumpQnnGraphGoldenMetadata),
+                                                    false,
+                                                    logger_);
+  if (dump_qnn_graph_golden_metadata_ && !dump_json_qnn_graph_) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "dump_qnn_graph_golden_metadata requires dump_json_qnn_graph=1. Skipping golden metadata export.");
+    dump_qnn_graph_golden_metadata_ = false;
+  }
+  if (dump_qnn_graph_golden_metadata_ && enable_multi_soc_ep_context_) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "dump_qnn_graph_golden_metadata does not support multi-SoC EP contexts. "
+                "Skipping golden metadata export.");
+    dump_qnn_graph_golden_metadata_ = false;
+  }
 
   static const std::string QNN_GRAPH_DUMP_DIR = "json_qnn_graph_dir";
   std::string json_graph_dir_str;
@@ -2648,6 +2667,15 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
       namespace fs = std::filesystem;
       context.json_qnn_graph_path =
           (fs::path(json_qnn_graph_dir_) / fs::path(fused_node_name + ".json")).string();
+      if (dump_qnn_graph_golden_metadata_ && qnn::IsNpuBackend(qnn_backend_manager_->GetQnnBackendType())) {
+        context.htp_graph_configs = &htp_graph_configs;
+      } else if (dump_qnn_graph_golden_metadata_) {
+        ORT_CXX_LOG(logger_,
+                    ORT_LOGGING_LEVEL_WARNING,
+                    "QNN graph golden metadata requires an HTP JSON graph dump. Skipping golden metadata.");
+        // Avoid repeating this warning for every graph in the session.
+        dump_qnn_graph_golden_metadata_ = false;
+      }
     }
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));

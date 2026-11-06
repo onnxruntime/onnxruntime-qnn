@@ -127,7 +127,7 @@ class QnnModelWrapper {
                      std::vector<std::string>&& param_tensor_names,
                      bool do_op_validation = false);
 
-  bool ComposeQnnGraph(bool build_json_qnn_graph = false);
+  bool ComposeQnnGraph(bool build_json_qnn_graph = false, bool collect_static_tensor_hashes = false);
 
   Qnn_GraphHandle_t GetQnnGraph() const { return graph_; }
 
@@ -235,6 +235,10 @@ class QnnModelWrapper {
 
   const nlohmann::json& GetQnnJSONGraph() {
     return json_qnn_graph_.Finalize();
+  }
+
+  const nlohmann::json& GetStaticTensorHashes() const {
+    return json_qnn_graph_.GetStaticTensorHashes();
   }
 
   Qnn_TensorType_t GetTensorType(const std::string& tensor_name) const {

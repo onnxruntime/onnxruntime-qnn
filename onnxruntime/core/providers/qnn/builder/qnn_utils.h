@@ -104,7 +104,7 @@ class QnnJSONGraph {
    *
    * /param op_conf_wrapper QNN operator to add.
    */
-  void AddOp(const QnnOpConfigWrapper& op_conf_wrapper);
+  void AddOp(const QnnOpConfigWrapper& op_conf_wrapper, bool collect_static_tensor_hashes = false);
 
   /**
    * Finalizes JSON graph (i.e., adds top-level graph metadata) and returns a reference
@@ -114,10 +114,15 @@ class QnnJSONGraph {
    */
   const nlohmann::json& Finalize();
 
+  // Returns ORT-owned metadata collected while serializing the QNN graph. This
+  // is intentionally separate from the QNN Netron-compatible graph JSON.
+  const nlohmann::json& GetStaticTensorHashes() const { return static_tensor_hashes_; }
+
  private:
-  void AddOpTensors(gsl::span<const Qnn_Tensor_t> tensors);
+  void AddOpTensors(gsl::span<const Qnn_Tensor_t> tensors, bool collect_static_tensor_hashes);
 
   nlohmann::json json_;
+  nlohmann::json static_tensor_hashes_;
   std::unordered_set<std::string> seen_tensors_;   // Tracks tensors already added to JSON graph.
   std::unordered_set<std::string> seen_op_types_;  // Tracks unique operator types.
 };
