@@ -23,6 +23,10 @@ on:
         description: "Rebuild only QNN EP and use it with the unchanged prebuilt tests"
         type: boolean
         default: false
+      rebuild_tests:
+        description: "Also rebuild provider_test for changed test setup or internal ABI"
+        type: boolean
+        default: false
       reuse_provider_run:
         description: "Reuse an already validated QNN library with the prebuilt test inputs"
         type: string
@@ -34,7 +38,7 @@ on:
 
 jobs:
   build-linux-arm64:
-    if: ${{ inputs.reuse_build_run == '' || inputs.rebuild_provider }}
+    if: ${{ inputs.reuse_build_run == '' || inputs.rebuild_provider || inputs.rebuild_tests }}
     runs-on: [self-hosted, X64, Linux, Build]
     steps:
       - uses: actions/checkout@v6
@@ -43,7 +47,8 @@ jobs:
       - name: Enable internal symbols in this disposable validation checkout
         shell: bash
         env:
-          QNN_PROVIDER_ONLY: ${{ inputs.rebuild_provider && '1' || '0' }}
+          QNN_PROVIDER_ONLY: ${{ (inputs.rebuild_provider || inputs.rebuild_tests) && '1' || '0' }}
+          QNN_REBUILD_TESTS: ${{ inputs.rebuild_tests && '1' || '0' }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -61,7 +66,10 @@ jobs:
               needle = '"${package_args[@]}"'
               if text.count(needle) != 1:
                   raise SystemExit("Could not locate the CMake build invocation")
-              path.write_text(text.replace(needle, needle + ' --targets onnxruntime_providers_qnn', 1))
+              targets = ' --targets onnxruntime_providers_qnn'
+              if os.environ["QNN_REBUILD_TESTS"] == "1":
+                  targets += ' onnxruntime_provider_test'
+              path.write_text(text.replace(needle, needle + targets, 1))
 
           path = Path("qcom/ep_build/tasks/build.py")
           text = path.read_text()
@@ -73,18 +81,22 @@ jobs:
       - name: Build and archive Linux ARM64 internal-symbol tests
         shell: bash
         env:
-          QNN_PROVIDER_ONLY: ${{ inputs.rebuild_provider && '1' || '0' }}
+          QNN_PROVIDER_ONLY: ${{ (inputs.rebuild_provider || inputs.rebuild_tests) && '1' || '0' }}
+          QNN_REBUILD_TESTS: ${{ inputs.rebuild_tests && '1' || '0' }}
         run: |
           set -euo pipefail
           python3 qcom/build_and_test.py --target-py-version None build_ort_linux_aarch64_manylinux_2_34
           if [ "${QNN_PROVIDER_ONLY}" = "1" ]; then
             test -f build/linux-aarch64_manylinux_2_34/Release/libonnxruntime_providers_qnn.so
+            if [ "${QNN_REBUILD_TESTS}" = "1" ]; then
+              test -f build/linux-aarch64_manylinux_2_34/Release/onnxruntime_provider_test
+            fi
             exit 0
           fi
           python3 qcom/build_and_test.py --target-py-version None \
             create_venv archive_ort_linux_aarch64_manylinux_2_34 archive_testdata --only
       - uses: actions/upload-artifact@v4
-        if: ${{ !inputs.rebuild_provider }}
+        if: ${{ !inputs.rebuild_provider && !inputs.rebuild_tests }}
         with:
           name: qnn-test-only-init-linux-arm64-inputs
           path: |
@@ -92,15 +104,21 @@ jobs:
             build/onnxruntime-testdata.tar.bz2
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: ${{ inputs.rebuild_provider }}
+        if: ${{ inputs.rebuild_provider || inputs.rebuild_tests }}
         with:
           name: qnn-rebuilt-provider
           path: build/linux-aarch64_manylinux_2_34/Release/libonnxruntime_providers_qnn.so
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.rebuild_tests }}
+        with:
+          name: qnn-rebuilt-provider-tests
+          path: build/linux-aarch64_manylinux_2_34/Release/onnxruntime_provider_test
+          if-no-files-found: error
 
   test-linux-arm64:
     needs: build-linux-arm64
-    if: ${{ always() && !cancelled() && (needs.build-linux-arm64.result == 'success' || (inputs.reuse_build_run != '' && !inputs.rebuild_provider)) }}
+    if: ${{ always() && !cancelled() && (needs.build-linux-arm64.result == 'success' || (inputs.reuse_build_run != '' && !inputs.rebuild_provider && !inputs.rebuild_tests)) }}
     runs-on: [self-hosted, ARM64, Linux, Test]
     timeout-minutes: 60
     steps:
@@ -120,20 +138,31 @@ jobs:
           python3 qcom/build_and_test.py --target-py-version None \
             create_venv extract_ort_linux_aarch64_manylinux_2_34 --only
       - uses: actions/download-artifact@v4
-        if: ${{ inputs.rebuild_provider || inputs.reuse_provider_run != '' }}
+        if: ${{ inputs.rebuild_provider || inputs.rebuild_tests || inputs.reuse_provider_run != '' }}
         with:
           name: qnn-rebuilt-provider
           path: rebuilt-provider
           github-token: ${{ github.token }}
           run-id: ${{ inputs.reuse_provider_run || github.run_id }}
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.rebuild_tests }}
+        with:
+          name: qnn-rebuilt-provider-tests
+          path: rebuilt-provider
       - name: Replace only the QNN shared library for this validation
-        if: ${{ inputs.rebuild_provider || inputs.reuse_provider_run != '' }}
+        if: ${{ inputs.rebuild_provider || inputs.rebuild_tests || inputs.reuse_provider_run != '' }}
         shell: bash
+        env:
+          QNN_REBUILD_TESTS: ${{ inputs.rebuild_tests && '1' || '0' }}
         run: |
           set -euo pipefail
           test_bin="$(find build/linux-aarch64_manylinux_2_34/Release -type f -name onnxruntime_provider_test -print -quit)"
           test -n "${test_bin}"
           cp rebuilt-provider/libonnxruntime_providers_qnn.so "$(dirname "${test_bin}")/libonnxruntime_providers_qnn.so"
+          if [ "${QNN_REBUILD_TESTS}" = "1" ]; then
+            cp rebuilt-provider/onnxruntime_provider_test "${test_bin}"
+            chmod +x "${test_bin}"
+          fi
       - name: Validate standalone invalid-path and shuffled unit, integration, and legacy tests
         shell: bash
         env:
