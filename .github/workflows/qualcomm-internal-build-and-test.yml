@@ -186,6 +186,26 @@ jobs:
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       nightly_build: ${{ inputs.nightly_build }}
 
+  # Shadow the shipping Windows ARM64 job with the internal-symbol build. This
+  # is test-only: binaries are handed to the ARM64 Test runner through the
+  # workflow's short-lived Actions artifact, never Artifactory.
+  build-and-test-windows-arm64-internal-symbols:
+    if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
+    needs: [archive-testdata, path-filter]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
+      nightly_build: ${{ inputs.nightly_build }}
+      target_arch: arm64
+      build_runner_arch: X64
+      test_runner_arch: arm64
+      target_py_vsn: None
+      qnn_internal_test_symbols: true
+      run_tests: true
+      build_test_same_runner: false
+      upload_wheel: false
+
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
     needs: [archive-testdata, path-filter]
