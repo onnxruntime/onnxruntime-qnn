@@ -8,7 +8,10 @@
 #include <optional>
 #include <string>
 #include <filesystem>
+#include <fstream>
 #include <variant>
+
+#include "nlohmann/json.hpp"
 
 #include "onnxruntime_session_options_config_keys.h"
 
@@ -56,6 +59,106 @@ static void RunOpTestOnCPU(const std::string& op_type,
                   provider_options,
                   opset_version,
                   EPVerificationParams{expected_ep_assignment});
+}
+
+static ProviderOptions MakeHtpIrDumpProviderOptions(const std::filesystem::path& dump_dir) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["skip_backend_op_validation"] = "1";
+  provider_options["dump_qnn_ir_dlc"] = "1";
+  provider_options["dump_qnn_ir_dlc_dir"] = dump_dir.string();
+#if defined(_WIN32)
+  provider_options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+  provider_options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = dump_dir.string();
+  return provider_options;
+}
+
+static void AssertGeluTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
+                                            const std::vector<uint32_t>& expected_shape) {
+  AssertOpInQnnGraph(dump_dir, "Gelu", 1);
+  for (const auto& file : std::filesystem::directory_iterator(dump_dir)) {
+    if (file.path().extension() != ".json" || file.path().stem().string().find("_tensor_log") != std::string::npos) {
+      continue;
+    }
+    std::ifstream stream(file.path());
+    const auto graph = nlohmann::json::parse(stream);
+    for (const auto& node : graph["graph"]["nodes"]) {
+      if (node["type"] == "Gelu") {
+        AssertTensorShapeInQnnGraph(dump_dir, node["input_names"][0].get<std::string>(), expected_shape);
+        AssertTensorShapeInQnnGraph(dump_dir, node["output_names"][0].get<std::string>(), expected_shape);
+      }
+    }
+  }
+}
+
+// Match the slow post-layout form of SegFormer-Base's MLP GELUs: channels-first rank-3 GELU,
+// followed by a sole [0, 2, 1] transpose and MatMul. Verify the HTP lowering with the IR backend.
+TEST_F(QnnIRBackendTests, Rank3GeluWithTransposeConsumerIsFlattened) {
+  const std::filesystem::path dump_dir = "Rank3GeluWithTransposeConsumerIsFlattened";
+  std::filesystem::remove_all(dump_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(dump_dir));
+  auto cleanup = gsl::finally([&dump_dir]() { std::filesystem::remove_all(dump_dir); });
+
+  const ProviderOptions provider_options = MakeHtpIrDumpProviderOptions(dump_dir);
+
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(
+      model, [](ModelTestBuilder& builder) {
+        builder.MakeInput<float>("input", {1, 128, 16384}, GetFloatDataInRange(-1.0f, 1.0f, 128 * 16384));
+        builder.MakeInitializer<float>("dense_weight", {128, 32}, GetFloatDataInRange(-0.1f, 0.1f, 128 * 32));
+
+        const auto perm = builder.MakeIntsAttribute("perm", {0, 2, 1});
+        builder.AddNode("gelu", "Gelu", {"input"}, {"gelu_channels_first"});
+        builder.AddNode("transpose_out", "Transpose", {"gelu_channels_first"}, {"gelu_out"}, kOnnxDomain, {perm});
+        builder.AddNode("dense", "MatMul", {"gelu_out", "dense_weight"}, {"output"});
+        builder.MakeOutput<float>("output", std::vector<int64_t>{1, 16384, 32});
+      },
+      21);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions session_options;
+  session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+  RegisterQnnEpLibrary(registered_ep_device, session_options, "QNNExecutionProvider", provider_options);
+  Ort::Session session(*GetOrtEnv(), model->model_data.data(), model->model_data.size(), session_options);
+
+  EXPECT_EQ(session.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(),
+            (std::vector<int64_t>{1, 16384, 32}));
+  AssertGeluTensorShapeInQnnGraph(dump_dir, {16384, 128});
+}
+
+// A rank-3 GELU with a non-Transpose consumer does not exhibit the slow post-layout pattern.
+// Keep its original rank instead of applying the targeted SegFormer workaround.
+TEST_F(QnnIRBackendTests, Rank3GeluWithoutTransposeConsumerIsNotFlattened) {
+  const std::filesystem::path dump_dir = "Rank3GeluWithoutTransposeConsumerIsNotFlattened";
+  std::filesystem::remove_all(dump_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(dump_dir));
+  auto cleanup = gsl::finally([&dump_dir]() { std::filesystem::remove_all(dump_dir); });
+
+  const ProviderOptions provider_options = MakeHtpIrDumpProviderOptions(dump_dir);
+
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(
+      model, [](ModelTestBuilder& builder) {
+        builder.MakeInput<float>("input", {1, 2, 3}, GetFloatDataInRange(-1.0f, 1.0f, 6));
+        builder.AddNode("gelu", "Gelu", {"input"}, {"gelu_out"});
+        builder.AddNode("relu", "Relu", {"gelu_out"}, {"output"});
+        builder.MakeOutput<float>("output", std::vector<int64_t>{1, 2, 3});
+      },
+      21);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions session_options;
+  session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+  RegisterQnnEpLibrary(registered_ep_device, session_options, "QNNExecutionProvider", provider_options);
+  Ort::Session session(*GetOrtEnv(), model->model_data.data(), model->model_data.size(), session_options);
+
+  EXPECT_EQ(session.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(),
+            (std::vector<int64_t>{1, 2, 3}));
+  AssertGeluTensorShapeInQnnGraph(dump_dir, {1, 2, 3});
 }
 
 // Test float DepthToSpace on the QNN CPU backend.

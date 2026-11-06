@@ -123,6 +123,14 @@ int TEST_MAIN(int argc, char** argv) {
 
   try {
     ortenv_setup();
+#if defined(USE_QNN) && QNN_EP_INTERNAL_SYMBOL_ACCESS && \
+    defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    // Initialize the existing factory-provided logger before direct Component
+    // tests bypass EP registration. Leave registration under each test's control.
+    constexpr const char* kQnnTestInitRegistration = "qnn_test_init";
+    ort_env->RegisterExecutionProviderLibrary(kQnnTestInitRegistration, ORT_TSTR("libonnxruntime_providers_qnn.so"));
+    ort_env->UnregisterExecutionProviderLibrary(kQnnTestInitRegistration);
+#endif
     ::testing::InitGoogleTest(&argc, argv);
 
     {

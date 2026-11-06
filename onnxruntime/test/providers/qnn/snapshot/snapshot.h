@@ -36,6 +36,7 @@
 #include "nlohmann/json.hpp"
 
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
@@ -102,8 +103,9 @@ inline std::unique_ptr<qnn::QnnModelWrapper> MakeSnapshotWrapperHtpJson(
 
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+  qnn::QnnGraphEmitter graph_emitter{ctx.qnn_interface};
 
-  if (!wrapper->CreateQnnGraph(htp.context_handle, "test_graph", nullptr)) {
+  if (!wrapper->CreateQnnGraph(graph_emitter, htp.context_handle, "test_graph", nullptr)) {
     return nullptr;
   }
   return wrapper;
