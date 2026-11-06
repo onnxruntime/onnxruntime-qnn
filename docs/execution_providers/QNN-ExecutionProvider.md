@@ -337,9 +337,7 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'1'|Enable HTP resource sharing for sequential graph execution with memory optimization but without virtual address optimization. Requires QNN API version >= 2.26.|
 |'2'|Enable HTP resource sharing for sequential graph execution with virtual address and memory optimization (most aggressive). Requires QNN API version >= 2.26.|
 
-When this option is omitted, the level defaults to `'0'` unless the deprecated `enable_vtcm_backup_buffer_sharing` option is set to `'1'`. Levels `'1'` and `'2'` require sequential graph execution and conflict with `ep.context_embed_mode`.
-
-**Deprecated compatibility option:** `enable_vtcm_backup_buffer_sharing` remains supported for existing applications and emits a deprecation warning. Its value `'1'` maps to optimization level `'1'`; otherwise sharing remains disabled. Prefer `htp_share_resource_optimization`.
+When this option is omitted, the level defaults to `'0'` unless the `enable_vtcm_backup_buffer_sharing` option is set to `'1'`. Levels `'1'` and `'2'` require sequential graph execution and conflict with `ep.context_embed_mode`.
 
 **Precedence:** An explicit `htp_share_resource_optimization`, including `'0'`, takes precedence over `enable_vtcm_backup_buffer_sharing`. An invalid explicit value logs an error and leaves sharing disabled; it does not fall back to the deprecated option.
 
@@ -457,7 +455,7 @@ When loading a context binary, QNN EP also emits the total number of QNN graphs 
 
 The per-QNN-graph estimates show the I/O sizes; the `I/O` field is that QNN graph's I/O size. Sum or take the max over the QNN graphs your app uses concurrently, per the rules above.
 
-**Per-context vs. group scope** — the scope depends on the effective `htp_share_resource_optimization`, including the deprecated VTCM-option mapping:
+**Per-context vs. group scope** — choose the value based on whether `htp_share_resource_optimization` is enabled:
 
 For example, consider 4 contexts, each containing 1 QNN graph with 100 MB I/O. If the app maps the I/O for only 1 QNN graph at a time across all 4 contexts, its actual peak is 100 MB.
 
