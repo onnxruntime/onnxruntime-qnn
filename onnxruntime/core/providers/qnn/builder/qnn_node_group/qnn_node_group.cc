@@ -14,6 +14,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/cast_lone_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/channel_shuffle_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_conv_integer_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/dq_layernorm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_matmul_integer_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dql_dq_fusion.h"
@@ -112,6 +113,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Tanh", {TanhGeluFusion::TryFusion}},
     {"ReduceMean", {LayerNormFusion::TryFusionFull, LayerNormFusion::TryFusionGammaOnly, LayerNormFusion::TryFusionCoreOnly}},
     {"ReduceL2", {L2NormFusion::TryFusion}},
+    {"LayerNormalization", {DQLayerNormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
     {"Reshape", {SpaceToDepthFusion::TryFusion, ChannelShuffleFusion::TryFusionFromReshape, Rank6ToRank5Fusion::TryFusion, ReshapeTransposeFusion::TryFusion, Rank5ToRank4Fusion::TryFusion}},
     {"Concat", {SliceConcatSpaceToDepthFusion::TryFusion}},
@@ -160,6 +162,7 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
       starting_node_unit.OpType() != "Erf" &&
       starting_node_unit.OpType() != "Tanh" &&
       starting_node_unit.OpType() != "Reshape" &&
+      starting_node_unit.OpType() != "LayerNormalization" &&
       starting_node_unit.OpType() != "Concat") {
     return nullptr;
   }
