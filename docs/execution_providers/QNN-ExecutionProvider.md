@@ -419,6 +419,7 @@ The `op_affinity` option points at a JSON config file that pins ONNX op types to
 { "op_type": { "GroupQueryAttention": "HTP" } }
 ```
 
+- GQA may run slower on HTP than on CPU.
 - Backend names are case-insensitive (`"HTP"` == `"htp"`).
 - A value may be a string or a single-element array (`["HTP"]`). **Arrays of length > 1 are rejected** — heterogeneous execution (one op split across multiple backends) is not supported.
 - Pinning an op type to a backend other than the one the session is running on fails session creation, since heterogeneous execution is not supported — except a `"cpu"` pin, which is a legitimate way to opt an op out of QNN EP (falls back to the CPU EP without failing the session).
