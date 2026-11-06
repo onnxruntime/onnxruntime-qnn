@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/qnn_model.h"
 
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <gsl/gsl>
@@ -88,6 +89,37 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
   graph_inputs_.Clear();
   graph_outputs_.Clear();
 
+  auto resolve_shape = [&](const std::string& name, std::vector<int64_t>& shape,
+                           bool is_input) -> Ort::Status {
+    for (size_t axis = 0; axis < shape.size(); ++axis) {
+      if (shape[axis] >= 0) continue;
+      RETURN_IF(axis != 0 || !graph_info_,
+                ("Dynamic shape is not supported yet, for " +
+                 std::string(is_input ? "input: " : "output: ") + name)
+                    .c_str());
+
+      std::string qnn_name = name;
+      if (context.tensor_name_overrides) {
+        auto it = context.tensor_name_overrides->find(name);
+        if (it != context.tensor_name_overrides->end()) qnn_name = it->second;
+      }
+      const auto& tensors = is_input ? graph_info_->InputTensors() : graph_info_->OutputTensors();
+      auto tensor = std::find_if(tensors.begin(), tensors.end(), [&](const auto& candidate) {
+        return candidate.GetName() == qnn_name;
+      });
+      RETURN_IF(tensor == tensors.end(),
+                ("Dynamic batch requires a matching AOT context tensor: " + name).c_str());
+      const auto& base_shape = tensor->GetTensorDims();
+      RETURN_IF(base_shape.size() != shape.size() || base_shape.empty() || base_shape[0] == 0,
+                ("Invalid AOT context base shape for tensor: " + name).c_str());
+
+      // shortcut: axis 0 is the batch axis in this AOT experiment; general support needs explicit axis mapping.
+      // Keep ORT's declaration dynamic and resolve only the EP-owned base shape.
+      shape[axis] = base_shape[axis];
+    }
+    return Ort::Status();
+  };
+
   Ort::ConstNode fused_node{&context.fused_node};
   std::vector<Ort::ConstValueInfo> input_defs = fused_node.GetInputs();
 
@@ -130,9 +162,7 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
     ONNXTensorElementDataType elem_type = shape_info.GetElementType();
     std::vector<int64_t> shape = shape_info.GetShape();
 
-    for (const auto& s : shape) {
-      RETURN_IF(s < 0, ("Dynamic shape is not supported yet, for input: " + name).c_str());
-    }
+    RETURN_IF_ERROR(resolve_shape(name, shape, true));
 
     graph_inputs_.tensors.emplace(std::piecewise_construct,
                                   std::forward_as_tuple(name),
@@ -169,9 +199,7 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
     ONNXTensorElementDataType elem_type = shape_info.GetElementType();
     std::vector<int64_t> shape = shape_info.GetShape();
 
-    for (const auto& s : shape) {
-      RETURN_IF(s < 0, ("Dynamic shape is not supported yet, for output: " + name).c_str());
-    }
+    RETURN_IF_ERROR(resolve_shape(name, shape, false));
 
     graph_outputs_.tensors.emplace(std::piecewise_construct,
                                    std::forward_as_tuple(name),
