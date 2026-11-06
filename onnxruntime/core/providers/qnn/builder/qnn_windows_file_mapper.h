@@ -32,6 +32,11 @@ class WindowsFileMapper : public FileMappingInterface {
   Ort::Status MapContextBinary(const std::string& bin_filepath,
                                std::shared_ptr<char>& mapped_memory) override;
 
+  // Returns the size of the same opened file backing this independently owned view.
+  Ort::Status MapContextBinary(const std::string& bin_filepath,
+                               std::shared_ptr<char>& mapped_memory,
+                               size_t& mapped_bytes);
+
  private:
   // A container of smart pointers of mapview memory pointers to mapped context bins
   // key: filepath to context bin, value: smart pointer of mapview memory pointers

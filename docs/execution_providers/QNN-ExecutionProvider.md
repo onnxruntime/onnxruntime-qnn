@@ -344,11 +344,21 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 
 Native context-binary loading selects DMA when the FastRPC library and SDK callback API are available. If FastRPC initialization fails, CPU file mapping remains available for ordinary context creation. A failed DMA create reuses the acquired bytes for ordinary loading without another read or decryption.
 
-EPContext read callbacks take priority over native file mapping. Successful callback output is passed to ordinary context creation without an additional whole-binary copy and remains alive through metadata extraction. The application owns ciphertext acquisition and decryption: enabling file-mapped weights does not automatically map or decrypt callback-managed files, and callback output is not automatically imported through DMA. No callback registration or ABI changes are required.
+EPContext read callbacks take priority over native file mapping. Successful callback output is passed to ordinary context creation without an additional whole-binary copy and remains alive through metadata extraction. With legacy callbacks, the application owns ciphertext acquisition and decryption: enabling file-mapped weights does not automatically map or decrypt callback-managed files, and callback output is not automatically imported through DMA. Output adoption requires no callback registration or ABI changes. The explicit source-aware binding below adds provider-owned source acquisition.
 
 Initialization validation covers initial external EPContext loading with callback output and native CPU mapping. Native DMA failed-create cleanup with other live contexts and shared-context recovery remain outside this validation: the existing failed-create cleanup can deregister mappings belonging to other live contexts on the same backend manager. Retrying with the acquired bytes avoids another read but does not establish safe DMA cleanup.
 
 An already loaded shared context is reused without deserializing it again.
+
+#### Provider-owned source mapping for context read callbacks
+
+The private option `ep.qnn.context_binary_decrypt_source_mapping=1` lets the provider map an external context source before invoking a source-aware application callback. It defaults to `0`, which preserves legacy callback acquisition. This requires Windows ARM64/HTP, an external single-SoC EPContext, and the explicit binding in `qnn_context_decrypt_source.h`; unrelated callbacks and unsupported loading scopes are rejected when the option is enabled.
+
+Register the provider first, create the binding with `QnnEpCreateDecryptSourceBinding`, and register its returned read bridge and state through the existing EPContext read-callback API. Keep the provider module, binding and application state alive until all referencing options and sessions are released; then call `QnnEpReleaseDecryptSourceBinding`.
+
+The provider supplies a read-only source pointer and length. The application must finish all source reads before returning and allocate its independent plaintext output through the supplied allocator. Source and output lengths may differ. The provider releases the source view synchronously before QNN loading and adopts successful output without copying it. Mapping or decoding errors return without retrying through the legacy reader.
+
+This maps the source for CPU access, independently of `disable_file_mapped_weights`. It does not make plaintext DMA-importable or change the application's cipher. The source may remain encrypted on disk; QNN receives only the callback output.
 
 |`"htp_bf16_enable"`|Description|
 |---|---|
