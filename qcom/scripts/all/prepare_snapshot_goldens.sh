@@ -10,10 +10,12 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=common.sh
-source "${script_dir}/common.sh"
-# shellcheck source=../all/resolve_tool_versions.sh
-source "${script_dir}/../all/resolve_tool_versions.sh"
+# shellcheck source=resolve_tool_versions.sh
+source "${script_dir}/resolve_tool_versions.sh"
+
+log_err() { printf 'ERROR: %s\n' "$*" >&2; }
+log_info() { printf '%s\n' "$*" >&2; }
+log_warn() { printf 'WARNING: %s\n' "$*" >&2; }
 
 usage() {
     cat <<USAGE
@@ -57,7 +59,10 @@ if [[ ! "${golden_profile}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
 fi
 [ -n "${BUILD_ARTIFACTORY_REPO:-}" ] || disable_store "BUILD_ARTIFACTORY_REPO is unset."
 command -v jf >/dev/null 2>&1 || disable_store "JFrog CLI is unavailable."
-command -v unzip >/dev/null 2>&1 || disable_store "unzip is unavailable."
+unzip_bin="${UNZIP_BIN:-unzip}"
+command -v "${unzip_bin}" >/dev/null 2>&1 || disable_store "unzip is unavailable: ${unzip_bin}."
+python_bin="${PYTHON_BIN:-python3}"
+command -v "${python_bin}" >/dev/null 2>&1 || disable_store "Python is unavailable: ${python_bin}."
 
 build_dir="$(realpath "${build_dir}")"
 qairt_version="$(resolve_qairt_version "${build_dir}")" || disable_store "QAIRT version cannot be resolved from ${build_dir}."
@@ -87,11 +92,11 @@ if ! jf rt download --flat "${remote}" "${staging}/"; then
 fi
 [ -f "${zip_path}" ] || disable_store "download did not produce goldens.zip."
 
-if ! unzip -tqq "${zip_path}"; then
+if ! "${unzip_bin}" -tqq "${zip_path}"; then
     disable_store "downloaded goldens.zip is corrupt."
 fi
 
-if ! python3 - "${zip_path}" "${golden_profile}" "${qairt_version}" "${ort_version}" <<'PY'
+if ! "${python_bin}" - "${zip_path}" "${golden_profile}" "${qairt_version}" "${ort_version}" <<'PY'
 import json
 import sys
 import zipfile
@@ -124,7 +129,7 @@ fi
 
 extract_dir="${staging}/extracted"
 mkdir "${extract_dir}"
-if ! unzip -q "${zip_path}" -d "${extract_dir}"; then
+if ! "${unzip_bin}" -q "${zip_path}" -d "${extract_dir}"; then
     disable_store "failed to extract goldens.zip."
 fi
 [ -f "${extract_dir}/manifest.json" ] || disable_store "extracted golden manifest is missing."
@@ -135,7 +140,12 @@ if ! mv -T "${extract_dir}" "${golden_dir}"; then
     disable_store "failed to publish extracted goldens."
 fi
 
-if [ -n "${GITHUB_ENV:-}" ]; then
-    echo "QNN_UT_SNAPSHOT_GOLDEN_DIR=${golden_dir}" >> "${GITHUB_ENV}"
+export_golden_dir="${golden_dir}"
+if command -v cygpath >/dev/null 2>&1; then
+    export_golden_dir="$(cygpath -w "${golden_dir}")"
 fi
-log_info "Enabled aligned snapshot golden store: ${golden_dir} (profile=${golden_profile}, qairt=${qairt_version}, ort=${ort_version})"
+
+if [ -n "${GITHUB_ENV:-}" ]; then
+    echo "QNN_UT_SNAPSHOT_GOLDEN_DIR=${export_golden_dir}" >> "${GITHUB_ENV}"
+fi
+log_info "Enabled aligned snapshot golden store: ${export_golden_dir} (profile=${golden_profile}, qairt=${qairt_version}, ort=${ort_version})"
