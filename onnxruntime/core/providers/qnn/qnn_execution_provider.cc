@@ -952,6 +952,23 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   }
 #endif
 
+  std::string init_acceleration;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("htp_context_init_acceleration"),
+                                 "0", init_acceleration);
+  if (init_acceleration != "0" && init_acceleration != "1") {
+    throw std::runtime_error("htp_context_init_acceleration must be '0' or '1'.");
+  }
+  enable_htp_context_init_acceleration_ = init_acceleration == "1";
+#if !defined(QNN_SDK_VERSION_MAJOR) || !defined(QNN_SDK_VERSION_MINOR) || \
+    (QNN_SDK_VERSION_MAJOR < 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR < 50))
+  if (enable_htp_context_init_acceleration_) {
+    throw std::runtime_error("htp_context_init_acceleration=1 requires a provider built with QAIRT 2.50 or newer.");
+  }
+#endif
+  if (enable_htp_context_init_acceleration_ && htp_share_resource_optimization_ == 1) {
+    throw std::runtime_error("htp_context_init_acceleration=1 does not support htp_share_resource_optimization=1.");
+  }
+
   std::string disable_file_mapped_weights_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("disable_file_mapped_weights"), "0", disable_file_mapped_weights_str);
   if (disable_file_mapped_weights_str == "1") {
@@ -2948,7 +2965,8 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
                                                   qnn_models,
                                                   logger_,
                                                   max_spill_fill_size,
-                                                  *io_dispatch_));
+                                                  *io_dispatch_,
+                                                  enable_htp_context_init_acceleration_));
   }
 
   std::string graph_name;

@@ -235,6 +235,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool prepare_only_ = false;
   bool prepare_and_load_ = false;
   bool enable_spill_fill_buffer_ = false;
+  bool enable_htp_context_init_acceleration_ = false;
   bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)
   uint8_t num_graph_prepare_threads_ = 8;

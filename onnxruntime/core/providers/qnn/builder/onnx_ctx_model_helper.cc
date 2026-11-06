@@ -156,7 +156,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      QnnModelLookupTable& qnn_models,
                                      int64_t max_spill_fill_size,
                                      const qnn::EpContextIoDispatch& io_dispatch,
-                                     const Ort::Logger* logger) {
+                                     const Ort::Logger* logger,
+                                     bool enable_htp_init_acceleration) {
   const char* op_type = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOperatorType(main_context_node, &op_type));
   RETURN_IF(op_type != EPCONTEXT_OP, "EPContext node should be EPContext type.");
@@ -167,6 +168,9 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   OrtNodeAttrHelper node_helper(*main_context_node);
   bool is_embed_mode = node_helper.Get(EMBED_MODE, true);
   bool is_multi_soc_ep_context = node_helper.Get(IS_MULTI_SOC_EP_CONTEXT, false);
+  RETURN_IF(enable_htp_init_acceleration &&
+                (is_embed_mode || is_multi_soc_ep_context),
+            "HTP context initialization acceleration requires an external, single-SoC EPContext binary.");
   if (is_embed_mode) {
     const std::string& context_binary = node_helper.Get(EP_CACHE_CONTEXT, "");
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(const_cast<char*>(context_binary.c_str()),
@@ -223,7 +227,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                qnn_models,
                                                                max_spill_fill_size,
                                                                io_dispatch,
-                                                               is_multi_soc_ep_context);
+                                                               is_multi_soc_ep_context,
+                                                               enable_htp_init_acceleration);
   }
 
   if (!std::filesystem::is_regular_file(context_binary_path)) {
@@ -239,7 +244,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                qnn_models,
                                                                max_spill_fill_size,
                                                                io_dispatch,
-                                                               is_multi_soc_ep_context);
+                                                               is_multi_soc_ep_context,
+                                                               enable_htp_init_acceleration);
   }
 #endif
 
@@ -271,7 +277,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                              qnn_models,
                                                              max_spill_fill_size,
                                                              io_dispatch,
-                                                             is_multi_soc_ep_context);
+                                                             is_multi_soc_ep_context,
+                                                             enable_htp_init_acceleration);
 }
 
 Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
@@ -320,7 +327,8 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                     QnnModelLookupTable& qnn_models,
                                     const Ort::Logger& logger,
                                     int64_t max_spill_fill_size,
-                                    const qnn::EpContextIoDispatch& io_dispatch) {
+                                    const qnn::EpContextIoDispatch& io_dispatch,
+                                    bool enable_htp_init_acceleration) {
   size_t num_nodes = 0;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graph, &num_nodes));
   RETURN_IF(num_nodes != 1, "OrtGraph should have only one EPContext node.");
@@ -336,7 +344,8 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                                      qnn_models,
                                                      max_spill_fill_size,
                                                      io_dispatch,
-                                                     &logger);
+                                                     &logger,
+                                                     enable_htp_init_acceleration);
 
   // This is the protocol with customer that status with INVALID_GRAPH will be generated if failed to load context model
   if (!load_status.IsOK()) {

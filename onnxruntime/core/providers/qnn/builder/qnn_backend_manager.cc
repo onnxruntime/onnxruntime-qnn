@@ -1343,9 +1343,28 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
     int64_t max_spill_fill_size,
     Qnn_ContextHandle_t first_group_handle,
-    QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t>& configs_builder) {
+    QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t>& configs_builder,
+    bool enable_htp_init_acceleration) {
   gsl::not_null<QnnContext_Config_t*> priority_cfg = configs_builder.PushConfig();
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, *priority_cfg));
+
+  if (enable_htp_init_acceleration) {
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 50))
+    RETURN_IF(GetQnnBackendType() != QnnBackendType::HTP,
+              "HTP context initialization acceleration requires the HTP backend.");
+    auto acceleration_custom = configs_builder.PushCustomConfig();
+    acceleration_custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION;
+    acceleration_custom->initAcceleration = true;
+    auto acceleration_config = configs_builder.PushConfig();
+    acceleration_config->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    acceleration_config->customConfig = acceleration_custom;
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                    "QNN HTP context initialization acceleration: enabled for initial loading.");
+#else
+    return MAKE_EP_FAIL("HTP context initialization acceleration requires a provider built with QAIRT 2.50 or newer.");
+#endif
+  }
 
   if (max_spill_fill_size > 0) {
     gsl::not_null<QnnHtpContext_CustomConfig_t*> spill_custom = configs_builder.PushCustomConfig();
@@ -2013,11 +2032,16 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
     int64_t max_spill_fill_size,
     const qnn::EpContextIoDispatch& io_dispatch,
-    bool is_multi_soc_buffer) {
+    bool is_multi_soc_buffer,
+    bool enable_htp_init_acceleration) {
   bool result = nullptr == qnn_sys_interface_.systemContextCreate ||
                 nullptr == qnn_sys_interface_.systemContextGetBinaryInfo ||
                 nullptr == qnn_sys_interface_.systemContextFree;
   RETURN_IF(result, "Failed to get valid function pointer.");
+
+  RETURN_IF(enable_htp_init_acceleration &&
+                (is_multi_soc_buffer || htp_share_resource_optimization_ == 1 || context_bin_filepath.empty()),
+            "HTP context initialization acceleration requires a standard external, single-SoC EPContext binary.");
 
   void* bin_buffer = buffer;
   bool use_dma_loading = false;
@@ -2101,7 +2125,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
     QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> configs_builder(
         QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
-    RETURN_IF_ERROR(BuildContextBinaryConfigs(max_spill_fill_size, first_group_handle, configs_builder));
+    RETURN_IF_ERROR(BuildContextBinaryConfigs(max_spill_fill_size, first_group_handle, configs_builder,
+                                              enable_htp_init_acceleration));
 
     qnn::profile::ProfilingInfo profiling_info;
     qnn::QnnProfilingScope profiling_scope;

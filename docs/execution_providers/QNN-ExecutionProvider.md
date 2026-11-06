@@ -344,6 +344,13 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 
 Native context-binary loading selects DMA when the FastRPC library and SDK callback API are available. If FastRPC initialization fails, CPU file mapping remains available for ordinary context creation. A failed DMA create reuses the acquired bytes for ordinary loading without another read or decryption.
 
+|`"htp_context_init_acceleration"`|Description|
+|---|---|
+|'0'|Default. Leave the SDK initialization-acceleration setting disabled.|
+|'1'|Set QNN HTP `INIT_ACCELERATION` for initial context restoration, allowing the SDK to use all DSP hardware threads for deserialization. Qualified with QAIRT SDK 2.50+ headers; requires runtime support, the HTP backend, and an external, single-SoC EPContext model. Incompatible with `htp_share_resource_optimization=1` (including its legacy alias). Unsupported settings fail explicitly; ORT does not retry with acceleration disabled. SSR recovery retains its existing configuration.|
+
+HTP initialization acceleration uses the session configuration key `ep.qnn.htp_context_init_acceleration`. It is passed per initial load and is not stored as shared-backend policy. Native mapping and callback ownership are independent of this option.
+
 EPContext read callbacks take priority over native file mapping. Successful callback output is passed to ordinary context creation without an additional whole-binary copy and remains alive through metadata extraction. The application owns ciphertext acquisition and decryption: enabling file-mapped weights does not automatically map or decrypt callback-managed files, and callback output is not automatically imported through DMA. No callback registration or ABI changes are required.
 
 Initialization validation covers initial external EPContext loading with callback output and native CPU mapping. Native DMA failed-create cleanup with other live contexts and shared-context recovery remain outside this validation: the existing failed-create cleanup can deregister mappings belonging to other live contexts on the same backend manager. Retrying with the acquired bytes avoids another read but does not establish safe DMA cleanup.

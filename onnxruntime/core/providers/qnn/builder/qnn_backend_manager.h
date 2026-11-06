@@ -201,7 +201,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
       int64_t max_spill_fill_size,
       const qnn::EpContextIoDispatch& io_dispatch,
-      bool is_multi_soc_buffer = false);
+      bool is_multi_soc_buffer = false,
+      bool enable_htp_init_acceleration = false);
 
   // Remove a single context handle from all tracking structures and free it via contextFree.
   void ReleaseSpecificContextHandle(Qnn_ContextHandle_t context_handle);
@@ -229,10 +230,12 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Builds the common context configs (priority + spill-fill) used by both binary-load paths.
   // first_group_handle: 0x0 for SSR (always a new group); GetQnnContext(0) for initial multi-
   // context load (joins the existing spill-fill group).
+  // Initialization acceleration is per initial load; SSR leaves it disabled.
   Ort::Status BuildContextBinaryConfigs(
       int64_t max_spill_fill_size,
       Qnn_ContextHandle_t first_group_handle,
-      QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t>& configs_builder);
+      QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t>& configs_builder,
+      bool enable_htp_init_acceleration = false);
 
   // Shared dispatch helper used by ReloadContextForSSR and LoadCachedQnnContextFromBuffer.
   // Attempts contextCreateFromBinaryWithCallback when use_dma_loading is true; falls back to
