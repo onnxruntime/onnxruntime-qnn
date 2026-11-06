@@ -158,7 +158,8 @@ LowPowerBlockQuantizedGemmFusion::LowPowerBlockQuantizedGemmFusion(const OrtNode
                                                                    const OrtNodeUnit& Act_DQL_node_unit,
                                                                    const OrtNodeUnit& Gemm_node_unit,
                                                                    const OrtNodeUnit& Output_QL_node_unit)
-    : node_units_{&Scale_DQL_node_unit,
+    : IQnnNodeGroup(Gemm_node_unit.Inputs()[0]),
+      node_units_{&Scale_DQL_node_unit,
                   W_QL_node_unit,
                   &W_DQL_node_unit,
                   &Act_DQL_node_unit,
@@ -172,7 +173,7 @@ LowPowerBlockQuantizedGemmFusion::LowPowerBlockQuantizedGemmFusion(const OrtNode
   }
 }
 
-Ort::Status LowPowerBlockQuantizedGemmFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status LowPowerBlockQuantizedGemmFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return CreateOrValidateOnQnn(qmw, *node_units_[0], node_units_[1], *node_units_[2], *node_units_[3], *node_units_[4], *node_units_[5], logger, true);
 }

@@ -372,10 +372,11 @@ Ort::Status CreateOrValidateFusedFCOnQnn(QnnModelWrapper& qnn_model_wrapper,
 // ============================================================================
 
 ReshapeGemmFusionGroup::ReshapeGemmFusionGroup(std::vector<const OrtNodeUnit*> node_units)
-    : node_units_(std::move(node_units)) {
+    : IQnnNodeGroup(node_units[0]->Inputs()[0]),
+      node_units_(std::move(node_units)) {
 }
 
-Ort::Status ReshapeGemmFusionGroup::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status ReshapeGemmFusionGroup::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   return CreateOrValidateOnQnn(qmw, logger, true);
 }
 

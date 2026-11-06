@@ -22,15 +22,18 @@ class QnnModelWrapper;
 class ScaleSoftmaxFusion : public IQnnNodeGroup {
  public:
   ScaleSoftmaxFusion(const OrtNodeUnit& mul_node_unit, const OrtNodeUnit& softmax_node_unit)
-      : node_units_{&mul_node_unit, &softmax_node_unit} {
+      : IQnnNodeGroup(mul_node_unit.Inputs()[0]),
+        node_units_{&mul_node_unit, &softmax_node_unit} {
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ScaleSoftmaxFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return node_units_[1]; }
   std::string_view Type() const override { return "ScaleSoftmaxFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   /// <summary>
   /// Traverses graph to check if the given starting NodeUnit is part of a valid Mul -> Softmax sequence.

@@ -544,7 +544,8 @@ GeluFusion::GeluFusion(std::vector<const OrtNodeUnit*>&& node_units,
                        OrtNodeUnitIODef validation_final_output,
                        OrtNodeUnitIODef gelu_root_input,
                        OrtNodeUnitIODef gelu_final_output)
-    : node_units_(std::move(node_units)),
+    : IQnnNodeGroup(validation_root_input),  // copy before moving into member
+      node_units_(std::move(node_units)),
       target_node_unit_(target_node_unit),
       validation_root_input_(std::move(validation_root_input)),
       validation_final_output_(std::move(validation_final_output)),
@@ -552,7 +553,7 @@ GeluFusion::GeluFusion(std::vector<const OrtNodeUnit*>&& node_units,
       gelu_final_output_(std::move(gelu_final_output)) {
 }
 
-Ort::Status GeluFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status GeluFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return ValidateOnQnn(qmw, node_units_, validation_root_input_, validation_final_output_);
 }

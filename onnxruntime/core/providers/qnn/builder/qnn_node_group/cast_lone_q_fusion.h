@@ -12,7 +12,8 @@ namespace qnn {
 /// </summary>
 class CastLoneQFusion : public IQnnNodeGroup {
  public:
-  explicit CastLoneQFusion(gsl::span<const OrtNodeUnit* const> node_units) {
+  explicit CastLoneQFusion(gsl::span<const OrtNodeUnit* const> node_units)
+      : IQnnNodeGroup(node_units[0]->Inputs()[0]) {
     if (node_units.size() != 2) {
       ORT_CXX_API_THROW("Pattern expect exactly 2 OrtNodeUnits.", ORT_EP_FAIL);
     }
@@ -22,7 +23,6 @@ class CastLoneQFusion : public IQnnNodeGroup {
 
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(CastLoneQFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return node_units_[0]; }
@@ -38,6 +38,9 @@ class CastLoneQFusion : public IQnnNodeGroup {
       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
       const Ort::Logger& logger);
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
  private:
   std::array<const OrtNodeUnit*, 2> node_units_;

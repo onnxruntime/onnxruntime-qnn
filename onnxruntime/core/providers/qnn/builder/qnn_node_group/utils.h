@@ -175,5 +175,12 @@ inline bool IsSingleElementShape(const std::vector<int64_t>& shape) {
 /// </summary>
 std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const OrtValueInfo* value_info);
 
+/// <summary>
+/// Returns an error Status when the HTP backend is V68 and the given tensor is FP32 or FP16.
+/// Call at the top of fusion IsSupported() implementations that support float input paths,
+/// to ensure they fall back to CPU rather than failing at QNN compile time on V68.
+/// </summary>
+Ort::Status RejectIfHtpV68Float(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& io_def);
+
 }  // namespace qnn
 }  // namespace onnxruntime

@@ -44,11 +44,13 @@ class DqlDqFusion : public IQnnNodeGroup {
 
   static constexpr std::string_view kType = "DqlDqFusion";
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return dql_; }
   std::string_view Type() const override { return kType; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper,

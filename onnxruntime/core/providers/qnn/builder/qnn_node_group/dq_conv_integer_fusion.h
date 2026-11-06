@@ -48,11 +48,13 @@ class DQConvIntegerFusion : public IQnnNodeGroup {
   // Used as Type() and to detect sibling claims on a shared DQL (see TryFusion).
   static constexpr std::string_view kType = "DQConvIntegerFusion";
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return conv_integer_; }
   std::string_view Type() const override { return kType; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper,

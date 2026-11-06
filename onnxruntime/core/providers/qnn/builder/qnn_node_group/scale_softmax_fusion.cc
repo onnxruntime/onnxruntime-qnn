@@ -243,8 +243,8 @@ gsl::span<const OrtNodeUnit* const> ScaleSoftmaxFusion::GetNodeUnits() const {
   return node_units_;
 }
 
-Ort::Status ScaleSoftmaxFusion::IsSupported(QnnModelWrapper& qnn_model_wrapper,
-                                            [[maybe_unused]] const Ort::Logger& logger) const {
+Ort::Status ScaleSoftmaxFusion::IsQnnSupported(QnnModelWrapper& qnn_model_wrapper,
+                                                [[maybe_unused]] const Ort::Logger& logger) const {
   return ValidateOnQnn(qnn_model_wrapper, *node_units_[0], *node_units_[1]);
 }
 

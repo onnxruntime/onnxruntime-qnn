@@ -169,12 +169,13 @@ std::unique_ptr<IQnnNodeGroup> DqlDqFusion::TryFusion(
 // ---------------------------------------------------------------------------
 DqlDqFusion::DqlDqFusion(const OrtNodeUnit* dql, const OrtNodeUnit* dq,
                          std::string float_input_name, std::string float_output_name)
-    : dql_(dql),
+    : IQnnNodeGroup(dql->Inputs()[0]),
+      dql_(dql),
       node_units_({dql, dq}),
       float_input_name_(std::move(float_input_name)),
       float_output_name_(std::move(float_output_name)) {}
 
-Ort::Status DqlDqFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status DqlDqFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return CreateOrValidateOnQnn(qmw, /*validate=*/true);
 }

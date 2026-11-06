@@ -37,6 +37,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/tanh_gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/ort_api.h"
@@ -44,16 +45,25 @@
 namespace onnxruntime {
 namespace qnn {
 
+IQnnNodeGroup::IQnnNodeGroup(OrtNodeUnitIODef root_input)
+    : root_input_(std::move(root_input)) {}
+
+Ort::Status IQnnNodeGroup::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+  RETURN_IF_ERROR(RejectIfHtpV68Float(qmw, root_input_));
+  return IsQnnSupported(qmw, logger);
+}
+
 /// <summary>
 /// A IQnnNodeGroup class that wraps a single NodeUnit. Most NodeUnits in the ONNX graph will
 /// be wrapped by this class.
 /// </summary>
 class QnnNodeUnitWrapper : public IQnnNodeGroup {
  public:
-  explicit QnnNodeUnitWrapper(const OrtNodeUnit& node_unit) : node_unit_(&node_unit) {}
+  explicit QnnNodeUnitWrapper(const OrtNodeUnit& node_unit)
+      : IQnnNodeGroup(OrtNodeUnitIODef{}), node_unit_(&node_unit) {}
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnNodeUnitWrapper);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override {
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override {
     const std::string& op_type = node_unit_->OpType();
     const auto* op_builder = qnn::GetOpBuilder(op_type);
 
@@ -65,6 +75,30 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
     // op_affinity gate, generic across all op types (not just GroupQueryAttention): if the config
     // pins this op type to a different backend, decline before reaching the op builder.
     RETURN_IF_ERROR(qmw.GetModelSettings().op_affinity.Evaluate(op_type, qmw.GetQnnBackendType()));
+
+    // HTP v68 does not support FP16 or FP32 tensors for compute ops. Reject any such op here,
+    // before dispatch to individual op builders, so the check cannot be bypassed by overrides.
+    // QuantizeLinear and DequantizeLinear are exempt: they are type-bridging ops that inherently
+    // have FP32/FP16 on one side and are valid on all HTP architectures.
+    if (IsNpuBackend(qmw.GetQnnBackendType()) &&
+        qmw.GetHtpArch() == QNN_HTP_DEVICE_ARCH_V68 &&
+        op_type != "QuantizeLinear" && op_type != "DequantizeLinear") {
+      const auto check_io = [&](const std::vector<OrtNodeUnitIODef>& io_defs) -> Ort::Status {
+        for (const auto& io_def : io_defs) {
+          if (!io_def.Exists()) {
+            continue;
+          }
+          TensorInfo tensor_info = {};
+          RETURN_IF_ERROR(qmw.GetTensorInfo(io_def, tensor_info));
+          const Qnn_DataType_t qnn_dt = tensor_info.qnn_data_type;
+          RETURN_IF(qnn_dt == QNN_DATATYPE_FLOAT_32 || qnn_dt == QNN_DATATYPE_FLOAT_16,
+                    "QNN EP does not support FP32 or FP16 tensors on HTP v68.");
+        }
+        return Ort::Status();
+      };
+      RETURN_IF_ERROR(check_io(node_unit_->Inputs()));
+      RETURN_IF_ERROR(check_io(node_unit_->Outputs()));
+    }
 
     return op_builder->IsOpSupported(qmw, *node_unit_, logger);
   }

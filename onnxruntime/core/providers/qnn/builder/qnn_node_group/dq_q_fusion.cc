@@ -211,10 +211,11 @@ std::unique_ptr<IQnnNodeGroup> DQQFusion::TryFusion(
 }
 
 DQQFusion::DQQFusion(const OrtNodeUnit& dq_node_unit, const OrtNodeUnit& q_node_unit)
-    : node_units_{&dq_node_unit, &q_node_unit} {
+    : IQnnNodeGroup(dq_node_unit.Inputs()[0]),
+      node_units_{&dq_node_unit, &q_node_unit} {
 }
 
-Ort::Status DQQFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status DQQFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   RETURN_IF_ERROR(ValidateOnQnn(qmw, *node_units_[0], *node_units_[1]));
 

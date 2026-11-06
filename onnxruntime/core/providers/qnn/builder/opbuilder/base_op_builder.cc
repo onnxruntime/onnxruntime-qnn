@@ -81,6 +81,19 @@ Ort::Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
   if (IsCpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckCpuDataTypes(input_qnn_dtypes, output_qnn_dtypes);
   } else if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    // HTP V68 does not support FP32 or FP16 tensors. Reject early so the node
+    // falls back to CPU at GetCapability time rather than failing at compile.
+    if (qnn_model_wrapper.GetHtpArch() == QNN_HTP_DEVICE_ARCH_V68) {
+      auto has_float = [](const std::vector<Qnn_DataType_t>& dtypes) {
+        for (Qnn_DataType_t dt : dtypes) {
+          if (dt == QNN_DATATYPE_FLOAT_32 || dt == QNN_DATATYPE_FLOAT_16) return true;
+        }
+        return false;
+      };
+      if (has_float(input_qnn_dtypes) || has_float(output_qnn_dtypes)) {
+        return MAKE_EP_FAIL("QNN EP does not support FP32 or FP16 tensors on HTP v68.");
+      }
+    }
     return CheckHtpDataTypes(input_qnn_dtypes, output_qnn_dtypes);
   } else if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckGpuDataTypes(input_qnn_dtypes, output_qnn_dtypes);

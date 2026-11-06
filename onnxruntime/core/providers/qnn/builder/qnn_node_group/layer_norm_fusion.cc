@@ -390,7 +390,8 @@ LayerNormFusion::LayerNormFusion(std::vector<const OrtNodeUnit*>&& node_units,
                                  std::vector<uint32_t> axes,
                                  std::string gamma_input_name,
                                  std::string beta_input_name)
-    : node_units_(std::move(node_units)),
+    : IQnnNodeGroup(node_units[0]->Inputs()[0]),
+      node_units_(std::move(node_units)),
       target_node_unit_(target_node_unit),
       epsilon_(epsilon),
       axes_(std::move(axes)),
@@ -417,7 +418,7 @@ static const OrtNodeUnitIODef* FindInputByName(gsl::span<const OrtNodeUnit* cons
   return nullptr;
 }
 
-Ort::Status LayerNormFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status LayerNormFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   bool gamma_ok = false, beta_ok = false;
   const OrtNodeUnitIODef* gamma_def = FindInputByName(node_units_, gamma_input_name_, gamma_ok);

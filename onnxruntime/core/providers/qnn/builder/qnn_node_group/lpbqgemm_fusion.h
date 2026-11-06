@@ -31,11 +31,13 @@ class LowPowerBlockQuantizedGemmFusion : public IQnnNodeGroup {
                                    const OrtNodeUnit& Output_QL_node_unit);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(LowPowerBlockQuantizedGemmFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "LowPowerBlockQuantizedGemmFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper,

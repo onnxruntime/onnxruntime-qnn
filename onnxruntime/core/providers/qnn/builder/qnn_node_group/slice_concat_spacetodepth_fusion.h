@@ -50,7 +50,8 @@ class SliceConcatSpaceToDepthFusion : public IQnnNodeGroup {
                                 const OrtNodeUnit& root_input_owner,
                                 std::array<int64_t, 4> dcr_phase_permutation,
                                 uint32_t input_channels)
-      : root_input_owner_(&root_input_owner),
+      : IQnnNodeGroup(root_input_owner.Inputs()[0]),
+        root_input_owner_(&root_input_owner),
         phase_permutation_(dcr_phase_permutation),
         channel_count_(input_channels) {
     node_units_.reserve(tiled_node_units.size());
@@ -61,11 +62,13 @@ class SliceConcatSpaceToDepthFusion : public IQnnNodeGroup {
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(SliceConcatSpaceToDepthFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return concat_node_unit_; }
   std::string_view Type() const override { return "SliceConcatSpaceToDepthFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
   static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper,

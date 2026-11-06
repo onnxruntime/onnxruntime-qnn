@@ -16,14 +16,17 @@ Defined in [qnn_node_group.h](../onnxruntime/core/providers/qnn/builder/qnn_node
 
 | Method | Contract |
 |---|---|
-| `Ort::Status IsSupported(QnnModelWrapper&, const Ort::Logger&) const` | Return OK iff the fused op can be emitted on this backend. Called during `GetCapability`. |
+| `Ort::Status IsSupported(QnnModelWrapper&, const Ort::Logger&) const` | **Non-virtual template method.** Runs `RejectIfHtpV68Float` on the root io_def stored at construction, then delegates to `IsQnnSupported`. Do **not** override this. |
+| `Ort::Status IsQnnSupported(QnnModelWrapper&, const Ort::Logger&) const` | **Pure virtual.** Fusion-specific support check. Called by `IsSupported` after the V68 guard passes. This is the hook you implement — it replaces the old `IsSupported` override. |
 | `Ort::Status AddToModelBuilder(QnnModelWrapper&, const Ort::Logger&) const` | Emit the fused QNN op(s). Called during `Compile`. |
 | `gsl::span<const OrtNodeUnit* const> GetNodeUnits() const` | All NodeUnits this group claims. Order is **not** required to be topological — it's used only to register claimed NodeUnits and enumerate nodes for partitioning. Any `node_units_[0]`/`.back()` dependence is the fusion's own private convention. |
 | `const OrtNodeUnit* GetTargetNodeUnit() const` | The topological anchor — the convergence point of all input paths. Drives the group's slot in the emission sort (§2). |
 | `std::string_view Type() const` | Human-readable type string. **Load-bearing:** used as a JSON key in the framework op trace (`fusion_count`) — renaming is a breaking change. |
 
+**Constructor contract:** Every fusion subclass must call the protected base constructor `IQnnNodeGroup(OrtNodeUnitIODef root_input)` with its primary ("root") input io_def. `IsSupported` passes this def to `RejectIfHtpV68Float` — if the backend is HTP v68 and the def's QNN type is `FLOAT_32` or `FLOAT_16`, the fusion is rejected before `IsQnnSupported` is called. Fusions on integer paths (e.g. `DQConvIntegerFusion`, `DQMatMulIntegerFusion`) pass `OrtNodeUnitIODef{}` (empty); the guard is a no-op for empty defs. This wires up the HTP v68 float rejection automatically — new fusions get it for free with no per-fusion boilerplate.
+
 - The interface does **not** declare `TryFusion` — that is a *static* factory on each subclass, referenced only by the registry (§2).
-- A single concrete NodeUnit is wrapped as an `IQnnNodeGroup` via the built-in `QnnNodeUnitWrapper` in [qnn_node_group.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/qnn_node_group.cc) — it is the only group type that delegates to op-builders.
+- A single concrete NodeUnit is wrapped as an `IQnnNodeGroup` via the built-in `QnnNodeUnitWrapper` in [qnn_node_group.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/qnn_node_group.cc) — it is the only group type that delegates to op-builders. It passes `OrtNodeUnitIODef{}` to the base (bypassing the single-def guard) and performs its own comprehensive per-io-def V68 check loop inside `IsQnnSupported`.
 
 ### Lifecycle (matching runs in both `GetCapability` and `Compile`)
 
@@ -85,8 +88,9 @@ Canonical structure:
 1. **Guard the trigger op first** — the map key is the only enforcement (e.g. [dq_q_fusion.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/dq_q_fusion.cc) re-checks op type + `SingleNode`).
 2. **Walk the graph via NodeUnit helpers** (never raw `OrtNode` edges).
 3. **Verify structural / constant constraints**; return `nullptr` on any mismatch.
-4. **Validate on QNN** before committing (§5).
-5. **Construct and return** the `unique_ptr<IQnnNodeGroup>`.
+4. **Construct and return** the `unique_ptr<IQnnNodeGroup>`.
+
+**`TryFusion` is a pure topology check — it does not call `backendValidateOpConfig` or mutate the `QnnModelWrapper`.** QNN validation happens later, in `IsQnnSupported` (called by `IQnnNodeGroup::IsSupported` from the dispatcher). This is a deliberate design: keeping `TryFusion` side-effect-free allows the dispatcher to safely attempt multiple fusion candidates in sequence without needing a validation-state rollback guard.
 
 ### `SingleNode` vs `QDQGroup` and how fusions see quant params
 
@@ -134,7 +138,7 @@ Supporting machinery:
 - **Node naming**: `utils::UniqueNameGenerator().New(node_unit)`. This generator is **stateful/global** (a process-wide counter, see `UniqueNameGenerator` in [qnn_utils.h](../onnxruntime/core/providers/qnn/builder/qnn_utils.h)). Safe for one-shot node names; but if a *decomposing* fusion mints intermediate **tensor** names that must be referenced later, see the cross-pass footgun in [qnn_op_builder_guidelines.md](qnn_op_builder_guidelines.md) §12.5 — use a deterministic rename, not the global generator, for names that must be stable across the two passes.
 - **Root input / final output**: collapse N NodeUnits into one QNN op by reading the *first* NodeUnit's relevant input and the *last* NodeUnit's output. Quant-heavy fusions instead emit several QNN ops and inject DQ/Transpose for weights (`DQMatMulIntegerFusion` / `DQConvIntegerFusion`).
 
-## 5. Validation Pattern (`IsSupported` Dry-Run)
+## 5. Validation Pattern (`IsQnnSupported` Dry-Run)
 
 The universal idiom: **one `CreateOrValidateOnQnn` body, two macro entry points**, so support-checking and emission can never diverge ([gelu_fusion.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/gelu_fusion.cc)):
 
@@ -145,19 +149,21 @@ The universal idiom: **one `CreateOrValidateOnQnn` body, two macro entry points*
 
 - The `validate` branch calls `qmw.ValidateQnnNode(...)` (constructs the QNN op, asks the backend, discards). The `!validate` branch calls `AddTensorWrapper` + `CreateQnnNode`.
 - Note the difference from op-builders: an op builder threads a single `do_op_validation` flag *into* `CreateQnnNode`, which internally forwards to `ValidateQnnNode` when true ([qnn_model_wrapper.cc](../onnxruntime/core/providers/qnn/builder/qnn_model_wrapper.cc)). Fusions instead branch explicitly — `ValidateQnnNode` in the validate branch, `CreateQnnNode(..., /*validate=*/false)` in the create branch. Same backend dry-run, two encodings; **don't pass `validate=true` to `CreateQnnNode` from a fusion.**
-- `IsSupported` → `ValidateOnQnn(...)`; `AddToModelBuilder` → `CreateOnQnn(...)`.
-- **`TryFusion` calls `ValidateOnQnn` as its last gate** and returns `nullptr` if it fails ([dq_q_fusion.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/dq_q_fusion.cc)) — this catches backend-specific rejections (dtype, rank) **before** the NodeUnits get claimed.
+- `IsQnnSupported` → `ValidateOnQnn(...)`; `AddToModelBuilder` → `CreateOnQnn(...)`.
+- **`IsQnnSupported` is the validate gate.** Backend-specific rejections (dtype, rank, arch) are caught here before the NodeUnits are committed to the partition. `TryFusion` is a pure topology check and does **not** call `ValidateOnQnn` (see §3).
 - **Graceful failure = return `nullptr` / non-OK `Ort::Status`.** Never throw, never log ERROR — the dispatcher falls through to the next factory or to `QnnNodeUnitWrapper`.
 - Exception precedent: `ChannelShuffleFusion` deliberately skips the validate API (backend inconsistency) and only emits in the `!validate` branch ([channel_shuffle_fusion.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/channel_shuffle_fusion.cc)).
 
 ### Backend awareness (HTP / CPU / GPU)
 
-`IsSupported`/`TryFusion` receive no backend enum directly, but `QnnModelWrapper::GetQnnBackendType()` exposes it and fusions routinely gate on it:
+`IsQnnSupported`/`TryFusion` receive no backend enum directly, but `QnnModelWrapper::GetQnnBackendType()` exposes it and fusions routinely gate on it:
 - LPBQ MatMul/Gemm require NPU (`IsNpuBackend(...)`, [lpbqmatmul_fusion.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/lpbqmatmul_fusion.cc), [lpbqgemm_fusion.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.cc));
 - `ReshapeGemmFusionGroup` bails on GPU ([reshape_gemm_fusion.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/reshape_gemm_fusion.cc));
 - `SpaceToDepthFusion` branches on backend ([spacetodepth_fusion.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/spacetodepth_fusion.cc)).
 
-If your fused QNN op is only available on some backends, gate in **`TryFusion`** (so the pattern falls back cleanly to single-op groups) rather than only in `IsSupported`.
+If your fused QNN op is only available on some backends, gate in **`TryFusion`** (so the pattern falls back cleanly to single-op groups) rather than only in `IsQnnSupported`.
+
+**HTP v68 float rejection is automatic.** `IQnnNodeGroup::IsSupported` calls `RejectIfHtpV68Float` on the root io_def before `IsQnnSupported`, so float-input fusions on v68 are rejected without any code in `IsQnnSupported`. You must pass the correct root io_def to the base constructor (typically the activation input) to get this guard. Fusions that accept only quantized (integer) inputs pass `OrtNodeUnitIODef{}` — the guard short-circuits on empty defs and is a no-op.
 
 ### What happens if `AddToModelBuilder` fails in Phase 2
 
@@ -198,7 +204,7 @@ If `AddToModelBuilder` returns non-OK during Compile, the error is logged at ERR
 2. **Wrong target NodeUnit.** `GetTargetNodeUnit` determines the group's slot in the topological sort — a group is appended to the sorted list when the NodeUnit walk reaches its target ([qnn_node_group.cc](../onnxruntime/core/providers/qnn/builder/qnn_node_group/qnn_node_group.cc)). (It does **not** control whether/where emission happens — every group is emitted unconditionally.) Picking a target upstream of where inputs actually converge can place the group before a producer it depends on.
 3. **Forgetting the QDQ-start gate.** If your trigger op is normally a QDQ group, add it to the `SingleNode`-exception list in `TryQnnFusions()`, or `TryFusion` is never called.
 4. **Mixed QDQ/float topology.** A pattern partially wrapped in standalone Q/DQ silently changes numerics — copy GELU's `WarnAndFailOnStandaloneQdq` guard and bail. Also handle exporter-duplicated tensor names (`/duplicated`) when comparing the root input.
-5. **Skipping the validate gate in `TryFusion`.** Claiming NodeUnits without running `ValidateOnQnn` before construction can strand a pattern the backend can't compile: marked supported in Phase 1, fails in Phase 2, aborting `Compile`. The gate may live textually in `TryFusion` or in the shared body called from it — but it must run before the group is returned. Conforming examples: `dq_q_fusion`, `channel_shuffle_fusion`.
+5. **Skipping the validate gate in `IsQnnSupported`.** Returning OK from `IsQnnSupported` without calling `ValidateOnQnn` can strand a pattern the backend can't compile: marked supported in Phase 1, fails in Phase 2, aborting `Compile`. `TryFusion` must not call `ValidateOnQnn` (it is a pure topology check); the gate belongs in `IsQnnSupported`. Conforming examples: `dq_q_fusion`, `channel_shuffle_fusion`.
 6. **Ordering among fusions sharing a start op.** More specific patterns must precede general ones — first non-null wins.
 7. **Validation/creation IODef drift.** When the pattern is sandwiched in DQ/Q, validate against the *outer* (quantized) tensors but emit against the *inner* (float) tensors — keep two IODef sets like GELU.
 8. **Graph-output / multi-consumer leaks.** Don't hand-roll edge walks; the helpers reject nodes that produce graph outputs or have >1 consumer. Fusing a node whose intermediate output is consumed elsewhere corrupts the graph.

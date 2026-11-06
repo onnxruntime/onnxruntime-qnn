@@ -39,15 +39,18 @@ class ReshapeTransposeFusion : public IQnnNodeGroup {
   ReshapeTransposeFusion(const OrtNodeUnit& reshape_node_unit,
                          const OrtNodeUnit& transpose_node_unit,
                          std::vector<int64_t> fused_perm)
-      : node_units_{&reshape_node_unit, &transpose_node_unit},
+      : IQnnNodeGroup(reshape_node_unit.Inputs()[0]),
+        node_units_{&reshape_node_unit, &transpose_node_unit},
         fused_perm_(std::move(fused_perm)) {}
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ReshapeTransposeFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return node_units_[0]; }
   std::string_view Type() const override { return "ReshapeTransposeFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
   static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper,

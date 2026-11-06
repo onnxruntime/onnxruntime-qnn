@@ -70,11 +70,13 @@ class GeluFusion : public IQnnNodeGroup {
              OrtNodeUnitIODef gelu_final_output);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(GeluFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "GeluFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   /// <summary>
   /// Traverses graph to check if the given starting NodeUnit is part of a valid Gelu pattern.

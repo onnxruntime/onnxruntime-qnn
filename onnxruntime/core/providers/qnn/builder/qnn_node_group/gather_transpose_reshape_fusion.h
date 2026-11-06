@@ -52,7 +52,8 @@ class GatherTransposeReshapeFusion : public IQnnNodeGroup {
                                         int64_t idx0,
                                         int64_t idx1,
                                         std::vector<uint32_t> new_perm_4d)
-      : index_pattern_(index_pattern),
+      : IQnnNodeGroup(node_units[0]->Inputs()[0]),
+        index_pattern_(index_pattern),
         idx0_(idx0),
         idx1_(idx1),
         new_perm_4d_(std::move(new_perm_4d)) {
@@ -65,11 +66,13 @@ class GatherTransposeReshapeFusion : public IQnnNodeGroup {
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(GatherTransposeReshapeFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return node_units_[0]; }
   std::string_view Type() const override { return "GatherTransposeReshapeFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
   /// Traverses the graph starting from a Gather NodeUnit to check whether it is the
   /// head of a valid Gather -> Transpose -> Reshape pattern with rank-6 intermediate

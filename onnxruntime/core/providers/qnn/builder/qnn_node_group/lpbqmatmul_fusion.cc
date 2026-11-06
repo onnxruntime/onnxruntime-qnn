@@ -116,7 +116,8 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedMatMulFusion::TryFusion(
 LowPowerBlockQuantizedMatMulFusion::LowPowerBlockQuantizedMatMulFusion(const OrtNodeUnit& Scale_DQL_node_unit,
                                                                        const OrtNodeUnit* W_QL_node_unit,
                                                                        const OrtNodeUnit& MatMul_node_unit)
-    : node_units_{&Scale_DQL_node_unit,
+    : IQnnNodeGroup(MatMul_node_unit.Inputs()[0]),
+      node_units_{&Scale_DQL_node_unit,
                   W_QL_node_unit,
                   &MatMul_node_unit} {
   // Populate filtered_node_units_ immediately
@@ -127,7 +128,7 @@ LowPowerBlockQuantizedMatMulFusion::LowPowerBlockQuantizedMatMulFusion(const Ort
   }
 }
 
-Ort::Status LowPowerBlockQuantizedMatMulFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status LowPowerBlockQuantizedMatMulFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   return CreateOrValidateOnQnn(qmw, *node_units_[0], node_units_[1], *node_units_[2], logger, true);
 }
 

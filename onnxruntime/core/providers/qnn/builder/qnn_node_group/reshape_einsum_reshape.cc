@@ -311,8 +311,8 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
 
 }  // namespace
 
-Ort::Status ReshapeEinsumReshapeNodeGroup::IsSupported(QnnModelWrapper& qnn_model_wrapper,
-                                                       const Ort::Logger& logger) const {
+Ort::Status ReshapeEinsumReshapeNodeGroup::IsQnnSupported(QnnModelWrapper& qnn_model_wrapper,
+                                                           const Ort::Logger& logger) const {
   return CreateOrValidateOnQnn(qnn_model_wrapper, *node_units_[0], *node_units_[1], *node_units_[2], logger, true);
 }
 

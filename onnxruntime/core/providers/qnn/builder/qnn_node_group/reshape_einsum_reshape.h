@@ -34,10 +34,9 @@ class ReshapeEinsumReshapeNodeGroup : public IQnnNodeGroup {
   ReshapeEinsumReshapeNodeGroup(const OrtNodeUnit* pre_reshape_node_unit,
                                 const OrtNodeUnit* einsum_node_unit,
                                 const OrtNodeUnit* post_reshape_node_unit)
-      : node_units_{pre_reshape_node_unit, einsum_node_unit, post_reshape_node_unit} {}
+      : IQnnNodeGroup(pre_reshape_node_unit->Inputs()[0]),
+        node_units_{pre_reshape_node_unit, einsum_node_unit, post_reshape_node_unit} {}
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ReshapeEinsumReshapeNodeGroup);
-
-  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
   Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
@@ -52,6 +51,9 @@ class ReshapeEinsumReshapeNodeGroup : public IQnnNodeGroup {
       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
       const Ort::Logger& logger);
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
  private:
   std::array<const OrtNodeUnit*, 3> node_units_;

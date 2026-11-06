@@ -27,7 +27,8 @@ class ChannelShuffleFusion : public IQnnNodeGroup {
   struct NoHeadTransposeTag {};
 
   // Full 5-node pattern: T_head, Reshape1, T_mid, Reshape2, T_tail
-  explicit ChannelShuffleFusion(gsl::span<const OrtNodeUnit* const> node_units) {
+  explicit ChannelShuffleFusion(gsl::span<const OrtNodeUnit* const> node_units)
+      : IQnnNodeGroup(node_units[0]->Inputs()[0]) {
     if (node_units.size() != 5) {
       ORT_CXX_API_THROW("Pattern expect exactly 5 NodeUnits.", ORT_EP_FAIL);
     }
@@ -39,7 +40,8 @@ class ChannelShuffleFusion : public IQnnNodeGroup {
     has_head_transpose_ = true;
   }
   // 4-node pattern (no head transpose): Reshape1, T_mid, Reshape2, T_tail
-  explicit ChannelShuffleFusion(gsl::span<const OrtNodeUnit* const> node_units, NoHeadTransposeTag) {
+  explicit ChannelShuffleFusion(gsl::span<const OrtNodeUnit* const> node_units, NoHeadTransposeTag)
+      : IQnnNodeGroup(node_units[0]->Inputs()[0]) {
     if (node_units.size() != 4) {
       ORT_CXX_API_THROW("No-head-transpose pattern expects exactly 4 NodeUnits.", ORT_EP_FAIL);
     }
@@ -52,11 +54,13 @@ class ChannelShuffleFusion : public IQnnNodeGroup {
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ChannelShuffleFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return has_head_transpose_ ? node_units_[0] : node_units_[1]; }
   std::string_view Type() const override { return "ChannelShuffleFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
   /// <summary>
   /// Traverses graph to check if the given starting NodeUnit (Transpose) is part of a channel shuffle pattern.

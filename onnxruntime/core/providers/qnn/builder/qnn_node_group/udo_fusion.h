@@ -31,11 +31,13 @@ class UDOQDQFusion : public IQnnNodeGroup {
       const std::map<size_t, const OrtNodeUnit*>& output_q_units);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(UDOQDQFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "UDOQDQFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   /// <summary>
   /// Traverses graph to check if the given starting OrtNodeUnit is part of a valid sequence.

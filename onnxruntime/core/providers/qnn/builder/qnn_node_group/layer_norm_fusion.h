@@ -55,11 +55,13 @@ class LayerNormFusion : public IQnnNodeGroup {
                   std::string beta_input_name);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(LayerNormFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "LayerNormFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   // One entry point per affine-tail variant. They are registered longest-first in the fusion table
   // (qnn_node_group.cc), so the first variant that matches and validates on QNN wins.

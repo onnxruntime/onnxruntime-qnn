@@ -33,15 +33,18 @@ class L2NormFusion : public IQnnNodeGroup {
   L2NormFusion(const OrtNodeUnit& reducel2_node_unit,
                const OrtNodeUnit& add_node_unit,
                const OrtNodeUnit& div_node_unit)
-      : node_units_{&reducel2_node_unit, &add_node_unit, &div_node_unit} {
+      : IQnnNodeGroup(reducel2_node_unit.Inputs()[0]),
+        node_units_{&reducel2_node_unit, &add_node_unit, &div_node_unit} {
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(L2NormFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return node_units_[2]; }
   std::string_view Type() const override { return "L2NormFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   /// <summary>
   /// Traverses the graph from a starting ReduceL2 NodeUnit to check for a valid
