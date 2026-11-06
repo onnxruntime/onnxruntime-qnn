@@ -2203,6 +2203,17 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
       static_assert(true, "");                                                                         \
   }
 
+#define SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(arch)                                                             \
+  do {                                                                                                   \
+    if (QnnHTPBackendTests::HasPlatformAttributes() &&                                                   \
+        QnnHTPBackendTests::GetPlatformAttributes().htp_arch == (arch)) {                                \
+      if (::testing::internal::AlwaysTrue()) {                                                           \
+        GTEST_SKIP() << "HTP test skipped on architecture == " + std::to_string(static_cast<int>(arch)); \
+      } else                                                                                             \
+        static_assert(true, "");                                                                         \
+    }                                                                                                    \
+  } while (0)
+
 #if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
 
 inline HRESULT CreateD3D12Buffer(
