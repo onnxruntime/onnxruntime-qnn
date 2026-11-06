@@ -20,8 +20,6 @@ namespace onnxruntime {
 namespace qnn {
 
 class WindowsFileMapper : public FileMappingInterface {
-  using MappedMemoryPtr = std::unique_ptr<char[], std::function<void(void*)>>;
-
  public:
   explicit WindowsFileMapper(const Ort::Logger& logger);
   ~WindowsFileMapper() override;
@@ -31,11 +29,14 @@ class WindowsFileMapper : public FileMappingInterface {
   Ort::Status GetContextBinMappedMemoryPtr(const std::string& bin_filepath,
                                            void** mapped_data_ptr) override;
 
+  Ort::Status MapContextBinary(const std::string& bin_filepath,
+                               std::shared_ptr<char>& mapped_memory) override;
+
  private:
   // A container of smart pointers of mapview memory pointers to mapped context bins
   // key: filepath to context bin, value: smart pointer of mapview memory pointers
   std::mutex map_mutex_;
-  std::unordered_map<std::string, MappedMemoryPtr> mapped_memory_ptrs_;
+  std::unordered_map<std::string, std::shared_ptr<char>> mapped_memory_ptrs_;
   const Ort::Logger& logger_;
 };
 

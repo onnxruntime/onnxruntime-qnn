@@ -12,6 +12,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -1323,16 +1324,22 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     model_settings_.offload_graph_io_quantization = false;
   }
 
-  if (enable_file_mapped_weights_ && !rpcmem_library_) {
-    // Attempt to init rpcmem_library_ if needed. If this fails, then
-    // disable file mapped weights and proceed with normal operation
+  // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
+  // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
+  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
+                                                            runtime_capabilities,
+                                                            &logger_);
+
+  // Callback output uses ordinary loading; only native DMA loading needs this RPCMem setup.
+  if (enable_file_mapped_weights_ && !io_dispatch_->HasReadCallback() && !rpcmem_library_) {
+    // DMA import requires RPCMem. If initialization fails, keep CPU file
+    // mapping enabled and use ordinary context loading.
     std::string rpcmem_error;
     rpcmem_library_ = qnn::RpcMemLibraryManager::GetOrCreate(rpcmem_error);
     if (rpcmem_library_ == nullptr) {
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_WARNING,
-                  ("Unable to load RPCMem library: " + rpcmem_error + " - Disabling file mapped weights.").c_str());
-      enable_file_mapped_weights_ = false;
+                  ("Unable to load RPCMem library: " + rpcmem_error + " - DMA loading is unavailable; retaining CPU file mapping for ordinary context loading.").c_str());
     }
   }
 
@@ -1723,20 +1730,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     etwRegistrationManager.RegisterInternalCallback(callback_ETWSink_provider_);
   }
 #endif
-
-  // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
-  // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
-  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
-                                                            runtime_capabilities,
-                                                            &logger_);
-
-  // File mapping and encryption are mutually exclusive: an App-provided read callback replaces
-  // the on-disk read, so file mapping must be off when a read callback is registered.
-  if (enable_file_mapped_weights_ && io_dispatch_->HasReadCallback()) {
-    enable_file_mapped_weights_ = false;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "EPContext read callback registered; disabling file mapping for this session.");
-  }
 }
 
 QnnEp::~QnnEp() {
