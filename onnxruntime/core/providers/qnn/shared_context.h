@@ -28,13 +28,10 @@ class SharedContext {
                        [&producer](const SharedQnnModel& entry) { return entry.producer == producer; });
   }
 
-  bool HasQnnModel(const std::string& model_name,
-                   const std::shared_ptr<qnn::QnnBackendManager>& producer) {
+  bool HasSharedQnnModel(const std::string& model_name,
+                         const std::shared_ptr<qnn::QnnBackendManager>& producer) {
     const std::lock_guard<std::mutex> lock(mtx_);
-    auto it = std::find_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
-                           [&model_name, &producer](const SharedQnnModel& entry) {
-                             return entry.producer == producer && entry.qnn_model->Name() == model_name;
-                           });
+    auto it = FindSharedQnnModel(model_name, producer);
     return it != shared_qnn_models_.end();
   }
 
@@ -42,10 +39,7 @@ class SharedContext {
       const std::string& model_name,
       const std::shared_ptr<qnn::QnnBackendManager>& producer) {
     const std::lock_guard<std::mutex> lock(mtx_);
-    auto it = std::find_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
-                           [&model_name, &producer](const SharedQnnModel& entry) {
-                             return entry.producer == producer && entry.qnn_model->Name() == model_name;
-                           });
+    auto it = FindSharedQnnModel(model_name, producer);
     if (it == shared_qnn_models_.end()) {
       return nullptr;
     }
@@ -62,10 +56,7 @@ class SharedContext {
     bool graph_exist = false;
     for (auto& shared_qnn_model : shared_qnn_models) {
       auto& model_name = shared_qnn_model->Name();
-      auto it = std::find_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
-                             [&model_name, &producer](const SharedQnnModel& entry) {
-                               return entry.producer == producer && entry.qnn_model->Name() == model_name;
-                             });
+      auto it = FindSharedQnnModel(model_name, producer);
       if (it == shared_qnn_models_.end()) {
         shared_qnn_models_.push_back(SharedQnnModel{std::move(shared_qnn_model), producer, owner_token});
       } else {
@@ -129,6 +120,16 @@ class SharedContext {
     std::shared_ptr<qnn::QnnBackendManager> producer;
     QnnModelOwnerToken owner_token;
   };
+
+  // The caller must hold mtx_ while finding or using the returned iterator.
+  std::vector<SharedQnnModel>::iterator FindSharedQnnModel(
+      const std::string& model_name,
+      const std::shared_ptr<qnn::QnnBackendManager>& producer) {
+    return std::find_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
+                        [&model_name, &producer](const SharedQnnModel& entry) {
+                          return entry.producer == producer && entry.qnn_model->Name() == model_name;
+                        });
+  }
 
   SharedContext() = default;
   ~SharedContext() = default;

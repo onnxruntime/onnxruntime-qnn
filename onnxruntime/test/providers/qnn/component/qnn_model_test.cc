@@ -210,8 +210,8 @@ TEST(QnnUnit_ModelTest, SharedContextRemovalIsScopedToProducingSession) {
   // Sessions A and B share one manager. Destroying A must leave B's parked model
   // available for a later consumer session C.
   SharedContext::GetInstance().RemoveSharedQnnModels(owner_a);
-  EXPECT_FALSE(SharedContext::GetInstance().HasQnnModel("session_a_graph", ctx.manager));
-  EXPECT_TRUE(SharedContext::GetInstance().HasQnnModel("session_b_graph", ctx.manager));
+  EXPECT_FALSE(SharedContext::GetInstance().HasSharedQnnModel("session_a_graph", ctx.manager));
+  EXPECT_TRUE(SharedContext::GetInstance().HasSharedQnnModel("session_b_graph", ctx.manager));
   auto session_c_model =
       SharedContext::GetInstance().GetSharedQnnModel("session_b_graph", ctx.manager);
   ASSERT_NE(session_c_model, nullptr);

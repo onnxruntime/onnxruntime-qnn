@@ -2040,7 +2040,7 @@ static bool EpSharedContextsHasAllGraphs(
         return false;
       }
 
-      if (!SharedContext::GetInstance().HasQnnModel(node_name, producer)) {
+      if (!SharedContext::GetInstance().HasSharedQnnModel(node_name, producer)) {
         ORT_CXX_LOG(logger,
                     ORT_LOGGING_LEVEL_VERBOSE,
                     ("Graph: " +
@@ -2862,7 +2862,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
   if (share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels(qnn_backend_manager_)) {
     bool has_all_graphs = true;
     for (const auto& name_pair : names) {
-      if (!SharedContext::GetInstance().HasQnnModel(name_pair.second, qnn_backend_manager_)) {
+      if (!SharedContext::GetInstance().HasSharedQnnModel(name_pair.second, qnn_backend_manager_)) {
         has_all_graphs = false;
         ORT_CXX_LOG(logger_,
                     ORT_LOGGING_LEVEL_VERBOSE,
