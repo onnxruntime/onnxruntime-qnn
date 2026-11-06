@@ -134,6 +134,14 @@ function get_package_contentdir() {
     package_manager --print-content-dir --package="${pkg_name}"
 }
 
+function get_ort_x64_prebuilt_root() {
+    get_package_contentdir ort_prebuilt_linux_x64
+}
+
+function get_ort_aarch64_prebuilt_root() {
+    get_package_contentdir ort_prebuilt_linux_aarch64
+}
+
 #
 # Get the root of the managed QAIRT installation.
 #
