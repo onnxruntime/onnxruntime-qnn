@@ -21,6 +21,7 @@
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/shared_context.h"
 
 #include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
@@ -49,7 +50,7 @@ struct BindQnnTensorMemoryTag {
                                               const OrtMemoryInfo*,
                                               void*,
                                               uint32_t,
-                                              Qnn_ContextHandle_t,
+                                              const qnn::QnnBackendManager::ContextHandleLease&,
                                               Qnn_Tensor_t&);
   friend type GetQnnModelPrivateMember(BindQnnTensorMemoryTag);
 };
@@ -63,17 +64,17 @@ struct GraphInfoTag {
 };
 template struct QnnModelPrivateMember<GraphInfoTag, &qnn::QnnModel::graph_info_>;
 
+void SetQnnModelNameForTest(qnn::QnnModel& model, const std::string& name) {
+  const auto graph_info = GetQnnModelPrivateMember(GraphInfoTag{});
+  model.*graph_info = std::make_unique<qnn::GraphInfo>(
+      nullptr, name, nullptr, std::vector<qnn::QnnTensorWrapper>{}, std::vector<qnn::QnnTensorWrapper>{});
+}
+
 struct GraphEmitterTag {
   using type = std::unique_ptr<qnn::QnnGraphEmitter> qnn::QnnModel::*;
   friend type GetQnnModelPrivateMember(GraphEmitterTag);
 };
 template struct QnnModelPrivateMember<GraphEmitterTag, &qnn::QnnModel::qnn_graph_emitter_>;
-
-struct BackendContextsTag {
-  using type = std::vector<Qnn_ContextHandle_t> qnn::QnnBackendManager::*;
-  friend type GetQnnModelPrivateMember(BackendContextsTag);
-};
-template struct QnnModelPrivateMember<BackendContextsTag, &qnn::QnnBackendManager::contexts_>;
 
 struct ModelGraphContextStub {
   Qnn_GraphHandle_t graph;
@@ -81,6 +82,9 @@ struct ModelGraphContextStub {
 };
 
 void InstallModelGraphStubs(QNN_INTERFACE_VER_TYPE& qnn_interface) {
+  qnn_interface.contextFree = [](Qnn_ContextHandle_t, Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+    return QNN_SUCCESS;
+  };
   qnn_interface.graphRetrieve = [](Qnn_ContextHandle_t context, const char*,
                                    Qnn_GraphHandle_t* graph) -> Qnn_ErrorHandle_t {
     const auto& stub = *static_cast<ModelGraphContextStub*>(context);
@@ -116,7 +120,7 @@ TEST(QnnUnit_ModelTest, DeserializeKeepsEmitterAndMetadataHandlesTogetherOnSucce
   StubApiEnv env;
   StubBackendManager backend(env.api_ptrs, env.logger);
   InstallModelGraphStubs(backend.QnnInterface());
-  qnn::QnnModel model(backend.GetMutable(), env.api_ptrs);
+  qnn::QnnModel model(backend.GetMutable()->shared_from_this(), env.api_ptrs);
   auto& graph_info = model.*GetQnnModelPrivateMember(GraphInfoTag{});
   auto& emitter = model.*GetQnnModelPrivateMember(GraphEmitterTag{});
 
@@ -154,7 +158,7 @@ TEST(QnnUnit_ModelTest, SsrRecoveryReusesNewContextAndReplacesBothHandlePairs) {
   StubBackendManager backend(env.api_ptrs, env.logger);
   backend.BackendType() = qnn::QnnBackendType::HTP;
   InstallModelGraphStubs(backend.QnnInterface());
-  qnn::QnnModel model(backend.GetMutable(), env.api_ptrs);
+  qnn::QnnModel model(backend.GetMutable()->shared_from_this(), env.api_ptrs);
   InstallFakeGraphApiStubs(env.stub_ort_api);
   OrtGlobalApiOverride api_override(&env.stub_ort_api);
 
@@ -182,8 +186,7 @@ TEST(QnnUnit_ModelTest, SsrRecoveryReusesNewContextAndReplacesBothHandlePairs) {
 
   // Simulate another model having recovered the shared context: the old context
   // is no longer tracked, and GetQnnContext(0) returns the replacement.
-  auto& contexts = (*backend.GetMutable()).*GetQnnModelPrivateMember(BackendContextsTag{});
-  contexts.push_back(&replacement_context);
+  ASSERT_TRUE(backend.GetMutable()->AddQnnContextHandle(&replacement_context).IsOK());
   ASSERT_FALSE(backend.Get()->HasContextHandle(&original_context));
   ASSERT_TRUE(model.RecoverFromSSR(env.logger, qnn::EpContextIoDispatch()).IsOK());
 
@@ -237,7 +240,7 @@ struct QnnModelMinimalTestContext {
     ApiPtrs api_ptrs{stub_ort_api, stub_ep_api, stub_editor_api};
     manager = qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
     if (!manager) return;
-    model = std::make_unique<qnn::QnnModel>(manager.get(), api_ptrs);
+    model = std::make_unique<qnn::QnnModel>(manager, api_ptrs);
   }
 
   bool IsValid() const { return model != nullptr; }
@@ -287,12 +290,61 @@ struct QnnModelHtpTestContext {
     auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map);
     if (!status.IsOK()) return;
 
-    model = std::make_unique<qnn::QnnModel>(manager.get(), api_ptrs);
+    model = std::make_unique<qnn::QnnModel>(manager, api_ptrs);
     valid = true;
   }
 
   bool IsValid() const { return valid; }
 };
+
+TEST(QnnUnit_ModelTest, KeepsBackendManagerAlive) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  std::weak_ptr<qnn::QnnBackendManager> weak_manager = ctx.manager;
+
+  // A model parked in SharedContext can outlive the QnnEp that created it.
+  ctx.manager.reset();
+  EXPECT_FALSE(weak_manager.expired());
+
+  ctx.model.reset();
+  EXPECT_TRUE(weak_manager.expired());
+}
+
+TEST(QnnUnit_ModelTest, SharedContextRemovalIsScopedToProducingSession) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  ApiPtrs api_ptrs{ctx.stub_ort_api, ctx.stub_ep_api, ctx.stub_editor_api};
+  auto model_a = std::make_unique<qnn::QnnModel>(ctx.manager, api_ptrs);
+  auto model_b = std::make_unique<qnn::QnnModel>(ctx.manager, api_ptrs);
+  SetQnnModelNameForTest(*model_a, "session_a_graph");
+  SetQnnModelNameForTest(*model_b, "session_b_graph");
+
+  SharedContext::QnnModelOwnerToken owner_a = std::make_shared<char>();
+  SharedContext::QnnModelOwnerToken owner_b = std::make_shared<char>();
+  std::string duplicate_graph_names;
+  std::vector<std::unique_ptr<qnn::QnnModel>> session_a_models;
+  session_a_models.push_back(std::move(model_a));
+  EXPECT_FALSE(SharedContext::GetInstance().SetSharedQnnModel(
+      std::move(session_a_models), ctx.manager, owner_a, duplicate_graph_names));
+  std::vector<std::unique_ptr<qnn::QnnModel>> session_b_models;
+  session_b_models.push_back(std::move(model_b));
+  EXPECT_FALSE(SharedContext::GetInstance().SetSharedQnnModel(
+      std::move(session_b_models), ctx.manager, owner_b, duplicate_graph_names));
+
+  // Sessions A and B share one manager. Destroying A must leave B's parked model
+  // available for a later consumer session C.
+  SharedContext::GetInstance().RemoveSharedQnnModels(owner_a);
+  EXPECT_FALSE(SharedContext::GetInstance().HasSharedQnnModel("session_a_graph", ctx.manager));
+  EXPECT_TRUE(SharedContext::GetInstance().HasSharedQnnModel("session_b_graph", ctx.manager));
+  auto session_c_model =
+      SharedContext::GetInstance().GetSharedQnnModel("session_b_graph", ctx.manager);
+  ASSERT_NE(session_c_model, nullptr);
+  EXPECT_EQ(session_c_model->Name(), "session_b_graph");
+
+  SharedContext::GetInstance().RemoveSharedQnnModels(owner_b);
+}
 
 // ---------------------------------------------------------------------------
 // DeserializeGraphInfoFromBinaryInfo tests
@@ -508,8 +560,9 @@ TEST(QnnUnit_ModelTest, BindTensor_UnregisteredGpuDefaultMemory_ReturnsError) {
   const auto bind_tensor_memory = GetQnnModelPrivateMember(BindQnnTensorMemoryTag{});
   int data = 0;
   Qnn_Tensor_t qnn_tensor = QNN_TENSOR_INIT;
+  const qnn::QnnBackendManager::ContextHandleLease context_handle_lease;
   const auto status = ((*ctx.model).*bind_tensor_memory)(
-      ctx.logger, reinterpret_cast<const OrtMemoryInfo*>(1), &data, sizeof(data), nullptr, qnn_tensor);
+      ctx.logger, reinterpret_cast<const OrtMemoryInfo*>(1), &data, sizeof(data), context_handle_lease, qnn_tensor);
 
   EXPECT_FALSE(status.IsOK());
   EXPECT_EQ(status.GetErrorMessage(), "GPU DEFAULT memory is not a registered imported memory handle.");
