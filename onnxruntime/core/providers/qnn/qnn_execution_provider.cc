@@ -933,20 +933,19 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                 "enable_vtcm_backup_buffer_sharing is deprecated. Use htp_share_resource_optimization instead.");
   }
 
-  if (!htp_share_resource_optimization_str.empty()) {
-    // An explicit level, including 0, takes precedence over the deprecated VTCM sharing option.
-    if (htp_share_resource_optimization_str == "0" ||
-        htp_share_resource_optimization_str == "1" ||
-        htp_share_resource_optimization_str == "2") {
-      htp_share_resource_optimization_ = std::stoi(htp_share_resource_optimization_str);
-    } else {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
-                  ("Invalid value entered for htp_share_resource_optimization: " +
-                   htp_share_resource_optimization_str + ", only 0, 1 or 2 are allowed.")
-                      .c_str());
+  if (!enable_vtcm_backup_buffer_sharing_str.empty() && !htp_share_resource_optimization_str.empty()) {
+    LOG_AND_THROW_ERROR(logger_,
+                        "Only one of 'enable_vtcm_backup_buffer_sharing' and 'htp_share_resource_optimization' should be set. "
+                        "Please choose one option.");
+  } else if (!htp_share_resource_optimization_str.empty()) {
+    if (htp_share_resource_optimization_str != "0" &&
+        htp_share_resource_optimization_str != "1" &&
+        htp_share_resource_optimization_str != "2") {
+      LOG_AND_THROW_ERROR(logger_, "Invalid htp_share_resource_optimization: only 0, 1 or 2 are allowed.");
     }
-  } else if (enable_vtcm_backup_buffer_sharing_str == "1") {
-    htp_share_resource_optimization_ = 1;
+    htp_share_resource_optimization_ = std::stoi(htp_share_resource_optimization_str);
+  } else if (!enable_vtcm_backup_buffer_sharing_str.empty()) {
+    htp_share_resource_optimization_ = static_cast<int>(enable_vtcm_backup_buffer_sharing_str == "1");
   }
 
   ORT_CXX_LOG(logger_,

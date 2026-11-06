@@ -333,13 +333,13 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 
 |`"htp_share_resource_optimization"`|Description|
 |---|---|
-|'0'|Default. Disable HTP resource sharing. An explicit `'0'` overrides `enable_vtcm_backup_buffer_sharing`.|
+|'0'|Default. Disable HTP resource sharing.|
 |'1'|Enable HTP resource sharing for sequential graph execution with memory optimization but without virtual address optimization. Requires QNN API version >= 2.26.|
 |'2'|Enable HTP resource sharing for sequential graph execution with virtual address and memory optimization (most aggressive). Requires QNN API version >= 2.26.|
 
 When this option is omitted, the level defaults to `'0'` unless the `enable_vtcm_backup_buffer_sharing` option is set to `'1'`. Levels `'1'` and `'2'` require sequential graph execution and conflict with `ep.context_embed_mode`.
 
-**Precedence:** An explicit `htp_share_resource_optimization`, including `'0'`, takes precedence over `enable_vtcm_backup_buffer_sharing`. An invalid explicit value logs an error and leaves sharing disabled; it does not fall back to the deprecated option.
+**Mutually exclusive options:** Set only one of `htp_share_resource_optimization` and the `enable_vtcm_backup_buffer_sharing`. If both have non-empty values, session creation fails with an error asking you to choose one option. Empty values are treated as unset. Non-empty `htp_share_resource_optimization` values must be exactly `'0'`, `'1'`, or `'2'`; any other value fails session creation.
 
 |`"disable_file_mapped_weights"`|Description|
 |---|---|
