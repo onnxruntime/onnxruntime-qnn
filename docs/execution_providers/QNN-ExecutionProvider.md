@@ -149,8 +149,6 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'0'|Default. Disabled.|
 |'1'|Enable VTCM backup buffer sharing across sessions. Requires QNN API version >= 2.26. Conflicts with `ep.context_embed_mode`.|
 
-**Deprecated:** Use `htp_share_resource_optimization` instead. Legacy `'1'` maps to level `'1'`; legacy `'0'` maps to level `'0'`. The legacy option is used only when `htp_share_resource_optimization` is omitted.
-
 |`"htp_reused_io_limit_mb"`|Description|
 |---|---|
 |Size in MB (string)|Tells QNN HTP the maximum I/O your app actually keeps registered at any one time, instead of assuming every graph's I/O is live at once. Used for memory estimation and DSP PD placement when loading a context binary; a tighter value can avoid PD placement failures (QNN error 1002). See [Reused IO Limit](#reused-io-limit) below for how to choose a value (it differs between the per-context and group paths). Defaults to "0" (QNN estimates using the total I/O size of all graphs in the context). Requires QAIRT 2.45 or later (QNN API >= 2.34).|
