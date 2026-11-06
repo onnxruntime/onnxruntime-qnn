@@ -54,6 +54,13 @@ Ort::Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& b
 
 Ort::Status WindowsFileMapper::MapContextBinary(const std::string& bin_filepath,
                                                 std::shared_ptr<char>& mapped_memory) {
+  size_t mapped_bytes = 0;
+  return MapContextBinary(bin_filepath, mapped_memory, mapped_bytes);
+}
+
+Ort::Status WindowsFileMapper::MapContextBinary(const std::string& bin_filepath,
+                                                std::shared_ptr<char>& mapped_memory,
+                                                size_t& mapped_bytes) {
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("Creating context bin file mapping for " + bin_filepath).c_str());
   RETURN_IF(bin_filepath.empty(), "Context bin file path is empty");
 
@@ -67,6 +74,11 @@ Ort::Status WindowsFileMapper::MapContextBinary(const std::string& bin_filepath,
     const auto error_code = GetLastError();
     return MAKE_FAIL(("Failed to create file handle for context bin" + bin_filepath + ". Error code: " + std::to_string(error_code) + ", \"" + std::system_category().message(error_code) + "\"").c_str());
   }
+
+  LARGE_INTEGER file_size{};
+  RETURN_IF(!GetFileSizeEx(file_handle.get(), &file_size) || file_size.QuadPart < 0,
+            "Failed to get context binary file size.");
+  const auto size = SafeInt<size_t>(file_size.QuadPart);
 
   ORT_CXX_LOG(logger_,
               ORT_LOGGING_LEVEL_VERBOSE, ("Created file handle (" + utils::PtrToString(file_handle.get()) + ") for context bin: " + bin_filepath).c_str());
@@ -101,6 +113,7 @@ Ort::Status WindowsFileMapper::MapContextBinary(const std::string& bin_filepath,
 
   mapped_memory = std::shared_ptr<char>(reinterpret_cast<char*>(mapped_base_ptr),
                                         [](char* ptr) { UnmapFile(ptr); });
+  mapped_bytes = size;
 
   return Ort::Status();
 }

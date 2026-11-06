@@ -68,17 +68,21 @@ class EpContextIoDispatch {
   // simply not registering anything.
   explicit EpContextIoDispatch(const OrtSessionOptions& session_options,
                                const OrtApiRuntimeCapabilities& runtime_capabilities,
-                               const Ort::Logger* logger = nullptr) noexcept;
+                               const Ort::Logger* logger = nullptr,
+                               bool map_decrypt_source = false) noexcept;
   ~EpContextIoDispatch() = default;
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(EpContextIoDispatch);
 
   bool HasReadCallback() const noexcept;
   bool HasWriteCallback() const noexcept;
+  bool HasSourceReadCallback() const noexcept;
+  bool SourceMappingIsEnabled() const noexcept { return map_decrypt_source_; }
 
   // Precondition: HasReadCallback(). Adopts successful output without copying.
   // On callback error, application cleanup and `out` remain unchanged.
-  Ort::Status Read(const std::string& file_name, EpContextBuffer& out) const;
+  Ort::Status Read(const std::string& file_name, EpContextBuffer& out,
+                   const std::string& validated_external_path = "") const;
 
   // Precondition: HasWriteCallback(). Logs INFO with byte count on success.
   Ort::Status Write(const std::string& name,
@@ -87,6 +91,8 @@ class EpContextIoDispatch {
                     const Ort::Logger& logger) const;
 
  private:
+  bool map_decrypt_source_ = false;
+  const Ort::Logger* logger_ = nullptr;
 #if ORT_API_HAS_EPCONTEXT_ENCRYPTION
   Ort::Experimental::EpContextConfig config_;
   OrtReadNamedBufferFunc read_fn_ = nullptr;
