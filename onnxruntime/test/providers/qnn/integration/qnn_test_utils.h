@@ -84,7 +84,11 @@ struct RegisteredQnnEp {
 // Linux and Windows x86 attach the HTP simulator/emulator through a CPU-type
 // virtual device. Linux AArch64 and Windows ARM64 select an NPU-type device.
 // Returns false if the matching QNN EP device or HTP backend is unavailable.
-inline bool MakeQnnHtpSessionOptions(const RegisteredQnnEp& ep, Ort::SessionOptions& out_opts) {
+// Callers may supply test-specific provider options without changing the
+// defaults used by the other integration tests.
+inline bool MakeQnnHtpSessionOptions(
+    const RegisteredQnnEp& ep, Ort::SessionOptions& out_opts,
+    const std::unordered_map<std::string, std::string>& extra_provider_opts = {}) {
   const OrtApi& api = Ort::GetApi();
   std::vector<Ort::ConstEpDevice> ep_devices = ort_env->GetEpDevices();
 
@@ -98,7 +102,8 @@ inline bool MakeQnnHtpSessionOptions(const RegisteredQnnEp& ep, Ort::SessionOpti
   }
   if (!target) return false;
 
-  const std::unordered_map<std::string, std::string> provider_opts{{"backend_path", QnnHtpBackendLibraryName()}};
+  std::unordered_map<std::string, std::string> provider_opts{{"backend_path", QnnHtpBackendLibraryName()}};
+  provider_opts.insert(extra_provider_opts.begin(), extra_provider_opts.end());
   try {
     out_opts.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(target)}, provider_opts);
   } catch (const Ort::Exception&) {

@@ -137,9 +137,10 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
   TensorInfo output_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
 
-  // Determine if we need to use UFIXED_POINT_8 and add a dequantize node
+  // HTP supports FP16 output natively. Other output types use the
+  // UFIXED_POINT_8 intermediate followed by Dequantize.
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  bool need_dequantize = is_npu_backend;
+  bool need_dequantize = is_npu_backend && output_info.qnn_data_type != QNN_DATATYPE_FLOAT_16;
 
   if (need_dequantize) {
     // Create an intermediate tensor with UFIXED_POINT_8 data type
@@ -195,7 +196,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
                       do_op_validation),
                   "Failed to create Dequantize node.");
   } else {
-    // For non-NPU backends, use the original data type directly
+    // Use the original data type directly, including native FP16 on HTP.
     QnnTensorWrapper output_wrapper(output_name,
                                     tensor_type,
                                     output_info.qnn_data_type,
