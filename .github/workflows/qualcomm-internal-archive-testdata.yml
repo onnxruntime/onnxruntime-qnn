@@ -30,6 +30,9 @@ jobs:
       - name: Build testdata archive
         run: python3 qcom/build_and_test.py archive_testdata
 
+      - name: Validate prebuilt ORT acquisition path
+        run: python3 qcom/scripts/all/tests/test_prebuilt_cmake_smoke.py
+
       # Artifactory steps are no-ops on fork PRs (secrets unavailable). The build still validates the script.
       - name: Setup JFrog CLI
         if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}

@@ -380,12 +380,26 @@ block()
   # Dependency on ORT Core public header files
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDES})
 
-  add_custom_command(
-    TARGET onnxruntime_provider_test POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${ort_core_SOURCE_DIR}/onnxruntime/test/testdata
-    $<TARGET_FILE_DIR:onnxruntime_provider_test>/testdata
-  )
+  # Copy version-matched upstream ORT test data next to the test binary. Source builds use the
+  # fetched ort_core tree. Prebuilt builds use the explicit test-assets contract.
+  if(onnxruntime_ORT_HOME AND onnxruntime_ORT_TEST_ASSETS_HOME)
+    set(_ort_provider_testdata_dir "${onnxruntime_ORT_TEST_ASSETS_HOME}/onnxruntime/test/testdata")
+  elseif(NOT onnxruntime_ORT_HOME)
+    set(_ort_provider_testdata_dir "${ort_core_SOURCE_DIR}/onnxruntime/test/testdata")
+  endif()
+
+  if(_ort_provider_testdata_dir)
+    add_custom_command(
+      TARGET onnxruntime_provider_test POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+      ${_ort_provider_testdata_dir}
+      $<TARGET_FILE_DIR:onnxruntime_provider_test>/testdata
+    )
+  else()
+    message(WARNING
+      "Prebuilt ORT testdata was not provided. Build-only tasks remain supported, but test tasks "
+      "must provide --ort-test-assets or ORT_TEST_ASSETS_ROOT.")
+  endif()
 
   # Exclude test_dynamic_plugin_ep when using prebuilt ONNX Runtime
   # TODO: Evaluate whether we can enable test_dynamic_plugin_ep with public API

@@ -92,10 +92,24 @@ if (ANDROID)
           ${ANDROID_QNN_EP_OUTPUT_DIR}/outputs/aar/onnxruntime-android-qnn.aar
           ${ANDROID_TEST_PACKAGE_LIB_DIR}/onnxruntime-android-qnn.aar)
 
-      # Copy sigmoid.ort from ort_core source tree into the test assets directory
+      if(onnxruntime_ORT_HOME)
+        if(NOT onnxruntime_ORT_TEST_ASSETS_HOME)
+          message(FATAL_ERROR
+            "Android tests with prebuilt ORT require --ort-test-assets or ORT_TEST_ASSETS_ROOT.")
+        endif()
+        set(_ort_android_sigmoid
+          "${onnxruntime_ORT_TEST_ASSETS_HOME}/java/src/test/android/app/src/androidTest/assets/sigmoid.ort")
+        if(NOT EXISTS "${_ort_android_sigmoid}")
+          message(FATAL_ERROR "Required Android ORT test asset not found: ${_ort_android_sigmoid}")
+        endif()
+      else()
+        set(_ort_android_sigmoid
+          "${ort_core_SOURCE_DIR}/java/src/test/android/app/src/androidTest/assets/sigmoid.ort")
+      endif()
+
       add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          ${ort_core_SOURCE_DIR}/java/src/test/android/app/src/androidTest/assets/sigmoid.ort
+          ${_ort_android_sigmoid}
           ${ANDROID_TEST_ASSETS_DIR}/sigmoid.ort)
 
       add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
