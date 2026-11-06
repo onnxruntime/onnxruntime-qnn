@@ -214,7 +214,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // file I/O logic. If io_dispatch is non-null and carries a read callback, the
   // callback is dispatched instead of reading from disk.
   Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                    std::vector<char>& buffer,
+                                    EpContextBuffer& buffer,
                                     const qnn::EpContextIoDispatch& io_dispatch);
 
   // Reloads a QNN context from its binary file after an SSR event. Handles both file-mapped
@@ -229,20 +229,19 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Builds the common context configs (priority + spill-fill) used by both binary-load paths.
   // first_group_handle: 0x0 for SSR (always a new group); GetQnnContext(0) for initial multi-
   // context load (joins the existing spill-fill group).
-  // Adding a new config here propagates to both LoadCachedQnnContextFromBuffer and ReloadContextForSSR.
   Ort::Status BuildContextBinaryConfigs(
       int64_t max_spill_fill_size,
       Qnn_ContextHandle_t first_group_handle,
       QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t>& configs_builder);
 
   // Shared dispatch helper used by ReloadContextForSSR and LoadCachedQnnContextFromBuffer.
-  // Attempts contextCreateFromBinaryWithCallback when use_file_mapping is true; falls back to
-  // contextCreateFromBinary on failure or when file mapping is disabled/unavailable.
+  // Attempts contextCreateFromBinaryWithCallback when use_dma_loading is true; falls back to
+  // contextCreateFromBinary with the same acquired buffer on failure or when DMA is disabled.
   // bin_buffer: pre-acquired mapped or pre-read buffer; pass nullptr to read from context_bin_filepath.
   // Does NOT call AddQnnContextHandle — callers are responsible for registering the handle.
   Ort::Status CreateContextHandleFromBinary(void* bin_buffer,
                                             uint64_t buffer_length,
-                                            bool use_file_mapping,
+                                            bool use_dma_loading,
                                             const QnnContext_Config_t** context_configs,
                                             const std::string& context_bin_filepath,
                                             const qnn::EpContextIoDispatch& io_dispatch,
@@ -775,7 +774,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   std::unique_ptr<FileMappingInterface> file_mapper_ = nullptr;
-  // Notify params for file mapping must persist throughout lifetime of
+  // Notify params for DMA callbacks must persist throughout lifetime of
   // QnnBackendManager for release of DMA data callback on destruction
   std::vector<std::unique_ptr<FileMappingCallbackInfo_t>> file_mapping_notify_params_;
 #endif
@@ -814,7 +813,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   QnnHtpDevice_Arch_t htp_arch_internal_ = QNN_HTP_DEVICE_ARCH_NONE;
   uint32_t vtcm_size_internal_ = 0;
 
-  // File mapping.
+  // Access this shared pointer atomically: SSR/DMA readers do not hold the setup lock.
+  // DMA operations retain a local snapshot through registration or release.
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
   std::mutex mapped_fastrpc_buffers_mutex_;
   std::vector<std::pair<void*, uint64_t>> mapped_fastrpc_buffers_;
