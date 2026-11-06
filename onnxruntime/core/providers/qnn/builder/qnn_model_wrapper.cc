@@ -22,7 +22,7 @@
 namespace onnxruntime {
 namespace qnn {
 
-QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
+QnnModelWrapper::QnnModelWrapper(const OrtGraph* ort_graph,
                                  const ApiPtrs& api_ptrs,
                                  const Ort::Logger& logger,
                                  const QnnBackendManager& qnn_backend_manager,
@@ -46,6 +46,42 @@ QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
   // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
   assert((qnn_backend_manager_.GetQnnValidatorBackendHandle() == nullptr) ==
          (qnn_backend_manager_.GetQnnValidatorInterface().backendValidateOpConfig == nullptr));
+}
+
+QnnModelWrapper::QnnModelWrapper(const ApiPtrs& api_ptrs,
+                                 const Ort::Logger& logger,
+                                 const QnnBackendManager& qnn_backend_manager,
+                                 const QnnGraphWrapper& qnn_graph_wrapper,
+                                 const ModelSettings& model_settings)
+    : logger_(logger),
+      qnn_backend_manager_(qnn_backend_manager),
+      graph_inputs_(qnn_graph_wrapper.graph_inputs),
+      graph_outputs_(qnn_graph_wrapper.graph_outputs),
+      model_settings_(model_settings),
+      api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
+      htp_arch_translation_info_(qnn_graph_wrapper.htp_arch_translation_info),
+      cloned_from_graph_wrapper_(true) {
+  // Clone rather than take ownership: a cached QnnGraphWrapper is composed once per QNN context
+  // (e.g. once per SoC of a multi-SoC context binary), so it has to stay intact for the next
+  // composition. Cloning gives this wrapper its own tensor metadata to mutate -- QNN-assigned
+  // tensor IDs, data type conversions, resolved names -- while the static tensor data is shared.
+  // No tensor_name_overrides_ on this path: MoveInternalWrappers already resolved every override
+  // into the cached QnnTensorWrappers, so re-composition has nothing left to look up and nothing
+  // new worth recording -- any name minted per-context must not leak back into the cache.
+  qnn_op_property_list_.reserve(qnn_graph_wrapper.ops.size());
+  for (const QnnOpProperty& op : qnn_graph_wrapper.ops) {
+    qnn_op_property_list_.push_back(op.Clone());
+  }
+
+  model_tensors_map_.reserve(qnn_graph_wrapper.tensors_map.size());
+  for (const auto& [tensor_name, tensor_wrapper] : qnn_graph_wrapper.tensors_map) {
+    model_tensors_map_.emplace(tensor_name, tensor_wrapper.Clone());
+  }
+
+  model_params_map_.reserve(qnn_graph_wrapper.params_map.size());
+  for (const auto& [param_tensor_name, param_wrapper] : qnn_graph_wrapper.params_map) {
+    model_params_map_.emplace(param_tensor_name, param_wrapper.Clone());
+  }
 }
 
 QnnHtpDevice_Arch_t QnnModelWrapper::GetHtpArch() const {
@@ -100,6 +136,16 @@ const std::string* QnnModelWrapper::GetTensorNameOverride(const std::string& int
   }
   auto it = tensor_name_overrides_->find(internal);
   return it != tensor_name_overrides_->end() ? &it->second : nullptr;
+}
+
+void QnnModelWrapper::ResolveTensorNameOverride() {
+  if (model_settings_.offload_graph_io_quantization) {
+    for (auto& [tensor_name, tensor_wrapper] : model_tensors_map_) {
+      if (const std::string* external = GetTensorNameOverride(tensor_name)) {
+        tensor_wrapper.SetResolvedTensorName(*external);
+      }
+    }
+  }
 }
 
 Ort::Status QnnModelWrapper::MakeTensorWrapper(const OrtNodeUnitIODef& tensor, QnnTensorWrapper& tensor_wrapper) const {
@@ -1224,7 +1270,7 @@ Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializ
                                                    std::vector<uint8_t>& unpacked_tensor,
                                                    const bool unpack_sub_byte_to_8_bit) const {
   const ORTCHAR_T* model_path = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetModelPath(&ort_graph_, &model_path));
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetModelPath(ort_graph_, &model_path));
   RETURN_IF_ERROR(utils::UnpackInitializerData(api_ptrs_.ort_api,
                                                initializer,
                                                std::filesystem::path(model_path),
@@ -1259,6 +1305,108 @@ Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializ
 
   return Ort::Status();
 }
+
+Ort::Status QnnModelWrapper::MoveInternalWrappers(QnnGraphWrapper& qnn_graph_wrapper) {
+  // A clone already carries per-graph state, so exporting it would overwrite the cached graph
+  // wrapper with SoC-specific data and break every later composition.
+  RETURN_IF(cloned_from_graph_wrapper_,
+            "Cannot export a QnnModelWrapper that was itself cloned from a QnnGraphWrapper.");
+  // Non-empty means tensors were already created in a QNN graph, so the wrappers below hold
+  // backend-assigned tensor IDs and are no longer reusable across contexts.
+  RETURN_IF(!qnn_tensor_id_map_.empty(),
+            "Cannot export a QnnModelWrapper whose tensors were already created in a QNN graph.");
+  RETURN_IF(qnn_op_property_list_.empty() || model_tensors_map_.empty(), "Model is not constructed.");
+
+  // Resolve the tensor name overrides now, while the map is still reachable. A resolved name is
+  // per-tensor state that Clone() carries, so baking it in here means re-composition needs no
+  // override table at all -- and the cached graph cannot be contaminated by one.
+  // Although this function should already be called by QnnModel, invoke again to make sure names resolved.
+  ResolveTensorNameOverride();
+
+  qnn_graph_wrapper.ops = std::move(qnn_op_property_list_);
+  qnn_graph_wrapper.tensors_map = std::move(model_tensors_map_);
+  qnn_graph_wrapper.params_map = std::move(model_params_map_);
+  qnn_graph_wrapper.graph_inputs = graph_inputs_;
+  qnn_graph_wrapper.graph_outputs = graph_outputs_;
+  qnn_graph_wrapper.htp_arch_translation_info = std::move(htp_arch_translation_info_);
+
+  return Ort::Status();
+}
+
+void QnnModelWrapper::RecordHtpArchTranslationDependency(HtpArchTranslationDependency dependency) {
+  if (htp_arch_translation_info_.dependencies.empty()) {
+    htp_arch_translation_info_.source_arch = GetHtpArch();
+  }
+
+  htp_arch_translation_info_.dependencies.push_back(std::move(dependency));
+}
+
+namespace utils {
+
+void WarnHtpArchDependentSharedTranslations(const std::vector<qnn::QnnGraphContext>& qnn_graph_contexts,
+                                            const Ort::Logger& logger) {
+  for (size_t context_idx = 0; context_idx < qnn_graph_contexts.size(); ++context_idx) {
+    const auto& qnn_graph_context = qnn_graph_contexts[context_idx];
+    std::set<std::string> affected_translations;
+
+    for (const auto& qnn_graph_wrapper : qnn_graph_context.qnn_graph_wrappers) {
+      const auto& info = qnn_graph_wrapper.htp_arch_translation_info;
+
+      for (const auto& dependency : info.dependencies) {
+        std::set<QnnHtpDevice_Arch_t> affected_archs;
+
+        for (const auto& soc_target : qnn_graph_context.soc_targets) {
+          const auto target_arch = soc_target.htp_arch;
+          // Unknown architectures conservatively trigger a diagnostic.
+          if (info.source_arch == QNN_HTP_DEVICE_ARCH_NONE ||
+              target_arch == QNN_HTP_DEVICE_ARCH_NONE ||
+              (info.source_arch >= dependency.switch_arch) != (target_arch >= dependency.switch_arch)) {
+            affected_archs.insert(target_arch);
+          }
+        }
+
+        if (affected_archs.empty()) {
+          continue;
+        }
+
+        std::string targets;
+        for (const auto arch : affected_archs) {
+          if (!targets.empty()) {
+            targets += ", ";
+          }
+          targets += std::to_string(arch);
+        }
+
+        affected_translations.insert(dependency.op_type + " node '" + dependency.node_name +
+                                     "' (" + dependency.feature +
+                                     "; translation arch " + std::to_string(info.source_arch) +
+                                     "; affected target archs [" + targets + "])");
+      }
+    }
+
+    if (affected_translations.empty()) {
+      continue;
+    }
+
+    std::string details;
+    for (const auto& translation : affected_translations) {
+      if (!details.empty()) {
+        details += "; ";
+      }
+      details += translation;
+    }
+
+    const std::string message = "Multi-SoC weight sharing: model " + std::to_string(context_idx + 1) +
+                                " of " + std::to_string(qnn_graph_contexts.size()) +
+                                " in the shared batch reuses one translation across HTP targets. "
+                                "The following architecture-dependent choices may differ from "
+                                "per-target translation: " +
+                                details + ". It may impact performance and/or accuracy.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, message.c_str());
+  }
+}
+
+}  // namespace utils
 
 }  // namespace qnn
 }  // namespace onnxruntime

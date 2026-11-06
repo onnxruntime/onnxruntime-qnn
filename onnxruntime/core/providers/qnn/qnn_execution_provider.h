@@ -127,7 +127,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
                               size_t count,
                               OrtNodeComputeInfo** node_compute_infos,
                               const qnn::HtpGraphConfigs_t& htp_graph_configs,
-                              bool collect_subgraph_traces = true);
+                              bool collect_subgraph_traces = true,
+                              bool cache_graph_wrappers = false);
+
+  OrtStatus* CompileQnnGraphWrappers(const std::vector<qnn::QnnGraphWrapper>& qnn_graph_wrappers,
+                                     const qnn::ModelSettings& model_settings,
+                                     const qnn::HtpGraphConfigs_t& htp_graph_configs);
 
   OrtStatus* CompileMultiSocOnnxModel(const OrtGraph** graphs,
                                       const OrtNode** fused_nodes,
@@ -166,6 +171,20 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   std::unique_ptr<qnn::QnnSerializerConfig> InitQnnSerializerConfig() const;
 
+  // Container for bundling config builder and vector to avoid lifetime issue.
+  struct QnnGraphConfigsHolder {
+    qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_builder{QNN_GRAPH_CONFIG_INIT,
+                                                                                      QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT};
+    std::vector<const QnnGraph_Config_t*> configs;
+
+    const QnnGraph_Config_t** GetRawPtr() { return configs.empty() ? nullptr : configs.data(); }
+  };
+
+  QnnGraphConfigsHolder BuildQnnGraphConfigs(const qnn::HtpGraphConfigs_t& htp_graph_configs,
+                                             const std::string& graph_name) const;
+
+  OrtStatus* FinalizeQnnModel(qnn::QnnModel& qnn_model);
+
   std::string FormatEPConfigKey(const std::string& key) const {
     return GetProviderOptionPrefix(name_) + key;
   }
@@ -198,7 +217,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
     ~ScopedPerSocQnnBackendSetup();
     ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ScopedPerSocQnnBackendSetup);
 
-    Ort::Status Init(size_t per_soc_idx);
+    Ort::Status Init(const qnn::SocTarget_t& soc_target);
 
    private:
     const QnnEp& ep_;
@@ -290,10 +309,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // === Multi-SoC context binary (a.k.a. Flexible Context Binary) ===
   bool enable_multi_soc_ep_context_ = false;
-  // Per-SoC HTP backend configurations. The size of below arrays are enforced to be the same.
-  std::vector<QnnHtpDevice_Arch_t> htp_arch_per_soc_;
-  std::vector<uint32_t> soc_model_per_soc_;
-  std::vector<qnn::HtpGraphConfigs_t> htp_graph_configs_per_soc_;
+  // Each target owns its SoC identity and HTP graph configuration.
+  std::vector<qnn::SocTarget_t> soc_targets_;
   // Internal option, could not be speicified by provider options.
   bool enable_htp_ref_weight_sharing_ = true;
 

@@ -13,3 +13,4 @@
 
 leak:libQnnHtp.so
 leak:libQnnCpu.so
+leak:libQnnSystem.so

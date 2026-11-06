@@ -13,6 +13,8 @@
 //   - Constructor early throws: prepare_only without context_cache, bf16 without soc_model,
 //     bf16 with soc_model<88, fp16 without soc_model (Linux x86_64), backend_type +
 //     backend_path both set.
+//   - Multi-SoC option parsing: model/arch inference and matching, VTCM cardinality,
+//     weight-sharing flags, and automatic prepare-only behavior through public callbacks.
 //   - Static impl methods: GetName, GetPreferredDataLayout, ShouldConvertDataLayoutForOp.
 //   - GetCompiledModelCompatibilityInfoImpl default-info empty path.
 //   - ValidateCompiledModelCompatibilityInfo early-return error paths.
@@ -32,6 +34,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -308,6 +311,36 @@ void GetPerThreadHtpPowerConfigsForTest(
   (ep.*GetQnnEpPrivateMember(GetPerThreadHtpPowerConfigsTag{}))(configs, run_options);
 }
 
+void ConfigureMultiSoc(EpStubContext& ctx) {
+  ctx.session_config["ep.context_enable"] = "1";
+  ctx.session_config[EPKey("htp_arch")] = "79,75";
+#ifdef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+  ctx.session_config[EPKey("enable_htp_cross_device_prepare")] = "1";
+#endif
+}
+
+void ExpectPrepareOnlyCallbacks(QnnEp& ep, EpStubContext& ctx) {
+  UseGlobalEpStubs use(ctx);
+  auto* ep_ptr = static_cast<OrtEp*>(&ep);
+  // This key would fail outside prepare-only mode, so success checks the early return.
+  const char* keys[] = {"ep.dynamic.nonexistent_option"};
+  const char* values[] = {"unused"};
+  Ort::Status dynamic_status(ep_ptr->SetDynamicOptions(ep_ptr, keys, values, 1));
+  EXPECT_TRUE(dynamic_status.IsOK());
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "SetDynamicOptions is a no-op in enable_htp_prepare_only mode.");
+
+  Ort::Status start_status(ep_ptr->OnRunStart(ep_ptr, nullptr));
+  EXPECT_TRUE(start_status.IsOK());
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Skipping OnRunStart in enable_htp_prepare_only mode.");
+
+  Ort::Status end_status(ep_ptr->OnRunEnd(ep_ptr, nullptr, false));
+  EXPECT_TRUE(end_status.IsOK());
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Skipping OnRunEnd in enable_htp_prepare_only mode.");
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -323,6 +356,16 @@ class QnnUnit_ExecutionProviderTest : public ::testing::Test {
   }
   void TearDown() override {
     ResetSharedBackendManagerForTest();
+  }
+};
+
+class QnnUnit_MultiSocExecutionProviderTest : public QnnUnit_ExecutionProviderTest {
+ protected:
+  void SetUp() override {
+    QnnUnit_ExecutionProviderTest::SetUp();
+#if QNN_ARCH_ARM64 && !defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
+    GTEST_SKIP() << "Multi-SoC preparation requires cross-device prepare on ARM64.";
+#endif
   }
 };
 
@@ -1414,24 +1457,201 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_FP16EnabledWithoutSocModel_ThrowsOnLi
 }
 #endif
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithoutContextCache_Throws) {
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocWithoutContextCache_Throws) {
   EpStubContext ctx;
-  // Comma-separated soc_model triggers multi-SoC path.
-  ctx.session_config[EPKey("soc_model")] = "60,73";
-  ctx.session_config[EPKey("htp_arch")] = "73,75";
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ConfigureMultiSoc(ctx);
+  ctx.session_config.erase("ep.context_enable");
   // context_cache_enabled defaults to "0" → must throw.
   auto factory = MakeFactory(ctx);
   EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+               "Per-SoC configurations are only supported for EP context enabled.");
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithShareEpContexts_Throws) {
+// Multi-SoC EP context generation now supports weight sharing across sessions.
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocWithShareEpContexts_Succeeds) {
   EpStubContext ctx;
-  ctx.session_config[EPKey("soc_model")] = "60,73";
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ConfigureMultiSoc(ctx);
+  ctx.session_config[EPKey("soc_model")] = "SM8550,SM8650";
   ctx.session_config[EPKey("htp_arch")] = "73,75";
-  ctx.session_config["ep.context_enable"] = "1";
   ctx.session_config["ep.share_ep_contexts"] = "1";
   auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+  ExpectPrepareOnlyCallbacks(*ep, ctx);
+}
+
+// The last session of a weight-sharing group sets both flags.
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocWithShareAndStopShareEpContexts_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ConfigureMultiSoc(ctx);
+  ctx.session_config[EPKey("soc_model")] = "SM8550,SM8650";
+  ctx.session_config[EPKey("htp_arch")] = "73,75";
+  ctx.session_config["ep.share_ep_contexts"] = "1";
+  ctx.session_config["ep.stop_share_ep_contexts"] = "1";
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+  ExpectPrepareOnlyCallbacks(*ep, ctx);
+}
+
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocWithStopShareOnly_Throws) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ConfigureMultiSoc(ctx);
+  ctx.session_config[EPKey("soc_model")] = "SM8550,SM8650";
+  ctx.session_config[EPKey("htp_arch")] = "73,75";
+  ctx.session_config["ep.stop_share_ep_contexts"] = "1";
+  auto factory = MakeFactory(ctx);
   EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+               "Unexpected stop_share_ep_contexts without share_ep_contexts enabled.");
+}
+
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocArchOnly_EnablesPrepareOnly) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ConfigureMultiSoc(ctx);
+  // No soc_model or explicit prepare-only option is needed for arch-only targets.
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Successfully parsed multi-SoC HTP backend configurations.");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_INFO,
+               "Enable 'enable_htp_prepare_only' by default for multi-SoC EP context.");
+  ExpectPrepareOnlyCallbacks(*ep, ctx);
+}
+
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocModelOnly_InfersArchitectures) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ConfigureMultiSoc(ctx);
+  ctx.session_config.erase(EPKey("htp_arch"));
+  ctx.session_config[EPKey("soc_model")] = "sm8650,SM8550";
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Setting HTP arch to 75 according to given SoC model.");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Setting HTP arch to 73 according to given SoC model.");
+  ExpectPrepareOnlyCallbacks(*ep, ctx);
+}
+
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocMismatchedArchitectures_LogsCorrections) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ConfigureMultiSoc(ctx);
+  ctx.session_config[EPKey("soc_model")] = "SM8650,SM8550";
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "Given HTP arch 79 did not match the given SoC model. Setting to 75 instead.");
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+               "Given HTP arch 75 did not match the given SoC model. Setting to 73 instead.");
+}
+
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocVtcm_DefaultBroadcastAndPerTargetValues_Succeed) {
+  const std::array<const char*, 4> vtcm_options = {nullptr, "", "4", "4,8"};
+  for (const char* vtcm_option : vtcm_options) {
+    SCOPED_TRACE(vtcm_option ? vtcm_option : "<unset>");
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ConfigureMultiSoc(ctx);
+    if (vtcm_option) {
+      ctx.session_config[EPKey("vtcm_mb")] = vtcm_option;
+    }
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 "Successfully parsed multi-SoC HTP backend configurations.");
+    for (const auto& rec : ctx.log_records) {
+      EXPECT_EQ(rec.message.find("Invalid vtcm_mb"), std::string::npos) << rec.message;
+    }
+  }
+}
+
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocVtcmMalformedElements_LogWarnings) {
+  const std::array<const char*, 3> invalid_values = {"abc", "-1", "2147483648"};
+  for (const char* invalid_value : invalid_values) {
+    SCOPED_TRACE(invalid_value);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ConfigureMultiSoc(ctx);
+    ctx.session_config[EPKey("vtcm_mb")] = std::string(invalid_value) + ",8";
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+                 std::string("Invalid vtcm_mb: ") + invalid_value + " will be skipped");
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 "Successfully parsed multi-SoC HTP backend configurations.");
+  }
+}
+
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocMismatchedTargetCounts_Throws) {
+  const std::array<std::pair<const char*, const char*>, 3> targets = {{
+      {"SM8650,SM8550", "75"},
+      {"SM8650", "75,73"},
+      {"SM8650,SM8550", "75,73,79"},
+  }};
+  for (const auto& [models, arches] : targets) {
+    SCOPED_TRACE(std::string(models) + " / " + arches);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ConfigureMultiSoc(ctx);
+    ctx.session_config[EPKey("soc_model")] = models;
+    ctx.session_config[EPKey("htp_arch")] = arches;
+    auto factory = MakeFactory(ctx);
+
+    EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+                 "Expecting soc_model and htp_arch having equal number of values in multi-SoC EP context.");
+  }
+}
+
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocMismatchedVtcmCount_Throws) {
+  const std::array<std::pair<const char*, const char*>, 2> options = {{
+      {"79,75", "4,8,16"},
+      {"79,75,73", "4,8"},
+  }};
+  for (const auto& [arches, vtcm] : options) {
+    SCOPED_TRACE(std::string(arches) + " / " + vtcm);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ConfigureMultiSoc(ctx);
+    ctx.session_config[EPKey("htp_arch")] = arches;
+    ctx.session_config[EPKey("vtcm_mb")] = vtcm;
+    auto factory = MakeFactory(ctx);
+
+    EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+                 "Expecting vtcm_mb having equal number of values with htp_arch/soc_model.");
+  }
+}
+
+TEST_F(QnnUnit_MultiSocExecutionProviderTest, Ctor_MultiSocArchOnly_WithFp16AndGraphConfigs_Succeeds) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ConfigureMultiSoc(ctx);
+  ctx.session_config[EPKey("vtcm_mb")] = "4,8";
+  ctx.session_config[EPKey("htp_graph_finalization_optimization_mode")] = "3";
+  ctx.session_config[EPKey("enable_htp_fp16_precision")] = "1";
+  ctx.session_config[EPKey("enable_htp_monolithic_lstm")] = "1";
+  ctx.session_config[EPKey("enable_htp_fp16_clamp_overflow")] = "1";
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "0";
+  ctx.session_config[EPKey("htp_num_cores")] = "2";
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+
+  // Arch-only multi-SoC targets satisfy the Linux FP16 requirement without soc_model.
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+               "Successfully parsed multi-SoC HTP backend configurations.");
+  ExpectPrepareOnlyCallbacks(*ep, ctx);
 }
 
 // ===========================================================================
@@ -1815,52 +2035,6 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, MultipleConfigs_AllPushed) {
   EXPECT_GE(builder.GetSize(), 4u);
 }
 
-// Mirrors aggregate init in ParsePerSocHtpConfigs - catches field reordering or omission.
-TEST(QnnUnit_PopulateHtpGraphConfigsTest, AggregateInit_PreservesAllFields) {
-  // Mirror aggregate init order from ParsePerSocHtpConfigs.
-  qnn::HtpGraphConfigs_t source{};
-  source.vtcm_size_in_mb = 4;
-  source.htp_graph_finalization_opt_mode = qnn::HtpGraphFinalizationOptimizationMode::kMode1;
-  source.enable_htp_fp16_precision = true;
-  source.enable_htp_monolithic_lstm = false;
-  source.enable_htp_fp16_clamp_overflow = false;
-  source.enable_htp_matmul_lut = false;
-  source.htp_num_cores = 3;
-
-  // Aggregate init - same order as struct definition.
-  qnn::HtpGraphConfigs_t copy{source.vtcm_size_in_mb,
-                              source.htp_graph_finalization_opt_mode,
-                              source.enable_htp_fp16_precision,
-                              source.enable_htp_monolithic_lstm,
-                              source.enable_htp_fp16_clamp_overflow,
-                              source.enable_htp_matmul_lut,
-                              source.htp_num_cores};
-
-  EXPECT_EQ(copy.htp_num_cores, 3u);
-  EXPECT_EQ(copy.vtcm_size_in_mb, 4);
-  EXPECT_EQ(copy.enable_htp_fp16_precision, true);
-
-  // Verify copy + round-trip through PopulateHtpGraphConfigs.
-  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
-      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, copy, builder);
-  auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES);
-  ASSERT_NE(found, nullptr);
-  EXPECT_EQ(found->numCores, 3u);
-}
-
-// New field added to HtpGraphConfigs_t without updating aggregate init sites will break this.
-TEST(QnnUnit_PopulateHtpGraphConfigsTest, StructLayout_FieldCountGuard) {
-  // All 7 fields via aggregate init - compile error if field count changes.
-  qnn::HtpGraphConfigs_t full_init{0,
-                                   qnn::HtpGraphFinalizationOptimizationMode::kDefault,
-                                   false, false, false, false,
-                                   0u};
-  (void)full_init;
-  static_assert(sizeof(qnn::HtpGraphConfigs_t) <= 16,
-                "HtpGraphConfigs_t size changed - update all aggregate init sites and this test");
-}
-
 // All fields set, verify correct values in QNN config array.
 TEST(QnnUnit_PopulateHtpGraphConfigsTest, FullRoundTrip_AllValues) {
   qnn::HtpGraphConfigs_t configs{};
@@ -1868,6 +2042,8 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, FullRoundTrip_AllValues) {
   configs.htp_graph_finalization_opt_mode = qnn::HtpGraphFinalizationOptimizationMode::kMode3;
   configs.enable_htp_fp16_precision = true;
   configs.enable_htp_monolithic_lstm = true;
+  configs.enable_htp_fp16_clamp_overflow = true;
+  configs.enable_htp_matmul_lut = true;
   configs.htp_num_cores = 4;
 
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
@@ -1894,6 +2070,20 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, FullRoundTrip_AllValues) {
   auto* lstm = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM);
   ASSERT_NE(lstm, nullptr);
   EXPECT_EQ(lstm->monolithicLstm, true);
+
+#ifdef QNN_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
+  auto* clamp = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW);
+  ASSERT_NE(clamp, nullptr);
+  EXPECT_EQ(clamp->fp16ClampOverflow, true);
+#endif
+
+#if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
+  auto* matmul_lut = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_FINALIZE_CONFIG);
+  ASSERT_NE(matmul_lut, nullptr);
+  EXPECT_STREQ(matmul_lut->finalizeConfig.key, "enable_matmul_lut");
+  EXPECT_EQ(matmul_lut->finalizeConfig.value.dataType, QNN_DATATYPE_BOOL_8);
+  EXPECT_EQ(matmul_lut->finalizeConfig.value.bool8Value, 1);
+#endif
 }
 
 }  // namespace test

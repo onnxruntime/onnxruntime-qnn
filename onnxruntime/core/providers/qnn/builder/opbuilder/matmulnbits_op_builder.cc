@@ -547,12 +547,14 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
           RETURN_IF_NOT(qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[0]),
                         "Expecting MatMulNBits input tensor wrapper should already be constructed.");
           const Qnn_DataType_t act_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
-          const bool is_supported_native_bq = bq::IsHTPSupportedNativeBQ(qnn_model_wrapper.GetHtpArch(),
+          const bool is_supported_native_bq = bq::IsHTPSupportedNativeBQ(qnn_model_wrapper,
+                                                                         node_unit,
                                                                          act_dtype,
                                                                          gsl::narrow_cast<uint32_t>(bits),
                                                                          gsl::narrow_cast<uint32_t>(block_size),
                                                                          gsl::narrow_cast<uint32_t>(N),
-                                                                         per_block_float_zp);
+                                                                         per_block_float_zp,
+                                                                         !do_op_validation);
 
           if (is_supported_native_bq) {
             // Native BQ requires symmetric quantization; IsHTPSupportedNativeBQ verified all offsets are zero.
