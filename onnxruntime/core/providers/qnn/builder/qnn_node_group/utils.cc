@@ -509,5 +509,23 @@ std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const 
   return dims;
 }
 
+Ort::Status RejectIfHtpV68Float(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& io_def) {
+  if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    return Ort::Status();
+  }
+  if (qnn_model_wrapper.GetHtpArch() != QNN_HTP_DEVICE_ARCH_V68) {
+    return Ort::Status();
+  }
+  if (!io_def.Exists()) {
+    return Ort::Status();
+  }
+  TensorInfo info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(io_def, info));
+  if (info.qnn_data_type == QNN_DATATYPE_FLOAT_32 || info.qnn_data_type == QNN_DATATYPE_FLOAT_16) {
+    return MAKE_EP_FAIL("QNN EP does not support FP32 or FP16 tensors on HTP v68.");
+  }
+  return Ort::Status();
+}
+
 }  // namespace qnn
 }  // namespace onnxruntime

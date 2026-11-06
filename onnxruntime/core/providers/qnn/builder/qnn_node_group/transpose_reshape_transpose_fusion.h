@@ -23,7 +23,8 @@ class TransposeReshapeTransposeFusion : public IQnnNodeGroup {
  public:
   TransposeReshapeTransposeFusion(gsl::span<const OrtNodeUnit* const> node_units,
                                   std::vector<int64_t> fused_output_shape)
-      : fused_output_shape_(std::move(fused_output_shape)) {
+      : IQnnNodeGroup(node_units[0]->Inputs()[0]),
+        fused_output_shape_(std::move(fused_output_shape)) {
     if (node_units.size() != 3) {
       ORT_CXX_API_THROW("TransposeReshapeTransposeFusion expects exactly 3 NodeUnits.", ORT_EP_FAIL);
     }
@@ -33,11 +34,13 @@ class TransposeReshapeTransposeFusion : public IQnnNodeGroup {
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(TransposeReshapeTransposeFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return node_units_[0]; }
   std::string_view Type() const override { return "TransposeReshapeTransposeFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
   /// </summary>
   /// <param name="qnn_model_wrapper">The QNN model wrapper for graph access.</param>

@@ -119,7 +119,7 @@ gsl::span<const OrtNodeUnit* const> CastLoneQFusion::GetNodeUnits() const {
   return gsl::span<const OrtNodeUnit* const>{node_units_.data(), node_units_.size()};
 }
 
-Ort::Status CastLoneQFusion::IsSupported(
+Ort::Status CastLoneQFusion::IsQnnSupported(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
   return CreateOrValidateOnQnn(&qnn_model_wrapper, GetNodeUnits(), logger, true);
 }

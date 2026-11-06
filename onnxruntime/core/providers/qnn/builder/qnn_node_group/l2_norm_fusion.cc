@@ -199,8 +199,8 @@ gsl::span<const OrtNodeUnit* const> L2NormFusion::GetNodeUnits() const {
   return node_units_;
 }
 
-Ort::Status L2NormFusion::IsSupported(QnnModelWrapper& qnn_model_wrapper,
-                                      [[maybe_unused]] const Ort::Logger& logger) const {
+Ort::Status L2NormFusion::IsQnnSupported(QnnModelWrapper& qnn_model_wrapper,
+                                          [[maybe_unused]] const Ort::Logger& logger) const {
   std::optional<std::vector<uint32_t>> axes = GetReduceAxes(qnn_model_wrapper, *node_units_[0]);
   RETURN_IF_NOT(axes.has_value() && !axes->empty(), "L2NormFusion: failed to get ReduceL2 axes.");
 

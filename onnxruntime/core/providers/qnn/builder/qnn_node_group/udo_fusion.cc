@@ -327,7 +327,8 @@ UDOQDQFusion::UDOQDQFusion(
     const std::map<size_t, const OrtNodeUnit*>& input_node_units,
     const OrtNodeUnit& node_unit,
     const std::map<size_t, const OrtNodeUnit*>& output_node_units)
-    : op_type_(op_type),
+    : IQnnNodeGroup(node_unit.Inputs()[0]),
+      op_type_(op_type),
       op_package_(op_package),
       input_node_units_(input_node_units),
       node_unit_(&node_unit),
@@ -345,7 +346,7 @@ UDOQDQFusion::UDOQDQFusion(
     }
   }
 }
-Ort::Status UDOQDQFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status UDOQDQFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   return CreateOrValidateOnQnn(op_type_, op_package_, qmw, input_node_units_, *node_unit_, output_node_units_, true, logger);
 }
 

@@ -51,7 +51,9 @@ class Rank6ToRank5Fusion : public IQnnNodeGroup {
   explicit Rank6ToRank5Fusion(gsl::span<const OrtNodeUnit* const> node_units,
                               RankReduction kind,
                               size_t index)
-      : kind_(kind), index_(index) {
+      : IQnnNodeGroup(node_units[0]->Inputs()[0]),
+        kind_(kind),
+        index_(index) {
     if (node_units.size() != 3) {
       ORT_CXX_API_THROW("Pattern expects exactly 3 NodeUnits.", ORT_EP_FAIL);
     }
@@ -61,11 +63,13 @@ class Rank6ToRank5Fusion : public IQnnNodeGroup {
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(Rank6ToRank5Fusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return node_units_[0]; }
   std::string_view Type() const override { return "Rank6ToRank5Fusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
   /// <summary>
   /// Traverses graph to check if the given starting NodeUnit is part of a valid Reshape -> Transpose -> Reshape

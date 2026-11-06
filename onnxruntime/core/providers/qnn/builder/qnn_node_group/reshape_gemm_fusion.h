@@ -29,7 +29,6 @@ class ReshapeGemmFusionGroup : public IQnnNodeGroup {
   explicit ReshapeGemmFusionGroup(std::vector<const OrtNodeUnit*> node_units);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ReshapeGemmFusionGroup);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override;
@@ -55,6 +54,9 @@ class ReshapeGemmFusionGroup : public IQnnNodeGroup {
       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
       const Ort::Logger& logger);
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
  private:
   Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw, const Ort::Logger& logger, bool validate) const;

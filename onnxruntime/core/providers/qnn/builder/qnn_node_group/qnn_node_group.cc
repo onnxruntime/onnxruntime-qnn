@@ -37,6 +37,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/tanh_gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/op_affinity/qnn_op_affinity_map.h"
 #include "core/providers/qnn/ort_api.h"
@@ -44,16 +45,25 @@
 namespace onnxruntime {
 namespace qnn {
 
+IQnnNodeGroup::IQnnNodeGroup(OrtNodeUnitIODef root_input)
+    : root_input_(std::move(root_input)) {}
+
+Ort::Status IQnnNodeGroup::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+  RETURN_IF_ERROR(RejectIfHtpV68Float(qmw, root_input_));
+  return IsQnnSupported(qmw, logger);
+}
+
 /// <summary>
 /// A IQnnNodeGroup class that wraps a single NodeUnit. Most NodeUnits in the ONNX graph will
 /// be wrapped by this class.
 /// </summary>
 class QnnNodeUnitWrapper : public IQnnNodeGroup {
  public:
-  explicit QnnNodeUnitWrapper(const OrtNodeUnit& node_unit) : node_unit_(&node_unit) {}
+  explicit QnnNodeUnitWrapper(const OrtNodeUnit& node_unit)
+      : IQnnNodeGroup(OrtNodeUnitIODef{}), node_unit_(&node_unit) {}
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnNodeUnitWrapper);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override {
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override {
     const std::string& op_type = node_unit_->OpType();
     const auto* op_builder = qnn::GetOpBuilder(op_type);
 

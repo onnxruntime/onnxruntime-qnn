@@ -380,7 +380,8 @@ std::unique_ptr<IQnnNodeGroup> DQConvIntegerFusion::TryFusion(
 // Constructor / IQnnNodeGroup plumbing
 // ---------------------------------------------------------------------------
 DQConvIntegerFusion::DQConvIntegerFusion(Pattern pattern)
-    : conv_integer_(pattern.conv_integer),
+    : IQnnNodeGroup(OrtNodeUnitIODef{}),
+      conv_integer_(pattern.conv_integer),
       requant_mul_(pattern.requant_mul),
       add_bias_(pattern.add_bias),
       float_input_name_(std::move(pattern.float_input_name)),
@@ -396,7 +397,7 @@ DQConvIntegerFusion::DQConvIntegerFusion(Pattern pattern)
   if (pattern.add_bias != nullptr) node_units_.push_back(pattern.add_bias);
 }
 
-Ort::Status DQConvIntegerFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status DQConvIntegerFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return CreateOrValidateOnQnn(qmw, /*validate=*/true);
 }

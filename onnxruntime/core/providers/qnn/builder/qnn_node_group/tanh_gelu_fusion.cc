@@ -279,13 +279,14 @@ TanhGeluFusion::TanhGeluFusion(std::vector<const OrtNodeUnit*>&& node_units,
                                const OrtNodeUnit* target_node_unit,
                                OrtNodeUnitIODef gelu_root_input,
                                OrtNodeUnitIODef gelu_final_output)
-    : node_units_(std::move(node_units)),
+    : IQnnNodeGroup(gelu_root_input),  // copy before moving into member
+      node_units_(std::move(node_units)),
       target_node_unit_(target_node_unit),
       gelu_root_input_(std::move(gelu_root_input)),
       gelu_final_output_(std::move(gelu_final_output)) {
 }
 
-Ort::Status TanhGeluFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& /*logger*/) const {
+Ort::Status TanhGeluFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& /*logger*/) const {
   QnnTensorWrapper input_tensor;
   QnnTensorWrapper output_tensor;
   RETURN_IF_ERROR(qmw.MakeTensorWrapper(gelu_root_input_, input_tensor));

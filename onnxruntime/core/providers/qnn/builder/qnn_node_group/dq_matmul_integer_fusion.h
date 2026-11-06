@@ -46,11 +46,13 @@ class DQMatMulIntegerFusion : public IQnnNodeGroup {
  public:
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(DQMatMulIntegerFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return matmul_integer_; }
   std::string_view Type() const override { return "DQMatMulIntegerFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   /// <summary>
   /// Tries to match the DQL/MatMulInteger/Cast/Mul/Mul/[Add] pattern starting at a

@@ -84,10 +84,11 @@ std::unique_ptr<IQnnNodeGroup> HardSigmoidMulFusion::TryFusion(
 }
 
 HardSigmoidMulFusion::HardSigmoidMulFusion(const OrtNodeUnit& hardsigmoid_node_unit, const OrtNodeUnit& mul_node_unit)
-    : node_units_{&hardsigmoid_node_unit, &mul_node_unit} {
+    : IQnnNodeGroup(hardsigmoid_node_unit.Inputs()[0]),
+      node_units_{&hardsigmoid_node_unit, &mul_node_unit} {
 }
 
-Ort::Status HardSigmoidMulFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status HardSigmoidMulFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return ValidateOnQnn(qmw, *node_units_[0], *node_units_[1]);
 }

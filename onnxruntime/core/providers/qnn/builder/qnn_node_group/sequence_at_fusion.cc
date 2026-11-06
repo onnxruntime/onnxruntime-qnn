@@ -242,7 +242,8 @@ std::unique_ptr<IQnnNodeGroup> SequenceAtFusion::TryFusion(
 
 SequenceAtFusion::SequenceAtFusion(const OrtNodeUnit& seq_construct_unit,
                                    const OrtNodeUnit& seq_at_unit)
-    : node_units_{&seq_construct_unit, &seq_at_unit} {}
+    : IQnnNodeGroup(seq_construct_unit.Inputs()[0]),
+      node_units_{&seq_construct_unit, &seq_at_unit} {}
 
 // ---------------------------------------------------------------------------
 // IQnnNodeGroup interface
@@ -261,7 +262,7 @@ const OrtNodeUnit* SequenceAtFusion::GetTargetNodeUnit() const {
   return node_units_[1];
 }
 
-Ort::Status SequenceAtFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+Ort::Status SequenceAtFusion::IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return ValidateOnQnn(qmw, *node_units_[0], *node_units_[1]);
 }

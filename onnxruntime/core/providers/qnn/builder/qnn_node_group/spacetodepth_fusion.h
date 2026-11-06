@@ -33,7 +33,8 @@ class SpaceToDepthFusion : public IQnnNodeGroup {
                      uint32_t mode,
                      bool is_nhwc_decomp,
                      bool output_is_nhwc)
-      : block_height_(block_height),
+      : IQnnNodeGroup(node_units[0]->Inputs()[0]),
+        block_height_(block_height),
         block_width_(block_width),
         mode_(mode),
         is_nhwc_decomp_(is_nhwc_decomp),
@@ -51,11 +52,13 @@ class SpaceToDepthFusion : public IQnnNodeGroup {
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(SpaceToDepthFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return target_node_unit_; }
   std::string_view Type() const override { return "SpaceToDepthFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
 
   static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper,

@@ -734,8 +734,8 @@ std::unique_ptr<IQnnNodeGroup> SliceConcatSpaceToDepthFusion::TryFusion(
       root_owner, dcr_permutation, channels);
 }
 
-Ort::Status SliceConcatSpaceToDepthFusion::IsSupported(QnnModelWrapper& model_wrapper,
-                                                       const Ort::Logger& logger) const {
+Ort::Status SliceConcatSpaceToDepthFusion::IsQnnSupported(QnnModelWrapper& model_wrapper,
+                                                           const Ort::Logger& logger) const {
   if (model_wrapper.GetQnnBackendType() != QnnBackendType::HTP &&
       model_wrapper.GetQnnBackendType() != QnnBackendType::HTP_FP16) {
     return MAKE_EP_FAIL("SliceConcatS2D: HTP only.");

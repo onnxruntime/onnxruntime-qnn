@@ -41,11 +41,13 @@ class TanhGeluFusion : public IQnnNodeGroup {
                  OrtNodeUnitIODef gelu_final_output);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(TanhGeluFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "TanhGeluFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   /// <summary>
   /// Tries to match the tanh-GELU pattern starting from the given Tanh NodeUnit.

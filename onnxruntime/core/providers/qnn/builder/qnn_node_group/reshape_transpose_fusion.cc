@@ -228,8 +228,8 @@ gsl::span<const OrtNodeUnit* const> ReshapeTransposeFusion::GetNodeUnits() const
   return gsl::span<const OrtNodeUnit* const>{node_units_.data(), node_units_.size()};
 }
 
-Ort::Status ReshapeTransposeFusion::IsSupported(QnnModelWrapper& qnn_model_wrapper,
-                                                const Ort::Logger& logger) const {
+Ort::Status ReshapeTransposeFusion::IsQnnSupported(QnnModelWrapper& qnn_model_wrapper,
+                                                    const Ort::Logger& logger) const {
   return CreateOrValidateOnQnn(qnn_model_wrapper, *node_units_[0], *node_units_[1],
                                fused_perm_, /*validate=*/true, logger);
 }

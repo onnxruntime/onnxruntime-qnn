@@ -387,7 +387,7 @@ gsl::span<const OrtNodeUnit* const> Rank6ToRank5Fusion::GetNodeUnits() const {
   return gsl::span<const OrtNodeUnit* const>{node_units_.data(), node_units_.size()};
 }
 
-Ort::Status Rank6ToRank5Fusion::IsSupported(
+Ort::Status Rank6ToRank5Fusion::IsQnnSupported(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
   const Reduction reduction{kind_, index_};
   return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), reduction, /*validate=*/true, logger);

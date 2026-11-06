@@ -25,11 +25,13 @@ class HardSigmoidMulFusion : public IQnnNodeGroup {
   HardSigmoidMulFusion(const OrtNodeUnit& hardsigmoid_node_unit, const OrtNodeUnit& mul_node_unit);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(HardSigmoidMulFusion);
 
-  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "HardSigmoidMulFusion"; }
+
+ protected:
+  Ort::Status IsQnnSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
 
   /// <summary>
   /// Traverses graph to check if the given starting NodeUnit is part of a valid HardSigmoid -> Mul sequence.

@@ -24,8 +24,9 @@ class IQnnNodeGroup {
  public:
   virtual ~IQnnNodeGroup() = default;
 
-  // Returns an OK status if this IQnnNodeGroup is supported by QNN.
-  virtual Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const = 0;
+  // Non-virtual. Runs the V68 float guard on root_input_, then delegates to IsQnnSupported.
+  // Each subclass passes its root io_def to IQnnNodeGroup(root_input) in its constructor.
+  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const;
 
   // Adds this IQnnNodeGroup to the QNN model wrapper.
   virtual Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const = 0;
@@ -52,6 +53,17 @@ class IQnnNodeGroup {
   // The canonical set of return values is the fusion registration map in
   // qnn_node_group.cc (the kType string constant of each IQnnNodeGroup subclass).
   virtual std::string_view Type() const = 0;
+
+ protected:
+  // Each subclass must pass its primary ("root") input io_def here.
+  // IsSupported runs RejectIfHtpV68Float on this def before calling IsQnnSupported.
+  explicit IQnnNodeGroup(OrtNodeUnitIODef root_input);
+
+  // Subclass-specific support check. Called by IsSupported after the V68 guard.
+  virtual Ort::Status IsQnnSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const = 0;
+
+ private:
+  OrtNodeUnitIODef root_input_;
 };
 
 /// Function to register fusion for QDQ

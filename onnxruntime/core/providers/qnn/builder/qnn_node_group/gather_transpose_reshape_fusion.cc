@@ -310,7 +310,7 @@ gsl::span<const OrtNodeUnit* const> GatherTransposeReshapeFusion::GetNodeUnits()
   return gsl::span<const OrtNodeUnit* const>{node_units_.data(), node_units_.size()};
 }
 
-Ort::Status GatherTransposeReshapeFusion::IsSupported(
+Ort::Status GatherTransposeReshapeFusion::IsQnnSupported(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
   return ValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), index_pattern_, idx0_, idx1_, new_perm_4d_);
 }

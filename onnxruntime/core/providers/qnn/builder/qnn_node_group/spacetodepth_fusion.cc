@@ -819,7 +819,7 @@ gsl::span<const OrtNodeUnit* const> SpaceToDepthFusion::GetNodeUnits() const {
   return gsl::span<const OrtNodeUnit* const>{node_units_.data(), node_units_.size()};
 }
 
-Ort::Status SpaceToDepthFusion::IsSupported(
+Ort::Status SpaceToDepthFusion::IsQnnSupported(
     QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const {
   return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), block_height_, block_width_, mode_,
                                is_nhwc_decomp_, output_is_nhwc_, logger, true);

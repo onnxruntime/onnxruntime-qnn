@@ -446,7 +446,7 @@ gsl::span<const OrtNodeUnit* const> ChannelShuffleFusion::GetNodeUnits() const {
   return gsl::span<const OrtNodeUnit* const>{node_units_.data() + start, node_units_.size() - start};
 }
 
-Ort::Status ChannelShuffleFusion::IsSupported(
+Ort::Status ChannelShuffleFusion::IsQnnSupported(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
   return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), /*validate=*/true);
 }
