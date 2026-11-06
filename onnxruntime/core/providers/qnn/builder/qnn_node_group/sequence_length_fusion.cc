@@ -302,7 +302,21 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
       if (!s.IsOK()) return s;
     }
 
-    // Probe 3: ElementWiseMultiply (elem_dtype, {1} × {1} → {1})
+    // Probe 3: Reshape ({1,...,1} → {1}) to collapse the keepdims accumulator.
+    {
+      QnnTensorWrapper rsh_in(base + "_vrsh_in", QNN_TENSOR_TYPE_NATIVE,
+                              elem_info.qnn_data_type, QnnQuantParamsWrapper(),
+                              std::vector<uint32_t>(keepdims_shape));
+      QnnTensorWrapper rsh_out(base + "_vrsh_out", QNN_TENSOR_TYPE_NATIVE,
+                               elem_info.qnn_data_type, QnnQuantParamsWrapper(),
+                               std::vector<uint32_t>{1u});
+      auto s = qmw.ValidateQnnNode(base + "_vrsh",
+                                   QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                                   {rsh_in.GetQnnTensor()}, {rsh_out.GetQnnTensor()}, {});
+      if (!s.IsOK()) return s;
+    }
+
+    // Probe 4: ElementWiseMultiply (elem_dtype, {1} × {1} → {1})
     // for the scalar zero-mask step.
     {
       QnnTensorWrapper mul_a(base + "_vmul_a", QNN_TENSOR_TYPE_NATIVE,
@@ -321,7 +335,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
       if (!s.IsOK()) return s;
     }
 
-    // Probe 4: Cast (elem_dtype → int64, {1}).
+    // Probe 5: Cast (elem_dtype → int64, {1}).
     {
       QnnTensorWrapper cast_in(base + "_vcast_in", QNN_TENSOR_TYPE_NATIVE,
                                elem_info.qnn_data_type, QnnQuantParamsWrapper(),
@@ -335,7 +349,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
       if (!s.IsOK()) return s;
     }
 
-    // Probe 5: ElementWiseAdd (int64 + int64 → int64) for the final 0+N step.
+    // Probe 6: ElementWiseAdd (int64 + int64 → int64) for the final 0+N step.
     {
       QnnTensorWrapper add_a(base + "_vadd_a", QNN_TENSOR_TYPE_NATIVE,
                              QNN_DATATYPE_INT_64, QnnQuantParamsWrapper(),

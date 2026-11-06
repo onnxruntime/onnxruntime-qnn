@@ -50,7 +50,7 @@ class QnnModelWrapper;
 ///   - All element inputs must share the same fully-static shape.
 ///   - Element rank must be ≥ 1 (scalar {} elements → CPU fallback).
 ///   - All element dimensions must be positive (zero-dim → CPU fallback).
-///   - Element count and stacked leading dimension must fit in uint32_t.
+///   - Element count must fit in uint32_t.
 ///   - Element dtype must be FP32 or FP16 (other types → CPU fallback).
 ///     Quantized types are also rejected because the zero-point encoding
 ///     cannot be represented by raw zero bytes.
