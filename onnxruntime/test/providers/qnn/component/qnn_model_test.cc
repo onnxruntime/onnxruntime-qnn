@@ -44,6 +44,13 @@ struct SetupTensorsTag {
 
 template struct QnnModelPrivateMember<SetupTensorsTag, &qnn::QnnModel::SetupTensors>;
 
+struct GraphInfoTag {
+  using type = std::unique_ptr<qnn::GraphInfo> qnn::QnnModel::*;
+  friend type GetQnnModelPrivateMember(GraphInfoTag);
+};
+
+template struct QnnModelPrivateMember<GraphInfoTag, &qnn::QnnModel::graph_info_>;
+
 struct BindQnnTensorMemoryTag {
   using type = Ort::Status (qnn::QnnModel::*)(const Ort::Logger&,
                                               const OrtMemoryInfo*,
@@ -304,6 +311,80 @@ TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_Basic_PopulatesInputsOutputs) {
 
   auto status = ctx.model->SetGraphInputOutputInfo(mc);
   EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
+}
+
+TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_AotDynamicBatch_PreservesOrtDeclarations) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+  FakeValueInfo input{"input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {-1, 3, 8, 8}};
+  FakeValueInfo output{"output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {-1, 2, 6, 6}};
+  FakeGraph graph{{}, {&input}, {&output}, {}};
+  FakeNode fused{"fused", "EPContext", "com.microsoft", 1, {&input}, {&output}};
+  std::unordered_map<std::string, std::string> overrides{{"input", "context_input"}};
+  qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger};
+  mc.tensor_name_overrides = &overrides;
+
+  std::vector<qnn::QnnTensorWrapper> inputs;
+  inputs.emplace_back("context_input", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                      qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{2, 8, 8, 3});
+  std::vector<qnn::QnnTensorWrapper> outputs;
+  outputs.emplace_back("output", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                       qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4, 6, 6, 2});
+  ((*ctx.model).*GetQnnModelPrivateMember(GraphInfoTag{})) = std::make_unique<qnn::GraphInfo>(
+      nullptr, "context_graph", nullptr, std::move(inputs), std::move(outputs));
+
+  const auto status = ctx.model->SetGraphInputOutputInfo(mc);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(ctx.model->GetInputsInfo().at("input").shape_, (std::vector<int64_t>{2, 3, 8, 8}));
+  EXPECT_EQ(ctx.model->GetOutputsInfo().at("output").shape_, (std::vector<int64_t>{4, 2, 6, 6}));
+  EXPECT_EQ(input.shape, (std::vector<int64_t>{-1, 3, 8, 8}));
+  EXPECT_EQ(output.shape, (std::vector<int64_t>{-1, 2, 6, 6}));
+}
+
+TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_AotDynamicBatch_RejectsUnsupportedShapes) {
+  struct Case {
+    const char* name;
+    std::vector<int64_t> input_shape;
+    std::vector<int64_t> output_shape;
+    bool has_context;
+    const char* context_input_name;
+    std::vector<uint32_t> base_input_shape;
+  };
+  const std::vector<Case> cases{
+      {"JIT input", {-1, 3, 8, 8}, {2, 2, 6, 6}, false, "input", {2, 8, 8, 3}},
+      {"JIT output", {2, 3, 8, 8}, {-1, 2, 6, 6}, false, "input", {2, 8, 8, 3}},
+      {"non-batch input", {-1, -1, 8, 8}, {2, 2, 6, 6}, true, "input", {2, 8, 8, 3}},
+      {"non-batch output", {2, 3, 8, 8}, {2, -1, 6, 6}, true, "input", {2, 8, 8, 3}},
+      {"missing tensor", {-1, 3, 8, 8}, {2, 2, 6, 6}, true, "other", {2, 8, 8, 3}},
+      {"rank mismatch", {-1, 3, 8, 8}, {2, 2, 6, 6}, true, "input", {2, 8, 3}},
+      {"zero base batch", {-1, 3, 8, 8}, {2, 2, 6, 6}, true, "input", {0, 8, 8, 3}},
+  };
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(test_case.name);
+    QnnModelMinimalTestContext ctx;
+    ASSERT_TRUE(ctx.IsValid());
+    InstallFakeGraphApiStubs(ctx.stub_ort_api);
+    OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+    FakeValueInfo input{"input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, test_case.input_shape};
+    FakeValueInfo output{"output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, test_case.output_shape};
+    FakeGraph graph{{}, {&input}, {&output}, {}};
+    FakeNode fused{"fused", "EPContext", "com.microsoft", 1, {&input}, {&output}};
+    qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger};
+    if (test_case.has_context) {
+      std::vector<qnn::QnnTensorWrapper> inputs;
+      inputs.emplace_back(test_case.context_input_name, QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                          qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>(test_case.base_input_shape));
+      ((*ctx.model).*GetQnnModelPrivateMember(GraphInfoTag{})) = std::make_unique<qnn::GraphInfo>(
+          nullptr, "context_graph", nullptr, std::move(inputs), std::vector<qnn::QnnTensorWrapper>{});
+    }
+    EXPECT_FALSE(ctx.model->SetGraphInputOutputInfo(mc).IsOK());
+    EXPECT_EQ(input.shape, test_case.input_shape);
+    EXPECT_EQ(output.shape, test_case.output_shape);
+  }
 }
 
 TEST(QnnUnit_ModelTest, SetupTensors_SparseOutputIndex_ReturnsCompactedTensorInfo) {
