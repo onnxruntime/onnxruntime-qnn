@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 name: Qualcomm Internal ARM64 QNN Internal-UT Validation
+run-name: ${{ inputs.run_accuracy && 'Linux ARM64 Accuracy and standalone Component validation' || 'Linux ARM64 logger comparison or crash diagnostic' }}
 
 permissions:
   contents: read
@@ -20,6 +21,14 @@ on:
         default: false
       rebuild_provider:
         description: "Rebuild only QNN EP and use it with the unchanged prebuilt tests"
+        type: boolean
+        default: false
+      reuse_provider_run:
+        description: "Reuse an already validated QNN library with the prebuilt test inputs"
+        type: string
+        default: ""
+      run_accuracy:
+        description: "Also execute and report the QnnAcc Accuracy tier"
         type: boolean
         default: false
 
@@ -111,12 +120,14 @@ jobs:
           python3 qcom/build_and_test.py --target-py-version None \
             create_venv extract_ort_linux_aarch64_manylinux_2_34 --only
       - uses: actions/download-artifact@v4
-        if: ${{ inputs.rebuild_provider }}
+        if: ${{ inputs.rebuild_provider || inputs.reuse_provider_run != '' }}
         with:
           name: qnn-rebuilt-provider
           path: rebuilt-provider
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.reuse_provider_run || github.run_id }}
       - name: Replace only the QNN shared library for this validation
-        if: ${{ inputs.rebuild_provider }}
+        if: ${{ inputs.rebuild_provider || inputs.reuse_provider_run != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -231,6 +242,23 @@ jobs:
             failures=1
           fi
           exit "${failures}"
+      - name: Validate the actual Accuracy tier with the same existing binaries
+        if: ${{ inputs.run_accuracy }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          results_dir="${GITHUB_WORKSPACE}/test-only-init-results"
+          test_bin="$(find build/linux-aarch64_manylinux_2_34/Release -type f -name onnxruntime_provider_test -print -quit)"
+          test -n "${test_bin}"
+          test_bin="$(realpath "${test_bin}")"
+          test_dir="$(dirname "${test_bin}")"
+          export LD_LIBRARY_PATH="${test_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+          cd "${test_dir}"
+          unset ADSP_LIBRARY_PATH
+          "${test_bin}" --gtest_list_tests '--gtest_filter=QnnAcc_*' | tee "${results_dir}/accuracy-inventory.txt"
+          grep -q '^QnnAcc_' "${results_dir}/accuracy-inventory.txt"
+          timeout 45m "${test_bin}" '--gtest_filter=QnnAcc_*' \
+            "--gtest_output=xml:${results_dir}/accuracy.xml" 2>&1 | tee "${results_dir}/accuracy.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
