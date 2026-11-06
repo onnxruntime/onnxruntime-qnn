@@ -284,7 +284,7 @@ struct QnnModelHtpTestContext {
     if (!manager) return;
 
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map);
+    auto status = manager->SetupBackend(false, false, false, 0, false, nullptr, dummy_map);
     if (!status.IsOK()) return;
 
     model = std::make_unique<qnn::QnnModel>(manager.get(), api_ptrs);
