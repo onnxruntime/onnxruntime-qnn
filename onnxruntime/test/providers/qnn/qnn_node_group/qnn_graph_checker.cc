@@ -302,6 +302,72 @@ void AssertTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
       << "QNN tensor '" << tensor_name << "': expected shape mismatch in " << json_path;
 }
 
+static void AssertOpInputQuantizationEncoding(const std::filesystem::path& dump_dir,
+                                              const std::string& op,
+                                              size_t input_index,
+                                              uint32_t expected_encoding) {
+  if (::testing::Test::IsSkipped()) {
+    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
+  }
+  std::filesystem::path json_path;
+  ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path))
+      << "No QNN JSON graph file found in " << dump_dir;
+
+  nlohmann::json root;
+  ASSERT_TRUE(ParseQnnJsonGraph(json_path, root))
+      << "Failed to parse QNN JSON graph: " << json_path;
+  ASSERT_TRUE(root.is_object() && root.contains("graph") && root["graph"].is_object() &&
+              root["graph"].contains("nodes") && root["graph"]["nodes"].is_object() &&
+              root["graph"].contains("tensors") && root["graph"]["tensors"].is_object())
+      << "JSON missing 'graph.nodes' or 'graph.tensors' object in: " << json_path;
+
+  const auto& nodes = root["graph"]["nodes"];
+  const auto& tensors = root["graph"]["tensors"];
+  size_t matching_node_count = 0;
+  try {
+    for (const auto& [node_name, node_json] : nodes.items()) {
+      if (!node_json.is_object() || !node_json.contains("type") || !node_json["type"].is_string() ||
+          node_json["type"].get<std::string>() != op) {
+        continue;
+      }
+      ++matching_node_count;
+
+      ASSERT_TRUE(node_json.contains("input_names") && node_json["input_names"].is_array() &&
+                  node_json["input_names"].size() > input_index)
+          << "QNN node '" << node_name << "' of type '" << op << "' has no input at index "
+          << input_index << " in " << json_path;
+      const auto& input_json = node_json["input_names"][input_index];
+      ASSERT_TRUE(input_json.is_string())
+          << "QNN node '" << node_name << "' has a non-string input at index " << input_index;
+
+      const std::string tensor_name = input_json.get<std::string>();
+      ASSERT_TRUE(tensors.contains(tensor_name))
+          << "QNN input tensor '" << tensor_name << "' not found in " << json_path;
+      const auto& tensor_json = tensors[tensor_name];
+      ASSERT_TRUE(tensor_json.is_object() && tensor_json.contains("quant_params") &&
+                  tensor_json["quant_params"].is_object() &&
+                  tensor_json["quant_params"].contains("encoding"))
+          << "QNN tensor '" << tensor_name << "' has no quantization encoding in " << json_path;
+      const auto& encoding_json = tensor_json["quant_params"]["encoding"];
+      ASSERT_TRUE(encoding_json.is_number_unsigned() || encoding_json.is_number_integer())
+          << "QNN tensor '" << tensor_name << "' has a non-integer quantization encoding";
+      EXPECT_EQ(encoding_json.get<uint32_t>(), expected_encoding)
+          << "Unexpected quantization encoding for input " << input_index << " of QNN op '" << op
+          << "' (tensor '" << tensor_name << "') in " << json_path;
+    }
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to inspect QNN graph inputs for op '" << op << "' in " << json_path << ": " << ex.what();
+  }
+  EXPECT_GT(matching_node_count, 0) << "No QNN op '" << op << "' found in " << json_path;
+}
+
+void AssertOpInputQuantizationEncodingInQnnGraph(const std::filesystem::path& dump_dir,
+                                                 const std::string& op,
+                                                 size_t input_index,
+                                                 uint32_t expected_encoding) {
+  AssertOpInputQuantizationEncoding(dump_dir, op, input_index, expected_encoding);
+}
+
 void AssertNodeInputsDistinctInQnnGraph(const std::filesystem::path& dump_dir,
                                         const std::string& op,
                                         size_t input_index) {
