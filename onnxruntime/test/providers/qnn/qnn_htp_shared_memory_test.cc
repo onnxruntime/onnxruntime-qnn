@@ -30,7 +30,7 @@ namespace onnxruntime {
 namespace test {
 
 #if !defined(ORT_MINIMAL_BUILD) && !BUILD_QNN_EP_STATIC_LIB && \
-    (defined(_M_ARM64) || defined(__aarch64__))
+    (defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__aarch64__))
 
 namespace {
 

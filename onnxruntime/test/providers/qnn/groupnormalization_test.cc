@@ -15,7 +15,7 @@
 
 namespace onnxruntime {
 namespace test {
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 static GetTestQDQModelFn<uint16_t> BuildQDQGroupNormTestCase(
     const TestInputDef<float>& input_def,
@@ -272,7 +272,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_3D) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 

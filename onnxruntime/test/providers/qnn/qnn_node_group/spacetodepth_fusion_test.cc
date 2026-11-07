@@ -20,7 +20,7 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 namespace {
 
@@ -962,7 +962,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthFusion_BareRTR_Float_DCR) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 4);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

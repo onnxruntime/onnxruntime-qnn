@@ -58,7 +58,7 @@ extern "C" void ortenv_setup() {
     }
 
     Ort::ThreadingOptions tpo;
-#if defined(USE_QNN) && !defined(__aarch64__) && !defined(_M_ARM64)
+#if defined(USE_QNN) && !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
     // x86/x64 QNN HTP tests use the simulator and therefore have no physical NPU for ORT to discover.
     // Explicitly opt the test environment into the compile-only virtual NPU advertised by the QNN EP.
     Ort::KeyValuePairs env_configs;

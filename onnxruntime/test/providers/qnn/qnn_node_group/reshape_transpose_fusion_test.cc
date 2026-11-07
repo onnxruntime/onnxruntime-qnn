@@ -17,7 +17,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 namespace {
 
@@ -258,7 +258,7 @@ TEST_F(QnnHTPBackendTests, ReshapeTransposeFusion_Qdq_MatchingEncoding_SingleTra
   AssertOpInQnnGraph(dir, "Reshape", 0);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime
