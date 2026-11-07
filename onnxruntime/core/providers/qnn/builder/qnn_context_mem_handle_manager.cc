@@ -42,25 +42,21 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* memory_address,
   {
     std::scoped_lock g{mem_handles_mutex_};
 
-    // find existing mem handle
-    if (const auto mem_handles_it = mem_handles_.find(memory_address);
-        mem_handles_it != mem_handles_.end()) {
-      const auto& mem_handle_record = mem_handles_it->second;
-
-      // check that actual tensor size is less than or equal to registered tensor size
-      RETURN_IF_NOT(qnn_tensor_data_size <= mem_handle_record.registered_tensor_data_size,
-                    ("Actual tensor data size (" + std::to_string(qnn_tensor_data_size) +
-                     ") is larger than registered tensor data size (" +
-                     std::to_string(mem_handle_record.registered_tensor_data_size) + ").")
-                        .c_str());
-
-      qnn_mem_handle = mem_handle_record.mem_handle.get();
+    // A pooled backing allocation can contain a different tensor view on a
+    // later run. Reuse a sufficiently large registration; otherwise replace it
+    // only after the larger registration succeeds, preserving its cleanup hook.
+    const auto existing = mem_handles_.find(memory_address);
+    const bool has_registration = existing != mem_handles_.end();
+    if (has_registration && qnn_tensor_data_size <= existing->second.registered_tensor_data_size) {
+      qnn_mem_handle = existing->second.mem_handle.get();
       did_register = false;
       return Ort::Status();
     }
 
     // register a new mem handle
     Qnn_MemDescriptor_t mem_descriptor = QNN_MEM_DESCRIPTOR_INIT;
+    // customInfo must remain valid until memRegister returns.
+    QnnMemHtp_Descriptor_t htp_mem_descriptor{};
     mem_descriptor.memShape.dimSize = qnn_tensor_dims;
     mem_descriptor.memShape.numDim = qnn_tensor_rank;
     mem_descriptor.memShape.shapeConfig = nullptr;
@@ -103,8 +99,10 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* memory_address,
 
         HtpSharedMemoryAllocator::SharedMemoryInfo shared_memory_info{};
         RETURN_IF_ERROR(HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfo(memory_address, shared_memory_info));
+        RETURN_IF_NOT(shared_memory_info.offset <= shared_memory_info.total_size &&
+                          qnn_tensor_data_size <= shared_memory_info.total_size - shared_memory_info.offset,
+                      "Tensor exceeds its shared memory backing allocation.");
 
-        QnnMemHtp_Descriptor_t htp_mem_descriptor{};
         htp_mem_descriptor.type = QNN_HTP_MEM_SHARED_BUFFER;
         htp_mem_descriptor.size = shared_memory_info.total_size;
         htp_mem_descriptor.sharedBufferConfig.fd = shared_memory_info.fd;
@@ -170,10 +168,10 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* memory_address,
 
     UniqueQnnMemHandle mem_handle(raw_mem_handle, unregister_mem_handle);
     MemHandleRecord mem_handle_record{qnn_tensor_data_size, std::move(mem_handle)};
-    mem_handles_.emplace(memory_address, std::move(mem_handle_record));
+    mem_handles_.insert_or_assign(memory_address, std::move(mem_handle_record));
 
     qnn_mem_handle = raw_mem_handle;
-    did_register = true;
+    did_register = !has_registration;
     return Ort::Status();
   }
 }
