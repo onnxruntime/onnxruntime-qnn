@@ -10,6 +10,7 @@
 #include <functional>
 #include <gsl/gsl>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -52,6 +53,48 @@ static_assert(QNN_API_VERSION_MAJOR > 2 ||
 
 namespace onnxruntime {
 namespace qnn {
+
+class HtpGlobalConfigState {
+ public:
+  std::mutex mutex;
+  bool configured = false;
+};
+
+namespace {
+
+std::mutex htp_global_config_states_mutex;
+std::unordered_map<QnnGlobalConfig_SetFn_t, std::weak_ptr<HtpGlobalConfigState>> htp_global_config_states;
+
+std::shared_ptr<HtpGlobalConfigState> GetHtpGlobalConfigState(QnnGlobalConfig_SetFn_t global_config_set) {
+  std::lock_guard<std::mutex> lock(htp_global_config_states_mutex);
+  auto& state = htp_global_config_states[global_config_set];
+  if (auto existing_state = state.lock()) {
+    return existing_state;
+  }
+
+  auto new_state = std::make_shared<HtpGlobalConfigState>();
+  state = new_state;
+  return new_state;
+}
+
+}  // namespace
+
+BackendLibraryLifetime::~BackendLibraryLifetime() {
+  library_handles_.clear();
+  htp_global_config_state_.reset();
+}
+
+void BackendLibraryLifetime::AddLibrary(UniqueDynamicLibraryHandle library_handle) {
+  library_handles_.push_back(std::move(library_handle));
+}
+
+std::shared_ptr<HtpGlobalConfigState> BackendLibraryLifetime::GetHtpGlobalConfigState() const {
+  return htp_global_config_state_;
+}
+
+void BackendLibraryLifetime::SetHtpGlobalConfigState(std::shared_ptr<HtpGlobalConfigState> state) {
+  htp_global_config_state_ = std::move(state);
+}
 
 void QnnBackendManager::InitializeProfilingManager(const QnnBackendManagerConfig& config) {
   profiling_manager_ = std::make_unique<QnnBackendProfilingManager>(
@@ -372,6 +415,8 @@ Ort::Status QnnBackendManager::LoadBackend() {
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
   SetQnnBackendType(backend_id_);
 
+  AttachHtpGlobalConfigState();
+
   Qnn_Version_t backend_interface_version = GetQnnInterfaceApiVersion(backend_interface_provider);
   std::ostringstream oss;
   oss << "Found valid interface, version: " << backend_interface_version.major
@@ -435,6 +480,9 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
        QNN_API_VERSION_PATCH},
       &serializer_interface_provider)));
   qnn_interface_ = serializer_interface_provider->QNN_INTERFACE_VER_NAME;  // NOTE: QnnSaver/Ir will provide the interfaces
+
+  AttachHtpGlobalConfigState();
+
   htp_power_config_manager_.Init(qnn_interface_);
 
   Qnn_Version_t backend_interface_version = GetQnnInterfaceApiVersion(backend_interface_provider);
@@ -503,13 +551,46 @@ Ort::Status QnnBackendManager::SetGlobalConfig() {
   }
 #endif
 
+  QnnGlobalConfig_t soc_model_config = QNN_GLOBAL_CONFIG_INIT;
+  if (IsGpuBackend(GetQnnBackendType())) {
+    const auto* device = GetActiveOrtDevice();
+    RETURN_IF(device == nullptr, "No GPU hardware device was provided to QNN EP.");
+    const auto* metadata = api_ptrs_.ort_api.HardwareDevice_Metadata(device);
+    const char* is_virtual = metadata ? api_ptrs_.ort_api.GetKeyValue(metadata, kOrtHardwareDevice_MetadataKey_IsVirtual)
+                                      : nullptr;
+    if (is_virtual != nullptr && std::strcmp(is_virtual, "1") == 0) {
+      soc_model_config.option = QNN_GLOBAL_CONFIG_OPTION_SOC_MODEL;
+      soc_model_config.socModel = static_cast<Qnn_SocModel_t>(soc_model_);
+      configs.push_back(&soc_model_config);
+    }
+  }
+
   if (!configs.empty()) {
     RETURN_IF(qnn_interface_.globalConfigSet == nullptr,
               "Failed to set global config without QnnGlobalConfig_set API.");
 
     configs.push_back(nullptr);
-    Qnn_ErrorHandle_t result = qnn_interface_.globalConfigSet(configs.data());
-    RETURN_IF(result != QNN_SUCCESS, ("Failed to set global config. Error: " + QnnErrorHandleToString(result)).c_str());
+
+    if (!IsNpuBackend(GetQnnBackendType())) {
+      Qnn_ErrorHandle_t result = qnn_interface_.globalConfigSet(configs.data());
+      RETURN_IF(result != QNN_SUCCESS, ("Failed to set global config. Error: " + QnnErrorHandleToString(result)).c_str());
+      return Ort::Status();
+    }
+
+    // The HTP backend requires that QnnGlobalConfig_t options be set through QnnGlobalConfig_set only once
+    // while its library is loaded. Track the successful call in state shared by every live library lifetime
+    // so reloading the backend starts a fresh generation.
+
+    AttachHtpGlobalConfigState();
+    const auto htp_global_config_state = backend_libraries_->GetHtpGlobalConfigState();
+    RETURN_IF(htp_global_config_state == nullptr, "Failed to track HTP global-config state.");
+
+    std::lock_guard<std::mutex> lock(htp_global_config_state->mutex);
+    if (!htp_global_config_state->configured) {
+      Qnn_ErrorHandle_t result = qnn_interface_.globalConfigSet(configs.data());
+      RETURN_IF(result != QNN_SUCCESS, ("Failed to set global config. Error: " + QnnErrorHandleToString(result)).c_str());
+      htp_global_config_state->configured = true;
+    }
   }
 
   return Ort::Status();
@@ -692,7 +773,7 @@ Ort::Status QnnBackendManager::InitializeBackendCommon(const QNN_INTERFACE_VER_T
                                                        bool& initialized_flag,
                                                        const std::string& backend_label) {
   Qnn_ErrorHandle_t result = qnn_interface.backendCreate(log_handle,
-                                                         (const QnnBackend_Config_t**)backend_config_,
+                                                         backend_config_,
                                                          &backend_handle);
   RETURN_IF(QNN_BACKEND_NO_ERROR != result,
             ("Failed to initialize backend (" + backend_label + "). Error: " +
@@ -709,17 +790,19 @@ Ort::Status QnnBackendManager::InitializeBackend(bool enable_gpu_weight_sharing)
     return Ort::Status();
   }
 
-  if (IsGpuBackend(GetQnnBackendType()) && enable_gpu_weight_sharing) {
-    gpu_backend_custom_config_.option = QNN_GPU_BACKEND_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;
-    gpu_backend_custom_config_.weightSharingEnabled = 1;
+  if (IsGpuBackend(GetQnnBackendType())) {
+    if (enable_gpu_weight_sharing) {
+      gsl::not_null<QnnGpuBackend_CustomConfig_t*> gpu_backend_weight_sharing_config =
+          gpu_backend_custom_configs_.PushCustomConfig();
+      gpu_backend_weight_sharing_config->option = QNN_GPU_BACKEND_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;
+      gpu_backend_weight_sharing_config->weightSharingEnabled = 1;
 
-    backend_config_wrapper_.option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
-    backend_config_wrapper_.customConfig = &gpu_backend_custom_config_;
+      gsl::not_null<QnnBackend_Config_t*> backend_weight_sharing_config = gpu_backend_custom_configs_.PushConfig();
+      backend_weight_sharing_config->option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
+      backend_weight_sharing_config->customConfig = gpu_backend_weight_sharing_config;
+    }
 
-    backend_configs_ptr_[0] = &backend_config_wrapper_;
-    backend_configs_ptr_[1] = nullptr;
-
-    backend_config_ = backend_configs_ptr_;
+    backend_config_ = gpu_backend_custom_configs_.GetQnnConfigs();
   }
 
   return InitializeBackendCommon(qnn_interface_, log_handle_, backend_handle_, backend_initialized_, "backend");
@@ -2690,27 +2773,6 @@ void QnnBackendManager::ReleaseResources() {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to TerminateQnnLog: " + result.GetErrorMessage()).c_str());
   }
 
-  if (backend_lib_handle_) {
-    result = UnloadLib(backend_lib_handle_);
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_ERROR,
-                      ("Failed to unload backend library: " + result.GetErrorMessage()).c_str());
-    }
-    backend_lib_handle_ = nullptr;
-  }
-
-  if (validator_backend_lib_handle_) {
-    result = UnloadLib(validator_backend_lib_handle_);
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_ERROR,
-                      ("Failed to unload validator backend library: " + result.GetErrorMessage()).c_str());
-    }
-    validator_backend_lib_handle_ = nullptr;
-  }
-
-  backend_lib_loaded_ = false;
   backend_partial_setup_completed_ = false;
   backend_setup_completed_ = false;
 }
@@ -2789,6 +2851,24 @@ void* QnnBackendManager::LoadLib(const char* file_name, int flags, std::string& 
   }
   if (!mod) {
     error_msg = "load library failed";
+
+    DWORD dw = GetLastError();
+    if (dw != 0) {
+      char* message_buffer = nullptr;
+
+      size_t size = FormatMessageA(
+          FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+          NULL,
+          dw,
+          MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+          (LPSTR)&message_buffer,
+          0,
+          NULL);
+
+      error_msg = std::string(message_buffer, size);
+      LocalFree(message_buffer);
+    }
+
     return nullptr;
   }
 
@@ -2819,6 +2899,10 @@ void* QnnBackendManager::LoadLib(const char* file_name, int flags, std::string& 
     mod_handles_.erase(mod);
   }
 
+  UniqueDynamicLibraryHandle library_handle(static_cast<void*>(mod));
+
+  backend_libraries_->AddLibrary(std::move(library_handle));
+
   return static_cast<void*>(mod);
 #else
   ORT_UNUSED_PARAMETER(error_msg);
@@ -2836,30 +2920,13 @@ void* QnnBackendManager::LoadLib(const char* file_name, int flags, std::string& 
     real_flags |= RTLD_GLOBAL;
   }
 
-  return ::dlopen(file_name, real_flags);
+  UniqueDynamicLibraryHandle library_handle(::dlopen(file_name, real_flags));
+  void* handle = library_handle.get();
+  if (handle) {
+    backend_libraries_->AddLibrary(std::move(library_handle));
+  }
+  return handle;
 #endif
-}
-
-Ort::Status QnnBackendManager::UnloadLib(void* handle) {
-  if (!handle) {
-    return Ort::Status();
-  }
-
-#ifdef _WIN32
-  HMODULE mod = static_cast<HMODULE>(handle);
-
-  if (FreeLibrary(mod) == 0) {
-    return MAKE_EP_FAIL("Failed to free library.");
-  }
-  mod_handles_.erase(mod);
-#else
-  auto rt = ::dlclose(handle);
-  if (rt != 0) {
-    return MAKE_EP_FAIL("Failed to free library.");
-  }
-#endif  // defined(_WIN32)
-
-  return Ort::Status();
 }
 
 void* QnnBackendManager::LibFunction(void* handle, const char* symbol, std::string& error_msg) {
@@ -3371,6 +3438,38 @@ void QnnBackendManager::DeallocateMappedDmaBuffers() {
   // If the failures occur on destruction, then there will be a memory leak
   // and will indicate a more fundamental issue in EP or QNN.
   mapped_fastrpc_buffers_ = std::move(failed_deregisters);
+}
+
+void QnnBackendManager::AttachHtpGlobalConfigState() {
+  if (!IsNpuBackend(GetQnnBackendType()) || qnn_interface_.globalConfigSet == nullptr) {
+    return;
+  }
+
+  backend_libraries_->SetHtpGlobalConfigState(GetHtpGlobalConfigState(qnn_interface_.globalConfigSet));
+}
+
+const OrtHardwareDevice* QnnBackendManager::GetActiveOrtDevice() const {
+  OrtHardwareDeviceType device_type;
+  if (IsNpuBackend(qnn_backend_type_)) {
+    device_type = OrtHardwareDeviceType_NPU;
+  } else if (IsGpuBackend(qnn_backend_type_)) {
+    device_type = OrtHardwareDeviceType_GPU;
+  } else if (IsCpuBackend(qnn_backend_type_)) {
+    device_type = OrtHardwareDeviceType_CPU;
+  } else {
+    return nullptr;
+  }
+
+  const auto is_device_type_matching = [this, device_type](const OrtHardwareDevice* device) {
+    return api_ptrs_.ort_api.HardwareDevice_Type(device) == device_type;
+  };
+
+  auto device_it = std::find_if(devices_.begin(), devices_.end(), is_device_type_matching);
+  if (device_it != devices_.end()) {
+    return *device_it;
+  } else {
+    return nullptr;
+  }
 }
 
 }  // namespace qnn
