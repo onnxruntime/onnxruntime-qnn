@@ -50,7 +50,16 @@ struct CosineSimilarityVerifier {
   float fp32_cs_threshold;
 };
 
-using TensorVerifier = std::variant<ElementwiseAbsoluteVerifier, CosineSimilarityVerifier>;
+struct ElementwiseRelativeVerifier {
+  explicit ElementwiseRelativeVerifier(float fp32_rel_err, float fp32_abs_err = 0.0f)
+      : fp32_rel_err(fp32_rel_err), fp32_abs_err(fp32_abs_err) {}
+
+  // Per-element tolerance is abs_err + rel_err * abs(expected).
+  float fp32_rel_err;
+  float fp32_abs_err;
+};
+
+using TensorVerifier = std::variant<ElementwiseAbsoluteVerifier, CosineSimilarityVerifier, ElementwiseRelativeVerifier>;
 
 // The struct to hold some verification params for RunAndVerifyOutputsWithEP
 struct EPVerificationParams {

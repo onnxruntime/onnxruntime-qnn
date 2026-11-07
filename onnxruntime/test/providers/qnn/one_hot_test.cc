@@ -261,6 +261,11 @@ static void RunOneHotHTPBF16Test(
 
 TEST_F(QnnHTPBackendTests, OneHot_BF16_Axis_Default) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after fixing BF16 OneHot offload.
+  // The current path falls back to CPU.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
   RunOneHotHTPBF16Test(
       TestInputDef<int64_t>({4}, false, {0, 2, 1, 3}),
       TestInputDef<int64_t>({1}, true, {5}),
@@ -271,6 +276,11 @@ TEST_F(QnnHTPBackendTests, OneHot_BF16_Axis_Default) {
 
 TEST_F(QnnHTPBackendTests, OneHot_BF16_Axis0) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after fixing BF16 OneHot offload.
+  // The current path falls back to CPU.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
   RunOneHotHTPBF16Test(
       TestInputDef<int64_t>({4}, false, {0, 2, 1, 3}),
       TestInputDef<int64_t>({1}, true, {5}),

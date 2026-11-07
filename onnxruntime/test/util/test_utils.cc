@@ -37,6 +37,20 @@ void VerifyElementwiseAbsoluteOutput(const std::string& output_name,
 }
 
 template <typename T>
+void VerifyElementwiseRelativeOutput(const std::string& output_name,
+                                     const T* expected_data,
+                                     const T* actual_data,
+                                     size_t element_count,
+                                     const ElementwiseRelativeVerifier& verifier) {
+  for (size_t element_index = 0; element_index < element_count; ++element_index) {
+    const float expected = static_cast<float>(expected_data[element_index]);
+    const float actual = static_cast<float>(actual_data[element_index]);
+    EXPECT_NEAR(expected, actual, verifier.fp32_abs_err + verifier.fp32_rel_err * std::abs(expected))
+        << "Element " << element_index << " mismatch for " << output_name;
+  }
+}
+
+template <typename T>
 void VerifyCosineSimilarityOutput(const std::string& output_name,
                                   const T* expected_data,
                                   const T* actual_data,
@@ -70,6 +84,9 @@ void VerifyFloatOutput(const std::string& output_name,
   if (std::holds_alternative<ElementwiseAbsoluteVerifier>(verifier)) {
     VerifyElementwiseAbsoluteOutput(output_name, expected_data, actual_data, element_count,
                                     std::get<ElementwiseAbsoluteVerifier>(verifier));
+  } else if (std::holds_alternative<ElementwiseRelativeVerifier>(verifier)) {
+    VerifyElementwiseRelativeOutput(output_name, expected_data, actual_data, element_count,
+                                    std::get<ElementwiseRelativeVerifier>(verifier));
   } else if (std::holds_alternative<CosineSimilarityVerifier>(verifier)) {
     VerifyCosineSimilarityOutput(output_name, expected_data, actual_data, element_count,
                                  std::get<CosineSimilarityVerifier>(verifier));

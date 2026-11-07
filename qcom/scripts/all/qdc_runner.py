@@ -10,7 +10,6 @@ import os
 import random
 import shutil
 import signal
-import tarfile
 import tempfile
 import time
 import uuid
@@ -20,13 +19,15 @@ from collections.abc import Callable
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from types import FrameType
-from typing import ClassVar, NamedTuple
+from typing import NamedTuple
 
 import backoff
 import requests
 from extract_testdata import MAPPING as _TESTDATA_MAPPING
+from extract_testdata import extract_to_staging
 from package_manager import PackageManager
 from prettytable import PrettyTable
+from qdc_windows_payload import prepare_windows_payload, validate_windows_results
 from qualcomm_device_cloud_sdk import Client
 from qualcomm_device_cloud_sdk.api.artifacts import (
     post_artifacts_start_upload,
@@ -210,10 +211,16 @@ class Run(ABC):
 
 
 class TestRuns:
-    _runs: ClassVar[list[Run]] = []
+    def __init__(self) -> None:
+        self._runs: list[Run] = []
 
     def abort(self) -> None:
-        [r.abort() for r in self._runs]
+        for run in self._runs:
+            if not run.is_done():
+                try:
+                    run.abort()
+                except Exception:
+                    logging.exception("Failed to abort %s", run.test_name)
 
     def add_run(self, run: Run) -> None:
         self._runs.append(run)
@@ -222,7 +229,7 @@ class TestRuns:
         return any(not run.is_done() for run in self._runs)
 
     def success(self) -> bool:
-        return all(run.status == RunStatus.SUCCESS for run in self._runs)
+        return bool(self._runs) and all(run.status == RunStatus.SUCCESS for run in self._runs)
 
     def poll_runs(self) -> None:
         for run in self._runs:
@@ -318,6 +325,7 @@ class QdcClient:
             ".results.xml",
             "_stdout.txt",
             "test_dbg.stdout",
+            ".log",
         ]
 
         all_job_log_names = self._get_full_job_log_names(job_id)
@@ -458,8 +466,6 @@ class QdcClient:
 
 
 class QdcRunner:
-    _JOB_TIMEOUT_MINUTES = 30
-
     class QdcJobConfig(NamedTuple):
         upload_uuids: list[str]
         test_framework: TestFramework
@@ -479,11 +485,15 @@ class QdcRunner:
         android_archive: Path,
         qli_archive: Path,
         windows_archive: Path,
+        job_timeout_minutes: int = 30,
+        queue_timeout_minutes: int = 45,
     ):
         logging.info("Initializing QDC test runner for project.")
         self._client = QdcClient(api_url, on_behalf_of)
         self._test_name = test_name
         self._log_dir = log_dir
+        self._job_timeout_minutes = job_timeout_minutes
+        self.queue_timeout_seconds = queue_timeout_minutes * 60
 
         enable_android = len(enable_platforms) == 0 or Platform.ANDROID in enable_platforms
         enable_qli = len(enable_platforms) == 0 or Platform.QUALCOMM_LINUX in enable_platforms
@@ -507,7 +517,7 @@ class QdcRunner:
             self._job_config[Platform.WINDOWS] = QdcRunner.QdcJobConfig(
                 [windows_test_uuid],
                 TestFramework.POWERSHELL,
-                "C:\\Temp\\TestContent\\run_tests.ps1",
+                "C:\\Temp\\TestContent\\bootstrap.ps1",
             )
 
         if override_android_id and enable_android:
@@ -555,8 +565,17 @@ class QdcRunner:
             if status != RunStatus.ABORTED:
                 logging.info(f"Downloading log files to {log_dir}.")
                 self._client.download_logs(job_id, log_dir)
+                if platform == Platform.WINDOWS:
+                    try:
+                        validate_windows_results(log_dir)
+                    except ValueError as error:
+                        logging.error("%s", error)
+                        return RunStatus.FAILED
             return status
 
+        if platform == Platform.WINDOWS and status == RunStatus.SUCCESS:
+            logging.error("Windows QDC requires downloaded JUnit reports to verify device execution.")
+            return RunStatus.FAILED
         return status
 
     def _schedule_tests(self, test_runs: TestRuns, tests: list[TestConfig]) -> None:
@@ -706,7 +725,7 @@ class QdcRunner:
             external_job_id=test_name[:32],
             job_type=JobType.AUTOMATED,
             job_mode=JobMode.APPLICATION,
-            timeout_in_minutes=self._JOB_TIMEOUT_MINUTES,
+            timeout_in_minutes=self._job_timeout_minutes,
             test_framework=self._job_config[platform].test_framework,
             job_artifacts=self._job_config[platform].upload_uuids,
             job_parameters=[JobSubmissionParameter.WIFIENABLED],
@@ -780,6 +799,7 @@ class QdcRun(Run):
         self.platform = platform
         self.runner = runner
         self.job_id = job_id
+        self._submitted_at = time.monotonic()
 
     def abort(self) -> None:
         logging.warning(f"Aborting {self.test_name}")
@@ -787,6 +807,11 @@ class QdcRun(Run):
 
     def poll(self) -> None:
         self.status = self.runner.get_run_status(self.job_id, self.platform)
+        if self.status in (RunStatus.PENDING, RunStatus.UNKNOWN):
+            if time.monotonic() - self._submitted_at > self.runner.queue_timeout_seconds:
+                logging.error("QDC queue timeout for %s", self.test_name)
+                self.abort()
+                self.status = RunStatus.FAILED
 
     def get_farm_name(self) -> str:
         return "QDC"
@@ -817,6 +842,13 @@ class TemporarySignalHandler:
 class RunnerCli:
     def __init__(self) -> None:
         parser = argparse.ArgumentParser(description="Device Farm test runner.")
+        parser.add_argument("--config", choices=("Release", "Debug", "RelWithDebInfo"), default="Release")
+        parser.add_argument("--windows-test-mode", choices=("smoke", "full"), default="full")
+        parser.add_argument(
+            "--windows-archive", type=Path, help="Override the Windows build artifact for a local QDC run."
+        )
+        parser.add_argument("--job-timeout-minutes", type=int, default=30)
+        parser.add_argument("--queue-timeout-minutes", type=int, default=45)
         parser.add_argument(
             "--enable-platforms",
             action="store",
@@ -901,6 +933,13 @@ class RunnerCli:
             default=None,
         )
         args = parser.parse_args()
+        if args.job_timeout_minutes <= 0 or args.queue_timeout_minutes <= 0:
+            parser.error("QDC timeouts must be positive.")
+        self.config = args.config
+        self.windows_test_mode = args.windows_test_mode
+        self.windows_archive = args.windows_archive
+        self.job_timeout_minutes = args.job_timeout_minutes
+        self.queue_timeout_minutes = args.queue_timeout_minutes
 
         provided_name = args.name[:100].replace("/", "_")
 
@@ -957,12 +996,16 @@ class RunnerCli:
         android_archive = ORT_ANDROID_ARCHIVE
         qli_archive = ORT_QLI_ARCHIVE
         windows_archive = ORT_TEST_WIN_ARM64
+        if self.config != "Release":
+            windows_archive = REPO_ROOT / "build" / f"onnxruntime-tests-{self.config}-windows-arm64.zip"
+        if self.windows_archive is not None:
+            windows_archive = self.windows_archive
 
         # If you change this temp dir's prefix, please also update the QDC CI job, which attempts to clean
         # up after us if we're killed and don't do it outselves.
         testdata_archive = self._resolve_testdata_archive()
         with tempfile.TemporaryDirectory(prefix="QdcRunner-") as tmpdir:
-            if android_archive.exists():
+            if android_archive.exists() and (not self.enable_platforms or Platform.ANDROID in self.enable_platforms):
                 android_archive = self.__append_package(
                     android_archive,
                     Path(tmpdir),
@@ -971,7 +1014,7 @@ class RunnerCli:
                     testdata_archive=testdata_archive,
                     target_platform_for_testdata="android-aarch64",
                 )
-            if qli_archive.exists():
+            if qli_archive.exists() and (not self.enable_platforms or Platform.QUALCOMM_LINUX in self.enable_platforms):
                 qli_archive = self.__append_package(
                     qli_archive,
                     Path(tmpdir),
@@ -980,38 +1023,55 @@ class RunnerCli:
                     testdata_archive=testdata_archive,
                     target_platform_for_testdata="linux-aarch64_oe_gcc11_2",
                 )
-            if windows_archive.exists():
-                windows_archive = self.__append_package(
+            if windows_archive.exists() and (not self.enable_platforms or Platform.WINDOWS in self.enable_platforms):
+                if testdata_archive is None:
+                    raise FileNotFoundError("Windows QDC testing requires --testdata-archive.")
+                if self.append_windows_package is not None:
+                    windows_archive = self.__append_package(
+                        windows_archive,
+                        Path(tmpdir),
+                        self.append_windows_package,
+                        None,
+                    )
+                windows_archive = prepare_windows_payload(
                     windows_archive,
-                    Path(tmpdir),
-                    self.append_windows_package,
-                    None,
-                    testdata_archive=testdata_archive,
-                    # QDC currently supports Windows ARM64 only; update if QDC gains
-                    # multi-platform support for testdata path re-mapping.
-                    target_platform_for_testdata="windows-arm64",
+                    Path(tmpdir) / "windows",
+                    testdata_archive,
+                    config=self.config,
+                    test_mode=self.windows_test_mode,
                 )
 
-            with TemporarySignalHandler(lambda sig, frame: test_runs.abort()):
-                QdcRunner(
-                    self.test_name,
-                    self.on_behalf_of,
-                    self.log_dir,
-                    test_runs,
-                    self.qdc_api_url,
-                    self.enable_platforms,
-                    self.qdc_android_id,
-                    self.qdc_qli_id,
-                    self.qdc_windows_id,
-                    android_archive,
-                    qli_archive,
-                    windows_archive,
-                )
-                logging.info(f"Initialized runner. Test name prefix={self.test_name}")
+            def cancel(sig: int, frame: FrameType | None) -> None:
+                raise SystemExit(128 + sig)
 
-                while test_runs.has_pending_tasks():
-                    test_runs.poll_runs()
-                    time.sleep(10)
+            with (
+                TemporarySignalHandler(cancel),
+                TemporarySignalHandler(cancel, signal.SIGTERM),
+            ):
+                try:
+                    QdcRunner(
+                        self.test_name,
+                        self.on_behalf_of,
+                        self.log_dir,
+                        test_runs,
+                        self.qdc_api_url,
+                        self.enable_platforms,
+                        self.qdc_android_id,
+                        self.qdc_qli_id,
+                        self.qdc_windows_id,
+                        android_archive,
+                        qli_archive,
+                        windows_archive,
+                        self.job_timeout_minutes,
+                        self.queue_timeout_minutes,
+                    )
+                    logging.info(f"Initialized runner. Test name prefix={self.test_name}")
+
+                    while test_runs.has_pending_tasks():
+                        test_runs.poll_runs()
+                        time.sleep(10)
+                finally:
+                    test_runs.abort()
 
         print()
         print(test_runs.get_status_table())
@@ -1076,19 +1136,9 @@ class RunnerCli:
         target_platform: str,
     ) -> None:
         """Re-pack the 4 handles from the testdata archive into the per-platform QDC payload."""
-        suffix = ".tar.bz2" if testdata_archive.name.endswith(".tar.bz2") else testdata_archive.suffix
         with tempfile.TemporaryDirectory(prefix="QdcMergeTestdata-") as tmp:
             staging = Path(tmp)
-            if suffix == ".zip":
-                with zipfile.ZipFile(testdata_archive) as zf:
-                    zf.extractall(staging)
-            else:
-                with tarfile.open(testdata_archive, "r:bz2") as tf:
-                    try:
-                        tf.extractall(staging, filter="data")
-                    except TypeError:
-                        # filter= parameter added in Python 3.12; fall back for older runtimes.
-                        tf.extractall(staging)
+            extract_to_staging(testdata_archive, staging)
 
             with zipfile.ZipFile(archive_path, mode="a") as out_zip:
                 for handle, rel_template in _TESTDATA_MAPPING.items():
@@ -1137,7 +1187,8 @@ class RunnerCli:
 log_format = "[%(asctime)s] [qdc_runner.py] [%(levelname)s] %(message)s"
 logging.basicConfig(level=logging.INFO, format=log_format, force=True)
 
-runner = RunnerCli()
-if not runner.run():
-    logging.error("Not all tests were successful.")
-    exit(1)
+if __name__ == "__main__":
+    runner = RunnerCli()
+    if not runner.run():
+        logging.error("Not all tests were successful.")
+        exit(1)
