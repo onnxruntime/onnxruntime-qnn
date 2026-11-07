@@ -949,12 +949,8 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_multi_io) {
 //   (2) The zero-copy fallback WARNING fires selectively — only for the tensor
 //       that opted in via the session option but is bound to CPU memory.
 //
-// Note: when default_device_ = HOST_ACCESSIBLE, ORT Core transparently copies
-// CPU-backed *inputs* into HOST_ACCESSIBLE memory before the kernel runs, so a
-// CPU input never reaches BindQnnTensorMemoryToOrtValueMemory with CPU memory
-// info. Only CPU-backed *outputs* still hit the RAW/clientBuf branch (outputs
-// are written directly to the user's bound buffer). This test therefore mixes
-// shared inputs with a CPU output to exercise the fallback path.
+// This test mixes shared inputs with a CPU output to exercise the fallback
+// path while preserving MEMHANDLE binding for explicitly shared tensors.
 TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
@@ -1021,10 +1017,9 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
 // session multiple times with CPU-backed bindings must produce exactly one
 // WARNING across all Runs — not one per tensor or Run.
 //
-// Note: when default_device_ = HOST_ACCESSIBLE, only CPU *outputs* trigger the
-// fallback; CPU inputs are transparently promoted to HOST_ACCESSIBLE by ORT
-// Core's memory planner. mul_1 has one output (Y), so exactly one WARNING is
-// expected regardless of the number of Runs.
+// CPU inputs and outputs remain in regular CPU memory even when shared memory
+// is enabled. Both use clientBuf, with one WARNING regardless of the number of
+// tensors or Runs.
 TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
@@ -1060,14 +1055,15 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
     session.Run(Ort::RunOptions{}, binding);
   }
 
-  // mul_1 has one input (X) and one output (Y). X is transparently promoted
-  // from CPU to HOST_ACCESSIBLE by ORT Core, so its Bind takes the MEMHANDLE
-  // branch with no WARNING. Only Y stays CPU and triggers the
-  // WARNING — exactly ONCE across all kRuns (not once per Run).
+  // mul_1 has one input (X) and one output (Y). Both stay CPU-backed rather
+  // than being automatically allocated in shared memory.
+  EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 0u);
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 2u * kRuns);
+  // The WARNING fires exactly ONCE across all kRuns (not once per tensor or Run).
   // If the one-shot guard is broken it would fire kRuns times.
   const size_t warn_count = capture.CountContaining(kLogSubstrFallbackWarning);
   EXPECT_EQ(warn_count, 1u)
-      << "Expected exactly 1 WARNING (for CPU-backed output Y) across " << kRuns
+      << "Expected exactly 1 WARNING (for CPU-backed I/O) across " << kRuns
       << " Runs, but got " << warn_count << ". One-shot semantics broken?";
 }
 
