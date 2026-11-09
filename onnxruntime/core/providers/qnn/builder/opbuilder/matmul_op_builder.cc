@@ -283,30 +283,32 @@ Ort::Status MatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, c
   }
 
   if (use_conv2d) {
-    return ProcessInputsForQnnConv2D(qnn_model_wrapper,
-                                     node_unit,
-                                     input_info_0,
-                                     input_info_1,
-                                     logger,
-                                     input_names,
-                                     do_op_validation);
+    RETURN_IF_ERROR(ProcessInputsForQnnConv2D(qnn_model_wrapper,
+                                              node_unit,
+                                              input_info_0,
+                                              input_info_1,
+                                              logger,
+                                              input_names,
+                                              do_op_validation));
   } else if (use_fully_connected) {
-    return ProcessInputsForQnnFullyConnected(qnn_model_wrapper,
-                                             node_unit,
-                                             input_info_0,
-                                             input_info_1,
-                                             logger,
-                                             input_names,
-                                             do_op_validation);
+    RETURN_IF_ERROR(ProcessInputsForQnnFullyConnected(qnn_model_wrapper,
+                                                      node_unit,
+                                                      input_info_0,
+                                                      input_info_1,
+                                                      logger,
+                                                      input_names,
+                                                      do_op_validation));
   } else {
-    return ProcessInputsForQnnMatMul(qnn_model_wrapper,
-                                     node_unit,
-                                     input_info_0,
-                                     input_info_1,
-                                     logger,
-                                     input_names,
-                                     do_op_validation);
+    RETURN_IF_ERROR(ProcessInputsForQnnMatMul(qnn_model_wrapper,
+                                              node_unit,
+                                              input_info_0,
+                                              input_info_1,
+                                              logger,
+                                              input_names,
+                                              do_op_validation));
   }
+
+  return utils::DequantizeWeightForGpuFloatActivation(qnn_model_wrapper, input_names, do_op_validation);
 }
 
 Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_model_wrapper,
