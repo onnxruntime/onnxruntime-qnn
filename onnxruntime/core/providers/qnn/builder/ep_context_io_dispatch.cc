@@ -66,21 +66,21 @@ bool EpContextIoDispatch::HasWriteCallback() const noexcept {
 Ort::Status EpContextIoDispatch::Read(const std::string& file_name, EpContextBuffer& out) const {
   RETURN_IF_NOT(HasReadCallback(), "EPContext read callback is unavailable.");
 
-  auto allocator = std::make_shared<Ort::AllocatorWithDefaultOptions>();
+  Ort::AllocatorWithDefaultOptions allocator;
   void* data = nullptr;
   size_t data_size = 0;
-  OrtStatus* s = read_fn_(read_state_, file_name.c_str(), *allocator, &data, &data_size);
+  OrtStatus* s = read_fn_(read_state_, file_name.c_str(), allocator, &data, &data_size);
   if (s != nullptr) {
     return Ort::Status(s);
   }
   if (data == nullptr || data_size == 0) {
     if (data != nullptr) {
-      allocator->Free(data);
+      allocator.Free(data);
     }
     return Ort::Status(
         ("OrtReadNamedBufferFunc returned invalid buffer for " + file_name).c_str(), ORT_FAIL);
   }
-  out.Adopt(data, data_size, std::shared_ptr<OrtAllocator>(allocator, *allocator));
+  out.Adopt(data, data_size);
   return Ort::Status();
 }
 

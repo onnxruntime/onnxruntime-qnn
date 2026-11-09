@@ -181,34 +181,26 @@ TEST(QnnUnit_EpContextIoDispatchTest, MovedBufferRetainsDataAndEmptiesSource) {
   EXPECT_EQ(destination.size(), 0u);
 }
 
-TEST(QnnUnit_EpContextIoDispatchTest, BufferRetainsAllocatorAndFreesOnceAfterLastOwner) {
-  size_t frees = 0;
-  struct CountingAllocator : OrtAllocator {
-    size_t* frees;
-    explicit CountingAllocator(size_t& count) : OrtAllocator{}, frees(&count) {
-      Free = [](OrtAllocator* allocator, void* data) {
-        ++*static_cast<CountingAllocator*>(allocator)->frees;
-        delete[] static_cast<char*>(data);
-      };
-    }
-  };
-  std::weak_ptr<CountingAllocator> allocator_weak;
+TEST(QnnUnit_EpContextIoDispatchTest, BufferSharesDefaultAllocationAfterWrapperScopeEnds) {
   qnn::EpContextBuffer retained;
+  char* original = nullptr;
   {
-    auto allocator = std::make_shared<CountingAllocator>(frees);
-    allocator_weak = allocator;
+    Ort::AllocatorWithDefaultOptions allocator;
+    auto* data = static_cast<char*>(allocator.Alloc(32));
+    ASSERT_NE(data, nullptr);
+    data[0] = 42;
     qnn::EpContextBuffer bytes;
-    auto* data = new char[32];
-    bytes.Adopt(data, 32, allocator);
+    bytes.Adopt(data, 32);
     retained = bytes;
+    original = data;
     EXPECT_EQ(retained.data(), data);
-    EXPECT_EQ(frees, 0u);
   }
-  EXPECT_FALSE(allocator_weak.expired());
-  EXPECT_EQ(frees, 0u);
+  EXPECT_EQ(retained.data(), original);
+  EXPECT_EQ(retained.size(), 32u);
+  EXPECT_EQ(retained.data()[0], 42);
   retained = {};
-  EXPECT_EQ(frees, 1u);
-  EXPECT_TRUE(allocator_weak.expired());
+  EXPECT_EQ(retained.data(), nullptr);
+  EXPECT_EQ(retained.size(), 0u);
 }
 
 // The named EPContext-encryption capability proceeds to resolve callbacks
