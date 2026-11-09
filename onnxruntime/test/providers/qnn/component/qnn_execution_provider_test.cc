@@ -347,8 +347,8 @@ TEST_F(QnnUnit_ExecutionProviderTest, PartitionCtxModel_AcceptsVirtualSourcesAnd
   for (const char* name : {"qnn", "QNNExecutionProvider", "qnn.virtual", "QNNExecutionProvider.Virtual", "other.virtual"}) {
     SCOPED_TRACE(name);
     EpStubContext ctx;
-    UseGlobalEpStubs use(ctx);
     InstallFakeGraphApiStubs(ctx.stub_ort_api);
+    UseGlobalEpStubs use(ctx);
     std::vector<const OrtNode*> fused_nodes;
     ctx.stub_ep_api.EpGraphSupportInfo_AddNodesToFuse =
         [](OrtEpGraphSupportInfo* info, const OrtNode* const* nodes, size_t count,
@@ -364,8 +364,12 @@ TEST_F(QnnUnit_ExecutionProviderTest, PartitionCtxModel_AcceptsVirtualSourcesAnd
     context.attrs[qnn::SOURCE] = &source;
     FakeNode relu{"relu", "Relu", "", 13, {}, {}};
     FakeGraph graph{{context, relu}, {}, {}, {}};
-    (ep.get()->*GetQnnEpPrivateMember(PartitionCtxModelTag{}))(
-        graph.AsGraph(), reinterpret_cast<OrtEpGraphSupportInfo*>(&fused_nodes));
+    {
+      // MakeEp's nested global override restores the real API on return.
+      UseGlobalEpStubs use(ctx);
+      (ep.get()->*GetQnnEpPrivateMember(PartitionCtxModelTag{}))(
+          graph.AsGraph(), reinterpret_cast<OrtEpGraphSupportInfo*>(&fused_nodes));
+    }
     EXPECT_EQ(fused_nodes.size(), std::strcmp(name, "other.virtual") == 0 ? 0u : 1u);
   }
 }

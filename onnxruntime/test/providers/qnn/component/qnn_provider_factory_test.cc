@@ -312,6 +312,16 @@ class FactoryStubContext {
       const auto it = values.find(key);
       return it == values.end() ? nullptr : it->second.c_str();
     };
+    stub_ort_api.HardwareDevice_Type = [](const OrtHardwareDevice* device) noexcept {
+      auto* self = current_;
+      const auto it = self->device_type_map.find(device);
+      return it == self->device_type_map.end() ? OrtHardwareDeviceType_CPU : it->second;
+    };
+    stub_ort_api.HardwareDevice_VendorId = [](const OrtHardwareDevice* device) noexcept {
+      auto* self = current_;
+      const auto it = self->device_vendor_map.find(device);
+      return it == self->device_vendor_map.end() ? 0u : it->second;
+    };
     stub_ort_api.HardwareDevice_Metadata = [](const OrtHardwareDevice* device) noexcept -> const OrtKeyValuePairs* {
       auto* self = current_;
       const auto it = self->hardware_metadata.find(device);
