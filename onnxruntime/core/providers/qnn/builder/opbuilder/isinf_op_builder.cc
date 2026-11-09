@@ -14,7 +14,7 @@ class IsInfOpBuilder : public BaseOpBuilder {
   IsInfOpBuilder() : BaseOpBuilder("IsInfOpBuilder") {}
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(IsInfOpBuilder);
 
-  // Override IsOpSupported to decline IsInf on the NPU/HTP backend (see implementation).
+  // Override IsOpSupported to restrict IsInf on the NPU/HTP backend to float16 inputs.
   Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
                             const Ort::Logger& logger) const override ORT_MUST_USE_RESULT;
@@ -42,9 +42,11 @@ Ort::Status IsInfOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   // (IsInf.*@CB.Ce.t*2) with no TCM/flat fallback, so finalize cannot allocate it and the whole
   // QNN subgraph fails to compile at session creation. Declining here lets ORT fall IsInf back to
   // the CPU EP instead of failing to load any model that contains it.
-  RETURN_IF(IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()),
-            "QNN EP does not support IsInf on the HTP backend "
-            "(graphFinalize fails with error 1002 / QNN_COMMON_ERROR_MEM_ALLOC).");
+  // IsInf with float16 input is allowed on HTP.
+  RETURN_IF(IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+                node_unit.Inputs()[0].type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16,
+            "QNN EP only supports float16 input tensors for IsInf on the HTP backend "
+            "(float32 inputs can fail graphFinalize with error 1002 / QNN_COMMON_ERROR_MEM_ALLOC).");
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
 
