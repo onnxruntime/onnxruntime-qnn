@@ -342,11 +342,7 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'0'|Default. File-mapped weights enabled (when supported).|
 |'1'|Disable file-mapped weight loading. File-mapped weights are only available on Windows ARM64 with QNN API >= 2.32; this option is ignored on other platforms.|
 
-Native context-binary loading selects DMA when the FastRPC library and SDK callback API are available. If FastRPC initialization fails, CPU file mapping remains available for ordinary context creation. A failed DMA create reuses the acquired bytes for ordinary loading without another read or decryption.
-
-EPContext read callbacks take priority over native file mapping. Successful callback output is passed to ordinary context creation without an additional whole-binary copy and remains alive through metadata extraction. The application owns ciphertext acquisition and decryption: enabling file-mapped weights does not automatically map or decrypt callback-managed files, and callback output is not automatically imported through DMA. No callback registration or ABI changes are required.
-
-Initialization validation covers initial external EPContext loading with callback output and native CPU mapping. Native DMA failed-create cleanup with other live contexts and shared-context recovery remain outside this validation: the existing failed-create cleanup can deregister mappings belonging to other live contexts on the same backend manager. Retrying with the acquired bytes avoids another read but does not establish safe DMA cleanup.
+EPContext read callbacks can be used with either value of `disable_file_mapped_weights`; registering a callback does not force this option to be disabled. The application remains responsible for reading and decrypting callback-managed context binaries. This option controls native context-binary file mapping and does not automatically enable file mapping for callback-managed files.
 
 An already loaded shared context is reused without deserializing it again.
 
