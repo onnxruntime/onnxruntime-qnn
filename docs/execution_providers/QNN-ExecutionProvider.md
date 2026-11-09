@@ -16,6 +16,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Qualcomm AI Hub](#qualcomm-ai-hub)
 - [Configuration Options](#configuration-options)
 - [Flexible Context Binary (FCB) / multi-SoC EP context](#flexible-context-binary-fcb--multi-soc-ep-context)
+- [Zero-copy with app-owned host memory (HTP, Windows)](#zero-copy-with-app-owned-host-memory-htp-windows)
 - [Supported ONNX operators](#supported-onnx-operators)
 - [QTI AISW block operators](#qti-aisw-block-operators)
 - [Running a model with QNN EP's HTP backend (Python)](#running-a-model-with-qnn-eps-htp-backend-python)
@@ -611,6 +612,40 @@ result = session.run(None, {"input": input_data}, run_options)
 del session
 ort.unregister_execution_provider_library(ep_registration_name)
 ```
+
+## Zero-copy with app-owned host memory (HTP, Windows)
+
+By default, QNN HTP copies graph inputs and outputs between ORT buffers and NPU-shared buffers on every run. To skip that copy for buffers the application already owns (for example, buffers from `malloc`), import them once through the ORT interop API using `ORT_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION`:
+
+```c++
+const OrtInteropApi& interop = Ort::GetInteropApi();
+OrtExternalResourceImporter* importer = nullptr;
+interop.CreateExternalResourceImporterForDevice(qnn_npu_ep_device, &importer);
+
+OrtExternalMemoryDescriptor desc{ORT_API_VERSION, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION,
+                                 buffer /* 4096-byte aligned */, size_bytes /* multiple of 4096 */, 0};
+OrtExternalMemoryHandle* mem = nullptr;
+interop.ImportMemory(importer, &desc, &mem);            // maps the buffer into the NPU address space once
+
+OrtExternalTensorDescriptor tensor_desc{ORT_API_VERSION, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                                        shape, rank, /*offset_bytes*/ 0};
+OrtValue* value = nullptr;
+interop.CreateTensorFromMemory(importer, mem, &tensor_desc, &value);
+// Bind `value` as a session input or output and call Run() as often as needed.
+
+// Teardown: release the OrtValue, then the import handle, then free the buffer.
+interop.ReleaseExternalMemoryHandle(mem);
+interop.ReleaseExternalResourceImporter(importer);
+```
+
+- QNN EP registers the buffer with FastRPC (`remote_register_buf_attr2`) when it is imported. On the first run in each QNN context it registers a QNN memory handle for each tensor address. Later runs reuse those handles, so steady-state runs do no copying and no registration.
+- Releasing the import handle deregisters the QNN memory handles in every context still alive, and then removes the FastRPC mapping. If a session is destroyed first, its handles are released together with its QNN context.
+- The tensor's `OrtMemoryInfo` is `QnnHtpShared` (CPU, `HOST_ACCESSIBLE`). CPU EP nodes can read it directly, and `enable_htp_shared_memory_allocator` is not required.
+- Requirements:
+  - Windows on Snapdragon with the HTP backend. Use an NPU `OrtEpDevice`; `CanImportMemory` reports whether the device supports this.
+  - The buffer address and size must be multiples of 4096 bytes. Imports must not overlap each other.
+- Lifetime: the buffer must stay valid until its import handle is released. Do not release the handle while a `Run()` that uses it is in progress.
+- Buffers that are not imported continue to use the copy path.
 
 ## Supported ONNX operators
 
