@@ -201,6 +201,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'75'|HTP v75.|
 |'79'|HTP v79.|
 |'81'|HTP v81.|
+|'85'|HTP v85. The Hexagon HTP v85 libraries are packaged starting with onnxruntime-qnn v2.9.0.|
 
 Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/enum_QnnHtpDevice_8h_1a0ed976142af98a86143459dfd326f717.html) for the full list of valid values.
 

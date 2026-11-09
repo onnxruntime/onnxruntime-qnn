@@ -113,6 +113,10 @@ pip install onnxruntime-qnn==2.9.0
 - **2.1.0**: Linux ARM64 preview wheels available
 - **2.0.0**: No Linux ARM64 Wheels or .tgz files
 
+### Hexagon HTP Libraries
+
+- **2.9.0+**: Hexagon HTP v85 libraries are packaged and available.
+
 ---
 
 ## Resources
