@@ -1662,7 +1662,7 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_EnvironmentErrorPropagat
   EXPECT_TRUE(ctx.created_ep_devices.empty());
 }
 
-TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_SyntheticGpuFailurePreservesPublishedNpu) {
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_SyntheticGpuFailureRollsBackPublishedNpu) {
   for (bool fail_hardware : {false, true}) {
     SCOPED_TRACE(fail_hardware);
     FactoryStubContext ctx;
@@ -1677,12 +1677,12 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_SyntheticGpuFailurePrese
       size_t count = 0;
       Ort::Status status(factory.GetSupportedDevices(&factory, devices, 1, output, 2, &count));
       ASSERT_FALSE(status.IsOK());
-      // Current API behavior retains already-published outputs on a later error.
-      EXPECT_EQ(count, 1u);
-      EXPECT_NE(output[0], nullptr);
+      // Failed discovery rolls back all EP outputs and synthesized hardware from this call.
+      EXPECT_EQ(count, 0u);
+      EXPECT_EQ(output[0], nullptr);
       EXPECT_EQ(output[1], nullptr);
-      EXPECT_EQ(ctx.release_ep_device_calls, 0);
-      EXPECT_TRUE(ctx.released_hardware.empty());
+      EXPECT_EQ(ctx.release_ep_device_calls, 1);
+      EXPECT_EQ(ctx.released_hardware.size(), fail_hardware ? 0u : 1u);
     }
     EXPECT_EQ(ctx.released_hardware.size(), fail_hardware ? 0u : 1u);
   }
