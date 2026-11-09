@@ -1104,8 +1104,7 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
   }
 
   if (!file_mapped_weights_enabled_) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                    "DMA data mapping is disabled.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, "DMA data mapping is disabled.");
     return QNN_CONTEXT_ERROR_ABORTED;
   }
 
@@ -1395,12 +1394,15 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
 #endif
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  RETURN_IF(use_dma_loading && (!file_mapper_ || !std::atomic_load(&rpcmem_library_)),
-            "DMA context loading requires a file mapper and FastRPC library.");
+  if (use_dma_loading && (!file_mapper_ || !std::atomic_load(&rpcmem_library_))) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                    "DMA file mapper or FastRPC library is unavailable; using ordinary context loading.");
+    use_dma_loading = false;
+  }
   if (use_dma_loading && file_mapper_) {
     if (!qnn_interface_.contextCreateFromBinaryWithCallback) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                      "QNN DMA callback API is unavailable; using ordinary loading with the acquired buffer.");
+                      "QNN DMA callback API is unavailable; using contextCreateFromBinary with the existing context binary buffer.");
       use_dma_loading = false;
     }
   }
@@ -1431,14 +1433,14 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
       use_dma_loading = false;
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
                       ("contextCreateFromBinaryWithCallback failed (" + QnnErrorHandleToString(rt) +
-                       "). Retrying ordinary loading with the acquired buffer.")
+                       "). Retrying contextCreateFromBinary with the same context binary buffer.")
                           .c_str());
     }
   }
 #endif
 
   if (!use_dma_loading || rt != QNN_SUCCESS) {
-    // The acquired buffer remains alive; DMA failure does not require another read/decryption.
+    // The caller keeps the context binary buffer alive; reuse it after DMA failure instead of reading the file again.
     EpContextBuffer file_buffer;
     if (bin_buffer == nullptr) {
       RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, file_buffer, io_dispatch));
@@ -1459,7 +1461,7 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
             ("contextCreateFromBinary failed. Error: " + QnnErrorHandleToString(rt)).c_str());
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
                   use_dma_loading ? "EPContext binary loaded using DMA callbacks."
-                                  : "EPContext binary loaded using ordinary context creation with the acquired buffer.");
+                                  : "EPContext binary loaded using contextCreateFromBinary.");
   return Ort::Status();
 }
 
@@ -1500,7 +1502,7 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
                                 std::to_string(blob_version.patch);
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
                       ("SSR recovery: context binary version " + version_str +
-                       " < 3.3.3; DMA callback loading requires version >= 3.3.3. Using ordinary loading with the acquired buffer.")
+                       " < 3.3.3; DMA callback loading requires version >= 3.3.3. Using contextCreateFromBinary with the existing mapped context binary buffer.")
                           .c_str());
     } else {
       use_dma_loading = true;
@@ -2026,7 +2028,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   // metadata destroyed before the view is unmapped. Legacy DMA keeps its cached view.
   std::shared_ptr<char> mapping_owner;
   if (file_mapped_weights_enabled_ && buffer_length == 0) {
-    RETURN_IF(io_dispatch.HasReadCallback(), "Callback-managed binary must be acquired before loading.");
+    RETURN_IF(io_dispatch.HasReadCallback(), "The decryption read callback must supply a plaintext context binary buffer before loading.");
     RETURN_IF(!file_mapper_, "File mapper is uninitialized.");
     RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
     use_dma_loading = std::atomic_load(&rpcmem_library_) != nullptr &&
@@ -2067,7 +2069,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     std::string version_str(std::to_string(blob_version.major) + "." + std::to_string(blob_version.minor) + "." + std::to_string(blob_version.patch));
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
-                    ("Context binary of " + node_name + " is " + version_str + ". DMA callback loading requires version >= 3.3.3. Using ordinary loading with the acquired buffer.").c_str());
+                    ("Context binary of " + node_name + " is " + version_str + ". DMA callback loading requires version >= 3.3.3. Using contextCreateFromBinary with the existing mapped context binary buffer.").c_str());
     use_dma_loading = false;
   }
 #endif
@@ -2176,7 +2178,8 @@ Ort::Status QnnBackendManager::SetupBackend(
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-    // A later native session can publish FastRPC after ordinary-only setup.
+    // A decryption callback skips FastRPC setup without disabling mapping on this shared manager.
+    // A later native session can supply the FastRPC library needed for DMA.
     if (file_mapped_weights_enabled_ && !std::atomic_load(&rpcmem_library_) && rpcmem_library) {
       std::atomic_store(&rpcmem_library_, rpcmem_library);
     }

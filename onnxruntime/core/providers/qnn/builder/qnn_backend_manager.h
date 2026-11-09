@@ -815,6 +815,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Access this shared pointer atomically: SSR/DMA readers do not hold the setup lock.
   // DMA operations retain a local snapshot through registration or release.
+  // SetupBackend can publish this library when a later native session reuses the manager.
+  // DMA callbacks use a different mutex, so all accesses use atomic shared_ptr operations.
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
   std::mutex mapped_fastrpc_buffers_mutex_;
   std::vector<std::pair<void*, uint64_t>> mapped_fastrpc_buffers_;
