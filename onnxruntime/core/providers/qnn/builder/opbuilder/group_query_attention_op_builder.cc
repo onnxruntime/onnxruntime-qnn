@@ -153,7 +153,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
   };
 
 #if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40) // TODO: validation onky, update to QNN_API_VERSION_MINOR >= xx once qairt uplevel to 2.52 in CI.
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 42)
   // The extended HTP GQA op definition has 14 positional inputs. HTP validates the exact input
   // count, so include all trailing optional inputs and represent absent ones with null tensors.
   if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP) {
