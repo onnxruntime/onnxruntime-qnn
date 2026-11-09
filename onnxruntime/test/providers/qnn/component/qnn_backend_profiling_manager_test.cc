@@ -10,6 +10,7 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -32,22 +33,27 @@ class ProfileApiRecorder {
     qnn_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
     qnn_interface_.profileCreate = ProfileCreate;
     qnn_interface_.profileFree = ProfileFree;
+    qnn_interface_.profileGetEvents = ProfileGetEvents;
+    qnn_interface_.propertyHasCapability = PropertyHasCapability;
     qnn_interface_.errorGetMessage = ErrorGetMessage;
   }
 
   ~ProfileApiRecorder() { current_ = nullptr; }
 
   std::unique_ptr<qnn::QnnBackendProfilingManager> CreateManager(qnn::ProfilingLevel provider_level,
-                                                                 bool backend_setup = true) {
+                                                                 bool backend_setup = true,
+                                                                 std::string profiling_file_path = {}) {
     backend_setup_ = backend_setup;
     qnn::QnnBackendProfilingManagerDependencies dependencies{
         qnn_interface_, backend_handle_, qnn_system_interface_, nullptr, backend_setup_, [] { return Ort::Status{}; }};
     return std::make_unique<qnn::QnnBackendProfilingManager>(
-        std::move(dependencies), provider_level, qnn::ProfilingLevel::OFF, std::string{}, false);
+        std::move(dependencies), provider_level, qnn::ProfilingLevel::INVALID,
+        std::move(profiling_file_path), false);
   }
 
   int create_calls = 0;
   int free_calls = 0;
+  int get_events_calls = 0;
   QnnProfile_Level_t created_level = static_cast<QnnProfile_Level_t>(0);
   Qnn_ErrorHandle_t create_result = QNN_PROFILE_NO_ERROR;
   bool block_profile_free = false;
@@ -55,8 +61,24 @@ class ProfileApiRecorder {
   bool allow_profile_free = false;
   std::mutex callback_mutex;
   std::condition_variable callback_cv;
+  std::function<void()> on_get_events;
 
  private:
+  static Qnn_ErrorHandle_t ProfileGetEvents(Qnn_ProfileHandle_t /*profile*/,
+                                            const QnnProfile_EventId_t** events, uint32_t* num_events) {
+    ++current_->get_events_calls;
+    if (current_->on_get_events) {
+      current_->on_get_events();
+    }
+    *events = nullptr;
+    *num_events = 0;
+    return QNN_PROFILE_NO_ERROR;
+  }
+
+  static Qnn_ErrorHandle_t PropertyHasCapability(QnnProperty_Key_t /*key*/) {
+    return QNN_PROPERTY_NOT_SUPPORTED;
+  }
+
   static Qnn_ErrorHandle_t ProfileCreate(Qnn_BackendHandle_t /*backend*/, QnnProfile_Level_t level,
                                          Qnn_ProfileHandle_t* profile) {
     ++current_->create_calls;
@@ -91,6 +113,17 @@ class ProfileApiRecorder {
 };
 
 ProfileApiRecorder* ProfileApiRecorder::current_ = nullptr;
+
+bool CanLockProfileHandleOnAnotherThread(qnn::QnnBackendProfilingManager& manager) {
+  auto lock = manager.AcquireProfileHandleLock();
+  lock.unlock();
+  bool acquired = false;
+  std::thread worker([&acquired, lock = std::move(lock)]() mutable {
+    acquired = lock.try_lock();
+  });
+  worker.join();
+  return acquired;
+}
 
 TEST(QnnUnit_BackendProfilingManagerTest,
      InitializeForCurrentConsumers_ProfilingOff_DoesNotCreateProfileHandle) {
@@ -286,6 +319,57 @@ TEST(QnnUnit_BackendProfilingManagerTest,
   EXPECT_TRUE(profiling_scope.Active());
   EXPECT_EQ(profiling_info.graph_name, "graph");
   EXPECT_EQ(profiling_info.ort_profiler, nullptr);
+}
+
+TEST(QnnUnit_BackendProfilingManagerTest,
+     ProviderOnlyScope_PreventsHandleResetUntilExtractionCompletes) {
+  for (bool execute : {false, true}) {
+    SCOPED_TRACE(execute ? "execute" : "finalize");
+    StubApiEnv env;
+    ProfileApiRecorder recorder;
+    auto manager = recorder.CreateManager(qnn::ProfilingLevel::BASIC, true, "unused-profile.csv");
+    ASSERT_TRUE(manager->InitializeProfilingForCurrentConsumers(env.logger).IsOK());
+    qnn::profile::ProfilingInfo profiling_info;
+    qnn::QnnProfilingScope profiling_scope;
+    if (execute) {
+      ASSERT_TRUE(manager->CreateGraphProfilingScope(
+                             profiling_info, "graph", qnn::OrtProfilingOperation::EXECUTE,
+                             qnn::ProfilingMethodType::EXECUTE, nullptr, env.logger, profiling_scope)
+                      .IsOK());
+    } else {
+      ASSERT_TRUE(manager->CreateSetupProfilingScope(
+                             profiling_info, "graph", qnn::OrtProfilingOperation::FINALIZE,
+                             qnn::ProfilingMethodType::FINALIZE, profiling_scope)
+                      .IsOK());
+    }
+    ASSERT_TRUE(profiling_scope.Active());
+    EXPECT_FALSE(CanLockProfileHandleOnAnotherThread(*manager));
+    profiling_scope.Complete(profiling_info);
+    EXPECT_FALSE(CanLockProfileHandleOnAnotherThread(*manager));
+    recorder.on_get_events = [&] {
+      EXPECT_FALSE(CanLockProfileHandleOnAnotherThread(*manager));
+    };
+    ASSERT_TRUE(manager->ExtractBackendProfilingInfo(profiling_info, env.logger).IsOK());
+    EXPECT_EQ(recorder.get_events_calls, 1);
+    EXPECT_FALSE(CanLockProfileHandleOnAnotherThread(*manager));
+    profiling_scope = qnn::QnnProfilingScope{};
+    EXPECT_TRUE(CanLockProfileHandleOnAnotherThread(*manager));
+  }
+}
+
+TEST(QnnUnit_BackendProfilingManagerTest,
+     ExtractBackendProfilingInfo_ProviderOnly_PreventsConcurrentHandleReset) {
+  StubApiEnv env;
+  ProfileApiRecorder recorder;
+  auto manager = recorder.CreateManager(qnn::ProfilingLevel::BASIC, true, "unused-profile.csv");
+  ASSERT_TRUE(manager->InitializeProfilingForCurrentConsumers(env.logger).IsOK());
+  qnn::profile::ProfilingInfo profiling_info;
+  recorder.on_get_events = [&] {
+    EXPECT_FALSE(CanLockProfileHandleOnAnotherThread(*manager));
+  };
+  ASSERT_TRUE(manager->ExtractBackendProfilingInfo(profiling_info, env.logger).IsOK());
+  EXPECT_EQ(recorder.get_events_calls, 1);
+  EXPECT_TRUE(CanLockProfileHandleOnAnotherThread(*manager));
 }
 
 TEST(QnnUnit_BackendProfilingManagerTest,

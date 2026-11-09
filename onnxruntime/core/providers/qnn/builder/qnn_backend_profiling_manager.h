@@ -22,7 +22,7 @@ namespace qnn {
 
 class QnnSerializerConfig;
 
-// Holds the manager-global QAIRT profiling lock across an ORT-attributed operation.
+// Holds the manager-global QAIRT profiling lock across an operation and its extraction.
 class QnnProfilingScope {
  public:
   QnnProfilingScope() = default;
