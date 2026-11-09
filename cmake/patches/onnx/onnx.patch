@@ -9,3 +9,15 @@ index 044996e..ded7e39 100644
  option(ONNX_PYODIDE_BUILD "Build ONNX for Pyodide/Emscripten (wasm32)." OFF)
  option(ONNX_INSTALL "Install ONNX targets, headers, and CMake config files" ON)
  if(WIN32)
+diff --git a/onnx/defs/nn/old.cc b/onnx/defs/nn/old.cc
+index a6a8a83..153da87 100644
+--- a/onnx/defs/nn/old.cc
++++ b/onnx/defs/nn/old.cc
+@@ -4117,7 +4117,6 @@ ONNX_OPERATOR_SET_SCHEMA(
+     GroupNormalization,
+     18,
+     OpSchema()
+-        .Deprecate()
+         .SetDoc(GroupNormalization_ver18_doc)
+         .Attr("epsilon", "The epsilon value to use to avoid division by zero.", AttributeProto::FLOAT, 1e-5f)
+         .Attr(
