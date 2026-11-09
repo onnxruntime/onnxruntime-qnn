@@ -42,7 +42,10 @@ Ort::Status IsInfOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   // (IsInf.*@CB.Ce.t*2) with no TCM/flat fallback, so finalize cannot allocate it and the whole
   // QNN subgraph fails to compile at session creation. Declining here lets ORT fall IsInf back to
   // the CPU EP instead of failing to load any model that contains it.
-  RETURN_IF(IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()),
+  // IsInf with float16 input is allowed on HTP. Single-direction detection has a known accuracy issue
+  // (see the IsInf HTP limitation in QNN-ExecutionProvider.md).
+  RETURN_IF(IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+                node_unit.Inputs()[0].type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16,
             "QNN EP does not support IsInf on the HTP backend "
             "(graphFinalize fails with error 1002 / QNN_COMMON_ERROR_MEM_ALLOC).");
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
