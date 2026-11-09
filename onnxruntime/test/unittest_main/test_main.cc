@@ -136,7 +136,8 @@ int TEST_MAIN(int argc, char** argv) {
       // Scope cleanup leaves EP registration under each test's control.
       const onnxruntime::test::RegisteredQnnEp qnn_ep{"qnn_test_init"};
       if (!qnn_ep.valid) {
-        throw std::runtime_error("QNN EP registration failed during internal-symbol test setup");
+        throw std::runtime_error("QNN EP registration failed during internal-symbol test setup: " +
+                                 qnn_ep.error_message);
       }
     }
 #endif
