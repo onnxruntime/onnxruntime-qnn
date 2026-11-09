@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #ifdef _WIN32
@@ -30,6 +31,11 @@
 #include "onnxruntime_env_config_keys.h"
 
 #include "test/util/env_var_utils.h"
+
+#if defined(USE_QNN) && QNN_EP_INTERNAL_SYMBOL_ACCESS && \
+    defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__) && !defined(ORT_MINIMAL_BUILD)
+#include "test/providers/qnn/integration/qnn_test_utils.h"
+#endif
 
 std::unique_ptr<Ort::Env> ort_env;
 
@@ -123,6 +129,18 @@ int TEST_MAIN(int argc, char** argv) {
 
   try {
     ortenv_setup();
+#if defined(USE_QNN) && QNN_EP_INTERNAL_SYMBOL_ACCESS && \
+    defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__) && !defined(ORT_MINIMAL_BUILD)
+    {
+      // Initialize QNN's existing logger through the shared Integration test helper.
+      // Scope cleanup leaves EP registration under each test's control.
+      const onnxruntime::test::RegisteredQnnEp qnn_ep{"qnn_test_init"};
+      if (!qnn_ep.valid) {
+        throw std::runtime_error("QNN EP registration failed during internal-symbol test setup: " +
+                                 qnn_ep.error_message);
+      }
+    }
+#endif
     ::testing::InitGoogleTest(&argc, argv);
 
     {
