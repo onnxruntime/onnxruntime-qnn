@@ -920,7 +920,7 @@ bool OrtDropDQNodeGroupSelector::Check(const OrtGraph* /*graph*/, const OrtApi& 
   return true;
 }
 
-// Implementation of Check() for OrtUnaryNodeGroupSelector
+// Implementation of Check() for OrtRandomNormalLikeNodeGroupSelector
 bool OrtRandomNormalLikeNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api,
                                                  const OrtNode* node, const OrtNode* redundant_clip_node,
                                                  const std::vector<const OrtNode*>& dq_nodes,

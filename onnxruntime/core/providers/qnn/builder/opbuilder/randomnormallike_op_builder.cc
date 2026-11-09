@@ -165,26 +165,16 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
                       do_op_validation),
                   "Failed to create RandomNormalLike node.");
 
-    // Create the final output tensor with the original data type
-    QnnTensorWrapper output_wrapper(output_name,
-                                    tensor_type,
-                                    output_info.qnn_data_type,
-                                    output_info.quant_param.Copy(),
-                                    std::vector<uint32_t>(output_info.shape));
-
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)),
-                  "Failed to add output tensor.");
-
-    // Cast the native FP16 samples to the requested FP32 output type
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, "_cast"),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_CAST,
-                      {intermediate_output_name},
-                      {output_name},
-                      {},
-                      do_op_validation),
-                  "Failed to create Cast node.");
+    // Cast the native FP16 samples to the requested FP32 output type.
+    RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(
+        utils::UniqueNameGenerator().New(node_unit, "_cast"),
+        intermediate_output_name,
+        output_name,
+        tensor_type,
+        output_info.qnn_data_type,
+        output_info.quant_param.Copy(),
+        std::vector<uint32_t>(output_info.shape),
+        do_op_validation));
   } else {
     // Use native FP16 or the fixed-point output encoding supplied by the QDQ selector.
     QnnTensorWrapper output_wrapper(output_name,

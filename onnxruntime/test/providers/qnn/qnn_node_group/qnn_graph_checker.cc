@@ -220,7 +220,8 @@ void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
 void AssertOpOutputInQnnGraph(const std::filesystem::path& dump_dir,
                               const std::string& op,
                               uint32_t expected_data_type,
-                              std::optional<std::pair<float, int32_t>> expected_scale_offset) {
+                              std::optional<std::pair<float, int32_t>> expected_scale_offset,
+                              const std::string& expected_output_name) {
   if (::testing::Test::IsSkipped()) {
     GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
   }
@@ -236,7 +237,8 @@ void AssertOpOutputInQnnGraph(const std::filesystem::path& dump_dir,
     ASSERT_TRUE(nodes.is_object() && tensors.is_object());
     const nlohmann::json* matched_node = nullptr;
     for (const auto& node : nodes) {
-      if (node.at("type") == op) {
+      if (node.at("type") == op &&
+          (expected_output_name.empty() || node.at("output_names") == nlohmann::json::array({expected_output_name}))) {
         ASSERT_EQ(matched_node, nullptr) << "Expected a single " << op << " node";
         matched_node = &node;
       }

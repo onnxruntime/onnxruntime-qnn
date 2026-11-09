@@ -3,10 +3,15 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
@@ -134,25 +139,44 @@ TEST_F(QnnHTPBackendTests, RandomNormalLike_FP32_ExplicitDtype) {
   RunRandomNormalLikeTest<Ort::Float16_t, float>(true, true, true);
 }
 
-template <typename QuantType>
-static void RunQDQRandomNormalLikeTest(bool has_input_dq, bool expose_float_output = false) {
-  const float quant_scale = sizeof(QuantType) == 2 ? 0.0005f : 0.05f;
+enum class RnlOutputUse { QuantizedOnly,
+                          GraphOutput,
+                          FloatConsumer,
+                          TwoQuantizeConsumers };
+
+template <typename QuantType, typename InputQuantType = QuantType>
+static void RunQDQRandomNormalLikeTest(bool has_input_dq,
+                                       RnlOutputUse output_use = RnlOutputUse::QuantizedOnly) {
+  const bool expose_float_output = output_use == RnlOutputUse::GraphOutput;
+  // Power-of-two scales make the reference rounding exact for exposed FP16 samples.
+  const float quant_scale = expose_float_output ? (sizeof(QuantType) == 2 ? 1.0f / 65536 : 1.0f / 256)
+                                                : (sizeof(QuantType) == 2 ? 0.0005f : 0.05f);
   const QuantType zero_point = std::is_same_v<QuantType, int8_t>
                                    ? QuantType{0}
                                    : static_cast<QuantType>(sizeof(QuantType) == 2 ? 10000 : 100);
-  auto build_test_case = [=](ModelTestBuilder& builder) {
-    const std::vector<int64_t> shape{2, 3};
-    builder.MakeInput<float>("runtime_input", shape, std::vector<float>(6, 1.0f));
+  // The shape-only input deliberately has a different encoding from the output.
+  const float input_scale = 0.125f;
+  const InputQuantType input_zero_point = std::is_same_v<InputQuantType, int8_t>
+                                              ? InputQuantType{0}
+                                              : static_cast<InputQuantType>(sizeof(InputQuantType) == 2 ? 2000 : 12);
+  const std::unordered_map<std::string, Ort::Value>* feeds = nullptr;
+  auto build_test_case = [=, &feeds](ModelTestBuilder& builder) {
+    const std::vector<int64_t> shape = expose_float_output ? std::vector<int64_t>{2, 128}
+                                                           : std::vector<int64_t>{2, 3};
+    const size_t count = expose_float_output ? 256 : 6;
+    builder.MakeInput<float>("runtime_input", shape, std::vector<float>(count, 1.0f));
 
     std::string rnl_input = "runtime_input";
     if (has_input_dq) {
-      builder.MakeInput<QuantType>("quant_input", shape, std::vector<QuantType>(6, zero_point));
-      builder.AddDequantizeLinearNode<QuantType>("input_dq", "quant_input", quant_scale, zero_point, "shape_input");
+      builder.MakeInput<InputQuantType>("quant_input", shape, std::vector<InputQuantType>(count, input_zero_point));
+      builder.AddDequantizeLinearNode<InputQuantType>("input_dq", "quant_input", input_scale,
+                                                      input_zero_point, "shape_input");
       rnl_input = "shape_input";
     }
 
     std::vector<ONNX_NAMESPACE::AttributeProto> attrs{
-        MakeAttribute("mean", 1.0f), MakeAttribute("scale", 0.25f), MakeAttribute("seed", 42.0f)};
+        MakeAttribute("mean", expose_float_output ? 0.2f : 1.0f),
+        MakeAttribute("scale", expose_float_output ? 1.0f : 0.25f), MakeAttribute("seed", 42.0f)};
     builder.AddNode("RandomNormalLike", "RandomNormalLike", {rnl_input}, {"random_out"}, kOnnxDomain, attrs);
     builder.AddQuantizeLinearNode<QuantType>("output_q", "random_out", quant_scale, zero_point, "quant_out");
     builder.AddDequantizeLinearNode<QuantType>("output_dq", "quant_out", quant_scale, zero_point, "dequant_out");
@@ -163,7 +187,14 @@ static void RunQDQRandomNormalLikeTest(bool has_input_dq, bool expose_float_outp
     builder.MakeOutput<QuantType>("quant_out", shape);
     if (expose_float_output) {
       builder.MakeOutput<float>("random_out", shape);
+    } else if (output_use == RnlOutputUse::FloatConsumer) {
+      builder.AddNode("float_add", "Add", {"runtime_input", "random_out"}, {"float_sum"});
+      builder.MakeOutput<float>("float_sum", shape);
+    } else if (output_use == RnlOutputUse::TwoQuantizeConsumers) {
+      builder.AddQuantizeLinearNode<uint16_t>("output_q2", "random_out", 0.0005f, uint16_t{10000}, "quant_out2");
+      builder.MakeOutput<uint16_t>("quant_out2", shape);
     }
+    feeds = &builder.feeds_;
   };
 
   const auto* test_info = ::testing::UnitTest::GetInstance()->current_test_info();
@@ -172,26 +203,65 @@ static void RunQDQRandomNormalLikeTest(bool has_input_dq, bool expose_float_outp
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
 
+  // Compare Q and float samples from the same QNN run, never CPU/QNN random sequences.
+  const std::function<void(const Ort::Session&)> check_quantized_samples = [&](const Ort::Session& session) {
+    ASSERT_NE(feeds, nullptr);
+    OrtIoBinding* raw_binding = nullptr;
+    Ort::ThrowOnError(Ort::GetApi().CreateIoBinding(session, &raw_binding));
+    auto release_binding = gsl::finally([&]() { Ort::GetApi().ReleaseIoBinding(raw_binding); });
+    Ort::UnownedIoBinding binding(raw_binding);
+    for (const auto& [name, value] : *feeds) {
+      binding.BindInput(name.c_str(), value);
+    }
+    const auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    binding.BindOutput("random_out", memory_info);
+    binding.BindOutput("quant_out", memory_info);
+    Ort::ThrowOnError(Ort::GetApi().RunWithBinding(session, nullptr, binding));
+    binding.SynchronizeOutputs();
+    const auto outputs = binding.GetOutputValues();
+    ASSERT_EQ(outputs.size(), 2);
+    const auto count = outputs[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    ASSERT_EQ(outputs[1].GetTensorTypeAndShapeInfo().GetElementCount(), count);
+    const auto* samples = outputs[0].GetTensorData<float>();
+    const auto* quantized = outputs[1].GetTensorData<QuantType>();
+    const float qmin = static_cast<float>(std::numeric_limits<QuantType>::min());
+    const float qmax = static_cast<float>(std::numeric_limits<QuantType>::max());
+    size_t low_saturation = 0, high_saturation = 0, interior = 0;
+    for (size_t i = 0; i < count; ++i) {
+      ASSERT_TRUE(std::isfinite(samples[i]));
+      const float rounded = RoundHalfToEven(samples[i] / quant_scale) + static_cast<float>(zero_point);
+      low_saturation += rounded < qmin;
+      high_saturation += rounded > qmax;
+      interior += rounded > qmin && rounded < qmax;
+      const auto expected = static_cast<QuantType>(std::clamp(rounded, qmin, qmax));
+      EXPECT_EQ(quantized[i], expected) << "sample " << i << ": " << samples[i];
+    }
+    EXPECT_GT(low_saturation, 0u);
+    EXPECT_GT(high_saturation, 0u);
+    EXPECT_GT(interior, 0u);
+  };
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_dir.string();
-  RunQnnModelTest(build_test_case,
-                  provider_options,
+  EPVerificationParams verification{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)};
+  if (expose_float_output) {
+    verification.graph_verifier = &check_quantized_samples;
+  }
+  RunQnnModelTest(build_test_case, provider_options,
                   21,  // Standard ONNX Q/DQ supports UINT16 starting at opset 21.
-                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)},
-                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  /*verify_outputs=*/false);
+                  verification, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, /*verify_outputs=*/false);
 
   if (::testing::Test::IsSkipped()) {
     return;
   }
-  const bool native_quantized_output = !std::is_same_v<QuantType, int8_t> && !expose_float_output;
+  const bool native_quantized_output = !std::is_same_v<QuantType, int8_t> && output_use == RnlOutputUse::QuantizedOnly;
   constexpr auto output_type = std::is_same_v<QuantType, int8_t> ? QNN_DATATYPE_SFIXED_POINT_8
                                : sizeof(QuantType) == 2          ? QNN_DATATYPE_UFIXED_POINT_16
                                                                  : QNN_DATATYPE_UFIXED_POINT_8;
   AssertOpInQnnGraph(json_dir, "RandomNormalLike", 1);
-  AssertOpInQnnGraph(json_dir, "Quantize", native_quantized_output ? 0 : 1);
+  AssertOpInQnnGraph(json_dir, "Quantize", native_quantized_output ? 0 : (output_use == RnlOutputUse::TwoQuantizeConsumers ? 2 : 1));
   AssertOpInQnnGraph(json_dir, "Cast", native_quantized_output ? 0 : 1);
   if (native_quantized_output) {
     AssertOpOutputInQnnGraph(json_dir, "RandomNormalLike", output_type,
@@ -200,7 +270,11 @@ static void RunQDQRandomNormalLikeTest(bool has_input_dq, bool expose_float_outp
     AssertOpOutputInQnnGraph(json_dir, "RandomNormalLike", QNN_DATATYPE_FLOAT_16);
     AssertOpOutputInQnnGraph(json_dir, "Cast", QNN_DATATYPE_FLOAT_32);
     AssertOpOutputInQnnGraph(json_dir, "Quantize", output_type,
-                             std::make_pair(quant_scale, -static_cast<int32_t>(zero_point)));
+                             std::make_pair(quant_scale, -static_cast<int32_t>(zero_point)), "quant_out");
+    if (output_use == RnlOutputUse::TwoQuantizeConsumers) {
+      AssertOpOutputInQnnGraph(json_dir, "Quantize", QNN_DATATYPE_UFIXED_POINT_16,
+                               std::make_pair(0.0005f, int32_t{-10000}), "quant_out2");
+    }
   }
 }
 
@@ -227,7 +301,31 @@ TEST_F(QnnHTPBackendTests, RandomNormalLike_QDQ_S8_SeparateQuantize) {
 
 // An observable float output must retain FP16 -> Cast rather than absorbing Q.
 TEST_F(QnnHTPBackendTests, RandomNormalLike_QDQ_U8_FloatGraphOutput) {
-  RunQDQRandomNormalLikeTest<uint8_t>(false, true);
+  RunQDQRandomNormalLikeTest<uint8_t>(false, RnlOutputUse::GraphOutput);
+}
+
+TEST_F(QnnHTPBackendTests, RandomNormalLike_QDQ_U8_InputDQ_U16_Output) {
+  RunQDQRandomNormalLikeTest<uint16_t, uint8_t>(true);
+}
+
+TEST_F(QnnHTPBackendTests, RandomNormalLike_QDQ_U16_InputDQ_U8_Output) {
+  RunQDQRandomNormalLikeTest<uint8_t, uint16_t>(true);
+}
+
+TEST_F(QnnHTPBackendTests, RandomNormalLike_QDQ_U8_FloatConsumer) {
+  RunQDQRandomNormalLikeTest<uint8_t>(false, RnlOutputUse::FloatConsumer);
+}
+
+TEST_F(QnnHTPBackendTests, RandomNormalLike_QDQ_TwoQuantizeConsumers) {
+  RunQDQRandomNormalLikeTest<uint8_t>(false, RnlOutputUse::TwoQuantizeConsumers);
+}
+
+TEST_F(QnnHTPBackendTests, RandomNormalLike_QDQ_U16_FloatGraphOutput) {
+  RunQDQRandomNormalLikeTest<uint16_t>(false, RnlOutputUse::GraphOutput);
+}
+
+TEST_F(QnnHTPBackendTests, RandomNormalLike_QDQ_S8_InputDQ_SeparateQuantize) {
+  RunQDQRandomNormalLikeTest<int8_t>(true);
 }
 
 // Test RandomNormalLike + Add to verify the output can be consumed by a downstream op.
