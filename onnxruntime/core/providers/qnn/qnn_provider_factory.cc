@@ -621,7 +621,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
 // External resource importer from D3D12
 OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImpl(
     OrtEpFactory* this_ptr,
-    const OrtEpDevice* /*ep_device*/,
+    const OrtEpDevice* ep_device,
     OrtExternalResourceImporterImpl** out_importer) noexcept {
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
@@ -639,9 +639,19 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
   // and then query the resulting OrtMemoryInfo for device ID.
   int device_id = 0;
 
+  // Host allocations are mapped into the HTP address space through FastRPC, so only NPU devices can import them.
+  bool supports_host_allocation = false;
+  if (ep_device != nullptr) {
+    const OrtHardwareDevice* device = factory->ort_api.EpDevice_Device(ep_device);
+    supports_host_allocation = device != nullptr &&
+                               factory->ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_NPU;
+  }
+
   // Create the external resource importer
   try {
-    *out_importer = std::make_unique<QnnExternalResourceImporterImpl>(device_id, factory->ort_api).release();
+    *out_importer = std::make_unique<QnnExternalResourceImporterImpl>(device_id, factory->ort_api,
+                                                                      supports_host_allocation)
+                        .release();
   } catch (...) {
     return factory->ort_api.CreateStatus(ORT_FAIL, "Failed to create external resource importer");
   }

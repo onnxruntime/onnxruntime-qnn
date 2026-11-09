@@ -3,6 +3,8 @@
 
 #include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
 
+#include <cstddef>
+
 #include "HTP/QnnHtpMem.h"
 
 #include "core/providers/qnn/builder/qnn_def.h"
@@ -74,6 +76,28 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* memory_address,
            << ", Imported memory (handle: " << memory_address
            << ", resource: " << imp_mem_handle->d3d12_resource_
            << ", offset: " << 0
+           << ")";
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss1.str().c_str());
+    } else if (const auto imported_host_memory = QnnExternalResourceImporterImpl::FindImportedHostMemory(memory_address);
+               imported_host_memory.has_value()) {
+      // App-owned host allocation already registered with FastRPC at import time.
+      const size_t offset = static_cast<size_t>(static_cast<const std::byte*>(memory_address) -
+                                                static_cast<const std::byte*>(imported_host_memory->base_address));
+      RETURN_IF_NOT(qnn_tensor_data_size <= imported_host_memory->size - offset,
+                    "Tensor exceeds its imported host allocation.");
+
+      mem_descriptor.memType = QNN_MEM_TYPE_CUSTOM;
+      htp_mem_descriptor.type = QNN_HTP_MEM_SHARED_BUFFER;
+      htp_mem_descriptor.size = imported_host_memory->size;
+      htp_mem_descriptor.sharedBufferConfig.fd = imported_host_memory->fd;
+      htp_mem_descriptor.sharedBufferConfig.offset = offset;
+      mem_descriptor.customInfo = &htp_mem_descriptor;
+
+      std::ostringstream oss1;
+      oss1 << "Registering QNN mem handle for context: " << context_
+           << ", imported host memory (address: " << memory_address
+           << ", offset: " << offset
+           << ", fd: " << imported_host_memory->fd
            << ")";
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss1.str().c_str());
     } else if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {

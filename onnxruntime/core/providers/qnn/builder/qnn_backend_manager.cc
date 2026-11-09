@@ -3017,6 +3017,11 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
     if (QnnExternalResourceImporterImpl::FindImportMemory(memory_address)) {
       RETURN_IF_ERROR(QnnExternalResourceImporterImpl::AddImportMemoryCleanUp(
           memory_address, QnnExternalResourceImporterImpl::ImportResourceCleanUpFn{std::move(unregister_mem_handle)}));
+    } else if (QnnExternalResourceImporterImpl::FindImportedHostMemory(memory_address).has_value()) {
+      // Retained until the app releases the import handle; the hook is dropped once this context expires.
+      RETURN_IF_ERROR(QnnExternalResourceImporterImpl::AddImportMemoryCleanUp(
+          memory_address, QnnExternalResourceImporterImpl::ImportResourceCleanUpFn{std::move(unregister_mem_handle)},
+          std::weak_ptr<void>{context_handle_record}));
     } else if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
       RETURN_IF_ERROR(Dx12SharedMemoryAllocator::AddAllocationCleanUp(
           memory_address, Dx12SharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));

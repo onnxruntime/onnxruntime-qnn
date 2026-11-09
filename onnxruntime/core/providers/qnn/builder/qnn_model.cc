@@ -524,6 +524,11 @@ Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& log
   }
   const bool can_use_imported_memory =
       uses_imported_memory && QnnExternalResourceImporterImpl::FindImportMemory(ort_value_data);
+  // App-owned host allocations imported through the external resource importer. Their QNN mem handles are retained
+  // across runs until the import handle is released. This does not require the shared-memory allocator option.
+  if (uses_shared_memory && !has_matching_shared_allocation && IsNpuBackend(qnn_backend_manager_->GetQnnBackendType())) {
+    has_matching_shared_allocation = QnnExternalResourceImporterImpl::FindImportedHostMemory(ort_value_data).has_value();
+  }
 #else
   const bool can_use_imported_memory = false;
 #endif
