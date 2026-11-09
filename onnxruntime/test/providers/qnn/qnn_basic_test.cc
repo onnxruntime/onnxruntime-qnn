@@ -223,7 +223,7 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
   }
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 // Tests that the QNN EP is registered when added via the public C++ API.
 // Loads a simple ONNX model that adds floats.
 TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
@@ -235,7 +235,7 @@ TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
   options["backend_path"] = "libQnnHtp.so";
 #endif
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -273,7 +273,7 @@ TEST_F(QnnHTPBackendTests, TestConvWithExternalData) {
 #endif
   options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -302,7 +302,7 @@ TEST_F(QnnHTPBackendTests, RunConvInt4Model) {
   options["backend_path"] = "libQnnHtp.so";
 #endif
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -338,7 +338,7 @@ TEST_F(QnnHTPBackendTests, RunConvInt4Model) {
 
   EXPECT_THAT(output_shape, ::testing::ElementsAre(1, 5, 6, 6));
 }
-#endif  // #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // #if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 enum class TestBackend {
   Cpu,
@@ -410,7 +410,7 @@ static std::unique_ptr<ScopedOrtSession> InitNHWCResizeModel(const ORTCHAR_T* or
 #if defined(_WIN32)
   options["backend_path"] = "Qnn" + backend_lib + ".dll";
 
-#if (defined(__aarch64__) || defined(_M_ARM64))
+#if (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -683,7 +683,7 @@ TEST_F(QnnCPUBackendTests, MultithreadSessionRun) {
   }
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Returns a function that builds a QDQ model that adds 3 tensors. Forces all scales and zero-points to be (1.0f, 0),
 // so it is only accurate when using non-fractional positive inputs.
@@ -736,7 +736,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
 #endif
   options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -786,7 +786,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MultithreadHtpPowerCfgSessionRunOption) {
 #endif
   options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -847,7 +847,7 @@ TEST_F(QnnHTPBackendTests, MultithreadDefaultHtpPowerCfgFromEpOption) {
   options["offload_graph_io_quantization"] = "0";
   options["htp_performance_mode"] = "burst";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -897,7 +897,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
   options["offload_graph_io_quantization"] = "0";
   options["htp_performance_mode"] = "sustained_high_performance";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -948,7 +948,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_MultithreadHtpPowerCfgDefaultAndRunOption) {
   options["offload_graph_io_quantization"] = "0";
   options["htp_performance_mode"] = "burst";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -1144,7 +1144,7 @@ TEST_F(QnnHTPBackendTests, HTPGraphFinalizationOptimizationModes) {
 TEST_F(QnnHTPBackendTests, HTPSocModels) {
   const std::array<std::string, 3> soc_models = {"",  // No explicit SoC model specified
                                                  std::to_string(QNN_SOC_MODEL_UNKNOWN),
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
                                                  std::to_string(QNN_SOC_MODEL_SC8280X)};
 #elif defined(__linux__)
                                                  std::to_string(QNN_SOC_MODEL_SM8350)};
@@ -1518,7 +1518,7 @@ TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
   options["json_qnn_graph_dir"] = dump_dir.string();
   options["dump_json_qnn_graph"] = "1";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -1691,7 +1691,7 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
   provider_options["json_qnn_graph_dir"] = dump_dir.string();
   provider_options["dump_json_qnn_graph"] = "1";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -1767,7 +1767,7 @@ TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
   options["backend_type"] = "htp";
   options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   options["num_graph_prepare_threads"] = "1";
@@ -2032,7 +2032,7 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
   ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_data.data(), ctx_data.size(), so2));
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN CPU backend,
 // using the CPU backend's validator.
@@ -2338,7 +2338,7 @@ TEST_F(QnnCPUBackendTests, OffloadGraphIoQuantizationMultipleQDQPairsOnGraphInpu
 #endif
   options["offload_graph_io_quantization"] = "1";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -2677,7 +2677,7 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
 }
 #endif  // defined(_WIN32)
 
-#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && !BUILD_QNN_EP_STATIC_LIB
 // Tests that the QNN GPU shared memory allocator (DX12) can be created and used to allocate/free memory.
 // Requires the QNN GPU backend (QnnGpu.dll) and a D3D12-capable device.
 TEST_F(QnnGPUBackendTests, get_allocator_qnn_gpu_shared) {
@@ -3290,7 +3290,7 @@ TEST_F(QnnGPUBackendTests, ConstantOnlyGraph) {
       13,
       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.001f)});
 }
-#endif  // defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && !BUILD_QNN_EP_STATIC_LIB
 
 // ============================ QNN EP input graph dump ============================
 //

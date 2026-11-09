@@ -58,12 +58,14 @@ inline OrtHardwareDeviceType QnnHtpDeviceType() {
 struct RegisteredQnnEp {
   std::string name;
   bool valid = false;
+  std::string error_message;
 
   explicit RegisteredQnnEp(const std::string& registration_name) : name(registration_name) {
     try {
       ort_env->RegisterExecutionProviderLibrary(name.c_str(), QnnEpLibraryName());
       valid = true;
-    } catch (const Ort::Exception&) {
+    } catch (const Ort::Exception& ex) {
+      error_message = ex.what();
     }
   }
 

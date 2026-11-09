@@ -175,5 +175,27 @@ inline bool IsSingleElementShape(const std::vector<int64_t>& shape) {
 /// </summary>
 std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const OrtValueInfo* value_info);
 
+/// <summary>
+/// Scans node_to_node_unit for the unique SingleNode consumer of a sequence-typed
+/// edge identified by seq_output_name.
+///
+/// GetConsumers() on a seq(tensor(T)) ValueInfo silently returns an empty list —
+/// the EP plugin API only enumerates consumers of tensor-typed edges. This helper
+/// works around that by iterating node_to_node_unit and checking raw GetInputs().
+///
+/// Counts ALL raw-node consumers of the sequence edge regardless of their
+/// OrtNodeUnit::Type (SingleNode or QDQGroup). Returns the matching OrtNodeUnit*
+/// only when exactly one raw-node consumer exists in total AND that consumer is a
+/// SingleNode with OpType() == required_op_type; nullptr in all other cases (zero
+/// consumers, more than one total consumer, wrong op type, or QDQ-wrapped consumer).
+///
+/// Note: all callers rely on nodes that are already validated to be in the ONNX ""
+/// domain by the EP's partition logic; no explicit domain check is performed here.
+/// </summary>
+const OrtNodeUnit* FindUniqueSequenceConsumer(
+    const std::string& seq_output_name,
+    const std::string& required_op_type,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit);
+
 }  // namespace qnn
 }  // namespace onnxruntime

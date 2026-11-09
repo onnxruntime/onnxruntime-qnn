@@ -509,5 +509,37 @@ std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const 
   return dims;
 }
 
+const OrtNodeUnit* FindUniqueSequenceConsumer(
+    const std::string& seq_output_name,
+    const std::string& required_op_type,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit) {
+  // Count ALL raw-node consumers of the sequence edge first, regardless of UnitType.
+  // Filtering by SingleNode before counting would silently ignore QDQ-wrapped consumers
+  // and produce a false "unique consumer" result when fan-out actually exists.
+  const OrtNodeUnit* result = nullptr;
+  size_t total_consumers = 0;
+  for (const auto& [node_ptr, unit_ptr] : node_to_node_unit) {
+    if (unit_ptr == nullptr) continue;
+    const Ort::ConstNode candidate_node(node_ptr);
+    bool consumes_sequence = false;
+    for (const auto& inp : candidate_node.GetInputs()) {
+      if (inp.GetName() == seq_output_name) {
+        consumes_sequence = true;
+        break;
+      }
+    }
+    if (!consumes_sequence) continue;
+    ++total_consumers;
+    // Track the expected consumer only if it is a SingleNode with the right op type.
+    if (unit_ptr->UnitType() == OrtNodeUnit::Type::SingleNode &&
+        unit_ptr->OpType() == required_op_type) {
+      result = unit_ptr;
+    }
+  }
+  // Require exactly one raw-node consumer in total.  Any fan-out (or a single
+  // QDQ-wrapped consumer) returns nullptr so fusion is skipped.
+  return (total_consumers == 1 && result != nullptr) ? result : nullptr;
+}
+
 }  // namespace qnn
 }  // namespace onnxruntime
