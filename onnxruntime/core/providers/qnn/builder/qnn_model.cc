@@ -279,8 +279,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   std::vector<std::unique_ptr<OrtNodeUnit>> node_unit_holder;
   std::unordered_map<const OrtNode*, const OrtNodeUnit*> node_unit_map;
   // GetQDQNodeUnits
-  std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(
-      api_ptrs_.ort_api, &ort_graph, logger, qnn_backend_manager_->GetQnnBackendType());
+  std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(api_ptrs_.ort_api, &ort_graph, logger);
 
   // This name must be same with the EPContext node name
   const auto& graph_name = Ort::ConstNode(&fused_node).GetName();

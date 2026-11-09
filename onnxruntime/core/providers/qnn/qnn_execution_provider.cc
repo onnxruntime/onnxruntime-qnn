@@ -2435,8 +2435,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   std::vector<std::unique_ptr<OrtNodeUnit>> node_unit_holder;
   std::unordered_map<const OrtNode*, const OrtNodeUnit*> node_unit_map;
 
-  std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(
-      ep->ort_api, graph, ep->logger_, ep->qnn_backend_manager_->GetQnnBackendType());
+  std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(ep->ort_api, graph, ep->logger_);
 
   // Analyze nodes for QNN support
   std::vector<const OrtNode*> supported_nodes;

@@ -9,7 +9,6 @@
 #include <optional>
 #include <tuple>
 
-#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/ort_api.h"
 
 // Forward declaration of OrtNode
@@ -170,16 +169,12 @@ class OrtSplitNodeGroupSelector : public OrtNodeGroupSelector {
 // DQ nodes for X, W and optionally B -> node -> Q
 class OrtConvNodeGroupSelector : public OrtNodeGroupSelector {
  public:
-  explicit OrtConvNodeGroupSelector(qnn::QnnBackendType backend_type)
-      : backend_type_(backend_type) {}
+  OrtConvNodeGroupSelector() = default;
 
   bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
              const OrtNode* redundant_clip_node,
              const std::vector<const OrtNode*>& dq_nodes,
              const std::vector<const OrtNode*>& q_nodes) const override;
-
- private:
-  qnn::QnnBackendType backend_type_;
 };
 
 class OrtWhereNodeGroupSelector : public OrtNodeGroupSelector {
@@ -227,16 +222,12 @@ class OrtReciprocalNodeGroupSelector : public OrtNodeGroupSelector {
 // A group without a trailing Q isn't really a QDQ node group, so it is not selected.
 class OrtMatMulNodeGroupSelector : public OrtNodeGroupSelector {
  public:
-  explicit OrtMatMulNodeGroupSelector(qnn::QnnBackendType backend_type)
-      : backend_type_(backend_type) {}
+  OrtMatMulNodeGroupSelector() = default;
 
   bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
              const OrtNode* redundant_clip_node,
              const std::vector<const OrtNode*>& dq_nodes,
              const std::vector<const OrtNode*>& q_nodes) const override;
-
- private:
-  qnn::QnnBackendType backend_type_;
 };
 
 // Input: DQ nodes for A, B and optional C
@@ -346,7 +337,7 @@ class OrtGRUNodeGroupSelector : public OrtNodeGroupSelector {
 // SelectorManager for OrtGraph
 class OrtSelectorManager {
  public:
-  explicit OrtSelectorManager(qnn::QnnBackendType backend_type);
+  OrtSelectorManager();
 
   // Method that finds and returns a vector of QDQ::NodeGroup in a given OrtGraph
   std::vector<OrtNodeGroup> GetOrtQDQSelections(const OrtGraph* graph,
@@ -360,13 +351,12 @@ class OrtSelectorManager {
 
   void InitializeSelectorsMap();
 
-  void CreateSelectors(qnn::QnnBackendType backend_type);
+  void CreateSelectors();
 };
 }  // namespace QDQ
 
 // Function to get QDQ node units from OrtGraph
 std::pair<std::vector<std::unique_ptr<OrtNodeUnit>>, std::unordered_map<const OrtNode*, const OrtNodeUnit*>>
-GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& logger,
-                   qnn::QnnBackendType backend_type);
+GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& logger);
 
 }  // namespace onnxruntime

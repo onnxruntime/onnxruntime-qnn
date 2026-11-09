@@ -1888,6 +1888,27 @@ static Ort::Status GetNarrowingIntermediateQuantParams(Qnn_DataType_t activation
   return Ort::Status();
 }
 
+Ort::Status DequantizeWeightForGpuFloatActivation(QnnModelWrapper& qnn_model_wrapper,
+                                                  std::vector<std::string>& input_names,
+                                                  bool do_op_validation) {
+  if (!IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()) || input_names.size() < 2) {
+    return Ort::Status();
+  }
+  const Qnn_DataType_t act_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+  const auto& weight_tensor = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]);
+  if ((act_dtype != QNN_DATATYPE_FLOAT_32 && act_dtype != QNN_DATATYPE_FLOAT_16) ||
+      weight_tensor.GetTensorDataType() != QNN_DATATYPE_SFIXED_POINT_8) {
+    return Ort::Status();
+  }
+  // Copy the dims before adding tensors, which may invalidate the wrapper reference.
+  std::vector<uint32_t> weight_shape = weight_tensor.GetTensorDims();
+  const std::string dequantized_name = UniqueNameGenerator().New(input_names[1], "_dequantize");
+  RETURN_IF_ERROR(qnn_model_wrapper.AddDequantizeNode(input_names[1], dequantized_name, act_dtype,
+                                                      std::move(weight_shape), do_op_validation));
+  input_names[1] = dequantized_name;
+  return Ort::Status();
+}
+
 Ort::Status AddOpWithQuantizedOutput(QnnModelWrapper& qnn_model_wrapper,
                                      const std::string& node_name,
                                      const std::string& op_type,
