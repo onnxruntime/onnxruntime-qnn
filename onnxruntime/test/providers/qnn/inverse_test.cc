@@ -68,7 +68,7 @@ TEST_F(QnnCPUBackendTests, Inverse_4d_test) {
                         ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -172,7 +172,7 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_2d) {
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
-#ifdef _M_ARM64
+#if defined(_M_ARM64) || defined(_M_ARM64EC)
   // output_range=0.31888091564178467, tolerance=0.40000000596046448%.
   // Expected val (f32@CPU_EP): 0.069747790694236755
   // qdq@QNN_EP val: 0.067527718842029572 (err: 0.0022200718522071838, err/output_range: 0.69620716571807861%)
@@ -192,7 +192,7 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
-#ifdef _M_ARM64
+#if defined(_M_ARM64) || defined(_M_ARM64EC)
   // output_range=0.31888091564178467, tolerance=0.40000000596046448%.
   // Expected val (f32@CPU_EP): 0.069747790694236755
   // qdq@QNN_EP val: 0.067527718842029572 (err: 0.0022200718522071838, err/output_range: 0.69620716571807861%)
@@ -210,7 +210,7 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
                                ExpectedEPNodeAssignment::All,
                                tolerance);
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

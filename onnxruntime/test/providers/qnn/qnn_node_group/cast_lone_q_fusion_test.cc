@@ -15,7 +15,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 namespace {
 
@@ -177,7 +177,7 @@ TEST_F(QnnHTPBackendTests, CastLoneQFusion_NoQChild_DoesNotFuse) {
   AssertOpWithNameInQnnGraph(json_dir, "Cast", "cast");
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

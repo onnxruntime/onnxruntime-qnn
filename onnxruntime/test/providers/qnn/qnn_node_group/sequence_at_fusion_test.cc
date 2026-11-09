@@ -94,7 +94,7 @@ static ProviderOptions GetHTPProviderOptions() {
 // HTP-only fusion tests
 // ---------------------------------------------------------------------------
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Basic positive index: N=3 tensors of shape [3,4], select index 1.
 TEST_F(QnnHTPBackendTests, SequenceAtFusion_PositiveIndex) {
@@ -366,7 +366,7 @@ TEST_F(QnnHTPBackendTests, SequenceAtFusion_PosFromInPartitionOp_ListedBeforeSeq
 // expected output to compare against and no meaningful test can be constructed
 // with the current RunQnnModelTest infrastructure.
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // ---------------------------------------------------------------------------
 // CPU fallback test (no architecture guard — runs on all platforms)

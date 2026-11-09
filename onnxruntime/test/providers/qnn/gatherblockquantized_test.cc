@@ -11,7 +11,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 constexpr int QBits = 4;
 
@@ -348,7 +348,7 @@ TEST_F(QnnCPUBackendTests, GatherBlockQuantized_CpuBackendNotSupported) {
   RunGatherBlockQuantizedTest(params, ExpectedEPNodeAssignment::None, "cpu");
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 }  // namespace test
 }  // namespace onnxruntime
