@@ -789,9 +789,13 @@ namespace {
 GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t block_size,
                                      int64_t trans_b = 0, bool include_bias = false,
                                      int weight_bits = 4, bool weight_is_unsigned = false,
-                                     int64_t trans_a = 0) {
+                                     int64_t trans_a = 0,
+                                     bool use_rank2_bias = false,
+                                     bool use_per_channel_bias = false,
+                                     bool use_uint8_output = false) {
   return [M, K, N, block_size, trans_b, include_bias, weight_bits,
-          weight_is_unsigned, trans_a](ModelTestBuilder& builder) -> void {
+          weight_is_unsigned, trans_a, use_rank2_bias, use_per_channel_bias,
+          use_uint8_output](ModelTestBuilder& builder) -> void {
     const int64_t num_blocks = K / block_size;  // caller ensures K % block_size == 0
 
     // ── Activation A: float → Q(uint16) → DQ ─────────────────────────────────
@@ -845,21 +849,46 @@ GetQDQTestCaseFn BuildBQGemmTestCase(int64_t M, int64_t K, int64_t N, int64_t bl
       gemm_attrs.push_back(builder.MakeScalarAttribute("transA", trans_a));
     }
     if (include_bias) {
-      // INT32-quantized bias (per-tensor scale). Matches Conv BQ bias pattern.
+      // INT32-quantized bias. Matches Conv BQ bias pattern.
       const float bias_scale = act_scale * 0.03f;
-      builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
-      builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
-      builder.Make1DInitializer<int32_t>("bias_quant", std::vector<int32_t>(static_cast<size_t>(N), 0));
+      const std::vector<int64_t> bias_shape = use_rank2_bias ? std::vector<int64_t>{1, N}
+                                                             : std::vector<int64_t>{N};
+      std::vector<ONNX_NAMESPACE::AttributeProto> bias_dq_attrs;
+      if (use_per_channel_bias) {
+        std::vector<float> bias_scales(static_cast<size_t>(N));
+        std::vector<int32_t> bias_zero_points(static_cast<size_t>(N), 0);
+        for (size_t i = 0; i < bias_scales.size(); ++i) {
+          bias_scales[i] = bias_scale * static_cast<float>(i + 1);
+        }
+        builder.MakeInitializer<float>("bias_scale", {N}, bias_scales);
+        builder.MakeInitializer<int32_t>("bias_zp", {N}, bias_zero_points);
+        bias_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(1)));
+      } else {
+        builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
+        builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
+      }
+      std::vector<int32_t> bias_values(SizeOfShape(bias_shape));
+      for (size_t i = 0; i < bias_values.size(); ++i) {
+        const int32_t magnitude = static_cast<int32_t>((i + 1) * 1000);
+        bias_values[i] = i % 2 == 0 ? magnitude : -magnitude;
+      }
+      builder.MakeInitializer<int32_t>("bias_quant", bias_shape, bias_values);
       builder.AddNode("bias_dql", "DequantizeLinear",
-                      {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"});
+                      {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"}, "", bias_dq_attrs);
       gemm_inputs.push_back("bias_dql_out");
     }
     builder.AddNode("gemm", "Gemm", gemm_inputs, {"gemm_out"}, kOnnxDomain, gemm_attrs);
 
     // ── Output: Gemm → Q(uint16) → DQ → graph output ─────────────────────────
-    const float out_scale = 4.0f / 65534.0f;
-    const uint16_t out_zp = 32767;
-    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "out", "gemm_out", out_scale, out_zp);
+    if (use_uint8_output) {
+      const float out_scale = 4.0f / 254.0f;
+      const uint8_t out_zp = 127;
+      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "out", "gemm_out", out_scale, out_zp);
+    } else {
+      const float out_scale = 4.0f / 65534.0f;
+      const uint16_t out_zp = 32767;
+      AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "out", "gemm_out", out_scale, out_zp);
+    }
   };
 }
 
@@ -953,6 +982,176 @@ TEST_F(QnnHTPBackendTests, DISABLED_GemmBQ_U16Int2_TransB0_BlockSize16) {
                                       /*include_bias=*/false, /*weight_bits=*/2),
                   GetBQGemmProviderOptions(), /*opset=*/21,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
+}
+
+// ─── LPBQ Gemm tests ──────────────────────────────────────────────────────────────────────────
+// Same model as BQ Gemm but with enable_block_quant_weight_optimization=1.
+// The QNN EP converts the BQ INT4 weight to LPBQ (BLOCKWISE_EXPANSION) encoding and lowers
+// the Gemm to a QNN Conv2D with 1x1 filters.
+// LPBQ requires: INT4 weight, symmetric zero-points (all zero), INT16 activation.
+
+namespace {
+enum class GemmLPBQExpectedPath {
+  LPBQ,
+  BQ,
+  CpuFallback,
+};
+
+ProviderOptions GetLPBQGemmProviderOptions(const std::filesystem::path& graph_dir,
+                                           const std::string& backend_type = "htp") {
+  ProviderOptions opts;
+  opts["backend_type"] = backend_type;
+  opts["offload_graph_io_quantization"] = "0";
+  opts["enable_block_quant_weight_optimization"] = "1";
+  opts["dump_json_qnn_graph"] = "1";
+  opts["json_qnn_graph_dir"] = graph_dir.string();
+#if defined(__linux__) && !defined(__aarch64__)
+  if (backend_type == "htp") {
+    opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+  }
+#endif
+  return opts;
+}
+
+void RunLPBQGemmGraphTest(GetQDQTestCaseFn test_case, GemmLPBQExpectedPath expected_path,
+                          const std::string& backend_type = "htp") {
+  namespace fs = std::filesystem;
+  const std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
+  const fs::path graph_dir = fs::temp_directory_path() / ("GemmLPBQ_" + test_name);
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  const bool is_cpu_fallback = expected_path == GemmLPBQExpectedPath::CpuFallback;
+  const ExpectedEPNodeAssignment expected_assignment = is_cpu_fallback ? ExpectedEPNodeAssignment::None
+                                                                       : ExpectedEPNodeAssignment::All;
+  RunQnnModelTest(test_case, GetLPBQGemmProviderOptions(graph_dir, backend_type), /*opset=*/21,
+                  EPVerificationParams{expected_assignment, ElementwiseAbsoluteVerifier(2e-2f)});
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  if (is_cpu_fallback) {
+    return;  // CPU fallback may produce no QNN graph JSON to inspect.
+  }
+
+  AssertOpInQnnGraph(graph_dir, "Conv2d",
+                     expected_path == GemmLPBQExpectedPath::LPBQ ? /*count=*/1 : /*count=*/0);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected",
+                     expected_path == GemmLPBQExpectedPath::BQ ? /*count=*/1 : /*count=*/0);
+  if (expected_path == GemmLPBQExpectedPath::LPBQ) {
+    AssertOpInputQuantizationEncodingInQnnGraph(
+        graph_dir, "Conv2d", /*input_index=*/1,
+        static_cast<uint32_t>(QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION));
+  } else if (expected_path == GemmLPBQExpectedPath::BQ) {
+    AssertOpInputQuantizationEncodingInQnnGraph(
+        graph_dir, "FullyConnected", /*input_index=*/1,
+        static_cast<uint32_t>(QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK));
+  }
+}
+
+void RunLPBQGemmTest(GetQDQTestCaseFn test_case) {
+  RunLPBQGemmGraphTest(std::move(test_case), GemmLPBQExpectedPath::LPBQ);
+}
+
+void RunLPBQGemmFallbackTest(GetQDQTestCaseFn test_case) {
+  RunLPBQGemmGraphTest(std::move(test_case), GemmLPBQExpectedPath::BQ);
+}
+
+void RunLPBQGemmCpuFallbackTest(GetQDQTestCaseFn test_case, const std::string& backend_type = "htp") {
+  RunLPBQGemmGraphTest(std::move(test_case), GemmLPBQExpectedPath::CpuFallback, backend_type);
+}
+}  // namespace
+
+// INT4 weight transB=0, [K,N]=[16,4], block_size=8, no bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_NoBias) {
+  RunLPBQGemmTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0));
+}
+
+// INT4 weight transB=1, [N,K]=[4,16], block_size=8, no bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB1_NoBias) {
+  RunLPBQGemmTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1));
+}
+
+// transA=1: ONNX activation is [K, M];
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransA1_TransB0) {
+  RunLPBQGemmTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/false, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/1));
+}
+
+// transA=1 with transB=1: both A and B transposed.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransA1_TransB1) {
+  RunLPBQGemmTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1,
+                                      /*include_bias=*/false, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/1));
+}
+
+// INT4 transB=0 with INT32-quantized bias (per-tensor scale).
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_WithBias) {
+  RunLPBQGemmTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/true, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/0));
+}
+
+// INT4 transB=1 with INT32-quantized bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB1_WithBias) {
+  RunLPBQGemmTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/1,
+                                      /*include_bias=*/true, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/0));
+}
+
+// INT4 transB=0 with an INT32-quantized rank-2 [1, N] bias.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_WithRank2Bias) {
+  RunLPBQGemmTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/true, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/0,
+                                      /*use_rank2_bias=*/true));
+}
+
+// INT4 transB=0 with rank-2 [1, N] bias and per-channel INT32 quantization.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_WithRank2PerChannelBias) {
+  RunLPBQGemmTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                      /*include_bias=*/true, /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/false, /*transA=*/0,
+                                      /*use_rank2_bias=*/true, /*use_per_channel_bias=*/true,
+                                      /*use_uint8_output=*/false));
+}
+
+// INT4 transB=0, larger K with multiple blocks.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int4_TransB0_MultiBlock) {
+  RunLPBQGemmTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/32, /*N=*/8, /*block_size=*/8, /*transB=*/0));
+}
+
+// LPBQ conversion supports INT4 only; INT8 block quantization must retain the standard BQ FC path.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16Int8Weight_UsesBQFullyConnected) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunLPBQGemmFallbackTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/4, /*transB=*/0,
+                                              /*include_bias=*/false, /*weight_bits=*/8));
+}
+
+// UINT4 weights are not LPBQ eligible; use the BQ BW_FLOAT_BLOCK FC path.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16UInt4Weight_UsesBQFullyConnected) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunLPBQGemmFallbackTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                              /*include_bias=*/false, /*weight_bits=*/4,
+                                              /*weight_is_unsigned=*/true));
+}
+
+// The LPBQ Conv2D lowering requires a 16-bit quantized output as well as a 16-bit activation.
+TEST_F(QnnHTPBackendTests, GemmLPBQ_U16ActivationU8Output_FallsBackToCpu) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunLPBQGemmCpuFallbackTest(BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0,
+                                                 /*include_bias=*/false, /*weight_bits=*/4,
+                                                 /*weight_is_unsigned=*/false, /*transA=*/0,
+                                                 /*use_rank2_bias=*/false,
+                                                 /*use_per_channel_bias=*/false,
+                                                 /*use_uint8_output=*/true));
+}
+
+// LPBQ is HTP-only. With the CPU backend selected, the block-quantized Gemm must remain on CPU.
+TEST_F(QnnCPUBackendTests, GemmLPBQ_NonHtpBackend_FallsBackToCpu) {
+  RunLPBQGemmCpuFallbackTest(
+      BuildBQGemmTestCase(/*M=*/2, /*K=*/16, /*N=*/4, /*block_size=*/8, /*transB=*/0), /*backend_type=*/"cpu");
 }
 
 // MatMulAddFusion (Gemm sandwiched by Reshapes) supergroup tests. The QDQ selector absorbs

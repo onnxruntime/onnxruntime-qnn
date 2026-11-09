@@ -242,9 +242,9 @@ class OrtGemmNodeGroupSelector : public OrtNodeGroupSelector {
              const std::vector<const OrtNode*>& q_nodes) const override;
 };
 
-// Input: DQ nodes for input, scale, and B
+// Input: DQ nodes for input, scale, and optional bias
 // Output: Q node for output
-class OrtInstanceAndLayerNormalizationNodeGroupSelector : public OrtNodeGroupSelector {
+class OrtNormalizationNodeGroupSelector : public OrtNodeGroupSelector {
   bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
              const OrtNode* redundant_clip_node,
              const std::vector<const OrtNode*>& dq_nodes,
