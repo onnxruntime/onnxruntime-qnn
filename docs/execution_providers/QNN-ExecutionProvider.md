@@ -149,6 +149,8 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'0'|Default. Disabled.|
 |'1'|Enable VTCM backup buffer sharing across sessions. Requires QNN API version >= 2.26. Conflicts with `ep.context_embed_mode`.|
 
+For equivalent behavior, replace `enable_vtcm_backup_buffer_sharing='1'` with `htp_share_resource_optimization='1'`. Specify only one option.
+
 |`"htp_reused_io_limit_mb"`|Description|
 |---|---|
 |Size in MB (string)|Tells QNN HTP the maximum I/O your app actually keeps registered at any one time, instead of assuming every graph's I/O is live at once. Used for memory estimation and DSP PD placement when loading a context binary; a tighter value can avoid PD placement failures (QNN error 1002). See [Reused IO Limit](#reused-io-limit) below for how to choose a value (it differs between the per-context and group paths). Defaults to "0" (QNN estimates using the total I/O size of all graphs in the context). Requires QAIRT 2.45 or later (QNN API >= 2.34).|
@@ -337,9 +339,9 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'1'|Enable HTP resource sharing for sequential graph execution with memory optimization but without virtual address optimization. Requires QNN API version >= 2.26.|
 |'2'|Enable HTP resource sharing for sequential graph execution with virtual address and memory optimization (most aggressive). Requires QNN API version >= 2.26.|
 
-When this option is omitted, the level defaults to `'0'` unless the `enable_vtcm_backup_buffer_sharing` option is set to `'1'`. Levels `'1'` and `'2'` require sequential graph execution and conflict with `ep.context_embed_mode`.
+Levels `'1'` and `'2'` require sequential graph execution and conflict with `ep.context_embed_mode`.
 
-**Mutually exclusive options:** Set only one of `htp_share_resource_optimization` and the `enable_vtcm_backup_buffer_sharing`. If both have non-empty values, session creation fails with an error asking you to choose one option. Empty values are treated as unset. Non-empty `htp_share_resource_optimization` values must be exactly `'0'`, `'1'`, or `'2'`; any other value fails session creation.
+**Note:** `htp_share_resource_optimization` and `enable_vtcm_backup_buffer_sharing` are mutually exclusive. Specify only one option.
 
 |`"disable_file_mapped_weights"`|Description|
 |---|---|

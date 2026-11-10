@@ -928,11 +928,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                  "",
                                  enable_vtcm_backup_buffer_sharing_str);
 
-  if (!enable_vtcm_backup_buffer_sharing_str.empty()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "enable_vtcm_backup_buffer_sharing is deprecated. Use htp_share_resource_optimization instead.");
-  }
-
   if (!enable_vtcm_backup_buffer_sharing_str.empty() && !htp_share_resource_optimization_str.empty()) {
     LOG_AND_THROW_ERROR(logger_,
                         "Only one of 'enable_vtcm_backup_buffer_sharing' and 'htp_share_resource_optimization' should be set. "
@@ -3806,11 +3801,11 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   // HTP resource sharing creates contexts during SetupBackend and requires
   // graph-derived context_bin_map data, so only the default (0) configuration
   // can reuse the compatibility backend.
-  bool compatibility_backend_isreusable = htp_share_resource_optimization_ == 0;
+  bool compatibility_backend_is_reusable = htp_share_resource_optimization_ == 0;
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
     Ort::Status setup_status = Ort::Status();
-    if (compatibility_backend_isreusable) {
+    if (compatibility_backend_is_reusable) {
       setup_status = qnn_backend_manager_->SetupBackend(/*load_from_cached_context*/ true,
                                                         /*need_load_system_lib*/ true,
                                                         /*share_ep_contexts*/ false,
@@ -3819,11 +3814,11 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
                                                         rpcmem_library_,
                                                         dummy_map);
     }
-    if (!compatibility_backend_isreusable || !setup_status.IsOK()) {
+    if (!compatibility_backend_is_reusable || !setup_status.IsOK()) {
       // Preserve compatibility validation when the reusable setup is not
       // supported. SetupBackend cleaned up its failed attempt, so retry with
       // the original isolated probe configuration.
-      compatibility_backend_isreusable = false;
+      compatibility_backend_is_reusable = false;
       setup_status = qnn_backend_manager_->SetupBackend(true, true, false, 0, false, nullptr, dummy_map);
     }
     if (!setup_status.IsOK()) {
@@ -3835,7 +3830,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
       *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
       return nullptr;
     }
-    if (compatibility_backend_isreusable) {
+    if (compatibility_backend_is_reusable) {
       backend_setup_from_compatibility_check_ = true;
     }
   }
@@ -3848,7 +3843,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
   }
 
-  if (!is_backend_setup && !compatibility_backend_isreusable) {
+  if (!is_backend_setup && !compatibility_backend_is_reusable) {
     // The isolated compatibility setup is only used for validation.
     qnn_backend_manager_->ReleaseResources();
   }
