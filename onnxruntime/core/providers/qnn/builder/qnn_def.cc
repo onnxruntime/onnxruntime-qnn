@@ -111,7 +111,7 @@ void SetQnnTensorDim(Qnn_Tensor_t& qnn_tensor, const std::vector<uint32_t>& dime
 }
 
 void SetQnnTensorIsDynamicDimensions(Qnn_Tensor_t& qnn_tensor,
-                                     const std::vector<uint8_t>& is_dynamic_dimensions) {
+                                     gsl::span<const uint8_t> is_dynamic_dimensions) {
   if (QNN_TENSOR_VERSION_1 == qnn_tensor.version) {
     return;  // not present in v1
   }

@@ -282,7 +282,7 @@ void SetQnnTensorClientBufData(Qnn_Tensor_t& qnn_tensor, void* client_buf_data);
 void SetQnnTensorMemHandle(Qnn_Tensor_t& qnn_tensor, Qnn_MemHandle_t mem_handle);
 void SetQnnTensorQParams(Qnn_Tensor_t& qnn_tensor, const Qnn_QuantizeParams_t& quantize_params);
 void SetQnnTensorIsDynamicDimensions(Qnn_Tensor_t& qnn_tensor,
-                                     const std::vector<uint8_t>& is_dynamic_dimensions);
+                                     gsl::span<const uint8_t> is_dynamic_dimensions);
 bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                             const Qnn_GraphHandle_t& graph,
                             const std::string& node_name,
