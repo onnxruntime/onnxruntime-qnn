@@ -180,7 +180,8 @@ jobs:
 
       # Internal-symbol binaries must not be published to Artifactory. This
       # temporary Actions artifact is used only to execute them on the ARM64
-      # Test runner after an X64 cross-build.
+      # Test runner after an X64 cross-build. Include the outer CTest file so
+      # the artifact preserves the multi-config layout expected by run_tests.ps1.
       - name: Upload internal-symbol test binaries
         if: ${{ inputs.has_code_changes && inputs.qnn_internal_test_symbols && !inputs.build_test_same_runner }}
         uses: actions/upload-artifact@v7
@@ -188,6 +189,7 @@ jobs:
           name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
           retention-days: 1
           path: |
+            ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ env.BUILD_DIR_ARCH }}/${{ inputs.build_config }}/CTestTestfile.cmake
             ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ env.BUILD_DIR_ARCH }}/${{ env.BUILD_CONFIG_DIR }}/
           if-no-files-found: error
 
@@ -316,7 +318,7 @@ jobs:
       - uses: actions/checkout@v6
         # Submodules omitted here; initialized below only when a heavy test run is needed.
       - name: Initialize submodules
-        if: ${{ inputs.has_code_changes && !inputs.qnn_internal_test_symbols }}
+        if: ${{ inputs.has_code_changes }}
         run: git submodule update --init --recursive
 
       - name: Setup JFrog CLI
@@ -340,7 +342,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
-          path: ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ env.BUILD_DIR_ARCH }}/${{ env.BUILD_CONFIG_DIR }}/
+          path: ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ env.BUILD_DIR_ARCH }}/${{ inputs.build_config }}/
 
       - name: Download testdata from Artifactory
         if: ${{ inputs.has_code_changes && !inputs.qnn_internal_test_symbols && inputs.testdata_archive_artifact_name != '' }}
@@ -361,39 +363,12 @@ jobs:
       - name: Test Windows ARM64 QNN internal-symbol build
         if: ${{ inputs.has_code_changes && inputs.qnn_internal_test_symbols }}
         timeout-minutes: 60
-        shell: powershell
-        env:
-          # Match the CPU-backend opt-in in qcom/scripts/windows/run_tests.ps1.
-          ORT_QNN_ENABLE_CPU_BACKEND: "1"
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $testDir = '${{ github.workspace }}/build/${{ inputs.target_os }}-${{ env.BUILD_DIR_ARCH }}/${{ env.BUILD_CONFIG_DIR }}'
-          $testBin = Get-Item (Join-Path $testDir 'onnxruntime_provider_test.exe')
-          Write-Host "Running $($testBin.FullName)"
-
-          $env:PATH = "$($testBin.DirectoryName);$env:PATH"
-          Push-Location $testBin.DirectoryName
-          try {
-            # Bound the HTP session workload per process. Google Test partitions
-            # the same full filter; all shards run sequentially on this device.
-            $env:GTEST_TOTAL_SHARDS = '4'
-            $failed = $false
-            for ($index = 0; $index -lt 4; ++$index) {
-              $env:GTEST_SHARD_INDEX = "$index"
-              $env:GTEST_SHARD_STATUS_FILE = Join-Path $testBin.DirectoryName "qnn-internal-symbol-shard-$index.status"
-              Write-Host "Running QNN test shard $index of $env:GTEST_TOTAL_SHARDS"
-              & $testBin.FullName '--gtest_filter=-QnnAcc_*' "--gtest_output=xml:qnn-internal-symbol-$index.results.xml"
-              if ($LASTEXITCODE -ne 0) {
-                Write-Host "::error::QNN test shard $index failed with exit code $LASTEXITCODE"
-                $failed = $true
-              }
-              if (-not (Test-Path -LiteralPath $env:GTEST_SHARD_STATUS_FILE)) {
-                throw 'The test binary did not acknowledge Google Test sharding'
-              }
-            }
-            if ($failed) { throw 'QNN legacy and internal-symbol unit tests failed' }
-          }
-          finally { Pop-Location }
+        run: >
+          python.exe qcom/build_and_test.py
+          --target-py-version ${{ inputs.target_py_vsn }}
+          --config ${{ inputs.build_config }}
+          create_venv
+          test_ort_windows_arm64_internal_symbols --only
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
@@ -417,7 +392,7 @@ jobs:
           detailed_summary: true
           verbose_summary: false
           report_paths: |
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/qnn-internal-symbol-*.results.xml
+            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v7
@@ -435,7 +410,7 @@ jobs:
           name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} internal-symbols Test Results
           retention-days: 7
           path: |
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/qnn-internal-symbol-*.results.xml
+            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
