@@ -780,6 +780,32 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Rotary_FP32) {
 }
 
 #ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_FullCacheWindow_Batch2_FP32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  for (const int32_t window_size : {-1, 4, 8}) {
+    SCOPED_TRACE("local_window_size=" + std::to_string(window_size));
+    GqaTestConfig<float, int32_t> config{
+        TestInputDef<float>({2, 1, 512}, false, -1.0f, 1.0f),
+        TestInputDef<int32_t>({2}, true, std::vector<int32_t>{3, 3}),
+        TestInputDef<int32_t>({}, true, std::vector<int32_t>{4})};
+    config.past_key_def.emplace(std::vector<int64_t>{2, 4, 4, 32}, false, -1.0f, 1.0f);
+    config.past_value_def.emplace(std::vector<int64_t>{2, 4, 4, 32}, false, -1.0f, 1.0f);
+    config.num_heads = 8;
+    config.kv_num_heads = 4;
+    config.do_rotary = 0;
+    config.local_window_size = window_size;
+    config.sliding_window_cache = 0;
+    config.backend_name = "htp";
+    config.op_affinity_path = affinity_config.path().string();
+    config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
+#if !defined(__linux__)
+    config.use_shared_memory_allocator = true;
+#endif
+    RunGQATest(config);
+  }
+}
+
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_PositionIdsInt64_FP32) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto config = MakeNonDefaultPositionIdsGqaConfig();

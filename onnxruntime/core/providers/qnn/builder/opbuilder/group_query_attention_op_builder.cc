@@ -16,6 +16,17 @@ namespace onnxruntime {
 namespace qnn {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+// A window covering the entire cache adds no attention restriction when eviction is disabled.
+static int32_t NormalizeLocalWindowSize(int32_t local_window_size,
+                                        int32_t sliding_window_cache,
+                                        uint32_t cache_capacity) {
+  if (sliding_window_cache == 0 && local_window_size >= 0 &&
+      static_cast<uint32_t>(local_window_size) >= cache_capacity) {
+    return -1;
+  }
+  return local_window_size;
+}
+
 class GroupQueryAttentionOpBuilder : public BaseOpBuilder {
  public:
   GroupQueryAttentionOpBuilder() : BaseOpBuilder("GroupQueryAttentionOpBuilder") {}
@@ -104,12 +115,13 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   RETURN_IF(local_window_size < -1, ("unsupported value for local_window_size: " + std::to_string(local_window_size)).c_str());
   RETURN_IF(sliding_window_cache == 1 && local_window_size <= 0,
             "sliding_window_cache requires local_window_size > 0");
-  // A window covering the entire cache is equivalent to full attention and remains supported on GPU.
-  const bool truncates_cache = local_window_size != -1 && SafeInt<uint32_t>(local_window_size) < max_sequence_length;
-  RETURN_IF((sliding_window_cache != 0 || truncates_cache) && backend_type != QnnBackendType::HTP,
+  const int32_t qnn_local_window_size =
+      NormalizeLocalWindowSize(local_window_size, sliding_window_cache, max_sequence_length);
+  const bool uses_local_attention = qnn_local_window_size != -1;
+  RETURN_IF((sliding_window_cache != 0 || uses_local_attention) && backend_type != QnnBackendType::HTP,
             "Truncating local windows and sliding_window_cache are only supported by QNN GroupQueryAttention on HTP");
 #ifndef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
-  RETURN_IF(sliding_window_cache != 0 || truncates_cache,
+  RETURN_IF(sliding_window_cache != 0 || uses_local_attention,
             "Local attention and sliding_window_cache require the extended QNN GroupQueryAttention op spec");
 #endif
 
@@ -304,18 +316,27 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
   // Explicit defaults match the extended op spec. Legacy builds and GPU retain full attention
   // without these parameters; backend validation determines support for the extended HTP config.
   if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP) {
-    const int32_t local_window_size = node_helper.Get("local_window_size", -1);
+    TensorInfo present_key_tensor_info = {};
+    RETURN_IF_NOT(num_outputs > 1 && outputs[1].Exists(), "Required output tensor present_key not provided");
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[1], present_key_tensor_info));
+    RETURN_IF_NOT(present_key_tensor_info.shape.size() == 4, "Unexpected rank for present_key");
+    const int32_t sliding_window_cache = node_helper.Get("sliding_window_cache", 0);
+    // This path is shared by backend validation and graph construction, so both use full attention
+    // for non-evicting windows that cover the entire cache.
+    const int32_t local_window_size = NormalizeLocalWindowSize(node_helper.Get("local_window_size", -1),
+                                                               sliding_window_cache,
+                                                               present_key_tensor_info.shape[2]);
     RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                  node_unit.Index(),
                                  node_unit.Name(),
                                  local_window_size,
                                  QNN_OP_GROUP_QUERY_ATTENTION_PARAM_LOCAL_WINDOW_SIZE,
                                  param_names));
-    const uint32_t sliding_window_cache = SafeInt<uint32_t>(node_helper.Get("sliding_window_cache", 0));
+    const uint32_t sliding_window_cache_u32 = SafeInt<uint32_t>(sliding_window_cache);
     RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
                                  node_unit.Index(),
                                  node_unit.Name(),
-                                 sliding_window_cache,
+                                 sliding_window_cache_u32,
                                  QNN_OP_GROUP_QUERY_ATTENTION_PARAM_SLIDING_WINDOW_CACHE,
                                  param_names));
   }
