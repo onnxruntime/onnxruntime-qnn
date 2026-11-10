@@ -260,11 +260,13 @@ switch ($Mode) {
     }
     "test" {
         $RunTests = $true
-        if ($BuildIsDirty) {
-            $GenerateBuild = $true
-            $DoBuild = $true
-        } elseif ($OrtPrebuiltRoot -and $OrtTestAssetsRoot) {
-            $DoBuild = $true
+        if ($OrtPrebuiltRoot) {
+            if ($BuildIsDirty) {
+                $GenerateBuild = $true
+                $DoBuild = $true
+            } elseif ($OrtTestAssetsRoot) {
+                $DoBuild = $true
+            }
         }
     }
     "archive" {
@@ -318,8 +320,12 @@ else {
             Remove-Item -LiteralPath $OrtIdentityFile
         }
         try {
+            $FetchDepsArgs = @()
+            if ($OrtPrebuiltRoot) {
+                $FetchDepsArgs += "--ort-home=$OrtPrebuiltRoot"
+            }
             Assert-Success -ErrorMessage "Failed to fetch CMake dependencies" {
-                python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+                python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py" @FetchDepsArgs
             }
             $BuildBatPath = (Join-Path $RepoRoot "build.bat")
 

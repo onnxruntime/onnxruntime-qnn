@@ -2,6 +2,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
+import importlib.util
 import json
 import os
 import shutil
@@ -10,12 +11,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PREBUILT_CMAKE = REPO_ROOT / "cmake" / "external" / "onnxruntime_prebuilt.cmake"
 ACQUISITION_CMAKE = REPO_ROOT / "cmake" / "external" / "onnxruntime_ort_core.cmake"
 BUILD_AND_TEST = REPO_ROOT / "qcom" / "build_and_test.py"
 IDENTITY_SCRIPT = REPO_ROOT / "qcom" / "scripts" / "all" / "ort_build_identity.py"
+FETCH_DEPS_SCRIPT = REPO_ROOT / "qcom" / "scripts" / "all" / "fetch_cmake_deps.py"
 ORT_VERSION = "1.24.4"
 
 
@@ -90,6 +93,32 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/selected-assets.txt" "${{onnxruntime_ORT_TEST_
 
 
 class PrebuiltCmakeSmokeTest(unittest.TestCase):
+    def test_dependency_preparation_skips_only_replaced_ort_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cached_file = root / "cached.zip"
+            _write(cached_file)
+            cache = Mock()
+            cache.fetch.return_value = cached_file
+            package_manager = Mock(DEFAULT_PACKAGE_CACHE_DIR=root, FileCache=Mock(return_value=cache))
+            spec = importlib.util.spec_from_file_location("prebuilt_dependency_fetch", FETCH_DEPS_SCRIPT)
+            self.assertIsNotNone(spec)
+            self.assertIsNotNone(spec.loader)
+            fetch_deps = importlib.util.module_from_spec(spec)
+            with patch.dict(sys.modules, {"package_manager": package_manager}):
+                spec.loader.exec_module(fetch_deps)
+            dependencies = [
+                ("ort_core", "https://example.com/ort.zip", "ort-sha1"),
+                ("eigen", "https://example.com/eigen.zip", "eigen-sha1"),
+            ]
+            for ort_home, expected in ((None, ["ort_core", "eigen"]), (root / "sdk", ["eigen"])):
+                with self.subTest(prebuilt=ort_home is not None):
+                    cache.fetch.reset_mock()
+                    with patch.object(fetch_deps, "_parse_deps_txt", return_value=dependencies):
+                        fetch_deps.main(root / "cache", root / "mirror", ort_home=ort_home)
+                    self.assertEqual([call.args[0] for call in cache.fetch.call_args_list], expected)
+                    self.assertEqual((root / "mirror/example.com/ort.zip").exists(), ort_home is None)
+
     def test_acquisition_version_validation_without_fetch(self) -> None:
         for version, error in (
             (ORT_VERSION, None),
@@ -131,6 +160,7 @@ class PrebuiltCmakeSmokeTest(unittest.TestCase):
                 assets = root / name
                 _write(assets / "VERSION_NUMBER", ORT_VERSION)
                 _write(assets / "onnxruntime/test/testdata/model.onnx", name)
+                _write(assets / f"onnxruntime/test/testdata/{name}/removed-or-added.onnx", name)
                 env["ORT_TEST_ASSETS_ROOT"] = str(assets)
                 result = _configure(root, env)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -145,6 +175,13 @@ class PrebuiltCmakeSmokeTest(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual((root / "build/testdata/model.onnx").read_text(), name)
+                self.assertEqual(
+                    sorted(
+                        path.relative_to(root / "build/testdata").as_posix()
+                        for path in (root / "build/testdata").rglob("*.onnx")
+                    ),
+                    [f"{name}/removed-or-added.onnx", "model.onnx"],
+                )
                 self.assertTrue((root / "build" / runner).is_file())
                 for library in libraries:
                     self.assertTrue((root / "build" / library).is_file(), library)

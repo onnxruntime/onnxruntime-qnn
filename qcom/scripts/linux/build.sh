@@ -274,10 +274,14 @@ case "${target_platform}" in
         ;;
       test)
         run_tests=1
-        if [ -n "${build_is_dirty}" ]; then
-          action_args+=("--update" "--build")
-        elif [ -n "${ort_prebuilt_root}" ] && [ -n "${ort_test_assets_root}" ]; then
-          action_args+=("--build")
+        # Source-built binaries may come from a container or extracted archive.
+        # Only prebuilt tests own SDK/assets regeneration in this process.
+        if [ -n "${ort_prebuilt_root}" ]; then
+          if [ -n "${build_is_dirty}" ]; then
+            action_args+=("--update" "--build")
+          elif [ -n "${ort_test_assets_root}" ]; then
+            action_args+=("--build")
+          fi
         fi
         ;;
       archive)
@@ -375,7 +379,11 @@ else
 
   if [ "${#action_args[@]}" -gt 0 ]; then
 
-    python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py"
+    fetch_deps_args=()
+    if [ -n "${ort_prebuilt_root}" ]; then
+      fetch_deps_args+=("--ort-home=${ort_prebuilt_root}")
+    fi
+    python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py" "${fetch_deps_args[@]}"
 
     package_args=()
     if [ -n "${build_archive}" ]; then

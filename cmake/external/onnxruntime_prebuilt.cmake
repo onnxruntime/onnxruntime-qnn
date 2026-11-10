@@ -287,7 +287,9 @@ if(onnxruntime_ORT_HOME)
     add_custom_target(ort_core_target DEPENDS ${ORT_BUILD_BYPRODUCTS})
     if(onnxruntime_ORT_TEST_ASSETS_HOME)
         # Stage independently of whether the provider test binary relinks.
+        # This directory is owned by the upstream assets; do not retain removed models.
         add_custom_target(ort_test_assets_target
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${ORT_PREBUILT_DEST}/testdata"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${ORT_PREBUILT_DEST}/testdata"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${onnxruntime_ORT_TEST_ASSETS_HOME}/onnxruntime/test/testdata"

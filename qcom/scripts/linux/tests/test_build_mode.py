@@ -42,6 +42,7 @@ def build_repo(tmp_path: Path) -> Path:
     (scripts / "run_tests.sh").touch()
     all_scripts = tmp_path / "qcom/scripts/all"
     all_scripts.mkdir()
+    shutil.copy2(QCOM_ROOT / "scripts/all/ort_build_identity.py", all_scripts / "ort_build_identity.py")
     (all_scripts / "python_test_files.txt").touch()
     (all_scripts / "fetch_cmake_deps.py").touch()
     tools = tmp_path / "fake-tools"
@@ -89,7 +90,13 @@ if args.build:
 
 
 def run_build(
-    repo: Path, mode: str, *, fail: bool = False, build_dir_suffix: str | None = None
+    repo: Path,
+    mode: str,
+    *,
+    fail: bool = False,
+    build_dir_suffix: str | None = None,
+    action: str = "build",
+    target_arch: str = "x86_64",
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ | {
         "PATH": f"{repo / 'fake-tools'}{os.pathsep}{os.environ['PATH']}",
@@ -103,9 +110,9 @@ def run_build(
         "bash",
         str(SCRIPT),
         "--target-platform=linux",
-        "--target-arch=x86_64",
+        f"--target-arch={target_arch}",
         "--config=RelWithDebInfo",
-        "--mode=build",
+        f"--mode={action}",
         "--no-use-cache",
         f"--qairt-sdk-root={repo / 'fake-qairt'}",
         *MODE_FLAGS[mode],
@@ -162,6 +169,27 @@ def test_successful_mode_switches_reconfigure_and_replace_marker(build_repo: Pat
     calls = (build_repo / "build/linux-x86_64/calls.jsonl").read_text().splitlines()
     assert len(calls) == 4
     assert all(json.loads(call) == {"update": True, "marker_exists": False} for call in calls)
+
+
+@pytest.mark.parametrize("target_arch", ["x86_64", "x86_64_ubuntu_22_04", "aarch64_manylinux_2_34"])
+def test_source_test_mode_does_not_reconfigure_container_build(build_repo: Path, target_arch: str) -> None:
+    result = run_build(build_repo, "normal", target_arch=target_arch)
+    assert result.returncode == 0, result.stderr
+    root = build_repo / f"build/linux-{target_arch}"
+    cache = root / "RelWithDebInfo/CMakeCache.txt"
+    container_cache = (
+        f"CMAKE_CACHEFILE_DIR:INTERNAL=/ort/build/linux-{target_arch}/RelWithDebInfo\n"
+        "CMAKE_HOME_DIRECTORY:INTERNAL=/ort/cmake\n"
+    )
+    cache.write_text(container_cache)
+    # The container writes different SDK paths and may not export host-side markers.
+    (root / "qairt-sdk-path-RelWithDebInfo.txt").write_text("/ort_caches/qairt")
+    (root / "ort-build-identity-RelWithDebInfo.txt").unlink()
+    result = run_build(build_repo, "normal", action="test", target_arch=target_arch)
+    assert result.returncode == 0, result.stderr
+    calls = (root / "calls.jsonl").read_text().splitlines()
+    assert len(calls) == 1
+    assert cache.read_text() == container_cache
 
 
 @pytest.mark.parametrize("initial_mode", ["normal", "coverage"])
