@@ -85,7 +85,8 @@ When `--ort-prebuilt` is provided, the build does not download, patch, or build 
 contain `VERSION_NUMBER`, public C/C++ headers under `include`, and the platform libraries under `lib`.
 ORT 1.24.2 or newer is required, and missing or malformed SDK contents fail during CMake configuration.
 
-Build-only tasks do not require ORT source or test data. Test tasks additionally require
+Build-only tasks do not require ORT source or test data. Test tasks additionally require a
+`bin/onnxruntime_plugin_ep_onnx_test` executable (`.exe` on Windows) in the SDK and
 `--ort-test-assets PATH` (or `ORT_TEST_ASSETS_ROOT`) pointing to a version-matched extracted ORT tree:
 
 ```text
@@ -97,6 +98,14 @@ Build-only tasks do not require ORT source or test data. Test tasks additionally
 
 The test-assets `VERSION_NUMBER` must exactly match the pre-built SDK version. This keeps prebuilt headers,
 libraries, and test models on one supported ORT version while allowing build-only consumers to omit test data.
+The runner must come from the same ORT version, target OS, architecture, and runtime configuration as the
+SDK libraries, and support `--plugin_ep_libs`, `--plugin_eps`, and `-i` (including QNN backend selection).
+It can be supplied from an independently built SDK; QNN EP never builds it from source in prebuilt mode.
+Configuration validates and copies it next to the test binaries before execution.
+
+The build tracks the resolved SDK and test-assets paths and versions. Adding assets to a build-only
+directory or switching asset trees regenerates the build and stages testdata even when the provider
+test executable does not need relinking. `--only` test tasks also regenerate a stale build before testing.
 
 ### Windows Builds
 

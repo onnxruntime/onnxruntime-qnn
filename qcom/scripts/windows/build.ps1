@@ -95,6 +95,11 @@ else {
 }
 
 $QairtSdkVersion = Get-QairtSdkVersion -QairtSdkRoot $QairtSdkRoot
+$OrtTestAssetsRoot = if ($env:ORT_TEST_ASSETS_ROOT) { $env:ORT_TEST_ASSETS_ROOT } else { "" }
+$OrtBuildIdentity = & python.exe "$RepoRoot/qcom/scripts/all/ort_build_identity.py" `
+    "--sdk=$OrtPrebuiltRoot" "--assets=$OrtTestAssetsRoot"
+if ($LASTEXITCODE -ne 0) { throw "Failed to resolve ORT build inputs." }
+$OrtIdentityFile = Join-Path $BuildDir "ort-build-identity-$Config.txt"
 
 if ($Mode -eq "generate_sln") {
     $CMakeGenerator = (Get-InstalledVsGenerator).Generator
@@ -105,7 +110,7 @@ else {
 
     if (Test-UpdateNeeded -BuildDir $BuildDir -Config $Config `
             -TargetPyVersion $TargetPyVersion -QairtSdkRoot $QairtSdkRoot `
-            -CMakeGenerator $CMakeGenerator -Update $Update) {
+            -CMakeGenerator $CMakeGenerator -Update $Update -OrtBuildIdentity $OrtBuildIdentity) {
         $BuildIsDirty = $true
         Save-QairtSdkFilePath -BuildDir $BuildDir -Config $Config
         Save-TargetPyVersion -BuildDir $BuildDir -Config $Config -TargetPyVersion $TargetPyVersion
@@ -143,6 +148,9 @@ $CommonArgs = `
     "--cmake_generator", $CMakeGenerator, `
     "--config", $Config, `
     "--parallel"
+$CommonArgs += "--cmake_extra_defines", `
+    "onnxruntime_ORT_HOME:PATH=$($OrtPrebuiltRoot.Replace('\', '/'))", `
+    "onnxruntime_ORT_TEST_ASSETS_HOME:PATH=$($OrtTestAssetsRoot.Replace('\', '/'))"
 
 # Use static MSVC runtime for builds to eliminate MSVCP140.dll and
 # VCRUNTIME140.dll dependencies from the shipping QNN EP DLL.
@@ -252,6 +260,12 @@ switch ($Mode) {
     }
     "test" {
         $RunTests = $true
+        if ($BuildIsDirty) {
+            $GenerateBuild = $true
+            $DoBuild = $true
+        } elseif ($OrtPrebuiltRoot -and $OrtTestAssetsRoot) {
+            $DoBuild = $true
+        }
     }
     "archive" {
         $MakeTestArchive = $true
@@ -300,6 +314,9 @@ else {
     }
 
     if ($GenerateBuild -or $DoBuild) {
+        if (Test-Path -LiteralPath $OrtIdentityFile) {
+            Remove-Item -LiteralPath $OrtIdentityFile
+        }
         try {
             Assert-Success -ErrorMessage "Failed to fetch CMake dependencies" {
                 python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
@@ -344,6 +361,7 @@ else {
                     }
                 }
             }
+            Set-Content -LiteralPath $OrtIdentityFile -Value $OrtBuildIdentity
         }
         finally {
             # Whatever happens, blow away mirror to avoid it showing up in git; it's okay, it's

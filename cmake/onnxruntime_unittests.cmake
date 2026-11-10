@@ -383,7 +383,7 @@ block()
   # Copy version-matched upstream ORT test data next to the test binary. Source builds use the
   # fetched ort_core tree. Prebuilt builds use the explicit test-assets contract.
   if(onnxruntime_ORT_HOME AND onnxruntime_ORT_TEST_ASSETS_HOME)
-    set(_ort_provider_testdata_dir "${onnxruntime_ORT_TEST_ASSETS_HOME}/onnxruntime/test/testdata")
+    add_dependencies(onnxruntime_provider_test ort_test_assets_target)
   elseif(NOT onnxruntime_ORT_HOME)
     set(_ort_provider_testdata_dir "${ort_core_SOURCE_DIR}/onnxruntime/test/testdata")
   endif()
@@ -395,7 +395,7 @@ block()
       ${_ort_provider_testdata_dir}
       $<TARGET_FILE_DIR:onnxruntime_provider_test>/testdata
     )
-  else()
+  elseif(NOT onnxruntime_ORT_TEST_ASSETS_HOME)
     message(WARNING
       "Prebuilt ORT testdata was not provided. Build-only tasks remain supported, but test tasks "
       "must provide --ort-test-assets or ORT_TEST_ASSETS_ROOT.")

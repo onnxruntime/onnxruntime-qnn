@@ -166,7 +166,8 @@ Environment variables
         type=Path,
         help=(
             "Path to version-matched ORT test assets. The directory must contain "
-            "VERSION_NUMBER and the upstream onnxruntime/test/testdata tree."
+            "VERSION_NUMBER and the upstream onnxruntime/test/testdata tree. "
+            "Prebuilt tests also require the matching plugin model-test runner under the SDK's bin directory."
         ),
     )
     parser.add_argument(
@@ -1648,7 +1649,18 @@ def get_ort_test_assets_root(
                 f"ORT test-assets version {assets_version} does not match prebuilt ORT {prebuilt_version}."
             )
 
-    return root
+        if assets_required:
+            windows_target = any("windows" in task for task in tasks) or (
+                is_host_windows() and not any("linux" in task or "android" in task for task in tasks)
+            )
+            runner_name = "onnxruntime_plugin_ep_onnx_test" + (".exe" if windows_target else "")
+            runner = ort_prebuilt_root / "bin" / runner_name
+            if not runner.is_file():
+                raise FileNotFoundError(f"Prebuilt ORT tests require the matching plugin model-test runner: {runner}")
+            if not windows_target and is_host_linux() and not os.access(runner, os.X_OK):
+                raise ValueError(f"Prebuilt ORT plugin model-test runner is not executable: {runner}")
+
+    return root.resolve()
 
 
 def get_qairt_sdk_root(root_from_args: Path | None) -> Path | None:

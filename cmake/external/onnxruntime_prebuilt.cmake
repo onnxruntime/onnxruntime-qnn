@@ -42,9 +42,9 @@ if(onnxruntime_ORT_HOME)
         endif()
     endforeach()
 
-    if(NOT onnxruntime_ORT_TEST_ASSETS_HOME AND DEFINED ENV{ORT_TEST_ASSETS_ROOT})
-        set(onnxruntime_ORT_TEST_ASSETS_HOME "$ENV{ORT_TEST_ASSETS_ROOT}" CACHE PATH
-            "Path to version-matched ONNX Runtime test assets")
+    if(NOT DEFINED onnxruntime_ORT_TEST_ASSETS_HOME AND DEFINED ENV{ORT_TEST_ASSETS_ROOT})
+        # Re-read the environment on each configure instead of caching the first path.
+        file(TO_CMAKE_PATH "$ENV{ORT_TEST_ASSETS_ROOT}" onnxruntime_ORT_TEST_ASSETS_HOME)
     endif()
     if(onnxruntime_ORT_TEST_ASSETS_HOME)
         set(_ort_test_assets_version_file "${onnxruntime_ORT_TEST_ASSETS_HOME}/VERSION_NUMBER")
@@ -240,6 +240,20 @@ if(onnxruntime_ORT_HOME)
             message(FATAL_ERROR "Required prebuilt ORT library not found: ${_file}")
         endif()
     endforeach()
+    if(onnxruntime_ORT_TEST_ASSETS_HOME)
+        set(_ort_model_test_runner "onnxruntime_plugin_ep_onnx_test")
+        if(WIN32)
+            string(APPEND _ort_model_test_runner ".exe")
+        endif()
+        set(_ort_model_test_runner_source "${onnxruntime_ORT_HOME}/bin/${_ort_model_test_runner}")
+        if(NOT EXISTS "${_ort_model_test_runner_source}")
+            message(FATAL_ERROR
+                "Prebuilt ORT tests require the version- and platform-matched plugin model-test runner: "
+                "${_ort_model_test_runner_source}")
+        endif()
+        list(APPEND ORT_PREBUILT_SOURCE_FILES "${_ort_model_test_runner_source}")
+        list(APPEND ORT_BINARY_FILES "${_ort_model_test_runner}")
+    endif()
 endif()
 
 # Generic install command that copies required files from ORT_PREBUILT_SOURCE to ORT_PREBUILT_DEST.
@@ -271,6 +285,18 @@ if(onnxruntime_ORT_HOME)
         VERBATIM
     )
     add_custom_target(ort_core_target DEPENDS ${ORT_BUILD_BYPRODUCTS})
+    if(onnxruntime_ORT_TEST_ASSETS_HOME)
+        # Stage independently of whether the provider test binary relinks.
+        add_custom_target(ort_test_assets_target
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${ORT_PREBUILT_DEST}/testdata"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${onnxruntime_ORT_TEST_ASSETS_HOME}/onnxruntime/test/testdata"
+                "${ORT_PREBUILT_DEST}/testdata"
+            DEPENDS ort_core_target
+            COMMENT "Staging prebuilt ORT test assets"
+            VERBATIM
+        )
+    endif()
 else()
     message(STATUS "ORT_BUILD_COMMAND for ExternalProject: ${ORT_BUILD_COMMAND}")
     ExternalProject_Add(

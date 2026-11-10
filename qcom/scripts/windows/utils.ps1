@@ -283,7 +283,8 @@ function Test-UpdateNeeded() {
         [Parameter(Mandatory = $true)]
         [string]$CMakeGenerator,
         [Parameter(Mandatory = $true)]
-        [bool]$Update
+        [bool]$Update,
+        [string]$OrtBuildIdentity = ""
     )
 
     if ($Update) {
@@ -312,6 +313,13 @@ function Test-UpdateNeeded() {
 
     if (Test-QairtSdkDiffers -BuildDir $BuildDir -Config $Config -QairtSdkRoot $QairtSdkRoot) {
         Write-Host "Previous build used a different QAIRT SDK."
+        return $True
+    }
+
+    $OrtIdentityFile = Join-Path $BuildDir "ort-build-identity-$Config.txt"
+    if (-not (Test-Path -LiteralPath $OrtIdentityFile) -or
+        (Get-Content -LiteralPath $OrtIdentityFile -Raw).Trim() -ne $OrtBuildIdentity) {
+        Write-Host "ORT SDK or test-assets configuration changed."
         return $True
     }
 
