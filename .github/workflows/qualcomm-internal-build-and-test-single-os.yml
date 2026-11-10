@@ -109,9 +109,10 @@ on:
         default: ""
       use_ort_home:
         description: |
-          If true, build with --use-ort-prebuilt which downloads and uses
-          prebuilt ORT binaries. Used to validate the --use-ort-prebuilt
-          code path in CI.
+          If true, build and test QNN EP against downloaded prebuilt ORT
+          binaries with --use-ort-prebuilt. ORT itself is not built from
+          source; QNN EP and its unit tests still need to be compiled.
+          Model tests are skipped in this mode.
         default: false
         type: boolean
       build_aar:
@@ -154,7 +155,7 @@ env:
 
 jobs:
   build:
-    name: "${{ inputs.use_ort_home && 'build-ort-home' || 'build' }}-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    name: "${{ inputs.use_ort_home && 'build-qnn-ep-with-prebuilt-ort' || 'build' }}-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     runs-on: ["self-hosted", "${{ inputs.build_runner_os != '' && inputs.build_runner_os || inputs.target_os }}", "${{ inputs.build_runner_arch }}", "Build"]
     defaults:
       run:
@@ -173,7 +174,7 @@ jobs:
         if: ${{ inputs.has_code_changes }}
         run: git submodule update --init --recursive
 
-      - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (ort-home)' || '' }}
+      - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (QNN EP with prebuilt ORT)' || '' }}
         if: ${{ inputs.has_code_changes }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
@@ -186,7 +187,7 @@ jobs:
           ${{ inputs.use_ort_home && '--use-ort-prebuilt' || '' }}
           ${{ inputs.upload_test_archive == true && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
 
-      - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (ort-home)' || '' }}
+      - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (QNN EP with prebuilt ORT)' || '' }}
         if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
@@ -299,7 +300,7 @@ jobs:
           docker builder prune -f --filter until=72h
 
   test:
-    name: "${{ inputs.use_ort_home && 'test-ort-home' || 'test' }}-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    name: "${{ inputs.use_ort_home && 'test-qnn-ep-with-prebuilt-ort' || 'test' }}-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     # Cross-runner test stage requires Artifactory hand-off from build; skip on fork PRs where secrets are unavailable.
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
     needs: [build]

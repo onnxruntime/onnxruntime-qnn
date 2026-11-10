@@ -596,6 +596,8 @@ class TaskLibrary:
                 self.__qairt_sdk_root,
                 self.__docker_ccache_root,
                 self.__build_archive,
+                use_ort_prebuilt=self.__use_ort_prebuilt,
+                ort_prebuilt_root=self.__ort_prebuilt_root,
             ),
         )
 
@@ -688,6 +690,8 @@ class TaskLibrary:
                 inner_task="_build_ort_linux_x86_64_ubuntu_22_04",
                 docker_tag=UBUNTU_22_04_X86_64_TAG,
                 platform="linux/amd64",
+                use_ort_prebuilt=self.__use_ort_prebuilt,
+                ort_prebuilt_root=self.__ort_prebuilt_root,
             ),
         )
 

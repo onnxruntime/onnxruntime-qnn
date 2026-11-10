@@ -43,6 +43,14 @@ The build system uses a task-based approach via `python qcom/build_and_test.py`.
 * `--config [Release/RelWithDebInfo/Debug]`: Build configuration (default: Release)
 * `--qairt-sdk PATH`: Path to QAIRT SDK (overrides environment variables)
 * `--use-ort-prebuilt`: Download and use prebuilt ORT binaries instead of building from source (optional)
+
+With `--use-ort-prebuilt`, QNN EP and its unit tests are still compiled against
+the prebuilt ORT libraries; ORT itself is not compiled from source. Unit tests
+run in this mode, while ONNX model tests are skipped. Release builds validate
+both modes through the existing build matrix, using the configured Python
+versions on Linux and Windows ARM64 and x86_64. Prebuilt validation does not
+publish wheels or distribution packages; Linux ARM64 transfers its test
+archives to a separate ARM64 test runner.
 * `--target-py-version [3.10/3.11/3.12/3.13/3.14]`: Python version for wheel building (default: 3.12 on Windows, 3.10 on Linux)
 * `--build-nuget`: Enable building NuGet packages for .NET bindings
 * `--build-archive`: Enable building archives

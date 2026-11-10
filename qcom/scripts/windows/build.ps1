@@ -112,6 +112,13 @@ if ($UseOrtPrebuilt -and $OrtPrebuiltRoot -eq "") {
     }
 }
 
+$OrtBuildMode = "source"
+if ($UseOrtPrebuilt) {
+    $OrtPrebuiltRoot = (Resolve-Path -LiteralPath $OrtPrebuiltRoot).Path
+    $OrtBuildMode = "prebuilt=$OrtPrebuiltRoot"
+}
+$OrtBuildModeFilePath = Join-Path $BuildDir "ort-build-mode-$Config.txt"
+
 if ($Mode -eq "generate_sln") {
     $CMakeGenerator = (Get-InstalledVsGenerator).Generator
     $BuildIsDirty = $true
@@ -128,6 +135,11 @@ else {
     } else {
         $BuildIsDirty = $false
     }
+}
+
+if (-not (Test-Path -LiteralPath $OrtBuildModeFilePath) -or
+    (Get-Content -LiteralPath $OrtBuildModeFilePath -Raw).Trim() -ne $OrtBuildMode) {
+    $BuildIsDirty = $true
 }
 
 $BinDir = Join-Path $BuildDir $Config
@@ -171,6 +183,9 @@ if ($UseOrtPrebuilt) {
     $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
     $QnnArgs += "--ort_home"
     $QnnArgs += "$OrtPrebuiltRoot"
+} else {
+    # Clear a prebuilt path retained by a previous CMake configuration.
+    $QnnArgs += "--cmake_extra_defines", "onnxruntime_ORT_HOME:PATH="
 }
 $GenerateBuild = $false
 $DoBuild = $false
@@ -316,6 +331,9 @@ else {
     }
 
     if ($GenerateBuild -or $DoBuild) {
+        if ($BuildIsDirty -and (Test-Path -LiteralPath $OrtBuildModeFilePath)) {
+            Remove-Item -LiteralPath $OrtBuildModeFilePath
+        }
         try {
             Assert-Success -ErrorMessage "Failed to fetch CMake dependencies" {
                 python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
@@ -360,6 +378,8 @@ else {
                     }
                 }
             }
+            # Persist the mode only after configure/build succeeds.
+            Set-Content -LiteralPath $OrtBuildModeFilePath -Value $OrtBuildMode
         }
         finally {
             # Whatever happens, blow away mirror to avoid it showing up in git; it's okay, it's

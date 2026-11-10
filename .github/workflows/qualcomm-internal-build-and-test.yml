@@ -180,7 +180,7 @@ jobs:
       testdata_archive_artifact_name: testdata-zip
       build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
       test_runner_arch: arm64
-      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn }}
+      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn != 'None' && inputs.target_py_vsn != '' }}
       upload_test_archive: ${{ inputs.windows_arm64_runner_arch != 'ARM64' }}
       build_test_same_runner: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}

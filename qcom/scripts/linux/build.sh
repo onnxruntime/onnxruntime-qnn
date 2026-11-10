@@ -164,10 +164,10 @@ fi
 
 if [ -n "${use_ort_prebuilt}" ] && [ -z "${ort_prebuilt_root}" ]; then
     case "${target_arch}" in
-      x86_64|x64)
+      x86_64|x64|x86_64_ubuntu_22_04)
         ort_prebuilt_root="$(get_ort_x64_prebuilt_root)"
         ;;
-      aarch64|arm64)
+      aarch64|arm64|aarch64_manylinux_2_34)
         ort_prebuilt_root="$(get_ort_aarch64_prebuilt_root)"
         ;;
       *)
@@ -177,6 +177,9 @@ if [ -n "${use_ort_prebuilt}" ] && [ -z "${ort_prebuilt_root}" ]; then
 fi
 
 cmake_bindir="$(get_cmake_bindir)"
+if [ -n "${use_ort_prebuilt}" ]; then
+  qnn_build_mode+=";ort_home=${ort_prebuilt_root}"
+fi
 llvm_contentdir="$(get_llvm_contentdir)"
 # Trigger Hexagon SDK download/extract; cmake discovers the path via ORT_BUILD_TOOLS_PATH.
 get_hexagon_sdk_contentdir > /dev/null
@@ -397,6 +400,10 @@ else
     common_args+=(--cmake_extra_defines
                   "ENABLE_COVERAGE:BOOL=${coverage_cmake_value}"
                   "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS:BOOL=${internal_symbols_cmake_value}")
+    # Clear the cached prebuilt path when returning to a source build.
+    if [ -z "${use_ort_prebuilt}" ]; then
+      common_args+=(--cmake_extra_defines "onnxruntime_ORT_HOME:PATH=")
+    fi
 
     if [ -n "${enable_asan}" ]; then
       common_args+=(--enable_address_sanitizer)

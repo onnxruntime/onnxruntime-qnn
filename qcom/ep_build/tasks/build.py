@@ -43,6 +43,8 @@ class BuildEpDockerTask(CompositeTask):
         inner_task: str = "_build_ort_linux_aarch64_manylinux_2_34",
         docker_tag: str = MANYLINUX_2_34_AARCH64_TAG,
         platform: str = "linux/aarch64",
+        use_ort_prebuilt: bool = False,
+        ort_prebuilt_root: Path | None = None,
     ) -> None:
         dist_rel_dir = Path("build") / f"linux-{target_arch}" / config / "dist"
 
@@ -64,6 +66,8 @@ class BuildEpDockerTask(CompositeTask):
                     ccache_root=ccache_root,
                     build_archive=build_archive,
                     platform=platform,
+                    use_ort_prebuilt=use_ort_prebuilt,
+                    ort_prebuilt_root=ort_prebuilt_root,
                 ),
             ],
         )
