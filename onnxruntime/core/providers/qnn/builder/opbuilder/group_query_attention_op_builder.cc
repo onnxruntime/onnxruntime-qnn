@@ -3,6 +3,8 @@
 
 #include <cmath>
 #include <numeric>
+#include <optional>
+#include <vector>
 
 #include "QnnOpDef.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -59,8 +61,6 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   RETURN_IF_NOT(present_key_tensor_info.shape.size() == 4, "Unexpected rank for present_key");
   const auto max_sequence_length = present_key_tensor_info.shape[2];
 
-  // At time of writing, the com.microsoft.GroupQueryAttention op def has 14 inputs and 4 outputs.
-  const size_t max_num_inputs = 14;
   const size_t max_num_outputs = 4;
 
   if (num_inputs > 10 && inputs[10].Exists()) {
@@ -71,11 +71,11 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
 #endif
   }
 
-  for (size_t i = 11; i < std::min(num_inputs, max_num_inputs); i++) {
-    RETURN_IF(inputs[i].Exists(), "head_sink, k_scale, and v_scale inputs are not supported");
+  // Reject unsupported inputs when present, allowing empty trailing optional slots as the schema evolves.
+  for (size_t i = 11; i < num_inputs; ++i) {
+    RETURN_IF(inputs[i].Exists(),
+              ("Unsupported optional GroupQueryAttention input: " + inputs[i].name).c_str());
   }
-  RETURN_IF(num_inputs > max_num_inputs,
-            ("More than " + std::to_string(max_num_inputs) + " inputs provided, which is unsupported").c_str());
 
   RETURN_IF(num_outputs > 3 && outputs[3].Exists(), "output_qk output is not supported");
   RETURN_IF(num_outputs > max_num_outputs,
@@ -142,7 +142,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
                                                         bool do_op_validation) const {
   const auto& onnx_inputs = node_unit.Inputs();
 
-  std::vector<size_t> qnn_idx_to_onnx{
+  std::vector<std::optional<size_t>> qnn_idx_to_onnx{
       0u,  // query
       5u,  // seqlens_K
       6u,  // total_sequence_length
@@ -159,10 +159,10 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
   // The extended HTP GQA op definition has 14 positional inputs. HTP validates the exact input
   // count, so include all trailing optional inputs and represent absent ones with null tensors.
   if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP) {
-    qnn_idx_to_onnx.push_back(10u);  // attention_bias
-    qnn_idx_to_onnx.push_back(11u);  // head_sink
-    qnn_idx_to_onnx.push_back(12u);  // q_norm_weight
-    qnn_idx_to_onnx.push_back(13u);  // k_norm_weight
+    qnn_idx_to_onnx.push_back(10u);           // QNN attention_bias <- ONNX attention_bias
+    qnn_idx_to_onnx.push_back(std::nullopt);  // QNN head_sink: unsupported
+    qnn_idx_to_onnx.push_back(std::nullopt);  // QNN q_norm_weight: unsupported
+    qnn_idx_to_onnx.push_back(std::nullopt);  // QNN k_norm_weight: unsupported
   }
 #endif
 
@@ -172,14 +172,15 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
 
   for (size_t qnn_idx = 0; qnn_idx < qnn_idx_to_onnx.size(); ++qnn_idx) {
     const auto onnx_idx = qnn_idx_to_onnx[qnn_idx];
-    if (onnx_inputs.size() > onnx_idx && onnx_inputs[onnx_idx].Exists()) {
+    if (onnx_idx.has_value() && onnx_inputs.size() > *onnx_idx && onnx_inputs[*onnx_idx].Exists()) {
+      const auto& onnx_input = onnx_inputs[*onnx_idx];
       // QNN requires total_sequence_length as a 0D scalar, but ONNX provides it as shape [1].
       // Build the tensor wrapper directly with an empty shape to avoid a Reshape.
       if (qnn_idx == kQnnTotalSeqLenIdx) {
-        const std::string& input_name = onnx_inputs[onnx_idx].name;
+        const std::string& input_name = onnx_input.name;
         if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
           TensorInfo tensor_info = {};
-          RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_inputs[onnx_idx], tensor_info));
+          RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_input, tensor_info));
           tensor_info.shape = {};  // override to 0D scalar
           QnnTensorWrapper tensor_wrapper;
           RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(tensor_info, input_name, tensor_wrapper));
@@ -187,12 +188,12 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
         }
         input_names.push_back(input_name);
       } else {
-        RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[onnx_idx], logger, input_names));
+        RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_input, logger, input_names));
 
         // ONNX GroupQueryAttention uses INT64 position_ids, while the QNN HTP op requires INT32.
         // Preserve the ONNX graph input type and insert a runtime cast only for the HTP backend.
-        if (is_htp_backend && onnx_idx == kOnnxPositionIdsIdx) {
-          const std::string& position_ids_name = onnx_inputs[onnx_idx].name;
+        if (is_htp_backend && *onnx_idx == kOnnxPositionIdsIdx) {
+          const std::string& position_ids_name = onnx_input.name;
           auto& position_ids_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(position_ids_name);
           const Qnn_DataType_t position_ids_type = position_ids_wrapper.GetTensorDataType();
           RETURN_IF(position_ids_type != QNN_DATATYPE_INT_32 && position_ids_type != QNN_DATATYPE_INT_64,
@@ -200,7 +201,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
 
           if (position_ids_type == QNN_DATATYPE_INT_64) {
             std::vector<uint32_t> position_ids_shape;
-            RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(onnx_inputs[onnx_idx].shape, position_ids_shape),
+            RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(onnx_input.shape, position_ids_shape),
                           "Cannot get GroupQueryAttention position_ids shape");
 
             const std::string cast_output_name =
