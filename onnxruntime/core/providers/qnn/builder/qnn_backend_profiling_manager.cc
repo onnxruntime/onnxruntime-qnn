@@ -309,7 +309,7 @@ Ort::Status QnnBackendProfilingManager::CreateGraphProfilingScope(
     return Ort::Status();
   }
 
-  profiling_scope = AcquireProfilingScope(false, HasActiveOrtProfilingConsumer());
+  profiling_scope = AcquireProfilingScope(false);
   if (!profiling_scope.Active()) {
     return Ort::Status();
   }
