@@ -182,160 +182,6 @@ static GetTestModelFn BuildGQATestCase(const GqaTestConfig<T, M>& config) {
   };
 }
 
-static std::string SerializeGqaTestModel(ModelTestBuilder& helper, int opset) {
-  for (const auto& [domain, version] : std::unordered_map<std::string, int>{{"", opset}, {kMSDomain, 1}}) {
-    auto* opset_id = helper.model_.add_opset_import();
-    opset_id->set_domain(domain);
-    opset_id->set_version(version);
-  }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
-  std::string model_data;
-  helper.model_.SerializeToString(&model_data);
-  return model_data;
-}
-
-// The explicit position selects a quarter-turn rotation; the default decode position selects identity.
-// Existing keys stay unrotated, so ignoring position_ids changes both attention output and the new key.
-static GqaTestConfig<float, int32_t> MakeNonDefaultPositionIdsGqaConfig() {
-  constexpr int32_t num_heads = 2;
-  constexpr int32_t head_size = 32;
-  constexpr int32_t cache_length = 16;
-  constexpr int64_t position_id = 3;
-  std::vector<float> query((num_heads + 2) * head_size, 0.0f);
-  for (int32_t head = 0; head <= num_heads; ++head) {
-    std::fill_n(query.begin() + head * head_size, head_size / 2, 1.0f);
-  }
-  std::fill_n(query.begin() + (num_heads + 1) * head_size, head_size, 1.0f);
-  GqaTestConfig<float, int32_t> config{
-      TestInputDef<float>({1, 1, (num_heads + 2) * head_size}, false, std::move(query)),
-      TestInputDef<int32_t>({1}, true, std::vector<int32_t>{cache_length - 1}),
-      TestInputDef<int32_t>({}, true, std::vector<int32_t>{cache_length})};
-  std::vector<float> past_key(cache_length * head_size, 0.0f);
-  for (int32_t row = 0; row < cache_length; ++row) {
-    std::fill_n(past_key.begin() + row * head_size, head_size / 2, 1.0f);
-  }
-  config.past_key_def.emplace(std::vector<int64_t>{1, 1, cache_length, head_size}, false, std::move(past_key));
-  config.past_value_def.emplace(std::vector<int64_t>{1, 1, cache_length, head_size}, false,
-                                std::vector<float>(cache_length * head_size, 0.0f));
-  std::vector<float> cos_cache(cache_length * head_size / 2, 1.0f);
-  std::vector<float> sin_cache(cos_cache.size(), 0.0f);
-  std::fill_n(cos_cache.begin() + position_id * head_size / 2, head_size / 2, 0.0f);
-  std::fill_n(sin_cache.begin() + position_id * head_size / 2, head_size / 2, 1.0f);
-  config.cos_cache_def.emplace(std::vector<int64_t>{cache_length, head_size / 2}, true, std::move(cos_cache));
-  config.sin_cache_def.emplace(std::vector<int64_t>{cache_length, head_size / 2}, true, std::move(sin_cache));
-  config.position_ids_def.emplace(std::vector<int64_t>{1, 1}, false, std::vector<int64_t>{position_id});
-  config.num_heads = num_heads;
-  config.kv_num_heads = 1;
-  config.do_rotary = 1;
-  config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
-  return config;
-}
-
-TEST(QnnGqaReferenceTests, NonDefaultPositionIdsAffectOutputAndPresentKey) {
-  const auto config = MakeNonDefaultPositionIdsGqaConfig();
-  ModelTestBuilder helper;
-  BuildGQATestCase(config)(helper);
-  const std::string model_data = SerializeGqaTestModel(helper, config.opset);
-  Ort::SessionOptions so;
-  Ort::Session with_positions(*GetOrtEnv(), model_data.data(), model_data.size(), so);
-  std::vector<Ort::Value> explicit_outputs;
-  Ort::RunOptions run_options;
-  RunWithEP(with_positions, run_options, helper.feeds_, explicit_outputs);
-
-  auto* graph = helper.model_.mutable_graph();
-  graph->mutable_node(0)->set_input(9, "");
-  for (int i = 0; i < graph->input_size(); ++i) {
-    if (graph->input(i).name() == "position_ids") {
-      graph->mutable_input()->DeleteSubrange(i, 1);
-      break;
-    }
-  }
-  std::string default_model_data;
-  helper.model_.SerializeToString(&default_model_data);
-  helper.feeds_.erase("position_ids");
-  Ort::Session without_positions(*GetOrtEnv(), default_model_data.data(), default_model_data.size(), so);
-  std::vector<Ort::Value> default_outputs;
-  RunWithEP(without_positions, run_options, helper.feeds_, default_outputs);
-  ASSERT_EQ(explicit_outputs.size(), 3u);
-  ASSERT_EQ(default_outputs.size(), 3u);
-  for (size_t output_index : {0u, 1u}) {
-    const auto count = explicit_outputs[output_index].GetTensorTypeAndShapeInfo().GetElementCount();
-    const auto* explicit_data = explicit_outputs[output_index].GetTensorData<float>();
-    const auto* default_data = default_outputs[output_index].GetTensorData<float>();
-    float max_difference = 0.0f;
-    for (size_t i = 0; i < count; ++i) {
-      max_difference = std::max(max_difference, std::abs(explicit_data[i] - default_data[i]));
-    }
-    EXPECT_GT(max_difference, 0.1f) << "Output " << output_index << " must detect ignored position_ids";
-  }
-}
-
-// Zero Q/K scores make attention uniform without bias. Each head's bias selects either the new
-// value (+1) or the first cached value (-1), so ignoring or broadcasting the bias changes the output.
-static GqaTestConfig<float, int32_t> MakeAttentionBiasGqaConfig() {
-  constexpr int32_t num_heads = 8;
-  constexpr int32_t kv_num_heads = 4;
-  constexpr int32_t head_size = 32;
-  constexpr int32_t cache_length = 1024;
-  std::vector<float> query((num_heads + 2 * kv_num_heads) * head_size, 0.0f);
-  std::fill(query.begin() + (num_heads + kv_num_heads) * head_size, query.end(), 1.0f);
-  GqaTestConfig<float, int32_t> config{
-      TestInputDef<float>({1, 1, (num_heads + 2 * kv_num_heads) * head_size}, false, std::move(query)),
-      TestInputDef<int32_t>({1}, true, std::vector<int32_t>{cache_length - 1}),
-      TestInputDef<int32_t>({}, true, std::vector<int32_t>{cache_length})};
-  config.past_key_def.emplace(std::vector<int64_t>{1, kv_num_heads, cache_length, head_size}, false,
-                              std::vector<float>(kv_num_heads * cache_length * head_size, 0.0f));
-  std::vector<float> past_value(kv_num_heads * cache_length * head_size, 0.0f);
-  for (int32_t head = 0; head < kv_num_heads; ++head) {
-    std::fill_n(past_value.begin() + head * cache_length * head_size, head_size, -1.0f);
-  }
-  config.past_value_def.emplace(std::vector<int64_t>{1, kv_num_heads, cache_length, head_size}, false,
-                                std::move(past_value));
-  std::vector<float> attention_bias(num_heads * cache_length, 0.0f);
-  for (int32_t head = 0; head < num_heads; ++head) {
-    const int32_t selected_key = head % 2 == 0 ? cache_length - 1 : 0;
-    attention_bias[head * cache_length + selected_key] = 16.0f;
-  }
-  config.attention_bias_def.emplace(std::vector<int64_t>{1, num_heads, 1, cache_length}, false,
-                                    std::move(attention_bias));
-  config.num_heads = num_heads;
-  config.kv_num_heads = kv_num_heads;
-  config.do_rotary = 0;
-  config.scale = 0.0f;
-  config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
-  return config;
-}
-
-TEST(QnnGqaReferenceTests, AttentionBiasAffectsOutput) {
-  auto config = MakeAttentionBiasGqaConfig();
-  ModelTestBuilder biased_helper;
-  BuildGQATestCase(config)(biased_helper);
-  const std::string biased_model = SerializeGqaTestModel(biased_helper, config.opset);
-  Ort::SessionOptions so;
-  Ort::Session with_bias(*GetOrtEnv(), biased_model.data(), biased_model.size(), so);
-  Ort::RunOptions run_options;
-  std::vector<Ort::Value> biased_outputs;
-  RunWithEP(with_bias, run_options, biased_helper.feeds_, biased_outputs);
-
-  config.attention_bias_def.reset();
-  ModelTestBuilder unbiased_helper;
-  BuildGQATestCase(config)(unbiased_helper);
-  const std::string unbiased_model = SerializeGqaTestModel(unbiased_helper, config.opset);
-  Ort::Session without_bias(*GetOrtEnv(), unbiased_model.data(), unbiased_model.size(), so);
-  std::vector<Ort::Value> unbiased_outputs;
-  RunWithEP(without_bias, run_options, unbiased_helper.feeds_, unbiased_outputs);
-  ASSERT_EQ(biased_outputs.size(), 3u);
-  ASSERT_EQ(unbiased_outputs.size(), 3u);
-  const auto count = biased_outputs[0].GetTensorTypeAndShapeInfo().GetElementCount();
-  ASSERT_EQ(count, unbiased_outputs[0].GetTensorTypeAndShapeInfo().GetElementCount());
-  const auto* biased_data = biased_outputs[0].GetTensorData<float>();
-  const auto* unbiased_data = unbiased_outputs[0].GetTensorData<float>();
-  for (size_t i = 0; i < count; ++i) {
-    EXPECT_GT(std::abs(biased_data[i] - unbiased_data[i]), 0.9f)
-        << "Element " << i << " must detect ignored attention_bias";
-  }
-}
-
 // === Shared model builder + backend-agnostic driver (used by HTP now, GPU after rebase) ===
 
 // Holds a shared-memory allocation plus the Ort::Value view over it, so GQA feeds
@@ -468,7 +314,16 @@ static void RunGQATest(const GqaTestConfig<T, M>& config) {
   ModelTestBuilder helper;
   build_test_case(helper);
 
-  const std::string model_data = SerializeGqaTestModel(helper, config.opset);
+  const std::unordered_map<std::string, int> domain_to_version = {{"", config.opset}, {kMSDomain, 1}};
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = config.backend_name;
@@ -808,7 +663,39 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_FullCacheWindow_Batch2_FP32) {
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_PositionIdsInt64_FP32) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  auto config = MakeNonDefaultPositionIdsGqaConfig();
+  // The explicit position selects a quarter-turn rotation; the default decode position selects identity.
+  // Existing keys stay unrotated, so ignoring position_ids changes both attention output and the new key.
+  constexpr int32_t num_heads = 2;
+  constexpr int32_t head_size = 32;
+  constexpr int32_t cache_length = 16;
+  constexpr int64_t position_id = 3;
+  std::vector<float> query((num_heads + 2) * head_size, 0.0f);
+  for (int32_t head = 0; head <= num_heads; ++head) {
+    std::fill_n(query.begin() + head * head_size, head_size / 2, 1.0f);
+  }
+  std::fill_n(query.begin() + (num_heads + 1) * head_size, head_size, 1.0f);
+  GqaTestConfig<float, int32_t> config{
+      TestInputDef<float>({1, 1, (num_heads + 2) * head_size}, false, std::move(query)),
+      TestInputDef<int32_t>({1}, true, std::vector<int32_t>{cache_length - 1}),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{cache_length})};
+  std::vector<float> past_key(cache_length * head_size, 0.0f);
+  for (int32_t row = 0; row < cache_length; ++row) {
+    std::fill_n(past_key.begin() + row * head_size, head_size / 2, 1.0f);
+  }
+  config.past_key_def.emplace(std::vector<int64_t>{1, 1, cache_length, head_size}, false, std::move(past_key));
+  config.past_value_def.emplace(std::vector<int64_t>{1, 1, cache_length, head_size}, false,
+                                std::vector<float>(cache_length * head_size, 0.0f));
+  std::vector<float> cos_cache(cache_length * head_size / 2, 1.0f);
+  std::vector<float> sin_cache(cos_cache.size(), 0.0f);
+  std::fill_n(cos_cache.begin() + position_id * head_size / 2, head_size / 2, 0.0f);
+  std::fill_n(sin_cache.begin() + position_id * head_size / 2, head_size / 2, 1.0f);
+  config.cos_cache_def.emplace(std::vector<int64_t>{cache_length, head_size / 2}, true, std::move(cos_cache));
+  config.sin_cache_def.emplace(std::vector<int64_t>{cache_length, head_size / 2}, true, std::move(sin_cache));
+  config.position_ids_def.emplace(std::vector<int64_t>{1, 1}, false, std::vector<int64_t>{position_id});
+  config.num_heads = num_heads;
+  config.kv_num_heads = 1;
+  config.do_rotary = 1;
+  config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
   const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
   config.backend_name = "htp";
   config.op_affinity_path = affinity_config.path().string();
@@ -837,9 +724,45 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_SlidingWindowCache_ConsecutiveDec
                              /*local_window_size*/ 128, /*sliding_window_cache*/ 1, /*decode_steps*/ 4);
 }
 
+// Zero Q/K scores make attention uniform without bias. Each head's bias selects either the newest
+// value (+1) or the oldest retained value (-1), so ignored or misaligned bias changes the output.
+static GqaTestConfig<float, int32_t> MakeAttentionBiasGqaConfig(int32_t cache_length, int32_t total_seq_len) {
+  constexpr int32_t num_heads = 8;
+  constexpr int32_t kv_num_heads = 4;
+  constexpr int32_t head_size = 32;
+  std::vector<float> query((num_heads + 2 * kv_num_heads) * head_size, 0.0f);
+  std::fill(query.begin() + (num_heads + kv_num_heads) * head_size, query.end(), 1.0f);
+  GqaTestConfig<float, int32_t> config{
+      TestInputDef<float>({1, 1, (num_heads + 2 * kv_num_heads) * head_size}, false, std::move(query)),
+      TestInputDef<int32_t>({1}, true, std::vector<int32_t>{total_seq_len - 1}),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{total_seq_len})};
+  config.past_key_def.emplace(std::vector<int64_t>{1, kv_num_heads, cache_length, head_size}, false,
+                              std::vector<float>(kv_num_heads * cache_length * head_size, 0.0f));
+  std::vector<float> past_value(kv_num_heads * cache_length * head_size, 0.0f);
+  const int32_t selected_past_row = total_seq_len > cache_length ? 1 : 0;
+  for (int32_t head = 0; head < kv_num_heads; ++head) {
+    std::fill_n(past_value.begin() + (head * cache_length + selected_past_row) * head_size, head_size, -1.0f);
+  }
+  config.past_value_def.emplace(std::vector<int64_t>{1, kv_num_heads, cache_length, head_size}, false,
+                                std::move(past_value));
+  std::vector<float> attention_bias(num_heads * total_seq_len, 0.0f);
+  for (int32_t head = 0; head < num_heads; ++head) {
+    const int32_t selected_key = head % 2 == 0 ? total_seq_len - 1 : total_seq_len - cache_length;
+    attention_bias[head * total_seq_len + selected_key] = 16.0f;
+  }
+  config.attention_bias_def.emplace(std::vector<int64_t>{1, num_heads, 1, total_seq_len}, false,
+                                    std::move(attention_bias));
+  config.num_heads = num_heads;
+  config.kv_num_heads = kv_num_heads;
+  config.do_rotary = 0;
+  config.scale = 0.0f;
+  config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
+  return config;
+}
+
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_FP32) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  auto config = MakeAttentionBiasGqaConfig();
+  auto config = MakeAttentionBiasGqaConfig(/*cache_length*/ 1024, /*total_seq_len*/ 1024);
   const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
   config.backend_name = "htp";
   config.op_affinity_path = affinity_config.path().string();
@@ -848,7 +771,23 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_FP32) {
 #endif
   RunGQATest(config);
 }
-#else
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_SlidingWindowCache_FP32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  constexpr int32_t cache_length = 128;
+  // One decode evicts the oldest cached row; bias must still match the retained token positions.
+  auto config = MakeAttentionBiasGqaConfig(cache_length, /*total_seq_len*/ cache_length + 1);
+  config.local_window_size = cache_length;
+  config.sliding_window_cache = 1;
+  config.backend_name = "htp";
+  config.op_affinity_path = affinity_config.path().string();
+#if !defined(__linux__)
+  config.use_shared_memory_allocator = true;
+#endif  // !defined(__linux__)
+  RunGQATest(config);
+}
+#else   // !QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_OlderHeaders_NotAssigned) {
   // Pin GQA to HTP so the test exercises the op builder's spec check rather than the default CPU affinity.
   const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
@@ -884,7 +823,7 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_WindowFeatures_OlderHeaders_NotAs
                     EPVerificationParams{ExpectedEPNodeAssignment::None, config.tensor_verifier});
   }
 }
-#endif
+#endif  // QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
