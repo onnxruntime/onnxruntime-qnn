@@ -254,6 +254,8 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |'0'|Default. Disabled.|
 |'1'|Enable QNN HTP shared-memory binding for this session. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
 
+For `onnxruntime_perf_test`, to use HTP shared-memory zero-copy, enable `enable_htp_shared_memory_allocator=1` and select a single QNN NPU device with `--select_ep_devices 1` (replace `1` with the appropriate device index).
+
 |`"enable_dx12_shared_memory_allocator"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
