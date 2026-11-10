@@ -295,17 +295,17 @@ struct QnnEpPrivateMember {
 };
 
 struct GetPerThreadHtpPowerConfigsTag {
-  using type = void (QnnEp::*)(qnn::PerThreadHtpPowerConfigs_t&, const OrtRunOptions*);
+  using type = bool (QnnEp::*)(qnn::PerThreadHtpPowerConfigs_t&, const OrtRunOptions*);
   friend type GetQnnEpPrivateMember(GetPerThreadHtpPowerConfigsTag);
 };
 
 template struct QnnEpPrivateMember<GetPerThreadHtpPowerConfigsTag,
                                    &QnnEp::GetPerThreadHtpPowerConfigs>;
 
-void GetPerThreadHtpPowerConfigsForTest(
+bool GetPerThreadHtpPowerConfigsForTest(
     QnnEp& ep, qnn::PerThreadHtpPowerConfigs_t& configs,
     const OrtRunOptions* run_options) {
-  (ep.*GetQnnEpPrivateMember(GetPerThreadHtpPowerConfigsTag{}))(configs, run_options);
+  return (ep.*GetQnnEpPrivateMember(GetPerThreadHtpPowerConfigsTag{}))(configs, run_options);
 }
 
 }  // namespace
@@ -826,7 +826,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_IntegerOptionsAcceptTargetTypeMaximum
   }
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, RunOptions_RpcLatencyRejectsMalformedValuesAndUsesSessionDefault) {
+TEST_F(QnnUnit_ExecutionProviderTest, RunOptions_RpcLatencyRejectsMalformedValuesWithoutUpdatingConfigs) {
   constexpr std::array<const char*, 6> invalid_values = {
       "abc", "12abc", " 10", "+10", "-1", "4294967296"};
 
@@ -843,11 +843,10 @@ TEST_F(QnnUnit_ExecutionProviderTest, RunOptions_RpcLatencyRejectsMalformedValue
 
     {
       UseGlobalEpStubs use(ctx);
-      GetPerThreadHtpPowerConfigsForTest(*ep, configs, fake_run_options);
+      EXPECT_FALSE(GetPerThreadHtpPowerConfigsForTest(*ep, configs, fake_run_options));
     }
 
-    ASSERT_TRUE(configs.rpc_control_latency.has_value());
-    EXPECT_EQ(configs.rpc_control_latency.value(), 123u);
+    EXPECT_FALSE(configs.rpc_control_latency.has_value());
     ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
                  std::string("Invalid rpc_control_latency: '") + invalid_value + "'. Ignoring.");
   }
@@ -865,7 +864,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, RunOptions_RpcLatencyAcceptsUint32Maximum)
 
   {
     UseGlobalEpStubs use(ctx);
-    GetPerThreadHtpPowerConfigsForTest(*ep, configs, fake_run_options);
+    EXPECT_TRUE(GetPerThreadHtpPowerConfigsForTest(*ep, configs, fake_run_options));
   }
 
   ASSERT_TRUE(configs.rpc_control_latency.has_value());
