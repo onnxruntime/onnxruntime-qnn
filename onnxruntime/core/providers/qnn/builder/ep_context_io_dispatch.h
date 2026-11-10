@@ -12,17 +12,17 @@
 namespace onnxruntime {
 namespace qnn {
 
-// Adopts default-allocator output without copying. Copies share ownership until
-// the last consumer releases it; the default allocator itself is owned by ORT.
+// Owns default-allocator output without copying; the allocator is owned by ORT.
 class EpContextBuffer {
+  using Owner = std::unique_ptr<char, Ort::detail::AllocatedFree>;
+
  public:
   char* data() const noexcept { return data_.get(); }
   size_t size() const noexcept { return data_ ? size_ : 0; }
   void Adopt(void* data, size_t size) {
-    OrtAllocator* default_allocator = nullptr;
-    Ort::ThrowOnError(Ort::GetApi().GetAllocatorWithDefaultOptions(&default_allocator));
-    data_ = std::shared_ptr<char>(static_cast<char*>(data),
-                                  [default_allocator](char* ptr) { default_allocator->Free(default_allocator, ptr); });
+    OrtAllocator* allocator = nullptr;
+    Ort::ThrowOnError(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator));
+    data_ = Owner(static_cast<char*>(data), Ort::detail::AllocatedFree(allocator));
     size_ = size;
   }
   void AllocateUninitialized(size_t size) {
@@ -33,11 +33,12 @@ class EpContextBuffer {
     if (size != 0 && data == nullptr) {
       ORT_CXX_API_THROW("Failed to allocate context binary buffer.", ORT_FAIL);
     }
-    Adopt(data, size);
+    data_ = Owner(static_cast<char*>(data), Ort::detail::AllocatedFree(allocator));
+    size_ = size;
   }
 
  private:
-  std::shared_ptr<char> data_;
+  Owner data_{nullptr, Ort::detail::AllocatedFree(nullptr)};
   size_t size_ = 0;
 };
 

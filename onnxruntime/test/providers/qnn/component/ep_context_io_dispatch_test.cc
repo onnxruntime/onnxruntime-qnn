@@ -119,29 +119,34 @@ TEST(QnnUnit_EpContextIoDispatchTest, DisabledDispatch_ReadAndWrite_ReturnFailur
 #if ORT_API_HAS_EPCONTEXT_ENCRYPTION
 TEST(QnnUnit_EpContextIoDispatchTest, InvalidSuccessfulCallbackPreservesPreviousOutput) {
   auto setter = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(&Ort::GetApi());
-  if (!setter) GTEST_SKIP() << "Runtime does not support EPContext read callbacks";
+  if (!setter) {
+    GTEST_SKIP() << "Runtime does not support EPContext read callbacks";
+  }
   Ort::SessionOptions options;
   ReadBufferState state;
   Ort::ThrowOnError(setter(options, ReadBufferState::Read, &state));
   qnn::EpContextIoDispatch dispatch(*options, OrtApiRuntimeCapabilities{ORT_API_VERSION});
   qnn::EpContextBuffer bytes;
   ASSERT_TRUE(dispatch.Read("valid.bin", bytes).IsOK());
-  auto previous = bytes;
+  auto* previous = bytes.data();
+  const auto previous_size = bytes.size();
   state.return_null = true;
   EXPECT_FALSE(dispatch.Read("null.bin", bytes).IsOK());
-  EXPECT_EQ(bytes.data(), previous.data());
-  EXPECT_EQ(bytes.size(), previous.size());
+  EXPECT_EQ(bytes.data(), previous);
+  EXPECT_EQ(bytes.size(), previous_size);
   state.return_null = false;
   state.return_empty = true;
   EXPECT_FALSE(dispatch.Read("empty.bin", bytes).IsOK());
-  EXPECT_EQ(bytes.data(), previous.data());
-  EXPECT_EQ(bytes.size(), previous.size());
+  EXPECT_EQ(bytes.data(), previous);
+  EXPECT_EQ(bytes.size(), previous_size);
   EXPECT_EQ(bytes.data()[0], 42);
 }
 
 TEST(QnnUnit_EpContextIoDispatchTest, AdoptsCallbackAllocationAndPreservesOutputOnError) {
   auto setter = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(&Ort::GetApi());
-  if (!setter) GTEST_SKIP() << "Runtime does not support EPContext read callbacks";
+  if (!setter) {
+    GTEST_SKIP() << "Runtime does not support EPContext read callbacks";
+  }
   Ort::SessionOptions options;
   ReadBufferState state;
   Ort::ThrowOnError(setter(options, ReadBufferState::Read, &state));
@@ -152,14 +157,13 @@ TEST(QnnUnit_EpContextIoDispatchTest, AdoptsCallbackAllocationAndPreservesOutput
   EXPECT_EQ(bytes.data(), state.returned);
   EXPECT_EQ(bytes.size(), 32u);
   EXPECT_EQ(bytes.data()[0], 42);
-  auto owner = bytes;
+  auto* original = bytes.data();
   state.fail_after_free = true;
   EXPECT_FALSE(dispatch.Read("failed.bin", bytes).IsOK());
-  EXPECT_EQ(bytes.data(), owner.data());
+  EXPECT_EQ(bytes.data(), original);
+  EXPECT_EQ(bytes.size(), 32u);
+  EXPECT_EQ(bytes.data()[0], 42);
   bytes = {};
-  EXPECT_EQ(owner.data()[0], 42);
-  owner = {};
-  state.fail_after_free = false;
 }
 #endif
 
@@ -181,7 +185,7 @@ TEST(QnnUnit_EpContextIoDispatchTest, MovedBufferRetainsDataAndEmptiesSource) {
   EXPECT_EQ(destination.size(), 0u);
 }
 
-TEST(QnnUnit_EpContextIoDispatchTest, BufferSharesDefaultAllocationAfterWrapperScopeEnds) {
+TEST(QnnUnit_EpContextIoDispatchTest, MovedBufferOutlivesDefaultAllocatorWrapper) {
   qnn::EpContextBuffer retained;
   char* original = nullptr;
   {
@@ -191,7 +195,7 @@ TEST(QnnUnit_EpContextIoDispatchTest, BufferSharesDefaultAllocationAfterWrapperS
     data[0] = 42;
     qnn::EpContextBuffer bytes;
     bytes.Adopt(data, 32);
-    retained = bytes;
+    retained = std::move(bytes);
     original = data;
     EXPECT_EQ(retained.data(), data);
   }

@@ -27,7 +27,9 @@ class QnnWindowsFileMapperTest : public ::testing::Test {
     path_ = filename;
   }
   void TearDown() override {
-    if (!path_.empty()) EXPECT_TRUE(DeleteFileW(path_.c_str()));
+    if (!path_.empty()) {
+      EXPECT_TRUE(DeleteFileW(path_.c_str()));
+    }
   }
   void Fill() {
     std::ofstream file(path_, std::ios::binary);

@@ -3,7 +3,7 @@
 //
 // Component-level unit tests for QnnBackendManager (qnn_backend_manager.cc).
 //
-// Two groups of tests live here, both gated on QNN_EP_INTERNAL_SYMBOL_ACCESS:
+// Three groups of tests live here, gated on QNN_EP_INTERNAL_SYMBOL_ACCESS:
 //
 //   1. Stub-based tests (no real QNN library) — QnnSerializerConfig, SetupBackend
 //      load-failure paths, and before-setup early returns. These always run.
@@ -11,6 +11,7 @@
 //      HTP backend (and QnnIr / QnnSaver) and drive SetupBackend directly, with no
 //      ORT session. The fixture GTEST_SKIP()s when the backend is unavailable,
 //      mirroring the QnnHTPBackendTests::SetUp() convention.
+//   3. Binary-loading tests — use instance-local SDK/FastRPC stubs, with no driver required.
 //
 // Coverage targets:
 //   - QnnSerializerConfig (CreateIr / CreateSaver / GetBackendPath / SetGraphName / Configure)
@@ -25,6 +26,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -39,6 +41,9 @@
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/ort_api.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#include "core/providers/qnn/builder/qnn_windows_file_mapper.h"
+#endif
 
 namespace onnxruntime {
 namespace test {
@@ -925,6 +930,656 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingAndThre
                                       4 /*htp_graph_splitting_num_prepare_threads*/);
   (void)status;
 }
+
+class QnnContextBinaryLoadingTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    backend_ = std::make_unique<StubBackendManager>(api_ptrs_, logger_);
+    manager_ = backend_->GetMutable();
+    current_ = this;
+    // Override only this manager's API table; no SDK or process-wide API is modified.
+    auto& interface = backend_->QnnInterface();
+    interface.errorGetMessage = [](Qnn_ErrorHandle_t error, const char** message) -> Qnn_ErrorHandle_t {
+      if (error == QNN_COMMON_ERROR_NOT_SUPPORTED) {
+        *message = "stub DMA rejection";
+      } else {
+        EXPECT_EQ(error, current_->sdk_result_);
+        *message = "stub context loading failure";
+      }
+      return QNN_SUCCESS;
+    };
+    interface.contextCreateFromBinary = [](Qnn_BackendHandle_t, Qnn_DeviceHandle_t,
+                                           const QnnContext_Config_t** configs, const void* binary,
+                                           Qnn_ContextBinarySize_t bytes, Qnn_ContextHandle_t* context,
+                                           Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      ++test.ordinary_calls_;
+      EXPECT_EQ(binary, test.expected_binary_);
+      EXPECT_EQ(bytes, test.expected_size_);
+      if (test.check_configs_) {
+        EXPECT_EQ(configs, test.configs_);
+      }
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+      if (test.check_configs_ && test.dma_calls_) {
+        EXPECT_EQ(configs, test.dma_configs_);
+      }
+      if (test.track_lifetime_) {
+        EXPECT_TRUE(test.mapping_alive_);
+        EXPECT_FALSE(test.system_freed_);
+        test.events_.push_back("ordinary");
+      }
+#endif
+      if (test.sdk_result_ == QNN_SUCCESS) {
+        *context = const_cast<void*>(binary);
+      }
+      return test.sdk_result_;
+    };
+    interface.contextFree = [](Qnn_ContextHandle_t, Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+      return QNN_SUCCESS;
+    };
+  }
+  void TearDown() override {
+    backend_.reset();
+    manager_ = nullptr;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    EXPECT_TRUE(registrations_.empty());
+    for (const auto& path : extra_paths_) {
+      EXPECT_TRUE(DeleteFileW(path.c_str()));
+    }
+    if (!path_.empty()) {
+      EXPECT_TRUE(DeleteFileW(path_.c_str()));
+    }
+#endif
+    current_ = nullptr;
+  }
+  Ort::Status Load(bool request_dma, Qnn_ContextHandle_t& context) {
+    qnn::EpContextIoDispatch io_dispatch;
+    // A nonexistent filename makes an accidental fallback reread fail.
+    return manager_->CreateContextHandleFromBinary(const_cast<void*>(expected_binary_), expected_size_, request_dma,
+                                                   configs_, "not-a-context-file.bin", io_dispatch,
+                                                   nullptr, context);
+  }
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  void EnableDma() {
+    qnn::RpcMemApi api{};
+    api.register_buf = [](void* pointer, size_t size, int fd, int attributes) {
+      auto& test = *current_;
+      EXPECT_EQ(attributes, qnn::rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | qnn::rpcmem::RPCMEM_ATTR_READ_ONLY);
+      if (fd == -1) {
+        auto it = test.registrations_.find(pointer);
+        ASSERT_NE(it, test.registrations_.end());
+        EXPECT_EQ(size, it->second);
+        ++test.deregister_calls_;
+        if (!test.fail_deregister_) {
+          test.registrations_.erase(it);
+        }
+      } else {
+        EXPECT_EQ(fd, 0);
+        EXPECT_EQ(test.registrations_.count(pointer), 0u);
+        ++test.register_calls_;
+        if (test.register_calls_ != test.fail_register_call_) {
+          test.registrations_.emplace(pointer, size);
+        }
+      }
+    };
+    api.to_fd = [](void* pointer) {
+      return current_->registrations_.count(pointer) ? 42 : -1;
+    };
+    rpcmem_ = std::make_shared<qnn::RpcMemLibrary>(api);
+    backend_->FileMappingEnabled() = true;
+    if (!backend_->FileMapper()) {
+      backend_->FileMapper() = std::make_unique<qnn::WindowsFileMapper>(logger_);
+    }
+    auto& interface = backend_->QnnInterface();
+    interface.contextCreateFromBinaryWithCallback = [](
+                                                        Qnn_BackendHandle_t, Qnn_DeviceHandle_t, const QnnContext_Config_t** configs,
+                                                        const Qnn_ContextBinaryCallback_t* callbacks, const void* binary,
+                                                        Qnn_ContextBinarySize_t bytes, Qnn_ContextHandle_t* context,
+                                                        Qnn_ProfileHandle_t, Qnn_SignalHandle_t) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      ++test.dma_calls_;
+      test.dma_configs_ = configs;
+      EXPECT_EQ(binary, test.expected_binary_);
+      EXPECT_EQ(bytes, test.expected_size_);
+      if (test.check_configs_) {
+        EXPECT_EQ(configs, test.configs_);
+      }
+      EXPECT_EQ(callbacks->type, QNN_CONTEXT_CALLBACK_DMA_BUFFER);
+      EXPECT_EQ(test.RequestMapping(*callbacks, binary, 1, bytes - 1), QNN_SUCCESS);
+      if (test.request_second_mapping_) {
+        EXPECT_EQ(test.RequestMapping(*callbacks, binary, 0, 1), QNN_CONTEXT_ERROR_MEM_ALLOC);
+      }
+      if (test.dma_result_ == QNN_SUCCESS) *context = const_cast<void*>(binary);
+      return test.dma_result_;
+    };
+  }
+  Qnn_ErrorHandle_t RequestMapping(const Qnn_ContextBinaryCallback_t& callbacks, const void* binary,
+                                   uint64_t offset, uint64_t size) {
+    Qnn_ContextBinaryDataRequest_t request{};
+    request.offset = offset;
+    request.size = size;
+    request.isBackendMappingNeeded = 1;
+    Qnn_ContextBinaryDmaDataResponse_t response{};
+    const auto& dma = callbacks.dmaBufferCallback.v1;
+    auto status = dma.dataProvide(request, &response, dma.notifyParam);
+    if (status == QNN_SUCCESS) {
+      EXPECT_EQ(response.dmaBuffer.data, static_cast<const char*>(binary) + offset);
+      EXPECT_EQ(response.dmaBuffer.fd, 42);
+      EXPECT_EQ(response.alignedSize, size);
+      EXPECT_EQ(response.dataStartOffset, 0u);
+      mappings_.push_back({callbacks, response, size});
+    }
+    return status;
+  }
+
+  Qnn_ErrorHandle_t ReleaseMapping(size_t index) {
+    const auto& mapping = mappings_.at(index);
+    Qnn_ContextBinaryDmaDataMem_t memory{};
+    memory.dmaBuffer = mapping.response.dmaBuffer;
+    memory.memSize = mapping.size;
+    const auto& dma = mapping.callbacks.dmaBufferCallback.v1;
+    return dma.dataRelease(memory, dma.notifyParam);
+  }
+
+  void EnableListFailure(bool partial_success) {
+    backend_->BackendSetupCompleted() = true;
+    backend_->HtpShareResourceOptimization() = 1;
+    backend_->QnnInterface().contextCreateFromBinaryListAsync = [](
+                                                                    Qnn_BackendHandle_t, Qnn_DeviceHandle_t, const QnnContext_Params_t** params,
+                                                                    const QnnContext_Config_t**, Qnn_SignalHandle_t) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      if (params[0]->version == QNN_CONTEXT_PARAMS_VERSION_2) {
+        ++test.list_dma_calls_;
+        for (size_t i = 0; params[i]; ++i) {
+          const auto& param = *params[i]->v2;
+          EXPECT_EQ(test.RequestMapping(*param.callback, param.binaryBuffer, 1, param.binaryBufferSize - 1), QNN_SUCCESS);
+          const bool succeeds = test.list_partial_success_ && i == 0;
+          param.notifyFunc(succeeds ? const_cast<void*>(param.binaryBuffer) : nullptr, nullptr, nullptr,
+                           QNN_CONTEXT_NOTIFY_TYPE_CONTEXT_INIT, param.notifyParam,
+                           succeeds ? QNN_SUCCESS : QNN_COMMON_ERROR_NOT_SUPPORTED);
+        }
+        return QNN_COMMON_ERROR_NOT_SUPPORTED;
+      }
+      ++test.list_ordinary_calls_;
+      for (size_t i = 0; params[i]; ++i) {
+        const auto& param = params[i]->v1;
+        param.notifyFunc(const_cast<void*>(param.binaryBuffer), nullptr, nullptr,
+                         QNN_CONTEXT_NOTIFY_TYPE_CONTEXT_INIT, param.notifyParam, QNN_SUCCESS);
+      }
+      return QNN_SUCCESS;
+    };
+    list_partial_success_ = partial_success;
+  }
+
+  void PublishDma() {
+    std::atomic_store(&backend_->RpcMemLibrary(), rpcmem_);
+  }
+
+  class TrackedMapper : public qnn::FileMappingInterface {
+   public:
+    explicit TrackedMapper(QnnContextBinaryLoadingTest& test) : test_(test), mapper_(test.logger_) {}
+    Ort::Status GetContextBinMappedMemoryPtr(const std::string& path, void** data) override {
+      auto status = mapper_.GetContextBinMappedMemoryPtr(path, data);
+      if (status.IsOK()) test_.expected_binary_ = *data;
+      return status;
+    }
+    Ort::Status MapContextBinary(const std::string& path, std::shared_ptr<char>& data) override {
+      std::shared_ptr<char> owner;
+      auto status = mapper_.MapContextBinary(path, owner);
+      if (!status.IsOK()) return status;
+      test_.expected_binary_ = owner.get();
+      test_.mapping_alive_ = true;
+      if (test_.track_lifetime_) test_.events_.push_back("map");
+      auto* pointer = owner.get();
+      data = std::shared_ptr<char>(pointer, [this, owner = std::move(owner)](char*) mutable {
+        EXPECT_TRUE(test_.system_freed_);
+        owner.reset();
+        test_.mapping_alive_ = false;
+        if (test_.track_lifetime_) test_.events_.push_back("unmap");
+      });
+      return status;
+    }
+
+   private:
+    QnnContextBinaryLoadingTest& test_;
+    qnn::WindowsFileMapper mapper_;
+  };
+
+  void PrepareInitialLoad() {
+    wchar_t folder[MAX_PATH], filename[MAX_PATH];
+    ASSERT_NE(GetTempPathW(MAX_PATH, folder), 0u);
+    ASSERT_NE(GetTempFileNameW(folder, L"qnn", 0, filename), 0u);
+    path_ = filename;
+    std::ofstream file(path_, std::ios::binary);
+    file.write("native_graph", sizeof("native_graph"));
+    ASSERT_TRUE(file.good());
+    file.close();
+    expected_size_ = sizeof("native_graph");
+    check_configs_ = false;
+    backend_->FileMappingEnabled() = true;
+    backend_->FileMapper() = std::make_unique<TrackedMapper>(*this);
+
+    auto& system = backend_->SystemInterface();
+    system.systemContextCreate = [](QnnSystemContext_Handle_t* handle) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      test.system_freed_ = false;
+      if (test.track_lifetime_) {
+        EXPECT_TRUE(test.mapping_alive_);
+        test.events_.push_back("system_create");
+      }
+      *handle = &test;
+      return QNN_SUCCESS;
+    };
+    system.systemContextGetBinaryInfo = [](
+                                            QnnSystemContext_Handle_t, void* binary, uint64_t bytes,
+                                            const QnnSystemContext_BinaryInfo_t** info, Qnn_ContextBinarySize_t* info_size) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      EXPECT_EQ(binary, test.expected_binary_);
+      EXPECT_EQ(bytes, test.expected_size_);
+      if (test.track_lifetime_) {
+        EXPECT_TRUE(test.mapping_alive_);
+        test.events_.push_back("metadata");
+      }
+      if (test.metadata_result_ != QNN_SUCCESS) return test.metadata_result_;
+      test.input_.version = QNN_TENSOR_VERSION_1;
+      test.input_.v1.name = "input";
+      test.input_.v1.type = QNN_TENSOR_TYPE_APP_WRITE;
+      test.input_.v1.dataType = QNN_DATATYPE_FLOAT_32;
+      test.input_.v1.rank = 1;
+      test.input_.v1.dimensions = &test.dimension_;
+      test.output_ = test.input_;
+      test.output_.v1.name = "output";
+      test.output_.v1.type = QNN_TENSOR_TYPE_APP_READ;
+      test.graph_info_.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1;
+      auto& graph = test.graph_info_.graphInfoV1;
+      graph.graphName = static_cast<const char*>(binary);
+      graph.numGraphInputs = 1;
+      graph.graphInputs = &test.input_;
+      graph.numGraphOutputs = 1;
+      graph.graphOutputs = &test.output_;
+      test.binary_info_.version = QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1;
+      auto& context = test.binary_info_.contextBinaryInfoV1;
+      context.contextBlobVersion = {3, 3, 3};
+      context.numGraphs = 1;
+      context.graphs = &test.graph_info_;
+      *info = &test.binary_info_;
+      *info_size = sizeof(test.binary_info_);
+      return QNN_SUCCESS;
+    };
+    system.systemContextFree = [](QnnSystemContext_Handle_t) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      if (test.track_lifetime_) {
+        EXPECT_TRUE(test.mapping_alive_);
+        test.events_.push_back("system_free");
+      }
+      test.system_freed_ = true;
+      return QNN_SUCCESS;
+    };
+    auto& interface = backend_->QnnInterface();
+    interface.graphRetrieve = [](Qnn_ContextHandle_t context, const char* name,
+                                 Qnn_GraphHandle_t* graph) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      EXPECT_STREQ(name, static_cast<const char*>(test.expected_binary_));
+      EXPECT_FALSE(test.system_freed_);
+      if (test.track_lifetime_) {
+        EXPECT_TRUE(test.mapping_alive_);
+        test.events_.push_back("graph");
+      }
+      *graph = context;
+      return QNN_SUCCESS;
+    };
+  }
+
+  Ort::Status LoadNative(std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& models) {
+    return manager_->LoadCachedQnnContextFromBuffer(nullptr, 0, path_.string(), "native", models,
+                                                    0, qnn::EpContextIoDispatch{});
+  }
+
+#if ORT_API_HAS_EPCONTEXT_ENCRYPTION
+  static OrtStatus* ORT_API_CALL ReadCallback(void* opaque, const char*, OrtAllocator* allocator,
+                                              void** data, size_t* size) {
+    auto& test = *static_cast<QnnContextBinaryLoadingTest*>(opaque);
+    ++test.read_calls_;
+    *size = sizeof("callback_graph");
+    auto status = Ort::GetApi().AllocatorAlloc(allocator, *size, data);
+    if (status) return status;
+    std::memcpy(*data, "callback_graph", *size);
+    return nullptr;
+  }
+  void CheckSharingOrder(bool callback_first) {
+    PrepareInitialLoad();
+    ASSERT_FALSE(path_.empty());
+    EnableDma();
+    dma_result_ = QNN_SUCCESS;
+    // Exercise SetupBackend's reused-manager branch after callback-only initialization.
+    backend_->BackendSetupCompleted() = true;
+    auto setter = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(&Ort::GetApi());
+    ASSERT_NE(setter, nullptr);
+    Ort::SessionOptions options;
+    Ort::ThrowOnError(setter(options, ReadCallback, this));
+    qnn::EpContextIoDispatch dispatch(*options, OrtApiRuntimeCapabilities{ORT_API_VERSION});
+    ASSERT_TRUE(dispatch.HasReadCallback());
+    std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> models;
+    auto callback_load = [&] {
+      std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
+      ASSERT_TRUE(manager_->SetupBackend(true, true, true, 0, true, nullptr, binaries, dispatch,
+                                         false, false, false, 0)
+                      .IsOK());
+      qnn::EpContextBuffer output;
+      ASSERT_TRUE(manager_->ReadContextBinIfValid("not-a-context-file.bin", output, dispatch).IsOK());
+      expected_binary_ = output.data();
+      expected_size_ = output.size();
+      ASSERT_TRUE(manager_->LoadCachedQnnContextFromBuffer(output.data(), output.size(), "not-a-context-file.bin",
+                                                           "callback", models, 0, dispatch)
+                      .IsOK());
+    };
+    auto native_load = [&] {
+      std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
+      ASSERT_TRUE(manager_->SetupBackend(true, true, true, 0, true, rpcmem_, binaries, qnn::EpContextIoDispatch{},
+                                         false, false, false, 0)
+                      .IsOK());
+      EXPECT_EQ(std::atomic_load(&backend_->RpcMemLibrary()), rpcmem_);
+      expected_size_ = sizeof("native_graph");
+      ASSERT_TRUE(LoadNative(models).IsOK());
+    };
+    if (callback_first) {
+      callback_load();
+      EXPECT_EQ(std::atomic_load(&backend_->RpcMemLibrary()), nullptr);
+      native_load();
+    } else {
+      native_load();
+      callback_load();
+      EXPECT_EQ(std::atomic_load(&backend_->RpcMemLibrary()), rpcmem_);
+    }
+    ASSERT_EQ(models.size(), 2u);
+    EXPECT_EQ(models.at("callback")->Name(), "callback_graph");
+    EXPECT_EQ(models.at("native")->Name(), "native_graph");
+    EXPECT_EQ(read_calls_, 1u);
+    EXPECT_EQ(ordinary_calls_, 1u);
+    EXPECT_EQ(dma_calls_, 1u);
+    EXPECT_TRUE(backend_->FileMappingEnabled());
+  }
+#endif
+
+  std::shared_ptr<qnn::RpcMemLibrary> rpcmem_;
+  std::filesystem::path path_;
+  Qnn_ErrorHandle_t dma_result_ = QNN_COMMON_ERROR_NOT_SUPPORTED;
+  Qnn_ErrorHandle_t metadata_result_ = QNN_SUCCESS;
+  size_t dma_calls_ = 0, register_calls_ = 0, deregister_calls_ = 0, read_calls_ = 0;
+  struct DmaMapping {
+    Qnn_ContextBinaryCallback_t callbacks;
+    Qnn_ContextBinaryDmaDataResponse_t response;
+    uint64_t size;
+  };
+  std::unordered_map<void*, size_t> registrations_;
+  std::vector<DmaMapping> mappings_;
+  std::vector<std::filesystem::path> extra_paths_;
+  size_t fail_register_call_ = 0, list_dma_calls_ = 0, list_ordinary_calls_ = 0;
+  bool request_second_mapping_ = false, fail_deregister_ = false, list_partial_success_ = false;
+  const QnnContext_Config_t** dma_configs_ = nullptr;
+  bool mapping_alive_ = false, system_freed_ = false, track_lifetime_ = false;
+  std::vector<std::string> events_;
+  uint32_t dimension_ = 1;
+  Qnn_Tensor_t input_ = QNN_TENSOR_INIT;
+  Qnn_Tensor_t output_ = QNN_TENSOR_INIT;
+  QnnSystemContext_GraphInfo_t graph_info_ = QNN_SYSTEM_CONTEXT_GRAPH_INFO_INIT;
+  QnnSystemContext_BinaryInfo_t binary_info_{};
+#endif
+
+  static thread_local QnnContextBinaryLoadingTest* current_;
+  OrtApi ort_api_{};
+  OrtEpApi ep_api_{};
+  OrtModelEditorApi editor_api_{};
+  ApiPtrs api_ptrs_{ort_api_, ep_api_, editor_api_};
+  Ort::Logger logger_{MakeNullLogger()};
+  std::unique_ptr<StubBackendManager> backend_;
+  qnn::QnnBackendManager* manager_ = nullptr;
+  char binary_[4] = {1, 2, 3, 4};
+  const void* expected_binary_ = binary_;
+  uint64_t expected_size_ = sizeof(binary_);
+  bool check_configs_ = true;
+  const QnnContext_Config_t* configs_[1] = {nullptr};
+  size_t ordinary_calls_ = 0;
+  Qnn_ErrorHandle_t sdk_result_ = QNN_SUCCESS;
+};
+
+thread_local QnnContextBinaryLoadingTest* QnnContextBinaryLoadingTest::current_ = nullptr;
+
+TEST_F(QnnContextBinaryLoadingTest, OrdinaryLoadingUsesSuppliedBufferWithoutReadingFile) {
+  Qnn_ContextHandle_t context = nullptr;
+  ASSERT_TRUE(Load(false, context).IsOK());
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(context, binary_);
+}
+
+TEST_F(QnnContextBinaryLoadingTest, MissingDmaResourcesFallBackToSameBuffer) {
+  Qnn_ContextHandle_t context = nullptr;
+  ASSERT_TRUE(Load(true, context).IsOK());
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(context, binary_);
+}
+
+TEST_F(QnnContextBinaryLoadingTest, OrdinarySdkFailureAfterDmaFallbackIsPropagated) {
+  sdk_result_ = QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  Qnn_ContextHandle_t context = nullptr;
+  auto status = Load(true, context);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(context, nullptr);
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("contextCreateFromBinary failed"), std::string::npos);
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("stub context loading failure"), std::string::npos);
+}
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+TEST_F(QnnContextBinaryLoadingTest, SdkDmaRejectionRetriesSameBufferAfterDeregistering) {
+  EnableDma();
+  PublishDma();
+  Qnn_ContextHandle_t context = nullptr;
+  ASSERT_TRUE(Load(true, context).IsOK());
+  EXPECT_EQ(dma_calls_, 1u);
+  EXPECT_EQ(register_calls_, 1u);
+  EXPECT_EQ(deregister_calls_, 1u);
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(context, binary_);
+}
+
+TEST_F(QnnContextBinaryLoadingTest, OrdinaryFailureAfterSdkDmaRejectionIsPropagated) {
+  EnableDma();
+  PublishDma();
+  sdk_result_ = QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  Qnn_ContextHandle_t context = nullptr;
+  auto status = Load(true, context);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(dma_calls_, 1u);
+  EXPECT_EQ(register_calls_, 1u);
+  EXPECT_EQ(deregister_calls_, 1u);
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(context, nullptr);
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("stub context loading failure"), std::string::npos);
+}
+
+TEST_F(QnnContextBinaryLoadingTest, LaterMappingFailureRollsBackOnlySuccessfulRegistrations) {
+  EnableDma();
+  PublishDma();
+  request_second_mapping_ = true;
+  fail_register_call_ = 2;
+  Qnn_ContextHandle_t context = nullptr;
+  ASSERT_TRUE(Load(true, context).IsOK());
+  EXPECT_EQ(register_calls_, 2u);
+  EXPECT_EQ(deregister_calls_, 1u);
+  EXPECT_TRUE(registrations_.empty());
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(context, binary_);
+  EXPECT_EQ(binary_[0], 1);
+}
+
+TEST_F(QnnContextBinaryLoadingTest, FailedLoadPreservesPreviousSuccessfulContextRegistration) {
+  EnableDma();
+  PublishDma();
+  dma_result_ = QNN_SUCCESS;
+  Qnn_ContextHandle_t previous = nullptr;
+  ASSERT_TRUE(Load(true, previous).IsOK());
+  ASSERT_TRUE(manager_->AddQnnContextHandle(previous).IsOK());
+  auto* previous_range = mappings_.at(0).response.dmaBuffer.data;
+
+  char next_binary[4] = {5, 6, 7, 8};
+  expected_binary_ = next_binary;
+  dma_result_ = QNN_COMMON_ERROR_NOT_SUPPORTED;
+  Qnn_ContextHandle_t next = nullptr;
+  ASSERT_TRUE(Load(true, next).IsOK());
+  EXPECT_EQ(manager_->GetQnnContext(0), previous);
+  EXPECT_EQ(register_calls_, 2u);
+  EXPECT_EQ(deregister_calls_, 1u);
+  ASSERT_EQ(registrations_.size(), 1u);
+  EXPECT_EQ(registrations_.count(previous_range), 1u);
+  EXPECT_EQ(ReleaseMapping(0), QNN_SUCCESS);
+  EXPECT_EQ(deregister_calls_, 2u);
+}
+
+TEST_F(QnnContextBinaryLoadingTest, FailedOwnerKeepsExactRangeUsedByEarlierContext) {
+  EnableDma();
+  PublishDma();
+  dma_result_ = QNN_SUCCESS;
+  Qnn_ContextHandle_t previous = nullptr;
+  ASSERT_TRUE(Load(true, previous).IsOK());
+  dma_result_ = QNN_COMMON_ERROR_NOT_SUPPORTED;
+  Qnn_ContextHandle_t next = nullptr;
+  ASSERT_TRUE(Load(true, next).IsOK());
+  EXPECT_EQ(register_calls_, 1u);
+  EXPECT_EQ(deregister_calls_, 0u);
+  ASSERT_EQ(registrations_.size(), 1u);
+  // A late release from the failed owner cannot release the surviving owner's range.
+  EXPECT_EQ(ReleaseMapping(1), QNN_CONTEXT_ERROR_INVALID_ARGUMENT);
+  EXPECT_EQ(registrations_.size(), 1u);
+  EXPECT_EQ(ReleaseMapping(0), QNN_SUCCESS);
+  EXPECT_EQ(deregister_calls_, 1u);
+}
+
+TEST_F(QnnContextBinaryLoadingTest, SharedExactRangeIsDeregisteredAtFinalRelease) {
+  EnableDma();
+  PublishDma();
+  dma_result_ = QNN_SUCCESS;
+  Qnn_ContextHandle_t first = nullptr, second = nullptr;
+  ASSERT_TRUE(Load(true, first).IsOK());
+  ASSERT_TRUE(Load(true, second).IsOK());
+  EXPECT_EQ(register_calls_, 1u);
+  EXPECT_EQ(ReleaseMapping(0), QNN_SUCCESS);
+  EXPECT_EQ(deregister_calls_, 0u);
+  EXPECT_EQ(registrations_.size(), 1u);
+  EXPECT_EQ(ReleaseMapping(1), QNN_SUCCESS);
+  EXPECT_EQ(deregister_calls_, 1u);
+  EXPECT_TRUE(registrations_.empty());
+}
+
+TEST_F(QnnContextBinaryLoadingTest, FailedDeregistrationIsRetriedDuringDestruction) {
+  EnableDma();
+  PublishDma();
+  fail_deregister_ = true;
+  Qnn_ContextHandle_t context = nullptr;
+  ASSERT_TRUE(Load(true, context).IsOK());
+  EXPECT_EQ(deregister_calls_, 1u);
+  EXPECT_EQ(registrations_.size(), 1u);
+  fail_deregister_ = false;
+  backend_.reset();
+  manager_ = nullptr;
+  EXPECT_EQ(deregister_calls_, 2u);
+  EXPECT_TRUE(registrations_.empty());
+}
+
+TEST_F(QnnContextBinaryLoadingTest, FailedDmaListKeepsPreviousSuccessfulRegistration) {
+  EnableDma();
+  PublishDma();
+  dma_result_ = QNN_SUCCESS;
+  Qnn_ContextHandle_t previous = nullptr;
+  ASSERT_TRUE(Load(true, previous).IsOK());
+  ASSERT_TRUE(manager_->AddQnnContextHandle(previous).IsOK());
+  auto* previous_range = mappings_.at(0).response.dmaBuffer.data;
+  PrepareInitialLoad();
+  EnableListFailure(false);
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
+  binaries.emplace(path_.string(), std::make_unique<std::vector<std::string>>(1, "failed_list"));
+  ASSERT_TRUE(manager_->SetupBackend(true, true, true, 1, true, rpcmem_, binaries, qnn::EpContextIoDispatch{}).IsOK());
+  EXPECT_EQ(list_dma_calls_, 1u);
+  EXPECT_EQ(list_ordinary_calls_, 1u);
+  EXPECT_EQ(deregister_calls_, 1u);
+  ASSERT_EQ(registrations_.size(), 1u);
+  EXPECT_EQ(registrations_.count(previous_range), 1u);
+  EXPECT_EQ(ReleaseMapping(0), QNN_SUCCESS);
+}
+
+TEST_F(QnnContextBinaryLoadingTest, PartiallyFailedListKeepsSuccessfulContextRegistration) {
+  EnableDma();
+  PublishDma();
+  dma_result_ = QNN_SUCCESS;
+  Qnn_ContextHandle_t previous = nullptr;
+  ASSERT_TRUE(Load(true, previous).IsOK());
+  ASSERT_TRUE(manager_->AddQnnContextHandle(previous).IsOK());
+  auto* previous_range = mappings_.at(0).response.dmaBuffer.data;
+  PrepareInitialLoad();
+  auto second_path = std::filesystem::path(path_.wstring() + L"_second");
+  extra_paths_.push_back(second_path);
+  std::filesystem::copy_file(path_, second_path);
+  EnableListFailure(true);
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
+  binaries.emplace(path_.string(), std::make_unique<std::vector<std::string>>(1, "list_one"));
+  binaries.emplace(second_path.string(), std::make_unique<std::vector<std::string>>(1, "list_two"));
+  ASSERT_TRUE(manager_->SetupBackend(true, true, true, 1, true, rpcmem_, binaries, qnn::EpContextIoDispatch{}).IsOK());
+  EXPECT_EQ(list_dma_calls_, 1u);
+  EXPECT_EQ(list_ordinary_calls_, 1u);
+  ASSERT_EQ(mappings_.size(), 3u);
+  ASSERT_EQ(registrations_.size(), 2u);
+  EXPECT_EQ(registrations_.count(previous_range), 1u);
+  EXPECT_EQ(registrations_.count(mappings_[1].response.dmaBuffer.data), 1u);
+  EXPECT_EQ(registrations_.count(mappings_[2].response.dmaBuffer.data), 0u);
+  EXPECT_EQ(deregister_calls_, 1u);
+  EXPECT_EQ(ReleaseMapping(0), QNN_SUCCESS);
+  EXPECT_EQ(ReleaseMapping(1), QNN_SUCCESS);
+}
+
+#if ORT_API_HAS_EPCONTEXT_ENCRYPTION
+TEST_F(QnnContextBinaryLoadingTest, CallbackThenNativePublishesDmaOnSharedManager) {
+  CheckSharingOrder(true);
+}
+TEST_F(QnnContextBinaryLoadingTest, NativeThenCallbackKeepsDmaOnSharedManager) {
+  CheckSharingOrder(false);
+}
+#endif
+
+TEST_F(QnnContextBinaryLoadingTest, InitialCpuMappingOutlivesSdkMetadataAndSystemContext) {
+  PrepareInitialLoad();
+  track_lifetime_ = true;
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> models;
+  ASSERT_TRUE(LoadNative(models).IsOK());
+  EXPECT_FALSE(mapping_alive_);
+  EXPECT_EQ(models.at("native")->Name(), "native_graph");
+  EXPECT_EQ(events_, (std::vector<std::string>{"map", "system_create", "metadata", "ordinary", "graph", "system_free", "unmap"}));
+}
+
+TEST_F(QnnContextBinaryLoadingTest, InitialCpuMappingIsReleasedAfterSdkLoadingFailure) {
+  PrepareInitialLoad();
+  track_lifetime_ = true;
+  sdk_result_ = QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> models;
+  EXPECT_FALSE(LoadNative(models).IsOK());
+  EXPECT_TRUE(models.empty());
+  EXPECT_FALSE(mapping_alive_);
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(events_, (std::vector<std::string>{"map", "system_create", "metadata", "ordinary", "system_free", "unmap"}));
+}
+
+TEST_F(QnnContextBinaryLoadingTest, InitialCpuMappingIsReleasedAfterMetadataFailure) {
+  PrepareInitialLoad();
+  track_lifetime_ = true;
+  metadata_result_ = QNN_COMMON_ERROR_GENERAL;
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> models;
+  EXPECT_FALSE(LoadNative(models).IsOK());
+  EXPECT_TRUE(models.empty());
+  EXPECT_FALSE(mapping_alive_);
+  EXPECT_EQ(ordinary_calls_, 0u);
+  EXPECT_EQ(events_, (std::vector<std::string>{"map", "system_create", "metadata", "system_free", "unmap"}));
+}
+#endif
 
 }  // namespace test
 }  // namespace onnxruntime

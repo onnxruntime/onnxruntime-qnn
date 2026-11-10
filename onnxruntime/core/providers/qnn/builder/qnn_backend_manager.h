@@ -49,9 +49,6 @@
 #endif
 
 namespace onnxruntime {
-namespace test {
-class QnnContextBinaryLoadingTest;
-}
 namespace qnn {
 
 // Sets the QNN context priority config from a ContextPriority enum value.
@@ -151,7 +148,6 @@ struct QnnBackendManagerConfig {
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
   friend class QnnBackendSystemDlcPlugin;
-  friend class onnxruntime::test::QnnContextBinaryLoadingTest;
 
  private:
   // private tag to pass to constructor to ensure that constructor cannot be directly called externally
@@ -409,30 +405,29 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Note that whether in host mode is meaningless if not on device.
   bool IsBackendHostMode() const { return configure_host_mode_; }
 
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  Qnn_ErrorHandle_t MapDmaData(Qnn_ContextBinaryDataRequest_t request,
-                               Qnn_ContextBinaryDmaDataResponse_t* response,
-                               void* const mapped_base_ptr,
-                               const size_t file_size);
-
-  Qnn_ErrorHandle_t ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem, void* mapped_base_ptr);
-#endif
-
-  // Releases all QNN resources. Called in the destructor.
-  // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
-  void ReleaseResources();
-
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   typedef struct FileMappingCallbackInfo {
     void* const mapped_file_ptr;
     const size_t file_size;
     QnnBackendManager* const backend_manager;
+    Qnn_ContextHandle_t context = nullptr;
 
     FileMappingCallbackInfo(void* ptr, size_t size, QnnBackendManager* manager)
         : mapped_file_ptr(ptr), file_size(size), backend_manager(manager) {}
 
   } FileMappingCallbackInfo_t;
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  Qnn_ErrorHandle_t MapDmaData(Qnn_ContextBinaryDataRequest_t request,
+                               Qnn_ContextBinaryDmaDataResponse_t* response,
+                               const FileMappingCallbackInfo_t& callback_info);
+
+  Qnn_ErrorHandle_t ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem,
+                                   const FileMappingCallbackInfo_t& callback_info);
 #endif
+
+  // Releases all QNN resources. Called in the destructor.
+  // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
+  void ReleaseResources();
 
   void ResetLogger(const Ort::Logger& logger) {
     logger_ptr_ = &logger;
@@ -703,7 +698,14 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void InitializeProfilingManager(const QnnBackendManagerConfig& config);
 
-  void DeallocateMappedDmaBuffers();
+  struct MappedDmaBuffer {
+    void* data;
+    uint64_t size;
+    const FileMappingCallbackInfo_t* owner;
+  };
+  // Called with mapped_fastrpc_buffers_mutex_ held.
+  bool DeregisterMappedDmaBuffer(const MappedDmaBuffer& buffer, const RpcMemApi& api);
+  void DeallocateMappedDmaBuffers(const FileMappingCallbackInfo_t* owner = nullptr);
 
   // Checks if act_ver is >= min_ver. An act_ver of 0.0.0 is considered invalid.
   static bool MinVersionMet(const Qnn_Version_t& act_ver, const Qnn_Version_t& min_ver) {
@@ -819,13 +821,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   QnnHtpDevice_Arch_t htp_arch_internal_ = QNN_HTP_DEVICE_ARCH_NONE;
   uint32_t vtcm_size_internal_ = 0;
 
-  // Access this shared pointer atomically: SSR/DMA readers do not hold the setup lock.
-  // DMA operations retain a local snapshot through registration or release.
-  // SetupBackend can publish this library when a later native session reuses the manager.
-  // DMA callbacks use a different mutex, so all accesses use atomic shared_ptr operations.
+  // Reused SetupBackend can publish this library while SSR/DMA readers use another lock.
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
   std::mutex mapped_fastrpc_buffers_mutex_;
-  std::vector<std::pair<void*, uint64_t>> mapped_fastrpc_buffers_;
+  std::vector<MappedDmaBuffer> mapped_fastrpc_buffers_;
 
   // Backend plugin for system DLC APIs.
   bool system_dlc_created_ = false;

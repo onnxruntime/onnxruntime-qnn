@@ -1090,15 +1090,14 @@ static Qnn_ErrorHandle_t MapDmaDataCallback(Qnn_ContextBinaryDataRequest_t reque
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
-  return callback_info->backend_manager->MapDmaData(request, response,
-                                                    callback_info->mapped_file_ptr,
-                                                    callback_info->file_size);
+  return callback_info->backend_manager->MapDmaData(request, response, *callback_info);
 }
 
 Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t request,
                                                 Qnn_ContextBinaryDmaDataResponse_t* response,
-                                                void* const mapped_base_ptr,
-                                                const size_t file_size) {
+                                                const FileMappingCallbackInfo_t& callback_info) {
+  void* const mapped_base_ptr = callback_info.mapped_file_ptr;
+  const auto file_size = callback_info.file_size;
   if (response == nullptr) {
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
@@ -1142,11 +1141,17 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
   }
 
   void* unaligned_data_ptr = static_cast<char*>(mapped_base_ptr) + request.offset;
-  rpcmem_library->Api().register_buf(unaligned_data_ptr, size, NULL,
-                                     rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
+  const auto existing = std::find_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
+                                     [unaligned_data_ptr, size](const auto& buffer) {
+                                       return buffer.data == unaligned_data_ptr && buffer.size == size;
+                                     });
+  // Import an exact range once; each request retains a separate owner record.
+  if (existing == mapped_fastrpc_buffers_.end()) {
+    rpcmem_library->Api().register_buf(unaligned_data_ptr, size, 0,
+                                       rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
+  }
 
-  // register_buf does not return a status. Treat the buffer as registered and add it to
-  // the registration list only after rpcmem_to_fd verifies the registration succeeded.
+  // register_buf has no status; to_fd confirms that the range was imported.
   auto fd = rpcmem_library->Api().to_fd(unaligned_data_ptr);
   if (fd == -1) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to register DMA data mapping to RPCMEM");
@@ -1160,7 +1165,7 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
   response->dataStartOffset = 0;
   response->alignedSize = size;
 
-  mapped_fastrpc_buffers_.emplace_back(unaligned_data_ptr, size);
+  mapped_fastrpc_buffers_.push_back({unaligned_data_ptr, size, &callback_info});
 
   return QNN_SUCCESS;
 }
@@ -1179,54 +1184,35 @@ static Qnn_ErrorHandle_t ReleaseDmaDataCallback(Qnn_ContextBinaryDmaDataMem_t da
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
-  return callback_info->backend_manager->ReleaseDmaData(data_mem, callback_info->mapped_file_ptr);
+  return callback_info->backend_manager->ReleaseDmaData(data_mem, *callback_info);
 }
 
-// Use LOGS_DEFAULT here as this function will be called during destruction of QnnBackendManager
-// At time of destruction, usage of logger_ will not be available and will result in a seg fault
 Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem,
-                                                    void* mapped_base_ptr) {
-  if (mapped_base_ptr == nullptr) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Attempting to release DMA data for null memory mapped pointer"));
+                                                    const FileMappingCallbackInfo_t& callback_info) {
+  const auto* logger = OrtLoggingManager::HasDefaultLogger() ? &OrtLoggingManager::GetDefaultLogger() : nullptr;
+  if (callback_info.mapped_file_ptr == nullptr || data_mem.dmaBuffer.data == nullptr || data_mem.memSize == 0) {
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR, "Invalid DMA release pointer or size.");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
-
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-              ORT_LOGGING_LEVEL_INFO,
-              ("Releasing DMA data mapping for memory mapped pointer(" + utils::PtrToString(mapped_base_ptr) + "), address(" + utils::PtrToString(data_mem.dmaBuffer.data) + "), size: (" + std::to_string(data_mem.memSize) + ")").c_str());
-
-  if (data_mem.dmaBuffer.data == nullptr || data_mem.memSize == 0) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "Mapping release request address must not be null and size must be > 0");
-    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
-  }
+  ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_INFO,
+                  ("Releasing DMA mapping: " + utils::PtrToString(data_mem.dmaBuffer.data)).c_str());
 
   std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
   const auto rpcmem_library = std::atomic_load(&rpcmem_library_);
-  const auto mapping = std::find(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
-                                 std::make_pair(data_mem.dmaBuffer.data, static_cast<uint64_t>(data_mem.memSize)));
+  const auto mapping = std::find_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
+                                    [&callback_info, &data_mem](const auto& buffer) {
+                                      return buffer.owner == &callback_info &&
+                                             buffer.data == data_mem.dmaBuffer.data &&
+                                             buffer.size == data_mem.memSize;
+                                    });
   if (mapping == mapped_fastrpc_buffers_.end()) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR,
-                "DMA data release request does not match a registered mapping");
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR, "DMA release does not match this owner's registration.");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
-  if (!rpcmem_library || !rpcmem_library->Api().register_buf || !rpcmem_library->Api().to_fd) {
+  if (!rpcmem_library || !rpcmem_library->Api().register_buf || !rpcmem_library->Api().to_fd ||
+      !DeregisterMappedDmaBuffer(*mapping, rpcmem_library->Api())) {
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
-
-  // Deregister file mapped data from NPU regardless of file_mapped_weights_enabled_
-  // as there may be file mapped data registered to the NPU prior to any mapping error
-  void* unaligned_data_ptr = data_mem.dmaBuffer.data;
-  rpcmem_library->Api().register_buf(unaligned_data_ptr, data_mem.memSize, -1,
-                                     rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
-
-  auto fd = rpcmem_library->Api().to_fd(unaligned_data_ptr);
-  if (fd != -1) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(unaligned_data_ptr)).c_str());
-    return QNN_CONTEXT_ERROR_MEM_ALLOC;
-  }
-
-  // Erase only this registration. QNN may request the same range more than once and
-  // each successful registration has a corresponding release callback.
   mapped_fastrpc_buffers_.erase(mapping);
   return QNN_SUCCESS;
 }
@@ -1239,6 +1225,7 @@ struct ContextCreateAsyncCallbackInfo {
   // mutable process-wide shared state when the callback runs.
   QnnBackendManager* backend_manager;
   const std::vector<std::string>* ep_node_names;
+  QnnBackendManager::FileMappingCallbackInfo_t* dma_owner = nullptr;
 };
 
 // Per QnnContext.h, QnnContext_createFromBinaryListAsync blocks until every notification has fired,
@@ -1259,6 +1246,9 @@ static void ContextCreateAsyncCallback(Qnn_ContextHandle_t context,
   }
 
   const auto* callback_info = static_cast<const ContextCreateAsyncCallbackInfo*>(notify_param);
+  if (callback_info->dma_owner) {
+    callback_info->dma_owner->context = context;
+  }
   if (callback_info->backend_manager != nullptr && callback_info->ep_node_names != nullptr) {
     callback_info->backend_manager->ProcessContextFromBinListAsync(context, *callback_info->ep_node_names);
   }
@@ -1409,6 +1399,7 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
   if (use_dma_loading && file_mapper_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Attempting EPContext binary loading with DMA callbacks.");
     auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(bin_buffer, buffer_length, this);
+    auto* dma_owner = notify_param_ptr.get();
 
     Qnn_ContextBinaryCallback_t callbacks;
     callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
@@ -1417,7 +1408,10 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
     callbacks.dmaBufferCallback.v1.dataRelease = ReleaseDmaDataCallback;
     callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
 
-    file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
+    {
+      std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
+      file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
+    }
 
     rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_,
                                                             device_handle_,
@@ -1428,8 +1422,10 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
                                                             &context,
                                                             profile_handle,
                                                             NULL);
-    if (rt != QNN_SUCCESS) {
-      DeallocateMappedDmaBuffers();
+    if (rt == QNN_SUCCESS) {
+      dma_owner->context = context;
+    } else {
+      DeallocateMappedDmaBuffers(dma_owner);
       use_dma_loading = false;
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
                       ("contextCreateFromBinaryWithCallback failed (" + QnnErrorHandleToString(rt) +
@@ -1692,7 +1688,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     }
 
     auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(buffer, buffer_size, this);
-    callback_infos.push_back({this, it.second.get()});
+    callback_infos.push_back({this, it.second.get(), notify_param_ptr.get()});
 
     Qnn_ContextBinaryCallback_t context_file_map_callbacks;
     context_file_map_callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
@@ -1701,7 +1697,10 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     context_file_map_callbacks.dmaBufferCallback.v1.dataRelease = ReleaseDmaDataCallback;
     context_file_map_callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
 
-    file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
+    {
+      std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
+      file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
+    }
     context_callbacks_list.push_back(std::move(context_file_map_callbacks));
 
     // Callbacks require QnnContext_ParamsV2_t which is new to QNN API 2.32
@@ -1730,7 +1729,11 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                                 configs,
                                                                 nullptr);
   if (QNN_CONTEXT_NO_ERROR != result) {
-    DeallocateMappedDmaBuffers();
+    for (const auto& info : callback_infos) {
+      if (info.dma_owner->context == nullptr) {
+        DeallocateMappedDmaBuffers(info.dma_owner);
+      }
+    }
   }
 
   RETURN_IF(QNN_CONTEXT_NO_ERROR != result, ("Failed to create context list with DMA callbacks. Error: " +
@@ -3359,7 +3362,30 @@ Ort::Status QnnBackendManager::AddContextToDlc() {
   return system_dlc_plugin_->AddContextToDlc(GetQnnContext());
 }
 
-void QnnBackendManager::DeallocateMappedDmaBuffers() {
+bool QnnBackendManager::DeregisterMappedDmaBuffer(const MappedDmaBuffer& buffer, const RpcMemApi& api) {
+  const auto users = std::count_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
+                                   [&buffer](const auto& entry) {
+                                     return entry.data == buffer.data && entry.size == buffer.size;
+                                   });
+  if (users > 1) {
+    return true;
+  }
+
+  // Session loggers may already be gone during destruction; a default logger is optional.
+  const auto* logger = OrtLoggingManager::HasDefaultLogger() ? &OrtLoggingManager::GetDefaultLogger() : nullptr;
+  ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Attempting to deregister buffer from RPCMEM: " + utils::PtrToString(buffer.data)).c_str());
+  api.register_buf(buffer.data, buffer.size, -1,
+                   rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
+  if (api.to_fd(buffer.data) != -1) {
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(buffer.data)).c_str());
+    return false;
+  }
+  return true;
+}
+
+void QnnBackendManager::DeallocateMappedDmaBuffers(const FileMappingCallbackInfo_t* owner) {
   std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
   const auto rpcmem_library = std::atomic_load(&rpcmem_library_);
   if (mapped_fastrpc_buffers_.empty() || !rpcmem_library ||
@@ -3367,26 +3393,14 @@ void QnnBackendManager::DeallocateMappedDmaBuffers() {
     return;
   }
 
-  std::vector<std::pair<void*, uint64_t>> failed_deregisters;
-  for (const auto& mem_info : mapped_fastrpc_buffers_) {
-    auto ptr = mem_info.first;
-    auto size = mem_info.second;
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, ("Attempting to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
-    // setting third input arg to -1 here indicates a deregistration request
-    rpcmem_library->Api().register_buf(ptr, size, -1,
-                                       rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
-    auto fd = rpcmem_library->Api().to_fd(ptr);
-    if (fd != -1) {
-      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(ptr)).c_str());
-      failed_deregisters.push_back(mem_info);
+  for (auto it = mapped_fastrpc_buffers_.begin(); it != mapped_fastrpc_buffers_.end();) {
+    if ((!owner || it->owner == owner) && DeregisterMappedDmaBuffer(*it, rpcmem_library->Api())) {
+      it = mapped_fastrpc_buffers_.erase(it);
+    } else {
+      // Keep failed deregistrations for destruction-time retry.
+      ++it;
     }
   }
-  // Capture failed deregistrations.
-  // If the failures occur on failed context creation due to file mapping, a second
-  // deregistration attempt will occur on destruction of QnnBackendManager instance.
-  // If the failures occur on destruction, then there will be a memory leak
-  // and will indicate a more fundamental issue in EP or QNN.
-  mapped_fastrpc_buffers_ = std::move(failed_deregisters);
 }
 
 }  // namespace qnn
