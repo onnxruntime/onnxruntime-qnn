@@ -170,12 +170,6 @@ inline bool IsSingleElementShape(const std::vector<int64_t>& shape) {
 }
 
 /// <summary>
-/// Get the static shape of a tensor from its OrtValueInfo. Returns std::nullopt if the
-/// OrtValueInfo is null or if any underlying OrtApi call fails.
-/// </summary>
-std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const OrtValueInfo* value_info);
-
-/// <summary>
 /// Scans node_to_node_unit for the unique SingleNode consumer of a sequence-typed
 /// edge identified by seq_output_name.
 ///

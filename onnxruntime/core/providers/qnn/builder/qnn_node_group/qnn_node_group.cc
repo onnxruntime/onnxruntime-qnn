@@ -31,7 +31,6 @@
 #include "core/providers/qnn/builder/qnn_node_group/slice_concat_spacetodepth_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/spacetodepth_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
-#include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5_to_rank4.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/sequence_at_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/sequence_length_fusion.h"
@@ -114,7 +113,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"ReduceMean", {LayerNormFusion::TryFusionFull, LayerNormFusion::TryFusionGammaOnly, LayerNormFusion::TryFusionCoreOnly}},
     {"ReduceL2", {L2NormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
-    {"Reshape", {SpaceToDepthFusion::TryFusion, ChannelShuffleFusion::TryFusionFromReshape, Rank6ToRank5Fusion::TryFusion, ReshapeTransposeFusion::TryFusion, Rank5ToRank4Fusion::TryFusion}},
+    {"Reshape", {SpaceToDepthFusion::TryFusion, ChannelShuffleFusion::TryFusionFromReshape, Rank6ToRank5Fusion::TryFusion, ReshapeTransposeFusion::TryFusion}},
     {"Concat", {SliceConcatSpaceToDepthFusion::TryFusion}},
     {"SequenceConstruct", {SequenceAtFusion::TryFusion, SequenceLengthFusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
