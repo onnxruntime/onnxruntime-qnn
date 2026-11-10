@@ -4,6 +4,8 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <limits>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -50,9 +52,14 @@ Ort::Status CheckMatMulNBitsSupport(const IOpBuilder& builder,
 }
 
 void ExpectInvalidArgument(const IOpBuilder& builder,
-                           int64_t K, int64_t N, int64_t bits, int64_t block_size) {
+                           int64_t K, int64_t N, int64_t bits, int64_t block_size,
+                           std::string_view expected_error) {
+  SCOPED_TRACE(testing::Message() << "K=" << K << ", N=" << N
+                                  << ", bits=" << bits << ", block_size=" << block_size);
   const Ort::Status status = CheckMatMulNBitsSupport(builder, K, N, bits, block_size);
-  EXPECT_EQ(status.GetErrorCode(), ORT_INVALID_ARGUMENT);
+  ASSERT_EQ(status.GetErrorCode(), ORT_INVALID_ARGUMENT) << status.GetErrorMessage();
+  EXPECT_NE(status.GetErrorMessage().find(expected_error), std::string::npos)
+      << "Expected error containing '" << expected_error << "'; got: " << status.GetErrorMessage();
 }
 
 }  // namespace
@@ -62,19 +69,21 @@ TEST(QnnUnit_MatMulNBits_ComponentTest, RejectsInvalidDimensionsBeforeNarrowingO
   ASSERT_NE(builder, nullptr);
 
   constexpr int64_t max_uint32 = std::numeric_limits<uint32_t>::max();
-  ExpectInvalidArgument(*builder, -256, -256, 4, 8);
-  ExpectInvalidArgument(*builder, 0, 32, 4, 8);
-  ExpectInvalidArgument(*builder, 64, 0, 4, 8);
-  ExpectInvalidArgument(*builder, max_uint32 + 1, 32, 4, 8);
-  ExpectInvalidArgument(*builder, 64, max_uint32 + 1, 4, 8);
-  ExpectInvalidArgument(*builder, max_uint32, max_uint32, 4, 8);
+  ExpectInvalidArgument(*builder, -256, -256, 4, 8, "K and N must both be positive");
+  ExpectInvalidArgument(*builder, -64, 32, 4, 8, "K and N must both be positive");
+  ExpectInvalidArgument(*builder, 64, -32, 4, 8, "K and N must both be positive");
+  ExpectInvalidArgument(*builder, 0, 32, 4, 8, "K and N must both be positive");
+  ExpectInvalidArgument(*builder, 64, 0, 4, 8, "K and N must both be positive");
+  ExpectInvalidArgument(*builder, max_uint32 + 1, 32, 4, 8, "K and N must fit in uint32");
+  ExpectInvalidArgument(*builder, 64, max_uint32 + 1, 4, 8, "K and N must fit in uint32");
+  ExpectInvalidArgument(*builder, max_uint32, max_uint32, 4, 8, "K * N overflows int64");
 }
 
 TEST(QnnUnit_MatMulNBits_ComponentTest, RejectsZeroBlockSizeBeforeDivision) {
   const IOpBuilder* builder = GetOpBuilder("MatMulNBits");
   ASSERT_NE(builder, nullptr);
 
-  ExpectInvalidArgument(*builder, 64, 32, 4, 0);
+  ExpectInvalidArgument(*builder, 64, 32, 4, 0, "bits and block_size must both be positive");
 }
 
 }  // namespace test
