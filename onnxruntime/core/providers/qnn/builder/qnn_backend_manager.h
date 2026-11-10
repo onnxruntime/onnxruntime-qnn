@@ -49,6 +49,9 @@
 #endif
 
 namespace onnxruntime {
+namespace test {
+class QnnContextBinaryLoadingTest;
+}
 namespace qnn {
 
 // Sets the QNN context priority config from a ContextPriority enum value.
@@ -148,6 +151,7 @@ struct QnnBackendManagerConfig {
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
   friend class QnnBackendSystemDlcPlugin;
+  friend class onnxruntime::test::QnnContextBinaryLoadingTest;
 
  private:
   // private tag to pass to constructor to ensure that constructor cannot be directly called externally
@@ -218,7 +222,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     const qnn::EpContextIoDispatch& io_dispatch);
 
   // Reloads a QNN context from its binary file after an SSR event. Handles both file-mapped
-  // and direct-read paths to match initial-load behavior. Always starts a new spill-fill
+  // and direct-read paths. CPU mapping without FastRPC is currently limited to initial
+  // single-context loading; recovery keeps its existing buffered-read fallback.
+  // Always starts a new spill-fill
   // group (firstGroupHandle = 0x0) since SSR invalidates all prior context handles.
   // The new context handle is registered via AddQnnContextHandle on success.
   Ort::Status ReloadContextForSSR(const std::string& context_bin_filepath,

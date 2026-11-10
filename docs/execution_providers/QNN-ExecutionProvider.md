@@ -342,8 +342,6 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'0'|Default. File-mapped weights enabled (when supported).|
 |'1'|Disable file-mapped weight loading. File-mapped weights are only available on Windows ARM64 with QNN API >= 2.32; this option is ignored on other platforms.|
 
-EPContext decryption callbacks can be registered with either value of `disable_file_mapped_weights`. See [Compiled Model Encryption](#compiled-model-encryption-ort-api-v28) for how the callback supplies the plaintext binary.
-
 |`"htp_bf16_enable"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
@@ -1374,11 +1372,6 @@ Ort::Session session(env, ctx_model_path, inference_session_options);
 ```
 
 If no callback is registered, the EP uses the legacy plaintext behavior.
-
-- Registering a decryption read callback does not change `disable_file_mapped_weights`. The
-  application callback reads and decrypts the binary, and QNN EP loads the returned plaintext
-  buffer. Enabling native file mapping does not automatically map the encrypted source file
-  or import the callback output through DMA.
 
 **What is (and isn't) covered:**
 

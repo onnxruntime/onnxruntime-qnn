@@ -19,15 +19,17 @@ class EpContextBuffer {
   char* data() const noexcept { return data_.get(); }
   size_t size() const noexcept { return data_ ? size_ : 0; }
   void Adopt(void* data, size_t size) {
-    Ort::AllocatorWithDefaultOptions allocator;
-    OrtAllocator* default_allocator = allocator;
+    OrtAllocator* default_allocator = nullptr;
+    Ort::ThrowOnError(Ort::GetApi().GetAllocatorWithDefaultOptions(&default_allocator));
     data_ = std::shared_ptr<char>(static_cast<char*>(data),
                                   [default_allocator](char* ptr) { default_allocator->Free(default_allocator, ptr); });
     size_ = size;
   }
   void AllocateUninitialized(size_t size) {
-    Ort::AllocatorWithDefaultOptions allocator;
-    void* data = allocator.Alloc(size);
+    OrtAllocator* allocator = nullptr;
+    Ort::ThrowOnError(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator));
+    void* data = nullptr;
+    Ort::ThrowOnError(Ort::GetApi().AllocatorAlloc(allocator, size, &data));
     if (size != 0 && data == nullptr) {
       ORT_CXX_API_THROW("Failed to allocate context binary buffer.", ORT_FAIL);
     }

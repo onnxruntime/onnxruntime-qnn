@@ -1104,7 +1104,7 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
   }
 
   if (!file_mapped_weights_enabled_) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, "DMA data mapping is disabled.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, "Attempting to map DMA data while file mapping is disabled.");
     return QNN_CONTEXT_ERROR_ABORTED;
   }
 

@@ -413,11 +413,7 @@ class QnnTensorWrapper {
               "Cached context tensor rank exceeds the supported limit");
     RETURN_IF(shape_rank > 0 && shape_data == nullptr,
               "Cached context tensor dimensions are null");
-    // Rank-zero tensors may have null dimensions; do not form a pointer range from nullptr.
-    dimensions_.clear();
-    if (shape_rank > 0) {
-      dimensions_.assign(shape_data, shape_data + shape_rank);
-    }
+    dimensions_.assign(shape_data, shape_data + shape_rank);
     SetQnnTensorDim(qnn_tensor_, dimensions_);
 
     SetQnnTensorMemType(qnn_tensor_, GetQnnTensorMemType(qnn_tensor));
