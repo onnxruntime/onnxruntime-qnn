@@ -12,10 +12,14 @@
 // This mock does NOT perform a real PD reset — it simply returns the SSR error code.
 // This makes the test portable across devices regardless of CDSP driver configuration.
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 #if defined(_WIN32)
 #include <windows.h>
+#ifdef interface
+#undef interface
+#endif
 #endif
 #include "QnnCommon.h"
 #include "QnnInterface.h"
@@ -28,6 +32,20 @@ uint32_t real_numProviders{0};
 // Declared at file scope so QnnInterface_getProviders can reset it on all platforms.
 static bool g_ssr_fired = false;
 
+// The default intentionally preserves the original mock behavior: inject SSR on
+// the first graphExecute call. Setup-time injection points are test-only hooks
+// used to verify how ORT propagates failures from graph composition,
+// finalization, and context-binary loading.
+enum class MockSSRInjectionPoint : uint32_t {
+  kGraphExecute = 0,
+  kGraphCreate = 1,
+  kGraphFinalize = 2,
+  kContextCreateFromBinary = 3,
+};
+
+static MockSSRInjectionPoint g_injection_point = MockSSRInjectionPoint::kGraphExecute;
+static bool g_injection_point_hit = false;
+
 // Forces every graphExecute to fail, so a retry after SSR recovery crashes again.
 // Exported (see .def) because no header exists for this DLL.
 static bool g_always_crash_mode = false;
@@ -35,6 +53,36 @@ static bool g_always_crash_mode = false;
 extern "C" void SetMockSSRAlwaysCrash(bool always_crash) {
   g_always_crash_mode = always_crash;
 }
+
+// Selects the QNN API at which this mock reports
+// QNN_COMMON_ERROR_SYSTEM_COMMUNICATION. Invalid values restore the default
+// graphExecute behavior. This is exported for tests which load the mock through
+// the backend_path provider option.
+extern "C" void SetMockSSRInjectionPoint(uint32_t injection_point) {
+  switch (static_cast<MockSSRInjectionPoint>(injection_point)) {
+    case MockSSRInjectionPoint::kGraphExecute:
+    case MockSSRInjectionPoint::kGraphCreate:
+    case MockSSRInjectionPoint::kGraphFinalize:
+    case MockSSRInjectionPoint::kContextCreateFromBinary:
+      g_injection_point = static_cast<MockSSRInjectionPoint>(injection_point);
+      break;
+    default:
+      g_injection_point = MockSSRInjectionPoint::kGraphExecute;
+      break;
+  }
+  g_ssr_fired = false;
+  g_injection_point_hit = false;
+}
+
+namespace {
+
+bool InjectAt(MockSSRInjectionPoint point) {
+  const bool inject = g_injection_point == point;
+  g_injection_point_hit = g_injection_point_hit || inject;
+  return inject;
+}
+
+}  // namespace
 
 // Tracks whether contextCreateFromBinaryWithCallback was invoked during SSR recovery
 // (i.e., after g_ssr_fired became true).  Reset alongside g_ssr_fired each session.
@@ -85,7 +133,7 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
   if (g_always_crash_mode) {
     return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
   }
-  if (!g_ssr_fired) {
+  if (InjectAt(MockSSRInjectionPoint::kGraphExecute) && !g_ssr_fired) {
     g_ssr_fired = true;
     g_file_mapping_used_for_recovery = false;  // Reset: anything after this is recovery.
     return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
@@ -95,6 +143,68 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
   }
   return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphExecute(
       graphHandle, inputs, numInputs, outputs, numOutputs, profileHandle, signalHandle);
+}
+
+// When graphCreate fails, QnnModelWrapper tries graphRetrieve as a compatibility
+// fallback. Return the same SSR status from that fallback so the original
+// graphCreate failure is not obscured by a later GRAPH_NOT_FOUND error.
+QNN_API
+Qnn_ErrorHandle_t QnnGraph_create(Qnn_ContextHandle_t contextHandle,
+                                  const char* graphName,
+                                  const QnnGraph_Config_t** graphConfigs,
+                                  Qnn_GraphHandle_t* graphHandle) {
+  if (InjectAt(MockSSRInjectionPoint::kGraphCreate)) {
+    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  }
+  if (!real_providerList) {
+    return QNN_COMMON_ERROR_GENERAL;
+  }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphCreate(
+      contextHandle, graphName, graphConfigs, graphHandle);
+}
+
+QNN_API
+Qnn_ErrorHandle_t QnnGraph_retrieve(Qnn_ContextHandle_t contextHandle,
+                                    const char* graphName,
+                                    Qnn_GraphHandle_t* graphHandle) {
+  if (InjectAt(MockSSRInjectionPoint::kGraphCreate)) {
+    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  }
+  if (!real_providerList) {
+    return QNN_COMMON_ERROR_GENERAL;
+  }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphRetrieve(contextHandle, graphName, graphHandle);
+}
+
+QNN_API
+Qnn_ErrorHandle_t QnnGraph_finalize(Qnn_GraphHandle_t graphHandle,
+                                    Qnn_ProfileHandle_t profileHandle,
+                                    Qnn_SignalHandle_t signalHandle) {
+  if (InjectAt(MockSSRInjectionPoint::kGraphFinalize)) {
+    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  }
+  if (!real_providerList) {
+    return QNN_COMMON_ERROR_GENERAL;
+  }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphFinalize(graphHandle, profileHandle, signalHandle);
+}
+
+QNN_API
+Qnn_ErrorHandle_t QnnContext_createFromBinary(Qnn_BackendHandle_t backendHandle,
+                                              Qnn_DeviceHandle_t deviceHandle,
+                                              const QnnContext_Config_t** config,
+                                              const void* binaryBuffer,
+                                              Qnn_ContextBinarySize_t binaryBufferSize,
+                                              Qnn_ContextHandle_t* context,
+                                              Qnn_ProfileHandle_t profileHandle) {
+  if (InjectAt(MockSSRInjectionPoint::kContextCreateFromBinary)) {
+    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  }
+  if (!real_providerList) {
+    return QNN_COMMON_ERROR_GENERAL;
+  }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.contextCreateFromBinary(
+      backendHandle, deviceHandle, config, binaryBuffer, binaryBufferSize, context, profileHandle);
 }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -112,6 +222,9 @@ Qnn_ErrorHandle_t QnnContext_createFromBinaryWithCallback(
     Qnn_ContextHandle_t* context,
     Qnn_ProfileHandle_t profileHandle,
     void* reserved) {
+  if (InjectAt(MockSSRInjectionPoint::kContextCreateFromBinary)) {
+    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  }
   if (g_ssr_fired) {
     if (g_simulate_old_blob_version) {
       // Simulate a pre-3.3.3 context binary: reject the callback API and do NOT record
@@ -139,6 +252,13 @@ extern "C" bool QnnMockSSR_WasFileMappingUsedForRecovery() {
   return g_file_mapping_used_for_recovery;
 }
 
+// Reports whether the configured setup-time injection point was reached in the
+// current session. The application E2E script uses this to distinguish a
+// propagated QNN error from an unrelated session-creation failure.
+extern "C" bool QnnMockSSR_WasInjectionPointHit() {
+  return g_injection_point_hit;
+}
+
 // When set to true, the contextCreateFromBinaryWithCallback interceptor will return
 // QNN_COMMON_ERROR_NOT_SUPPORTED during SSR recovery instead of forwarding to the real
 // backend, simulating a pre-3.3.3 context binary where the callback API is unsupported.
@@ -147,8 +267,6 @@ extern "C" void QnnMockSSR_SetSimulateOldBlobVersion(bool simulate) {
   g_simulate_old_blob_version = simulate;
 }
 
-// 'interface' is #defined as 'struct' in <objbase.h> (pulled in via <windows.h>).
-// Use a different name to avoid that macro collision.
 extern "C" Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** providerList,
                                                        uint32_t* numProviders) {
   // Reset mock state for each new session that loads this provider.
@@ -170,8 +288,12 @@ extern "C" Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** p
   if (real_providerList) {
     mock_interface.apiVersion = real_providerList[0]->apiVersion;
     mock_interface.QNN_INTERFACE_VER_NAME = real_providerList[0]->QNN_INTERFACE_VER_NAME;
-    // Intercept graphExecute to simulate SSR.
+    // Intercept the QNN APIs used by each SSR test injection point.
     mock_interface.QNN_INTERFACE_VER_NAME.graphExecute = QnnGraph_execute;
+    mock_interface.QNN_INTERFACE_VER_NAME.graphCreate = QnnGraph_create;
+    mock_interface.QNN_INTERFACE_VER_NAME.graphRetrieve = QnnGraph_retrieve;
+    mock_interface.QNN_INTERFACE_VER_NAME.graphFinalize = QnnGraph_finalize;
+    mock_interface.QNN_INTERFACE_VER_NAME.contextCreateFromBinary = QnnContext_createFromBinary;
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     // Intercept contextCreateFromBinaryWithCallback to detect file mapping during recovery.
     mock_interface.QNN_INTERFACE_VER_NAME.contextCreateFromBinaryWithCallback =

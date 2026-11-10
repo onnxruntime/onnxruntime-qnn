@@ -12,7 +12,7 @@
 
 namespace onnxruntime {
 namespace test {
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 template <typename DataType>
 static GetTestModelFn BuildIdentityTestCase(const TestInputDef<DataType>& input_def) {
@@ -92,7 +92,7 @@ TEST_F(QnnHTPBackendTests, IdentityRank1F32) {
                                 ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime
