@@ -240,7 +240,7 @@ def test_internal_symbol_test_task_uses_isolated_build_directory(tmp_path: Path)
     assert step_id == "test_ort_linux_x86_64_internal_symbols"
     command = task.executables_and_args[0]
     assert "--mode=test" in command
-    assert "--enable-qnn-internal-ut-symbols" in command
+    assert "--enable-qnn-internal-test-symbols" in command
     assert "--build-dir-suffix=internal-symbols" in command
 
 

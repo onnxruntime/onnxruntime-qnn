@@ -1224,7 +1224,7 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
-                    qnn_internal_ut_symbols=True,
+                    qnn_internal_test_symbols=True,
                     build_dir_suffix="internal-symbols",
                 )
             )
