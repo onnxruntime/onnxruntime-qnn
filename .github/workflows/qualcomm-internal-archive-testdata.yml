@@ -27,6 +27,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install onnx for node test generation
+        # ONNX >= 1.23.0 removed the static node/ test corpus from the source tree.
+        # archive_testdata.py regenerates it on-the-fly via onnx.backend.test.case.node.
+        run: python3 -m pip install --quiet --user onnx==1.23.2 numpy
+
       - name: Build testdata archive
         run: python3 qcom/build_and_test.py archive_testdata
 

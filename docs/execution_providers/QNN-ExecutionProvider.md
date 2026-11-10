@@ -751,7 +751,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
-|com.microsoft:GatherBlockQuantized|GPU backend only; weights/scales must have rank > 1; indices may be scalar or have rank < 4; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis must resolve to the trailing axis (`-1` is supported); symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
+|com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
 |com.microsoft:GroupQueryAttention|GPU and HTP backends (float precision); GPU support requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP support requires QAIRT SDK ≥ 2.49. On HTP, GQA may run slower than on CPU and may exhibit accuracy deviations on certain models.|
 |com.microsoft:MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
