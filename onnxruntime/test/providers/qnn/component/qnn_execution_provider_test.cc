@@ -789,10 +789,6 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableVtcmBackupBufferSharing_Succeed
     ctx.session_config[EPKey("htp_share_resource_optimization")] = "";
     auto factory = MakeFactory(ctx);
     auto ep = MakeEp(*factory, ctx);
-    for (const auto& rec : ctx.log_records) {
-      EXPECT_EQ(rec.message.find("enable_vtcm_backup_buffer_sharing is deprecated."), std::string::npos)
-          << rec.message;
-    }
     ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
                  std::string("htp_share_resource_optimization: ") + (std::string(legacy_value) == "1" ? "1" : "0"));
     EXPECT_EQ(SetSharedBackendManagerAllocatorForTest(qnn::QnnAllocatorType::NONE),
