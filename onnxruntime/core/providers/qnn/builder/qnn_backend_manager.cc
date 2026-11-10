@@ -2065,7 +2065,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
   Qnn_ContextHandle_t context = nullptr;
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
-  if (htp_share_resource_optimization_ > 0) {
+  if (htp_share_resource_optimization_) {
     {
       std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
       auto context_it = ep_context_handle_map_.find(node_name);
@@ -2147,7 +2147,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool load_from_cached_context,
     bool need_load_system_lib,
     bool share_ep_contexts,
-    int htp_share_resource_optimization,
+    uint8_t htp_share_resource_optimization,
     bool enable_file_mapped_weights,
     std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
@@ -2169,7 +2169,7 @@ Ort::Status QnnBackendManager::SetupBackend(
                       "backend manager; disabling file mapping for this session.");
     }
 
-    if (htp_share_resource_optimization_ > 0) {
+    if (htp_share_resource_optimization_) {
       // If a context bin filepath has not been processed yet,
       // then a new context must be created for the set of context bins
       bool context_exists = false;
@@ -2337,14 +2337,14 @@ Ort::Status QnnBackendManager::SetupBackend(
 #endif
   }
 
-  if (status.IsOK() && (htp_share_resource_optimization_ > 0 || !load_from_cached_context)) {
-    if (htp_share_resource_optimization_ > 0 && enable_htp_graph_splitting) {
+  if (status.IsOK() && (htp_share_resource_optimization_ || !load_from_cached_context)) {
+    if (htp_share_resource_optimization_ && enable_htp_graph_splitting) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
                       "enable_htp_graph_splitting is not compatible with htp_share_resource_optimization "
                       "(VTCM sharing path uses QnnContext_createFromBinaryListAsync which does not accept "
                       "graph-splitting configs). Graph splitting will be ignored for this session.");
     }
-    status = htp_share_resource_optimization_ > 0
+    status = htp_share_resource_optimization_
                  ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
                                                                io_dispatch)
                  : CreateContext(enable_htp_weight_sharing,

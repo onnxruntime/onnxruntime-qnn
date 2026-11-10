@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -224,7 +225,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   const Ort::Logger logger_;
   bool context_cache_enabled_ = false;
   bool share_ep_contexts_ = false;
-  int htp_share_resource_optimization_ = 0;
+  uint8_t htp_share_resource_optimization_ = 0;
   std::string context_node_name_prefix_ = "";
   std::string context_cache_path_cfg_ = "";
   const OrtSessionOptions& session_options_;

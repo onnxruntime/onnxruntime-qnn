@@ -12,6 +12,7 @@
 #include <dlfcn.h>
 #endif
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -263,7 +264,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool load_from_cached_context,
       bool need_load_system_lib,
       bool share_ep_contexts,
-      int htp_share_resource_optimization,
+      uint8_t htp_share_resource_optimization,
       bool enable_file_mapped_weights,
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
@@ -765,7 +766,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
-  int htp_share_resource_optimization_ = 0;
+  uint8_t htp_share_resource_optimization_ = 0;
   uint64_t reused_io_limit_mb_ = 0;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
