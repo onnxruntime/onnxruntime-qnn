@@ -1408,6 +1408,10 @@ Register the provider, create a binding with `QnnEpCreateDecryptSourceBinding`, 
 
 The callback must finish reading the source before returning and allocate independent decoded output using the supplied allocator. Source mapping is independent of `disable_file_mapped_weights`: it maps the source for CPU access. Callback output is copied into the provider's existing context buffer and loaded through the ordinary QNN context loading API; native weight mapping is disabled when a read callback is registered.
 
+Provider-owned source cleanup overlaps initial QNN context loading automatically after the decoder returns. The per-load future joins before initialization returns, including error paths. Reads without a load owner, such as SSR recovery, release the source synchronously. If a cleanup worker cannot be started, the provider logs the reason and releases the source synchronously.
+
+Initial external, single-SoC HTP context loading automatically requests QAIRT initialization acceleration when built with QAIRT 2.50 or newer. Other backends and context formats use standard loading. If QNN rejects the acceleration config without creating a context, the provider logs the rejection and retries with the same binary and the remaining configs. Priority, spill-fill and reused-I/O settings are preserved; SSR acceleration and HTP power mode are unchanged. No additional session options are required.
+
 ## Parallel Graph Preparation
 For general context, please read the [QNN context binary cache feature](#qnn-context-binary-cache-feature) section above.
 

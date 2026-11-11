@@ -64,6 +64,149 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeManager(
   return qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
 }
 
+TEST(QnnUnit_BackendManagerTest, CommonContextConfigsPreservePriorityAndSpillFillWithoutAcceleration) {
+  StubApiEnv env;
+  auto manager = MakeManager("unused", env.api_ptrs, env.logger);
+  qnn::QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> configs(
+      QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
+  auto group = reinterpret_cast<Qnn_ContextHandle_t>(uintptr_t{467});
+  ASSERT_TRUE(manager->BuildContextBinaryConfigs(4096, group, configs).IsOK());
+  const auto** values = configs.GetQnnConfigs();
+  ASSERT_NE(values[0], nullptr);
+  EXPECT_EQ(values[0]->option, QNN_CONTEXT_CONFIG_OPTION_PRIORITY);
+  ASSERT_NE(values[1], nullptr);
+  const auto* spill = static_cast<const QnnHtpContext_CustomConfig_t*>(values[1]->customConfig);
+  ASSERT_NE(spill, nullptr);
+  EXPECT_EQ(spill->option, QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS);
+  EXPECT_EQ(spill->groupRegistration.firstGroupHandle, group);
+  EXPECT_EQ(spill->groupRegistration.maxSpillFillBuffer, 4096u);
+  EXPECT_EQ(values[2], nullptr);
+}
+
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 50))
+namespace {
+struct InitConfigSdkStub {
+  Qnn_ErrorHandle_t first_result = QNN_CONTEXT_ERROR_INVALID_CONFIG;
+  Qnn_ErrorHandle_t second_result = QNN_SUCCESS;
+  bool partial_context = false;
+  const void* binary = nullptr;
+  const QnnContext_Config_t* priority = nullptr;
+  const QnnContext_Config_t* spill = nullptr;
+  std::vector<bool> accelerated_calls;
+  static thread_local InitConfigSdkStub* current;
+  static Qnn_ErrorHandle_t ErrorGetMessage(Qnn_ErrorHandle_t, const char** message) {
+    *message = "stub context creation error";
+    return QNN_SUCCESS;
+  }
+  static Qnn_ErrorHandle_t Create(Qnn_BackendHandle_t, Qnn_DeviceHandle_t,
+                                  const QnnContext_Config_t** configs, const void* buffer,
+                                  Qnn_ContextBinarySize_t bytes, Qnn_ContextHandle_t* context,
+                                  Qnn_ProfileHandle_t) {
+    auto& state = *current;
+    EXPECT_EQ(buffer, state.binary);
+    EXPECT_EQ(bytes, 4u);
+    EXPECT_EQ(configs[0], state.priority);
+    EXPECT_EQ(configs[1], state.spill);
+    const auto* spill = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[1]->customConfig);
+    EXPECT_EQ(spill->groupRegistration.maxSpillFillBuffer, 8192u);
+    bool accelerated = false;
+    for (auto** config = configs; *config; ++config) {
+      if ((*config)->option == QNN_CONTEXT_CONFIG_OPTION_CUSTOM) {
+        auto* custom = static_cast<const QnnHtpContext_CustomConfig_t*>((*config)->customConfig);
+        if (custom->option == QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION) {
+          EXPECT_TRUE(custom->initAcceleration);
+          accelerated = true;
+        }
+      }
+    }
+    state.accelerated_calls.push_back(accelerated);
+    auto result = state.accelerated_calls.size() == 1 ? state.first_result : state.second_result;
+    if (result == QNN_SUCCESS || state.partial_context) {
+      *context = reinterpret_cast<Qnn_ContextHandle_t>(uintptr_t{469});
+    }
+    return result;
+  }
+};
+thread_local InitConfigSdkStub* InitConfigSdkStub::current = nullptr;
+
+Ort::Status RunInitConfigLoad(InitConfigSdkStub& state, qnn::QnnBackendType backend, bool with_acceleration) {
+  StubApiEnv env;
+  StubBackendManager stub(env.api_ptrs, env.logger);
+  stub.BackendType() = backend;
+  stub.QnnInterface().contextCreateFromBinary = InitConfigSdkStub::Create;
+  stub.QnnInterface().errorGetMessage = InitConfigSdkStub::ErrorGetMessage;
+  InitConfigSdkStub::current = &state;
+  char bytes[] = {'d', 'a', 't', 'a'};
+  state.binary = bytes;
+  qnn::QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> configs(
+      QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
+  auto config_status = stub.GetMutable()->BuildContextBinaryConfigs(
+      8192, reinterpret_cast<Qnn_ContextHandle_t>(uintptr_t{468}), configs);
+  if (!config_status.IsOK()) return config_status;
+  state.priority = configs.GetQnnConfigs()[0];
+  state.spill = configs.GetQnnConfigs()[1];
+  if (with_acceleration) {
+    auto custom = configs.PushCustomConfig();
+    custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION;
+    custom->initAcceleration = true;
+    auto config = configs.PushConfig();
+    config->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    config->customConfig = custom;
+  }
+  qnn::EpContextIoDispatch io;
+  Qnn_ContextHandle_t context = nullptr;
+  return stub.GetMutable()->CreateContextHandleFromBinary(
+      bytes, 4, false, configs.GetQnnConfigs(), "nonexistent-source", io, nullptr, context);
+}
+}  // namespace
+
+TEST(QnnUnit_BackendManagerTest, UnsupportedInitAccelerationRetriesSameBytesWithCommonConfigs) {
+  for (auto error : {Qnn_ErrorHandle_t{QNN_CONTEXT_ERROR_INVALID_CONFIG},
+                     Qnn_ErrorHandle_t{QNN_COMMON_ERROR_NOT_SUPPORTED},
+                     Qnn_ErrorHandle_t{QNN_CONTEXT_ERROR_INVALID_CONFIG} | (Qnn_ErrorHandle_t{7} << 16)}) {
+    InitConfigSdkStub state;
+    state.first_result = error;
+    EXPECT_TRUE(RunInitConfigLoad(state, qnn::QnnBackendType::HTP, true).IsOK());
+    EXPECT_EQ(state.accelerated_calls, (std::vector<bool>{true, false}));
+  }
+}
+
+TEST(QnnUnit_BackendManagerTest, AcceptedInitAccelerationLoadsOnce) {
+  InitConfigSdkStub state;
+  state.first_result = QNN_SUCCESS;
+  EXPECT_TRUE(RunInitConfigLoad(state, qnn::QnnBackendType::HTP, true).IsOK());
+  EXPECT_EQ(state.accelerated_calls, (std::vector<bool>{true}));
+}
+
+TEST(QnnUnit_BackendManagerTest, InitAccelerationDoesNotRetryUnrelatedErrorsOrPartialContexts) {
+  InitConfigSdkStub unrelated;
+  unrelated.first_result = QNN_CONTEXT_ERROR_MEM_ALLOC;
+  EXPECT_FALSE(RunInitConfigLoad(unrelated, qnn::QnnBackendType::HTP, true).IsOK());
+  EXPECT_EQ(unrelated.accelerated_calls, (std::vector<bool>{true}));
+  InitConfigSdkStub partial;
+  partial.partial_context = true;
+  EXPECT_FALSE(RunInitConfigLoad(partial, qnn::QnnBackendType::HTP, true).IsOK());
+  EXPECT_EQ(partial.accelerated_calls, (std::vector<bool>{true}));
+}
+
+TEST(QnnUnit_BackendManagerTest, StandardOrCpuConfigErrorsAreNotRetried) {
+  InitConfigSdkStub standard;
+  EXPECT_FALSE(RunInitConfigLoad(standard, qnn::QnnBackendType::HTP, false).IsOK());
+  EXPECT_EQ(standard.accelerated_calls, (std::vector<bool>{false}));
+  InitConfigSdkStub cpu;
+  EXPECT_FALSE(RunInitConfigLoad(cpu, qnn::QnnBackendType::CPU, true).IsOK());
+  EXPECT_EQ(cpu.accelerated_calls, (std::vector<bool>{true}));
+}
+
+TEST(QnnUnit_BackendManagerTest, StandardRetryFailureIsReportedWithoutAnotherAttempt) {
+  InitConfigSdkStub state;
+  state.second_result = QNN_CONTEXT_ERROR_MEM_ALLOC;
+  EXPECT_FALSE(RunInitConfigLoad(state, qnn::QnnBackendType::HTP, true).IsOK());
+  EXPECT_EQ(state.accelerated_calls, (std::vector<bool>{true, false}));
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // Group 0: IsBackendHostMode — pure getter, no QNN lib needed
 // ---------------------------------------------------------------------------

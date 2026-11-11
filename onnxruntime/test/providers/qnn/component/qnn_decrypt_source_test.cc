@@ -8,6 +8,8 @@
 #if QNN_EP_INTERNAL_SYMBOL_ACCESS && defined(QNN_FILE_MAPPED_WEIGHTS_AVAILABLE) && ORT_API_HAS_EPCONTEXT_ENCRYPTION
 
 #include <windows.h>
+#include <chrono>
+#include <future>
 #include <filesystem>
 #include <fstream>
 #include <cstring>
@@ -171,6 +173,87 @@ TEST_F(QnnDecryptSourceTest, UnrelatedCallbackIsRejectedWithoutInterpretingItsAp
   EXPECT_EQ(state_.legacy_calls, 0u);
   EXPECT_EQ(state_.source_calls, 0u);
 }
+TEST_F(QnnDecryptSourceTest, DefaultOverlapCopiesIndependentOutputAndJoinsMappedSourceRelease) {
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  std::future<void> cleanup;
+  std::vector<char> out;
+  ASSERT_TRUE(dispatch.Read("logical-name", out, path_.u8string(), &cleanup).IsOK());
+  EXPECT_EQ(state_.legacy_calls, 0u);
+  EXPECT_EQ(state_.source_calls, 1u);
+  EXPECT_NE(out.data(), state_.source);
+  if (cleanup.valid()) cleanup.get();
+  ExpectSourceReleased();
+  EXPECT_EQ(out.size(), 4u);
+  EXPECT_EQ(std::memcmp(out.data(), "data", 4), 0);
+}
+
+TEST_F(QnnDecryptSourceTest, MissingLoadOwnerFallsBackToSynchronousSourceRelease) {
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  std::vector<char> out;
+  ASSERT_TRUE(dispatch.Read("logical-name", out, path_.u8string()).IsOK());
+  EXPECT_EQ(state_.source_calls, 1u);
+  EXPECT_EQ(state_.legacy_calls, 0u);
+  EXPECT_EQ(std::string(out.begin(), out.end()), "data");
+  ExpectSourceReleased();
+}
+
+TEST_F(QnnDecryptSourceTest, OverlapDecryptErrorReleasesSourceWithoutReplacingOutput) {
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  std::future<void> cleanup;
+  std::vector<char> out;
+  out.assign(4, 'p');
+  auto* previous = out.data();
+  state_.fail = true;
+  EXPECT_FALSE(dispatch.Read("logical-name", out, path_.u8string(), &cleanup).IsOK());
+  if (cleanup.valid()) cleanup.get();
+  EXPECT_EQ(state_.source_calls, 1u);
+  EXPECT_EQ(state_.legacy_calls, 0u);
+  EXPECT_EQ(out.data(), previous);
+  ExpectSourceReleased();
+}
+
+TEST_F(QnnDecryptSourceTest, LoadScopeJoinsSourceReleaseOnSuccessAndException) {
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  for (bool fail_load : {false, true}) {
+    try {
+      std::future<void> cleanup;
+      std::vector<char> out;
+      ASSERT_TRUE(dispatch.Read("logical-name", out, path_.u8string(), &cleanup).IsOK());
+      ASSERT_TRUE(cleanup.valid());
+      if (fail_load) throw std::runtime_error("Simulated context-load failure.");
+    } catch (const std::runtime_error&) {
+    }
+    ExpectSourceReleased();
+  }
+}
+
+TEST_F(QnnDecryptSourceTest, PendingLoadOwnerFallsBackWithoutReplacingItsTask) {
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  std::promise<void> allow_release;
+  auto allowed = allow_release.get_future();
+  auto cleanup = std::async(std::launch::async, [&] { allowed.wait(); });
+  std::vector<char> out;
+  auto status = dispatch.Read("logical-name", out, path_.u8string(), &cleanup);
+  // Unblock even if the assertions fail so the test cannot strand the future.
+  allow_release.set_value();
+  ASSERT_TRUE(status.IsOK());
+  EXPECT_EQ(std::string(out.begin(), out.end()), "data");
+  ExpectSourceReleased();
+  EXPECT_TRUE(cleanup.valid());
+  cleanup.get();
+}
+
+TEST_F(QnnDecryptSourceTest, DisabledSourceMappingStillUsesLegacyWithLoadOwner) {
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, false);
+  std::future<void> cleanup;
+  std::vector<char> out;
+  ASSERT_TRUE(dispatch.Read("logical-name", out, path_.u8string(), &cleanup).IsOK());
+  EXPECT_EQ(state_.legacy_calls, 1u);
+  EXPECT_EQ(state_.source_calls, 0u);
+  EXPECT_FALSE(cleanup.valid());
+  EXPECT_EQ(std::string(out.begin(), out.end()), "data");
+}
+
 }  // namespace
 }  // namespace onnxruntime::test
 #endif

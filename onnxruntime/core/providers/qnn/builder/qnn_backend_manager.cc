@@ -1441,6 +1441,36 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
                                                 static_cast<Qnn_ContextBinarySize_t>(buffer_length),
                                                 &context,
                                                 profile_handle);
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 50))
+    if (GetQnnBackendType() == QnnBackendType::HTP && context == nullptr && context_configs &&
+        (QNN_GET_ERROR_CODE(rt) == QNN_CONTEXT_ERROR_INVALID_CONFIG ||
+         QNN_GET_ERROR_CODE(rt) == QNN_COMMON_ERROR_NOT_SUPPORTED)) {
+      std::vector<const QnnContext_Config_t*> standard_configs;
+      const QnnContext_Config_t* acceleration_config = nullptr;
+      for (const QnnContext_Config_t** config = context_configs; *config; ++config) {
+        const auto* custom = (*config)->option == QNN_CONTEXT_CONFIG_OPTION_CUSTOM
+                                 ? static_cast<const QnnHtpContext_CustomConfig_t*>((*config)->customConfig)
+                                 : nullptr;
+        if (!custom || custom->option != QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION) {
+          standard_configs.push_back(*config);
+        } else {
+          acceleration_config = *config;
+        }
+      }
+      // Retry only when the acceleration config was actually present and no context was created.
+      if (acceleration_config) {
+        standard_configs.push_back(nullptr);
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                        ("QNN rejected initialization acceleration (" + QnnErrorHandleToString(rt) +
+                         "); retrying with standard configs and the same context binary buffer.")
+                            .c_str());
+        rt = qnn_interface_.contextCreateFromBinary(backend_handle_, device_handle_, standard_configs.data(),
+                                                    bin_buffer, static_cast<Qnn_ContextBinarySize_t>(buffer_length),
+                                                    &context, profile_handle);
+      }
+    }
+#endif
   }
 
   RETURN_IF(QNN_SUCCESS != rt,
@@ -2068,6 +2098,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   Qnn_ContextHandle_t context = nullptr;
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   if (htp_share_resource_optimization_ == 1) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                    "Using the context already restored by resource-sharing list loading; individual initialization acceleration is not applied.");
     {
       std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
       auto context_it = ep_context_handle_map_.find(node_name);
@@ -2089,6 +2121,25 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> configs_builder(
         QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
     RETURN_IF_ERROR(BuildContextBinaryConfigs(max_spill_fill_size, first_group_handle, configs_builder));
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 50))
+    if (GetQnnBackendType() == QnnBackendType::HTP && !is_multi_soc_buffer && !context_bin_filepath.empty()) {
+      auto acceleration_custom = configs_builder.PushCustomConfig();
+      acceleration_custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION;
+      acceleration_custom->initAcceleration = true;
+      auto acceleration_config = configs_builder.PushConfig();
+      acceleration_config->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+      acceleration_config->customConfig = acceleration_custom;
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      "QNN HTP context initialization acceleration: enabled automatically for initial loading.");
+    } else {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                      "HTP initialization acceleration is unavailable for this backend or context format; using standard loading.");
+    }
+#else
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
+                  "HTP initialization acceleration requires QAIRT 2.50 or newer build headers; using standard loading.");
+#endif
 
     qnn::profile::ProfilingInfo profiling_info;
     qnn::QnnProfilingScope profiling_scope;
