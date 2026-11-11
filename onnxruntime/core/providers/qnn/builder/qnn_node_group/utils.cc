@@ -163,17 +163,10 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
 
     // 4. If the child is Q/DQ wrapper(s), skip through them and look at the next math child.
     // Example: DQ -> op -> Q -> DQ -> ...
-    // Only Q/DQ nodes inside a QDQGroup are skipped; a standalone one (e.g., a requantization) is a real op.
     while (potential_child != nullptr) {
       const std::string child_op = Ort::ConstNode(potential_child).GetOperatorType();
       if (child_op != QUANTIZE_LINEAR && child_op != DEQUANTIZE_LINEAR) {
         break;
-      }
-
-      const auto qdq_node_unit_it = node_unit_map.find(potential_child);
-      if (qdq_node_unit_it == node_unit_map.end() ||
-          qdq_node_unit_it->second->UnitType() != OrtNodeUnit::Type::QDQGroup) {
-        return nullptr;
       }
 
       const std::vector<Ort::ConstValueInfo> qdq_outputs = Ort::ConstNode(potential_child).GetOutputs();
@@ -479,34 +472,6 @@ bool IsScalarConstantApprox(const QnnModelWrapper& qmw,
                             float tol) {
   const auto val = GetScalarConstantValue(qmw, input_name);
   return val.has_value() && std::abs(*val - expected) <= tol;
-}
-
-std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const OrtValueInfo* value_info) {
-  if (value_info == nullptr) {
-    return std::nullopt;
-  }
-
-  const OrtTypeInfo* type_info = nullptr;
-  if (ort_api.GetValueInfoTypeInfo(value_info, &type_info) != nullptr) {
-    return std::nullopt;
-  }
-
-  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  if (ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info) != nullptr) {
-    return std::nullopt;
-  }
-
-  size_t dims_count = 0;
-  if (ort_api.GetDimensionsCount(tensor_info, &dims_count) != nullptr) {
-    return std::nullopt;
-  }
-
-  std::vector<int64_t> dims(dims_count);
-  if (ort_api.GetDimensions(tensor_info, dims.data(), dims_count) != nullptr) {
-    return std::nullopt;
-  }
-
-  return dims;
 }
 
 const OrtNodeUnit* FindUniqueSequenceConsumer(
