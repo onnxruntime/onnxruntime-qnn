@@ -14,13 +14,19 @@ if ($firstBlockEnd -lt 0 -or ($lines -join "`n") -notmatch 'onnxruntime_provider
     throw 'Expected the original four-shard, multi-config provider CTest metadata.'
 }
 
+$selection = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'single_process_diagnostic_selection.json') -Raw | ConvertFrom-Json
+if ($selection.source_run_id -ne $SourceRunId -or
+    $selection.expected_active_cases -ne $selection.original_active_cases - @($selection.excluded_for_diagnosis).Count) {
+    throw 'Diagnostic selection does not match the source CI inventory.'
+}
+$testFilter = $selection.filter
 $singleTest = ($lines[0..$firstBlockEnd] -join "`n").Replace(
     'onnxruntime_provider_test_0', 'onnxruntime_provider_test').Replace(
-    '--gtest_filter=-QnnAcc_*', '--gtest_filter=-QnnAcc_*:QnnHTPBackendTests.ReduceL2*').Replace(
+    '--gtest_filter=-QnnAcc_*', '--gtest_filter=' + $testFilter).Replace(
     '.shard0.results.xml', '.results.xml')
 $singleTest = $singleTest.Replace(' ENVIRONMENT "GTEST_TOTAL_SHARDS=4;GTEST_SHARD_INDEX=0" RUN_SERIAL "TRUE"', '')
 if ($singleTest -match 'GTEST_.*SHARD|onnxruntime_provider_test_[0-3]' -or
-    $singleTest -notmatch [regex]::Escape('--gtest_filter=-QnnAcc_*:QnnHTPBackendTests.ReduceL2*')) {
+    $singleTest -notmatch [regex]::Escape('--gtest_filter=' + $testFilter)) {
     throw 'Single-process CTest conversion failed validation.'
 }
 Set-Content -LiteralPath $testFile -Value $singleTest -Encoding ascii
@@ -33,15 +39,10 @@ $hashes = @('onnxruntime_provider_test.exe', 'onnxruntime_providers_qnn.dll', 'o
 $manifest = [ordered]@{
     source_run_id = $SourceRunId
     processes = 1
-    filter = '-QnnAcc_*:QnnHTPBackendTests.ReduceL2*'
-    expected_active_cases = 3331
-    excluded_for_diagnosis = @(
-        'QnnHTPBackendTests.ReduceL2S8Opset13',
-        'QnnHTPBackendTests.ReduceL2U8Opset13_NoKeepDims',
-        'QnnHTPBackendTests.ReduceL2U16Opset18',
-        'QnnHTPBackendTests.ReduceL2U8Opset18'
-    )
+    filter = $testFilter
+    expected_active_cases = $selection.expected_active_cases
+    excluded_for_diagnosis = @($selection.excluded_for_diagnosis)
     binaries = @($hashes)
 }
-$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $binaryRoot 'reduce-l2-diagnostic.json') -Encoding utf8
-Write-Host 'Diagnostic only: one registered CTest process; four HTP ReduceL2 cases excluded; original binaries reused.'
+$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $binaryRoot 'single-process-diagnostic.json') -Encoding utf8
+Write-Host "Diagnostic only: one registered CTest process; $(@($selection.excluded_for_diagnosis).Count) HTP reduction/reshape/resize/expand cases excluded; original binaries reused."

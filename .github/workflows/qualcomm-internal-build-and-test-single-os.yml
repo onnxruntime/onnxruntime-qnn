@@ -190,14 +190,14 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: ${{ github.workspace }}/build/windows-arm64-internal-symbols/${{ inputs.build_config }}/
 
-      - name: Restore one CTest process and exclude only HTP ReduceL2 for diagnosis
+      - name: Restore one CTest process and exclude HTP reduction and shape families for diagnosis
         if: ${{ inputs.has_code_changes && inputs.qnn_internal_test_symbols }}
         shell: powershell
         run: |
           if ('${{ inputs.target_os }}' -ne 'windows' -or '${{ inputs.target_arch }}' -ne 'arm64' -or '${{ inputs.build_config }}' -ne 'Release') {
             throw 'This diagnostic branch only supports Windows ARM64 Release internal-symbol validation.'
           }
-          & .\qcom\scripts\windows\prepare_single_process_reducel2_diagnostic.ps1 `
+          & .\qcom\scripts\windows\prepare_single_process_diagnostic.ps1 `
             -ArtifactRoot '${{ github.workspace }}/build/windows-arm64-internal-symbols/Release' `
             -SourceRunId '${{ env.QNN_SINGLE_PROCESS_DIAGNOSTIC_RUN_ID }}'
 
@@ -389,7 +389,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Continue'
-          $diagnosticLog = '${{ github.workspace }}/single-process-reducel2-flow.log'
+          $diagnosticLog = '${{ github.workspace }}/single-process-diagnostic-flow.log'
           & python.exe qcom/build_and_test.py `
             --target-py-version '${{ inputs.target_py_vsn }}' `
             --config '${{ inputs.build_config }}' `
@@ -438,8 +438,8 @@ jobs:
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/reduce-l2-diagnostic.json
-            ${{ github.workspace }}/single-process-reducel2-flow.log
+            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/single-process-diagnostic.json
+            ${{ github.workspace }}/single-process-diagnostic-flow.log
 
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
