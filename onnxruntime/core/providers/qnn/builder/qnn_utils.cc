@@ -1494,7 +1494,9 @@ Ort::Status LowPowerBlockQuantizeData(gsl::span<const float> data,
 
 std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_ErrorHandle_t qnn_error_handle) {
   const char* error_msg = nullptr;
-  if (qnn_interface.errorGetMessage(qnn_error_handle, &error_msg) == QNN_SUCCESS) {
+  if (qnn_interface.errorGetMessage != nullptr &&
+      QNN_GET_ERROR_CODE(qnn_interface.errorGetMessage(qnn_error_handle, &error_msg)) == QNN_SUCCESS &&
+      error_msg != nullptr) {
     return error_msg;
   }
   return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);

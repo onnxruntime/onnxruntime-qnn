@@ -826,7 +826,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 #endif
   RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
 
-  if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+  if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == QNN_GET_ERROR_CODE(execute_status)) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
     if (ort_profiler) {
       ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
@@ -840,7 +840,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 
       // Retry once with fresh context and re-bound tensors.
       RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
-      if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+      if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == QNN_GET_ERROR_CODE(execute_status)) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
         if (ort_profiler) {
           ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
@@ -850,7 +850,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                                     utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status);
         return Ort::Status(message.c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
       }
-      if (QNN_GRAPH_NO_ERROR == execute_status) {
+      if (QNN_GRAPH_NO_ERROR == QNN_GET_ERROR_CODE(execute_status)) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "SSR recovery succeeded.");
       }
     } else {
@@ -865,7 +865,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     }
   }
 
-  if (QNN_GRAPH_NO_ERROR != execute_status) {
+  if (QNN_GRAPH_NO_ERROR != QNN_GET_ERROR_CODE(execute_status)) {
     return MAKE_EP_FAIL(("QNN graph execute error. " +
                          utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status))
                             .c_str());
