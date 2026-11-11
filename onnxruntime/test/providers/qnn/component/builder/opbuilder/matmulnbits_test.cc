@@ -42,21 +42,17 @@ MockNodeUnit MakeMatMulNBitsNode(int64_t K, int64_t N, int64_t bits, int64_t blo
                           "matmul_nbits", kMSDomain, 1, 0, std::move(attributes));
 }
 
-Ort::Status CheckMatMulNBitsSupport(const IOpBuilder& builder,
-                                    int64_t K, int64_t N, int64_t bits, int64_t block_size) {
-  OpBuilderTestContext ctx;
-  ModelSettings settings{};
-  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
-  auto node_unit = MakeMatMulNBitsNode(K, N, bits, block_size);
-  return builder.IsOpSupported(*wrapper, node_unit, ctx.ort_logger);
-}
-
 void ExpectInvalidArgument(const IOpBuilder& builder,
                            int64_t K, int64_t N, int64_t bits, int64_t block_size,
                            std::string_view expected_error) {
   SCOPED_TRACE(testing::Message() << "K=" << K << ", N=" << N
                                   << ", bits=" << bits << ", block_size=" << block_size);
-  const Ort::Status status = CheckMatMulNBitsSupport(builder, K, N, bits, block_size);
+  OpBuilderTestContext ctx;
+  ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings, QnnBackendType::HTP);
+  // Keep the mock's global API override alive while inspecting and releasing its status.
+  auto node_unit = MakeMatMulNBitsNode(K, N, bits, block_size);
+  const Ort::Status status = builder.IsOpSupported(*wrapper, node_unit, ctx.ort_logger);
   ASSERT_EQ(status.GetErrorCode(), ORT_INVALID_ARGUMENT) << status.GetErrorMessage();
   EXPECT_NE(status.GetErrorMessage().find(expected_error), std::string::npos)
       << "Expected error containing '" << expected_error << "'; got: " << status.GetErrorMessage();
