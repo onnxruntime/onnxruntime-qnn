@@ -5,6 +5,7 @@
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -51,6 +52,7 @@ from ep_build.tasks.python import (
     OrtWheelSmokeTestTask,
     RunLinterTask,
 )
+from ep_build.tools import get_uv_cache_dir
 from ep_build.typing import BuildConfigT, TargetPyVersionT
 from ep_build.util import (
     DEFAULT_PYTHON,
@@ -97,6 +99,10 @@ Environment variables
 
   ORT_BUILD_TOOLS_PATH
     If specified, use this directory for build-managed tools instead of build/tools.
+
+  ORT_BUILD_UV_CACHE_PATH
+    If specified, use this directory for the uv package cache instead of ~/.ort-uv-cache.
+    UV_CACHE_DIR takes precedence over ORT_BUILD_UV_CACHE_PATH if both are set.
 
   ORT_NIGHTLY_BUILD
     If set to 1, instruct the ORT build to use a more verbose version string.
@@ -626,6 +632,25 @@ class TaskLibrary:
                 )
             )
 
+        @public_task("Build ONNX Runtime for x86_64 with QNN EP internal test symbols")
+        @depends(["create_venv"])
+        def build_ort_linux_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Building ONNX Runtime for Linux on x86_64 with QNN EP internal test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "build",
+                    qnn_internal_test_symbols=True,
+                    build_dir_suffix="internal-symbols",
+                )
+            )
+
     @task
     @depends(["docker_build_ubuntu_22_04_x86_64"])
     def build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
@@ -649,10 +674,9 @@ class TaskLibrary:
         @public_task("Coverage-instrumented build only, no report (Linux x86_64, RelWithDebInfo)")
         @depends(["create_venv"])
         def coverage_build_linux_x86_64(self, plan: Plan) -> str:
-            # The coverage binary is required for consumers that run the snapshot/
-            # accuracy tiers directly (e.g. publish_goldens.sh regenerates goldens
-            # and verifies accuracy in one pass). They only need the instrumented
-            # binary, not the HTML report, so this omits GenerateCoverageTask.
+            # Coverage reports require instrumentation and the internal-symbol test
+            # tier. Golden producers use build_ort_linux_x86_64_internal_symbols
+            # instead, avoiding instrumentation when no report is needed.
             return plan.add_step(
                 BuildEpLinuxTask(
                     "Building ONNX Runtime for Linux (RelWithDebInfo + coverage)",
@@ -665,6 +689,7 @@ class TaskLibrary:
                     self.__qairt_sdk_root,
                     "build",
                     extra_args=["--enable-coverage"],
+                    qnn_internal_test_symbols=True,
                 )
             )
 
@@ -687,6 +712,7 @@ class TaskLibrary:
                             self.__qairt_sdk_root,
                             "build",
                             extra_args=["--enable-coverage"],
+                            qnn_internal_test_symbols=True,
                         ),
                         GenerateCoverageTask(
                             "Generating HTML coverage report",
@@ -694,6 +720,18 @@ class TaskLibrary:
                             build_dir,
                         ),
                     ],
+                )
+            )
+
+        @public_task("Generate a full coverage report from an existing Linux x86_64 coverage build")
+        @depends(["create_venv"])
+        def coverage_report_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            return plan.add_step(
+                GenerateCoverageTask(
+                    "Generating HTML coverage report",
+                    self.__venv_path,
+                    build_dir,
                 )
             )
 
@@ -715,6 +753,25 @@ class TaskLibrary:
                     False,
                     self.__build_nuget,
                     self.__build_archive,
+                )
+            )
+
+        @public_task("Build ONNX Runtime for ARM64 Windows with QNN EP internal test symbols")
+        @depends(["create_venv"])
+        def build_ort_windows_arm64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Building ONNX Runtime for Windows on ARM64 with QNN EP internal test symbols",
+                    self.__venv_path,
+                    "arm64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "build",
+                    build_nuget=False,
+                    build_archive=False,
+                    qnn_internal_test_symbols=True,
                 )
             )
 
@@ -807,6 +864,25 @@ class TaskLibrary:
                 )
             )
 
+        @public_task("Build ONNX Runtime for x86_64 with QNN EP internal test symbols")
+        @depends(["create_venv"])
+        def build_ort_windows_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Building ONNX Runtime for Windows on x86_64 with QNN EP internal test symbols",
+                    self.__venv_path,
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "build",
+                    build_nuget=False,
+                    build_archive=False,
+                    qnn_internal_test_symbols=True,
+                )
+            )
+
     @task
     def create_qdc_venv(self, plan: Plan) -> str:
         return plan.add_step(CreateQdcVenvTask(self.__python_executable, self.__venv_path))
@@ -817,15 +893,30 @@ class TaskLibrary:
 
     if is_host_linux() and is_host_x86_64():
 
-        @public_task("Build with coverage and generate diff coverage report against main (Linux x86_64)")
-        @depends(["coverage_linux_x86_64"])
+        @public_task("Generate coverage and diff reports from an existing Linux x86_64 coverage build")
+        @depends(["create_venv"])
         def diff_coverage_linux_x86_64(self, plan: Plan) -> str:
             build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            # This task deliberately owns test/report generation from an already-built
+            # binary. In coverage CI, that lets the workflow run snapshot-golden preflight
+            # between coverage_build_linux_x86_64 and GenerateCoverageTask, before snapshot
+            # and accuracy tests consume QNN_UT_SNAPSHOT_GOLDEN_DIR.
             return plan.add_step(
-                GenerateDiffCoverageTask(
-                    "Generating diff coverage report (Linux x86_64)",
-                    self.__venv_path,
-                    build_dir,
+                CompositeTask(
+                    "Coverage report and diff from existing build",
+                    [
+                        GenerateCoverageTask(
+                            "Generating HTML coverage report",
+                            self.__venv_path,
+                            build_dir,
+                        ),
+                        GenerateDiffCoverageTask(
+                            "Generating diff coverage report (Linux x86_64)",
+                            self.__venv_path,
+                            build_dir,
+                            base_commit=os.environ.get("ORT_DIFF_BASE_COMMIT"),
+                        ),
+                    ],
                 )
             )
 
@@ -1116,6 +1207,25 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
+                )
+            )
+
+        @task
+        @depends(["build_ort_linux_x86_64_internal_symbols"])
+        def test_ort_linux_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Testing ONNX Runtime for Linux on x86_64 with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_test_symbols=True,
+                    build_dir_suffix="internal-symbols",
                 )
             )
 
@@ -1429,6 +1539,23 @@ class TaskLibrary:
                 )
             )
 
+        @task
+        @depends(["build_ort_windows_x86_64_internal_symbols"])
+        def test_ort_windows_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Testing ONNX Runtime for Windows on x86_64 with QNN EP internal test symbols",
+                    self.__venv_path,
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_test_symbols=True,
+                )
+            )
+
 
 def get_docker_ccache_root(root_from_args: Path | None) -> Path | None:
     ccache_root: Path | None = None
@@ -1602,6 +1729,8 @@ def build_and_test():
     qairt_sdk_root = get_qairt_sdk_root(args.qairt_sdk)
     docker_ccache_root = get_docker_ccache_root(args.docker_ccache_root)
 
+    os.environ.setdefault("UV_CACHE_DIR", str(get_uv_cache_dir()))
+
     plan = Plan()
 
     if len(args.task) > 0:
@@ -1642,6 +1771,9 @@ def build_and_test():
         print()
         plan.print_report()
         print()
+        uv_bin = args.venv_path / ("Scripts/uv.exe" if is_host_windows() else "bin/uv")
+        if uv_bin.exists():
+            subprocess.run([str(uv_bin), "cache", "prune", "--ci"], check=False)
         if caught:
             raise caught
 

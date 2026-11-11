@@ -12,7 +12,7 @@
 
 namespace onnxruntime {
 namespace test {
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Runs a float32 SimplifiedLayerNormalization model on the QNN CPU backend.
 static void RunSimplifiedLayerNormCpuTest(const TestInputDef<float>& input_def,
@@ -178,12 +178,14 @@ TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_InvStdVar_Unsupported) {
                   false /* verify_outputs */);
 }
 
-// QNN HTP only supports axis = last dimension. axis=0 must be rejected.
-// Uses a non-QDQ float model so that Q/DQ nodes don't inflate the assigned-node count.
-TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_Axis0_Unsupported) {
+TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_Axis0) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_htp_fp16_precision"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
 
   RunQnnModelTest(
       BuildOpTestCase<float>("simplified_layernorm",
@@ -194,15 +196,17 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_Axis0_Unsupported) {
                              {test::MakeAttribute("axis", static_cast<int64_t>(0))}),
       provider_options,
       17,
-      EPVerificationParams{ExpectedEPNodeAssignment::None});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
 
-// Input rank > 4 must be rejected.
-// Uses a non-QDQ float model so that Q/DQ nodes don't inflate the assigned-node count.
-TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_Rank5_Unsupported) {
+TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_Rank5) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_htp_fp16_precision"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
 
   RunQnnModelTest(
       BuildOpTestCase<float>("simplified_layernorm",
@@ -213,7 +217,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_Rank5_Unsupported) {
                              {test::MakeAttribute("axis", static_cast<int64_t>(-1))}),
       provider_options,
       17,
-      EPVerificationParams{ExpectedEPNodeAssignment::None});
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.01f)});
 }
 
 // 3D input, last axis, static scale, U8 activations / U8 weights.
@@ -282,7 +286,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_4D_LastAxis_AU16_WU8) {
       true /* use_contrib_qdq_ops */);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

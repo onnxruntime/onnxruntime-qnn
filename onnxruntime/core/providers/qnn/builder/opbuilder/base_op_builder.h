@@ -106,6 +106,16 @@ class BaseOpBuilder : public IOpBuilder {
                                      bool do_op_validation,
                                      const std::string& qnn_op_type) const ORT_MUST_USE_RESULT;
 
+  // HTP ops emit at activation precision; bridge a narrower declared output with Convert.
+  Ort::Status ProcessOutputsAcrossPrecision(QnnModelWrapper& qnn_model_wrapper,
+                                            const OrtNodeUnit& node_unit,
+                                            std::vector<std::string>&& input_names,
+                                            std::vector<std::string>&& param_tensor_names,
+                                            const Ort::Logger& logger,
+                                            bool do_op_validation,
+                                            const std::string& qnn_op_type,
+                                            Qnn_DataType_t activation_qnn_data_type) const ORT_MUST_USE_RESULT;
+
   Ort::Status ProcessInput(QnnModelWrapper& qnn_model_wrapper,
                            const OrtNodeUnitIODef& input,
                            const Ort::Logger& logger,

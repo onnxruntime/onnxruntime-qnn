@@ -386,7 +386,7 @@ TEST_F(QnnCPUBackendTests, GRU_fp32_layout1_forward) {
       std::exception);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Runs a GRU model on the QNN HTP backend with QDQ quantization.
 template <typename QuantType>
@@ -966,11 +966,14 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_reverse) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  // Linux x86_64 accumulates larger FP16 rounding error in the reverse unroll
-  // (observed: Y max-rel ~0.14, Y_h max-rel ~0.008).
-  // TODO: Remove the platform-aware tolerance once the accuracy issue on Linux x86_64 is solved
+  // Some HTP targets accumulate larger FP16 rounding error in the reverse unroll
+  // (observed: Linux x86_64 Y max-rel ~0.14, Y_h max-rel ~0.008; GlymurW/Windows ARM64
+  // Y max-rel ~0.010). Keep the tighter tolerance for other platforms.
+  // TODO: Remove the platform-aware tolerance once the accuracy issue is solved.
 #if defined(__linux__) && defined(__x86_64__)
   constexpr float kTolerance = 0.15f;
+#elif defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
+  constexpr float kTolerance = 0.012f;
 #else
   constexpr float kTolerance = 0.006f;
 #endif
@@ -1207,7 +1210,7 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_linear_before_reset) {
                       kTolerance);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

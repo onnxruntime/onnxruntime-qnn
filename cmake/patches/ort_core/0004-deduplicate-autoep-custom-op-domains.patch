@@ -1,6 +1,7 @@
-From: QNN EP team <noreply@qualcomm.com>
-Date: Wed, 09 Sep 2026 00:00:00 +0000
-Subject: [PATCH] session: deduplicate custom-op domains for AutoEP devices
+From 12ff823cd35ad4feb0a499126cb97eec43ee3801 Mon Sep 17 00:00:00 2001
+From: ORT QNN EP team <noreply@qualcomm.com>
+Date: Wed, 9 Sep 2026 00:00:00 +0000
+Subject: [PATCH 4/4] session: deduplicate custom-op domains for AutoEP devices
 
 AutoEP can expose multiple devices backed by the same EP factory. Each device
 can return the same custom-op domain, such as the QNN qti_aisw domain.
@@ -10,10 +11,12 @@ session, ORT collects each device's domains and registers them together in one
 session-local custom registry. Registering qti_aisw twice makes
 RegisterOpSet fail with "Domain already set in registry". Deduplicate domains
 within that collection before registering the session's custom registry.
-
 ---
+ onnxruntime/core/session/utils.cc | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
 diff --git a/onnxruntime/core/session/utils.cc b/onnxruntime/core/session/utils.cc
-index 8fc6c1d8c0..8d3a79740d 100644
+index 8fc6c1d..881a45b 100644
 --- a/onnxruntime/core/session/utils.cc
 +++ b/onnxruntime/core/session/utils.cc
 @@ -318,7 +318,10 @@ static OrtStatus* CreateSessionAndLoadSingleModelImpl(_In_ const OrtSessionOptio
@@ -40,3 +43,5 @@ index 8fc6c1d8c0..8d3a79740d 100644
            all_ep_custom_op_domains.push_back(domain);
          }
        }
+--
+2.53.0.windows.1

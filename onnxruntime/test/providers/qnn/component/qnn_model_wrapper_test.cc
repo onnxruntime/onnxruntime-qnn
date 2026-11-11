@@ -17,6 +17,7 @@
 #include "QnnTypes.h"
 
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
@@ -24,6 +25,11 @@ namespace onnxruntime {
 namespace test {
 
 namespace {
+
+Qnn_ErrorHandle_t StubErrorGetMessage(Qnn_ErrorHandle_t, const char** message) {
+  *message = "stub QNN error";
+  return QNN_SUCCESS;
+}
 
 // Context for constructing a QnnModelWrapper in function-level unit tests.
 //
@@ -56,6 +62,7 @@ struct QnnModelWrapperTestContext : public OrtApiStubContext {
 
   QNN_INTERFACE_VER_TYPE& qnn_interface = backend_manager.QnnInterface();
   Qnn_BackendHandle_t& backend_handle = backend_manager.BackendHandle();
+  qnn::QnnGraphEmitter graph_emitter{qnn_interface};
 
   // No validator interface in unit tests — validator_backend_handle stays null so
   // ValidateQnnNode routes through qnn_interface / backend_handle. Tests that want
@@ -658,7 +665,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_NullContext_ReturnsFalse) {
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
-  EXPECT_FALSE(wrapper->CreateQnnGraph(nullptr, "my_graph"));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, nullptr, "my_graph"));
 }
 
 // ── CreateQnnNode ─────────────────────────────────────────────────────────
@@ -873,7 +880,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_EmptyName_ReturnsFalse) {
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_FALSE(wrapper->CreateQnnGraph(fake_ctx, ""));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, ""));
 }
 
 // First call succeeds (graphCreate stub sets graph_ non-null); second call returns false
@@ -886,8 +893,8 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_AlreadyInitialized_ReturnsFalse) {
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_TRUE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
-  EXPECT_FALSE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
+  EXPECT_TRUE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
 }
 
 // CreateQnnNode with do_op_validation=true and BF16 disabled calls backendValidateOpConfig.
@@ -1310,11 +1317,12 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveFail
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface.graphCreate = StubGraphCreateFail;
   ctx.qnn_interface.graphRetrieve = StubGraphRetrieveFail;
+  ctx.qnn_interface.errorGetMessage = StubErrorGetMessage;
   qnn::ModelSettings settings{};
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_FALSE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
+  EXPECT_FALSE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
 }
 
 // graphCreate fails but graphRetrieve succeeds → lines ~38-39, ~47-49 are hit → return true.
@@ -1326,7 +1334,7 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnGraph_GraphCreateFails_GraphRetrieveSucc
   auto wrapper = ctx.CreateWrapper(settings);
 
   auto fake_ctx = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(1));
-  EXPECT_TRUE(wrapper->CreateQnnGraph(fake_ctx, "my_graph"));
+  EXPECT_TRUE(wrapper->CreateQnnGraph(ctx.graph_emitter, fake_ctx, "my_graph"));
 }
 
 // Tensor IS in model_tensors_map_ but tensorCreateGraphTensor fails during the main compose loop
@@ -1417,6 +1425,28 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_BF16_ApplyConversionFails_InputNotI
   EXPECT_FALSE(ok);
 }
 
+// A missing second input fails conversion after the first input has changed to BF16.
+// The guard must restore FP32 even though backend validation is never reached.
+TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_BF16_PartialConversionFailure_RestoresFP32) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  settings.htp_bf16_enable = true;
+  auto wrapper = ctx.CreateWrapper(settings, qnn::QnnBackendType::HTP);
+
+  qnn::QnnTensorWrapper in("inp", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                           qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper out("out", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                            qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(in)));
+  ASSERT_TRUE(wrapper->AddTensorWrapper(std::move(out)));
+
+  EXPECT_FALSE(wrapper->CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_ELEMENT_WISE_ADD,
+                                      {"inp", "missing_inp"}, {"out"}, {}, /*do_op_validation=*/true));
+
+  EXPECT_EQ(wrapper->GetQnnTensorWrapper("inp").GetTensorDataType(), QNN_DATATYPE_FLOAT_32);
+  EXPECT_EQ(wrapper->GetQnnTensorWrapper("out").GetTensorDataType(), QNN_DATATYPE_FLOAT_32);
+}
+
 // CreateQnnNode with do_op_validation=true: input OK but output absent from model_tensors_map_.
 // CreateQnnInputOutputTensors for the output returns false (line ~172-174) → line ~473 → false.
 // No SDK stubs needed: do_op_validation=true skips tensorCreateGraphTensor calls.
@@ -1437,21 +1467,20 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_Validation_OutputNotInMap_ReturnsFa
 
 // ── ValidateQnnNode with real QNN HTP backend ─────────────────────
 //
-// These tests dlopen libQnnHtp.so and create a real Qnn_BackendHandle_t so that
+// These tests load the platform HTP backend and create a real Qnn_BackendHandle_t so that
 // QnnGraphOpValidation / backendValidateOpConfig exercises the actual SDK path.
-// On Linux x86-64 (the unit-test host), HTP supports validation but not graph
+// On host builds, HTP supports validation but not graph
 // execution — these tests intentionally exercise only the validation path.
 //
-// libQnnHtp.so is part of the QAIRT SDK that is required to build the EP, so
-// it must be present at test time. A missing library indicates a CI/environment
-// configuration error and fails the test (ASSERT_TRUE) rather than skipping.
+// The HTP backend is part of the QAIRT SDK. Tests skip cleanly when it is not
+// available on the host.
 
 // ValidateQnnNode succeeds for a valid Relu op on the HTP backend.
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (success path).
 // Uses UFIXED_POINT_8 with per-tensor quant params — the representative HTP production path.
 TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
   QnnRealHtpBackendContext backend;
-  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available — QAIRT SDK must be installed in CI";
+  ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
@@ -1482,7 +1511,7 @@ TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_Relu_Succeeds) {
 // Covers ValidateQnnNode → QnnGraphOpValidation → backendValidateOpConfig (failure path).
 TEST(QnnUnit_ModelWrapperTest, ValidateQnnNode_HtpBackend_InvalidOpType_Fails) {
   QnnRealHtpBackendContext backend;
-  ASSERT_TRUE(backend.IsValid()) << "libQnnHtp.so not available — QAIRT SDK must be installed in CI";
+  ASSERT_TRUE(backend.IsValid()) << QnnHtpBackendLibraryName() << " not available";
 
   QnnModelWrapperTestContext ctx;
   ctx.qnn_interface = backend.qnn_interface;
@@ -1893,7 +1922,7 @@ static const void* g_tensor_raw_data = nullptr;
 
 OrtStatus* StubGraphGetModelPathEmpty(const OrtGraph*,
                                       const ORTCHAR_T** model_path) noexcept {
-  static const ORTCHAR_T empty_path[] = {0};
+  static const ORTCHAR_T empty_path[] = ORT_TSTR("");
   *model_path = empty_path;
   return nullptr;
 }
@@ -2896,6 +2925,160 @@ TEST(QnnUnit_ModelWrapperTest, CreateQnnNode_BF16Enabled_CpuBackend_ValidatorSee
 
   EXPECT_EQ(g_validated_input_data_type, QNN_DATATYPE_FLOAT_32);
   EXPECT_EQ(wrapper->GetQnnTensorWrapper("in0").GetTensorDataType(), QNN_DATATYPE_FLOAT_32);
+}
+
+namespace {
+
+std::vector<uint32_t> fusion_validation_scalar_values;
+size_t rejected_fusion_validation_calls = 0;
+
+Qnn_ErrorHandle_t CaptureFusionValidationParams(Qnn_BackendHandle_t, Qnn_OpConfig_t op_config) {
+  fusion_validation_scalar_values.clear();
+  for (uint32_t i = 0; i < op_config.v1.numOfParams; ++i) {
+    fusion_validation_scalar_values.push_back(op_config.v1.params[i].scalarParam.uint32Value);
+  }
+  return QNN_SUCCESS;
+}
+
+Qnn_ErrorHandle_t RejectFusionValidation(Qnn_BackendHandle_t, Qnn_OpConfig_t) {
+  ++rejected_fusion_validation_calls;
+  // Any non-success result exercises the backend-validation failure path.
+  return static_cast<Qnn_ErrorHandle_t>(1);
+}
+
+qnn::QnnTensorWrapper MakeFusionGuardTensor(const std::string& name, std::vector<uint32_t> shape) {
+  return qnn::QnnTensorWrapper(name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::move(shape));
+}
+
+qnn::QnnParamWrapper MakeFusionGuardParam(const std::string& node_name, uint32_t value) {
+  Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
+  scalar.dataType = QNN_DATATYPE_UINT_32;
+  scalar.uint32Value = value;
+  return qnn::QnnParamWrapper(0, node_name, "axis", scalar);
+}
+
+}  // namespace
+
+TEST(QnnUnit_ModelWrapperTest, FusionValidationGuard_FailedValidation_RestoresRegistrations) {
+  QnnModelWrapperTestContext ctx;
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+
+  ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("existing", {4})));
+  auto existing_param = MakeFusionGuardParam("existing", 7);
+  const std::string existing_param_name = existing_param.GetParamTensorName();
+  ASSERT_TRUE(wrapper->AddParamWrapper(std::move(existing_param)));
+
+  auto candidate_param = MakeFusionGuardParam("candidate", 1);
+  const std::string candidate_param_name = candidate_param.GetParamTensorName();
+  ctx.qnn_interface.backendValidateOpConfig = RejectFusionValidation;
+  rejected_fusion_validation_calls = 0;
+
+  {
+    qnn::QnnModelWrapper::FusionValidationGuard guard(*wrapper);
+
+    // Duplicate registrations must not become rollback targets.
+    ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("existing", {99})));
+    ASSERT_TRUE(wrapper->AddParamWrapper(MakeFusionGuardParam("existing", 99)));
+    ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("candidate", {2, 2})));
+    ASSERT_TRUE(wrapper->AddParamWrapper(std::move(candidate_param)));
+
+    EXPECT_FALSE(wrapper->CreateQnnNode("candidate", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                                        {"existing"}, {"candidate"}, {candidate_param_name},
+                                        /*do_op_validation=*/true));
+    EXPECT_EQ(rejected_fusion_validation_calls, 1u);
+  }
+
+  EXPECT_EQ(wrapper->GetQnnTensorWrapper("existing").GetTensorDims(), (std::vector<uint32_t>{4}));
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("candidate"));
+
+  // A later builder must be able to register different metadata under the
+  // names used by the rejected attempt.
+  ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("candidate", {4})));
+  ASSERT_TRUE(wrapper->AddParamWrapper(MakeFusionGuardParam("candidate", 2)));
+  ctx.qnn_interface.backendValidateOpConfig = CaptureFusionValidationParams;
+  fusion_validation_scalar_values.clear();
+
+  ASSERT_TRUE(wrapper->CreateQnnNode("fallback", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                                     {"existing"}, {"candidate"}, {existing_param_name, candidate_param_name},
+                                     /*do_op_validation=*/true));
+  EXPECT_EQ(wrapper->GetQnnTensorWrapper("candidate").GetTensorDims(), (std::vector<uint32_t>{4}));
+  EXPECT_EQ(fusion_validation_scalar_values, (std::vector<uint32_t>{7, 2}));
+}
+
+TEST(QnnUnit_ModelWrapperTest, FusionValidationGuard_Commit_PreservesRegistrations) {
+  QnnModelWrapperTestContext ctx;
+  ctx.qnn_interface.backendValidateOpConfig = CaptureFusionValidationParams;
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+  auto param = MakeFusionGuardParam("accepted", 3);
+  const std::string param_name = param.GetParamTensorName();
+
+  {
+    qnn::QnnModelWrapper::FusionValidationGuard guard(*wrapper);
+    ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("accepted", {4})));
+    ASSERT_TRUE(wrapper->AddParamWrapper(std::move(param)));
+    ASSERT_TRUE(wrapper->CreateQnnNode("accepted", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                                       {"accepted"}, {"accepted"}, {param_name}, /*do_op_validation=*/true));
+    guard.Commit();
+  }
+
+  {
+    qnn::QnnModelWrapper::FusionValidationGuard guard(*wrapper);
+    ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("accepted", {99})));
+    ASSERT_TRUE(wrapper->AddParamWrapper(MakeFusionGuardParam("accepted", 99)));
+    ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("temporary", {4})));
+    // This attempt is rejected.
+  }
+
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("temporary"));
+  EXPECT_EQ(wrapper->GetQnnTensorWrapper("accepted").GetTensorDims(), (std::vector<uint32_t>{4}));
+  fusion_validation_scalar_values.clear();
+  ASSERT_TRUE(wrapper->CreateQnnNode("check_accepted", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                                     {"accepted"}, {"accepted"}, {param_name}, /*do_op_validation=*/true));
+  EXPECT_EQ(fusion_validation_scalar_values, (std::vector<uint32_t>{3}));
+}
+
+TEST(QnnUnit_ModelWrapperTest, FusionValidationGuard_Exception_RollsBack) {
+  QnnModelWrapperTestContext ctx;
+  ctx.qnn_interface.backendValidateOpConfig = CaptureFusionValidationParams;
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+  auto param = MakeFusionGuardParam("candidate", 1);
+  const std::string param_name = param.GetParamTensorName();
+
+  EXPECT_THROW(
+      {
+        qnn::QnnModelWrapper::FusionValidationGuard guard(*wrapper);
+        ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("candidate", {2, 2})));
+        ASSERT_TRUE(wrapper->AddParamWrapper(std::move(param)));
+        throw std::runtime_error("Fusion attempt failed");
+      },
+      std::runtime_error);
+
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("candidate"));
+
+  // Also verifies that exception cleanup unregisters the active guard.
+  {
+    qnn::QnnModelWrapper::FusionValidationGuard guard(*wrapper);
+    ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("candidate", {4})));
+    ASSERT_TRUE(wrapper->AddParamWrapper(MakeFusionGuardParam("candidate", 2)));
+    guard.Commit();
+  }
+
+  fusion_validation_scalar_values.clear();
+  ASSERT_TRUE(wrapper->CreateQnnNode("retry", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                                     {"candidate"}, {"candidate"}, {param_name}, /*do_op_validation=*/true));
+  EXPECT_EQ(fusion_validation_scalar_values, (std::vector<uint32_t>{2}));
+}
+
+TEST(QnnUnit_ModelWrapperTest, FusionValidationGuard_NestedGuard_RejectedWithoutDisablingOuterGuard) {
+  QnnModelWrapperTestContext ctx;
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+  {
+    qnn::QnnModelWrapper::FusionValidationGuard outer_guard(*wrapper);
+    EXPECT_THROW({ qnn::QnnModelWrapper::FusionValidationGuard inner_guard(*wrapper); }, Ort::Exception);
+    ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("candidate", {4})));
+  }
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("candidate"));
 }
 
 }  // namespace test

@@ -38,11 +38,11 @@ namespace onnxruntime {
 namespace test {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
-#if (defined(__aarch64__) || defined(__linux__)) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
+#if (defined(__aarch64__) || defined(__linux__) || (defined(_M_ARM64) || defined(_M_ARM64EC))) && defined(QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE)
 #define BUILD_HTP_GQA_TESTS 1
 #endif
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 #define BUILD_GPU_GQA_TESTS 1
 #endif
 

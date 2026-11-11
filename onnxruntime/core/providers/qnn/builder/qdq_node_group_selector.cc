@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
-#include "core/providers/qnn/qnn_ep_utils.h"
+#include "core/providers/qnn/builder/qdq_node_group_selector.h"
 
 #include <iostream>
 #include <string>
@@ -9,6 +9,7 @@
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
+#include "core/providers/qnn/custom_op/qnn_qti_aisw_custom_op.h"
 
 namespace onnxruntime {
 namespace QDQ {
@@ -55,6 +56,33 @@ std::optional<ONNXTensorElementDataType> GetNodeInputDataType(const OrtNode* nod
   std::vector<const OrtValueInfo*> inputs(num_defs);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api, std::nullopt);
   return GetDataTypeFromValueInfo(ort_api, inputs[index]);
+}
+
+// 1.2.1 Bit width (4, 8, 16) of a convertible fixed-point encoding, or 0 if `type` is not one.
+int FixedPointBitWidth(ONNXTensorElementDataType type) {
+  switch (type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
+      return 4;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      return 8;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
+      return 16;
+    default:
+      return 0;
+  }
+}
+
+// True if `type` is a convertible (4/8/16-bit, signed or unsigned) fixed-point encoding.
+bool IsConvertibleFixedPointType(ONNXTensorElementDataType type) {
+  return FixedPointBitWidth(type) != 0;
+}
+
+// 1.2.2 True if `a` and `b` are a mismatched pair of convertible fixed-point encodings.
+bool NeedsPrecisionConvert(ONNXTensorElementDataType a, ONNXTensorElementDataType b) {
+  return a != b && IsConvertibleFixedPointType(a) && IsConvertibleFixedPointType(b);
 }
 
 // 1.3 Element type of `node`'s output[index].
@@ -892,7 +920,24 @@ bool OrtDropDQNodeGroupSelector::Check(const OrtGraph* /*graph*/, const OrtApi& 
   return true;
 }
 
-// Implementation of Check() for OrtUnaryNodeGroupSelector
+// Implementation of Check() for OrtRandomNormalLikeNodeGroupSelector
+bool OrtRandomNormalLikeNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api,
+                                                 const OrtNode* node, const OrtNode* redundant_clip_node,
+                                                 const std::vector<const OrtNode*>& dq_nodes,
+                                                 const std::vector<const OrtNode*>& q_nodes) const {
+  // Absorb a single output Q with an optional input DQ. RNL does not consume
+  // input values, so the input and output quantization types need not match.
+  if (redundant_clip_node != nullptr || dq_nodes.size() > 1 ||
+      !CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes,
+                     static_cast<int>(dq_nodes.size()))) {
+    return false;
+  }
+
+  const auto output_type = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
+  return output_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8 ||
+         output_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
+}
+
 bool OrtUnaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
                                       const OrtNode* redundant_clip_node,
                                       const std::vector<const OrtNode*>& dq_nodes,
@@ -911,7 +956,18 @@ bool OrtUnaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
   }
 
   if (dt_input.value() != dt_output.value()) {
-    return false;
+    // SimpleOpBuilder can Convert a precision mismatch for some unary ops.
+    // Other unary-shaped ops (Reduce*, Pool*, Softmax, Slice, LRN) have dedicated builders
+    // that don't implement this Convert, so stay strict for them.
+    // 1. Op must be one SimpleOpBuilder knows how to Convert.
+    // 2. The mismatch itself must be a convertible fixed-point pair (4/8/16-bit).
+    // This check is intentionally permissive beyond that (e.g. doesn't check graph-output or
+    // per-tensor-only); SimpleOpBuilder's InsertOutputPrecisionConvert enforces those limits
+    // and fails the second (NHWC) validation pass, so the node falls back if they don't hold.
+    if (!qnn::utils::IsConvertCompatibleUnaryOp(Ort::ConstNode(node).GetOperatorType()) ||
+        !NeedsPrecisionConvert(dt_input.value(), dt_output.value())) {
+      return false;
+    }
   }
 
   return true;
@@ -994,7 +1050,19 @@ bool OrtBinaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   }
 
   if (dt_input_1.value() != dt_input_2.value() || dt_input_1.value() != dt_output.value()) {
-    return false;
+    // SimpleOpBuilder can align a mismatched input pair for some binary ops via Convert.
+    // 1. Op must be one SimpleOpBuilder knows how to Convert.
+    const bool is_convert_compatible_op = qnn::utils::IsConvertCompatibleBinaryOp(Ort::ConstNode(node).GetOperatorType());
+    // 2. Every mismatched slot must itself be a convertible fixed-point type (4/8/16-bit).
+    // This check is intentionally permissive beyond that (e.g. doesn't check per-tensor-only);
+    // AlignBinaryInputPrecision enforces that limit and fails the second (NHWC) validation pass,
+    // so the node falls back if it doesn't hold.
+    const bool all_convertible = IsConvertibleFixedPointType(dt_input_1.value()) &&
+                                 IsConvertibleFixedPointType(dt_input_2.value()) &&
+                                 IsConvertibleFixedPointType(dt_output.value());
+    if (!is_convert_compatible_op || !all_convertible) {
+      return false;
+    }
   }
 
   return true;
@@ -1092,6 +1160,33 @@ static bool IsSupportedActivationOutputTypePair(const OrtGraph* graph, const Ort
   return is_16bit_input && is_8bit_output && IsQOrDQScalePositiveConstantScalar(graph, ort_api, q_node);
 }
 
+// A mismatched pair whose activation is not wider than the output is built as a Convert of the activation to the
+// output's precision followed by the op (a wider activation is narrowed after the op instead). HTP MatMul and
+// FullyConnected take 8- or 16-bit activations, weights and outputs, need the weight no wider than the output (the
+// converted activation's width), and pair a signed 16-bit activation only with an int8 weight.
+static bool IsConvertBeforeOpGroup(ONNXTensorElementDataType dt_input, ONNXTensorElementDataType dt_weight,
+                                   ONNXTensorElementDataType dt_output) {
+  const auto is_htp_width = [](ONNXTensorElementDataType type) {
+    const int bits = FixedPointBitWidth(type);
+    return bits == 8 || bits == 16;
+  };
+  return NeedsPrecisionConvert(dt_input, dt_output) && is_htp_width(dt_input) && is_htp_width(dt_weight) &&
+         is_htp_width(dt_output) && FixedPointBitWidth(dt_input) <= FixedPointBitWidth(dt_output) &&
+         FixedPointBitWidth(dt_weight) <= FixedPointBitWidth(dt_output) &&
+         (dt_output != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16 || dt_weight == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8);
+}
+
+// HTP LayerNorm has no signed 16-bit output configuration.
+static bool IsConvertActivationToOutputGroup(const OrtGraph* graph, const OrtApi& ort_api,
+                                             ONNXTensorElementDataType dt_input,
+                                             ONNXTensorElementDataType dt_output,
+                                             const OrtNode* dq_node) {
+  return NeedsPrecisionConvert(dt_input, dt_output) &&
+         FixedPointBitWidth(dt_input) <= FixedPointBitWidth(dt_output) &&
+         dt_output != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16 &&
+         IsQOrDQScalePositiveConstantScalar(graph, ort_api, dq_node);
+}
+
 // Float activation with a weight-only DQ of a constant per-channel initializer. QNN takes the weight as a
 // static quantized tensor, whereas a standalone per-channel DQ is unsupported and would leave the weight
 // as a graph input.
@@ -1152,27 +1247,25 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
   }
 
   // DQ nodes are positional. Verify explicitly that both inputs[0] (data) and inputs[1] (weight) are DQ-produced.
-  {
-    size_t num_inputs = 0;
-    if (ort_api.Node_GetNumInputs(node, &num_inputs) != nullptr || num_inputs < 2) {
+  size_t num_inputs = 0;
+  if (ort_api.Node_GetNumInputs(node, &num_inputs) != nullptr || num_inputs < 2) {
+    return false;
+  }
+  std::vector<const OrtValueInfo*> node_inputs(num_inputs);
+  if (ort_api.Node_GetInputs(node, node_inputs.data(), node_inputs.size()) != nullptr) {
+    return false;
+  }
+  for (int slot : {0, 1}) {
+    if (node_inputs[slot] == nullptr) {
       return false;
     }
-    std::vector<const OrtValueInfo*> inputs(num_inputs);
-    if (ort_api.Node_GetInputs(node, inputs.data(), inputs.size()) != nullptr) {
+    const OrtNode* producer = nullptr;
+    if (ort_api.ValueInfo_GetValueProducer(node_inputs[slot], &producer, nullptr) != nullptr) {
       return false;
     }
-    for (int slot : {0, 1}) {
-      if (inputs[slot] == nullptr) {
-        return false;
-      }
-      const OrtNode* producer = nullptr;
-      if (ort_api.ValueInfo_GetValueProducer(inputs[slot], &producer, nullptr) != nullptr) {
-        return false;
-      }
-      if (producer == nullptr ||
-          Ort::ConstNode(producer).GetOperatorType() != "DequantizeLinear") {
-        return false;  // inputs[0] and inputs[1] must be DQ-produced; only inputs[2] (bias) may be float.
-      }
+    if (producer == nullptr ||
+        Ort::ConstNode(producer).GetOperatorType() != "DequantizeLinear") {
+      return false;  // inputs[0] and inputs[1] must be DQ-produced; only inputs[2] (bias) may be float.
     }
   }
 
@@ -1184,8 +1277,22 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
+  // IsSupportedActivationOutputTypePair accepts 16-bit-in/8-bit-out: ConvOpBuilder narrows only the
+  // output after computing Conv at 16-bit (see AddOpWithQuantizedOutput), so that case is lossless
+  // and handled downstream regardless of rank. NeedsPrecisionConvert accepts any other mismatched
+  // fixed-point pair (e.g. 8-bit-in/16-bit-out, 4-bit combos): ConvOpBuilder Converts the activation
+  // to the output's precision before Conv runs, but only ProcessConv2D3DInputs (rank 4/5 activation)
+  // implements that Convert — ProcessConv1DInputs (rank 3) does not — so reject a rank-3 mismatch
+  // here rather than let it fall back silently after a wasted partition attempt. The per-tensor-only
+  // limit is checked separately in IsOpSupported (weight-bitwidth guard) and in
+  // ProcessConv2D3DInputs itself, which fails the second (NHWC) validation pass — and the node falls
+  // back — if it doesn't hold. See ConvOpBuilder::ProcessConv2D3DInputs.
   if (!IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0])) {
-    return false;
+    std::vector<int64_t> input_shape;
+    if (!NeedsPrecisionConvert(dt_input.value(), dt_output.value()) ||
+        !GetValueInfoShape(ort_api, node_inputs[0], input_shape) || input_shape.size() == 3) {
+      return false;
+    }
   }
 
   if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 &&
@@ -1301,7 +1408,8 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
 
   auto dt_output = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
   return dt_output.has_value() &&
-         IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]);
+         (IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]) ||
+          IsConvertBeforeOpGroup(dt_input.value(), dt_weight.value(), dt_output.value()));
 }
 
 bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1333,10 +1441,15 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     }
   }
 
-  // If there are Q nodes, check if activation and output have the same type
   if (!q_nodes.empty()) {
     auto dt_Y = GetNodeOutputDataType(q_nodes[0], ort_api, 0);
-    if (!dt_Y.has_value() || dt_A.value() != dt_Y.value()) {  // activation and output must be same type
+    if (!dt_Y.has_value()) {
+      return false;
+    }
+    const bool supported_activation_output =
+        IsSupportedActivationOutputTypePair(graph, ort_api, dt_A.value(), dt_Y.value(), q_nodes[0]) ||
+        IsConvertBeforeOpGroup(dt_A.value(), dt_B.value(), dt_Y.value());
+    if (!supported_activation_output) {
       return false;
     }
   }
@@ -1419,10 +1532,10 @@ bool OrtPadNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api
   }
 }
 
-bool OrtInstanceAndLayerNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
-                                                              const OrtNode* redundant_clip_node,
-                                                              const std::vector<const OrtNode*>& dq_nodes,
-                                                              const std::vector<const OrtNode*>& q_nodes) const {
+bool OrtNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+                                              const OrtNode* redundant_clip_node,
+                                              const std::vector<const OrtNode*>& dq_nodes,
+                                              const std::vector<const OrtNode*>& q_nodes) const {
   if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes)) {
     return false;
   }
@@ -1446,9 +1559,16 @@ bool OrtInstanceAndLayerNormalizationNodeGroupSelector::Check(const OrtGraph* gr
     }
   }
 
-  // Input, output, need to be the same type. The bias is int32.
-  // Scale can be different with input for a16w8 case
-  return (dt_input.value() == dt_output.value()) &&
+  // Only LayerNormalization implements the activation/output precision bridge.
+  bool supported_activation_output = dt_input.value() == dt_output.value();
+  if (!supported_activation_output && Ort::ConstNode(node).GetOperatorType() == "LayerNormalization") {
+    supported_activation_output =
+        IsSupportedActivationOutputTypePair(graph, ort_api, dt_input.value(), dt_output.value(), q_nodes[0]) ||
+        (dq_nodes.size() > 1 && IsConvertActivationToOutputGroup(graph, ort_api, dt_input.value(),
+                                                                 dt_output.value(), dq_nodes[0]));
+  }
+
+  return supported_activation_output &&
          (has_bias ? dt_bias.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32 : true);
 }
 
@@ -1796,6 +1916,10 @@ OrtSelectorManager::OrtSelectorManager() {
 void OrtSelectorManager::CreateSelectors() {
   // Register selectors for different op types
 
+  OrtOpVersionsAndSelector::OpVersionsMap random_normal_like_ops = {
+      {"RandomNormalLike", {}}};
+  ort_selectors_.RegisterSelector(random_normal_like_ops, std::make_unique<OrtRandomNormalLikeNodeGroupSelector>());
+
   // Register misc ops
   OrtOpVersionsAndSelector::OpVersionsMap misc_ops = {
       {"Expand", {}},
@@ -1824,6 +1948,7 @@ void OrtSelectorManager::CreateSelectors() {
       {"Asin", {}},
       {"Atan", {}},
       {"AveragePool", {}},
+      {"Buffer", {}},
       {"Ceil", {}},
       {"Cos", {}},
       {"DepthToSpace", {}},
@@ -1922,14 +2047,17 @@ void OrtSelectorManager::CreateSelectors() {
   ort_selectors_.RegisterSelector(gemm_ops, std::make_unique<OrtGemmNodeGroupSelector>());
 
   // Register GRU ops
-  OrtOpVersionsAndSelector::OpVersionsMap gru_ops = {{"GRU", {}}};
+  OrtOpVersionsAndSelector::OpVersionsMap gru_ops = {
+      {"GRU", {}},
+      {"StatefulGru", {}}};
   ort_selectors_.RegisterSelector(gru_ops, std::make_unique<OrtGRUNodeGroupSelector>());
 
-  // Register instance and layer normalization ops
-  OrtOpVersionsAndSelector::OpVersionsMap instance_layer_norm_ops = {
+  // Register normalization ops
+  OrtOpVersionsAndSelector::OpVersionsMap normalization_ops = {
+      {"GroupNormalization", {21}},
       {"InstanceNormalization", {}},
       {"LayerNormalization", {}}};
-  ort_selectors_.RegisterSelector(instance_layer_norm_ops, std::make_unique<OrtInstanceAndLayerNormalizationNodeGroupSelector>());
+  ort_selectors_.RegisterSelector(normalization_ops, std::make_unique<OrtNormalizationNodeGroupSelector>());
 
   // Register batch normalization ops
   OrtOpVersionsAndSelector::OpVersionsMap batch_norm_ops = {
@@ -2023,7 +2151,11 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
 
     // Check domain (similar to the GraphViewer version)
     std::string domain_str(domain);
-    if (domain_str != kOnnxDomain && domain_str != kMSInternalNHWCDomain && domain_str != kMSDomain && domain_str != kMLOnnxDomain) {
+    if (domain_str != kOnnxDomain &&
+        domain_str != kMSInternalNHWCDomain &&
+        domain_str != kMSDomain &&
+        domain_str != kMLOnnxDomain &&
+        domain_str != kQtiAiswDomain) {
       continue;
     }
 
@@ -2059,170 +2191,6 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
 }
 
 }  // namespace QDQ
-
-namespace utils {
-
-// QNN-EP COPY START
-// Below implementations are directly copied from "core/common/common.h"
-// Returns whether `key` is in `container`.
-// Like C++20's map/set contains() member function.
-template <typename Key, typename... OtherContainerArgs,
-          template <typename...> typename AssociativeContainer,
-          typename LookupKey>
-inline bool Contains(const AssociativeContainer<Key, OtherContainerArgs...>& container, LookupKey&& key) {
-  return container.find(std::forward<LookupKey>(key)) != container.end();
-}
-// QNN-EP COPY END
-
-std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
-    const OrtGraph* graph,
-    const OrtApi& ort_api,
-    const std::vector<const OrtNode*>& supported_nodes,
-    const std::string& ep_type,
-    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map) {
-  std::vector<std::vector<const OrtNode*>> supported_groups{};
-
-  size_t num_nodes = 0;
-  auto status = ort_api.Graph_GetNumNodes(graph, &num_nodes);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return {};
-  }
-  std::vector<const OrtNode*> graph_nodes(num_nodes);
-  status = ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return {};
-  }
-
-  // #inputs from unprocessed nodes (in-degree) per node.
-  std::unordered_map<size_t, size_t> in_degree{};
-  // Nodes that are ready to process.
-  std::deque<const OrtNode*> nodes_to_process{};
-  // Nodes that will be processed when considering the next partition node group.
-  std::deque<const OrtNode*> nodes_to_process_with_next_group{};
-
-  // Initialize in-degrees and find root nodes.
-  for (size_t node_idx = 0; node_idx < num_nodes; ++node_idx) {
-    const OrtNode* node = graph_nodes[node_idx];
-    const OrtNodeUnit* node_unit = node_unit_map.at(node);
-
-    if (&node_unit->GetNode() != node) {
-      // Only process the target node.
-      continue;
-    }
-
-    size_t degree = node_unit->GetInputEdgesCount(ort_api);
-    in_degree.insert({node_unit->Index(), degree});
-    if (degree == 0) {
-      nodes_to_process.push_back(node);
-    }
-  }
-
-  std::vector<const OrtNode*> supported_group{};
-  // The partition node group's border is the aggregate of its nodes' output nodes.
-  InlinedHashSet<const OrtNode*> supported_group_border{};
-
-  auto close_group = [&]() {
-    if (!supported_group.empty()) {
-      supported_groups.emplace_back(std::move(supported_group));
-      supported_group.clear();
-      supported_group_border.clear();
-    }
-  };
-
-  size_t num_nodes_processed = 0;
-
-  while (!nodes_to_process.empty() || !nodes_to_process_with_next_group.empty()) {
-    if (nodes_to_process.empty()) {
-      // We have processed all the nodes that we can while building this partition node group, start a new one.
-      close_group();
-      nodes_to_process.swap(nodes_to_process_with_next_group);
-      continue;
-    }
-
-    const OrtNode* node = nodes_to_process.front();
-    nodes_to_process.pop_front();
-
-    const OrtNodeUnit* node_unit = node_unit_map.at(node);
-    const bool is_qdq_node_unit = node_unit->UnitType() == OrtNodeUnit::Type::QDQGroup;
-
-    // A node that is already assigned to an EP other than current EP is unsupported.
-    const char* node_ep_name;
-    ORT_CONTINUE_ON_ERROR(ort_api.Node_GetEpName(node, &node_ep_name), ort_api);
-    const bool is_node_supported = ((std::string(node_ep_name).empty() || node_ep_name == ep_type) &&
-                                    std::find(supported_nodes.cbegin(), supported_nodes.cend(), node) != supported_nodes.cend());
-
-    if (!is_node_supported && Contains(supported_group_border, node)) {
-      // An unsupported node on the border will be processed after the current partition node group.
-      nodes_to_process_with_next_group.push_back(node);
-      continue;
-    }
-
-    if (is_node_supported) {
-      if (is_qdq_node_unit) {
-        // Add DQ -> node -> Q for the node unit and must be in topological order.
-        for (const OrtNode* dq : node_unit->GetDQNodes()) {
-          supported_group.push_back(dq);
-        }
-
-        supported_group.push_back(node);
-        const OrtNode* output_reshape_node = node_unit->GetOutputReshapeNode();
-        if (output_reshape_node) {
-          supported_group.push_back(output_reshape_node);
-          supported_group_border.erase(output_reshape_node);
-        }
-        const OrtNode* redundent_clip_node = node_unit->GetRedundantClipNode();
-        if (redundent_clip_node) {
-          supported_group.push_back(redundent_clip_node);
-          supported_group_border.erase(redundent_clip_node);
-        }
-
-        for (const OrtNode* q : node_unit->GetQNodes()) {
-          supported_group.push_back(q);
-        }
-      } else {
-        supported_group.push_back(node);
-      }
-
-      // Remove node from the border.
-      supported_group_border.erase(node);
-    }
-
-    // For each downstream node:
-    //   1: Add the downstream node to the border if the current node is supported.
-    //   2: Adjust in-degrees of the nodes consuming the current node's outputs, and add any new nodes to process.
-    for (const OrtNode* output_node : node_unit->GetOutputNodes(ort_api)) {
-      const OrtNodeUnit* downstream_node_unit = node_unit_map.at(output_node);
-      const OrtNode* downstream_node = &downstream_node_unit->GetNode();
-
-      if (is_node_supported) {
-        supported_group_border.insert(downstream_node);
-      }
-
-      auto& downstream_node_in_degree = in_degree[downstream_node_unit->Index()];
-      --downstream_node_in_degree;
-
-      if (downstream_node_in_degree == 0) {
-        nodes_to_process.push_back(downstream_node);
-      }
-    }
-
-    ++num_nodes_processed;
-  }
-
-  close_group();
-
-  if (num_nodes_processed != in_degree.size()) {
-    ORT_CXX_API_THROW("Processed " + std::to_string(num_nodes_processed) +
-                          " nodes. Expected to process " + std::to_string(in_degree.size()),
-                      ORT_EP_FAIL);
-  }
-
-  return supported_groups;
-}
-
-}  // namespace utils
 
 // Implementation of GetQDQNodeUnits for OrtGraph
 std::pair<std::vector<std::unique_ptr<OrtNodeUnit>>, std::unordered_map<const OrtNode*, const OrtNodeUnit*>>

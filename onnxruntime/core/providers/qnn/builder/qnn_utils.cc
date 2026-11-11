@@ -1818,6 +1818,18 @@ Ort::Status TransposeFromCnhwToHwcn(std::vector<int64_t>&& original_input_shape_
 
 // Inserts a QNN Convert operator to convert from one quantization type (e.g., uint16) to another (e.g., uint8).
 // (OR) Convert from Asymmetric (e.g., UINT16) to Symmetric (e.g., INT16) quantization type
+Ort::Status DeriveScaleOffsetForDtype(Qnn_DataType_t from_dtype, int32_t from_offset, float from_scale,
+                                      Qnn_DataType_t to_dtype, bool to_symmetric,
+                                      float& to_scale, int32_t& to_offset) {
+  float qmin = 0.0f;
+  float qmax = 255.0f;
+  RETURN_IF_ERROR(qnn::utils::GetQminQmax(from_dtype, qmin, qmax));
+  const double value_min = qnn::utils::Dequantize(from_offset, from_scale, qmin);
+  const double value_max = qnn::utils::Dequantize(from_offset, from_scale, qmax);
+  return qnn::utils::GetQuantParams(static_cast<float>(value_min), static_cast<float>(value_max),
+                                    to_dtype, to_scale, to_offset, to_symmetric);
+}
+
 Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             const std::string& convert_input_name,
                             const std::string& convert_output_name,
@@ -1827,25 +1839,17 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             float input_scale,
                             const std::vector<uint32_t>& output_shape,
                             bool output_symmetric,
-                            bool do_op_validation) {
+                            bool do_op_validation,
+                            Qnn_TensorType_t output_tensor_type) {
   // Assume input is already handled.
-  float qmin = 0.0f;
-  float qmax = 255.0f;
-  RETURN_IF_ERROR(qnn::utils::GetQminQmax(input_qnn_data_type, qmin, qmax));
-  double value_min = qnn::utils::Dequantize(input_offset, input_scale, qmin);
-  double value_max = qnn::utils::Dequantize(input_offset, input_scale, qmax);
   float scale = 0.0f;
   int32_t offset = 0;
-  RETURN_IF_ERROR(qnn::utils::GetQuantParams(static_cast<float>(value_min),
-                                             static_cast<float>(value_max),
-                                             output_qnn_data_type,
-                                             scale,
-                                             offset,
-                                             output_symmetric));
+  RETURN_IF_ERROR(DeriveScaleOffsetForDtype(input_qnn_data_type, input_offset, input_scale,
+                                            output_qnn_data_type, output_symmetric, scale, offset));
 
   std::vector<uint32_t> output_shape_copy = output_shape;
   QnnTensorWrapper convert_output_tensorwrapper(convert_output_name,
-                                                QNN_TENSOR_TYPE_NATIVE,
+                                                output_tensor_type,
                                                 output_qnn_data_type,
                                                 QnnQuantParamsWrapper::PerTensor(scale, offset),
                                                 std::move(output_shape_copy));
@@ -1859,11 +1863,6 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                                                 do_op_validation),
                 "Failed to add node.");
   return Ort::Status();
-}
-
-static bool IsNarrowingQuantOutput(Qnn_DataType_t activation_qnn_data_type, Qnn_DataType_t output_qnn_data_type) {
-  return IsQuant16bit(activation_qnn_data_type) &&
-         (output_qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 || output_qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8);
 }
 
 // Every output level maps onto an intermediate level, so the Convert only drops the extra precision and the
@@ -2259,6 +2258,199 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
   }
 
   return Ort::Status();
+}
+
+static Ort::Status RequantizeBiasIfNeeded(QnnModelWrapper& qnn_model_wrapper,
+                                          const Ort::Logger& logger,
+                                          const OrtNodeUnit& node_unit,
+                                          const OrtNodeUnitIODef& bias_def,
+                                          const TensorInfo& bias_info,
+                                          gsl::span<const float> weights_scales,
+                                          float activation_scale,
+                                          std::vector<std::string>& input_names,
+                                          bool& was_requantized) {
+  was_requantized = false;
+  int32_t bias_quant_axis = 0;
+  std::vector<float> current_scales;
+  std::vector<int32_t> current_offsets;
+  RETURN_IF_ERROR(GetBiasQuantScalesAndOffsets(bias_info.quant_param, current_scales,
+                                               current_offsets, bias_quant_axis));
+
+  const size_t num_channels = current_scales.size();
+  bool needs_requantization = false;
+  for (size_t i = 0; i < num_channels && !needs_requantization; ++i) {
+    const float w = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
+    if (current_offsets[i] != 0 ||
+        !CheckBiasScaleMatch(current_scales[i], w, activation_scale)) {
+      needs_requantization = true;
+    }
+  }
+
+  if (!needs_requantization) {
+    return Ort::Status();  // Scales already match; caller processes bias normally.
+  }
+
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Requantizing bias " + bias_def.name).c_str());
+
+  std::vector<uint8_t> original_bias_data;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, original_bias_data));
+
+  std::vector<uint8_t> new_bias_data;
+  std::vector<float> new_scales;
+  std::vector<int32_t> new_offsets;
+  const auto axis_opt = (num_channels > 1) ? std::optional<int64_t>(bias_quant_axis) : std::nullopt;
+  RETURN_IF_ERROR(RequantizeBiasTensor(
+      original_bias_data, bias_info.shape, current_scales, current_offsets,
+      weights_scales, activation_scale, bias_info.qnn_data_type,
+      new_bias_data, new_scales, new_offsets, axis_opt));
+
+  // Widening activation can saturate bias. Channel slicing requires an outermost channel axis.
+  if (!axis_opt.has_value() || axis_opt.value() == 0) {
+    const size_t num_elems = ShapeSizeCalc(bias_info.shape, 0, bias_info.shape.size());
+    if (num_elems > 0) {
+      std::vector<float> original_float(num_elems);
+      RETURN_IF_ERROR(DequantizePerChannel(original_bias_data, bias_info.shape, current_scales,
+                                           current_offsets, original_float, bias_info.qnn_data_type,
+                                           axis_opt));
+      std::vector<float> requantized_float(num_elems);
+      RETURN_IF_ERROR(DequantizePerChannel(new_bias_data, bias_info.shape, new_scales, new_offsets,
+                                           requantized_float, bias_info.qnn_data_type, axis_opt));
+
+      const size_t new_num_channels = new_scales.size();
+      const size_t channel_size = new_num_channels > 0 ? num_elems / new_num_channels : num_elems;
+      size_t clipped = 0;
+      for (size_t i = 0; i < num_elems; ++i) {
+        const size_t channel = (new_num_channels <= 1 || channel_size == 0) ? 0 : i / channel_size;
+        const float scale = new_scales[std::min(channel, new_num_channels - 1)];
+        if (std::abs(requantized_float[i] - original_float[i]) > 0.5f * scale) {
+          ++clipped;
+        }
+      }
+      if (clipped > 0) {
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                    ("Requantized bias " + bias_def.name + " clipped " + std::to_string(clipped) +
+                     " of " + std::to_string(num_elems) +
+                     " elements: the target scale cannot represent the bias range.")
+                        .c_str());
+      }
+    }
+  }
+
+  QnnQuantParamsWrapper new_quant_params = (new_scales.size() == 1)
+                                               ? QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0])
+                                               : QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
+
+  const std::string rq_bias_name = NodeUnitBaseName(node_unit) + "_bias_rq";
+  RETURN_IF_ERROR(qnn_model_wrapper.AddStaticBiasTensor(rq_bias_name, bias_info.shape, bias_info.qnn_data_type,
+                                                        std::move(new_quant_params), std::move(new_bias_data), input_names));
+  was_requantized = true;
+  return Ort::Status();
+}
+
+static Ort::Status QuantizeFloatBias(QnnModelWrapper& qnn_model_wrapper,
+                                     const Ort::Logger& logger,
+                                     const OrtNodeUnit& node_unit,
+                                     const OrtNodeUnitIODef& bias_def,
+                                     const TensorInfo& bias_info,
+                                     gsl::span<const float> weights_scales,
+                                     float activation_scale,
+                                     std::vector<std::string>& input_names) {
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+              ("Quantizing float bias " + bias_def.name + " using activation_scale * weight_scale[c]").c_str());
+  std::vector<uint8_t> original_bias_data;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, original_bias_data));
+  const size_t num_channels = bias_info.shape[0];
+  RETURN_IF_NOT(original_bias_data.size() == num_channels * sizeof(float),
+                "Unexpected bias data size for float bias quantization");
+  std::vector<uint8_t> new_bias_data;
+  std::vector<float> new_scales;
+  std::vector<int32_t> new_offsets;
+  RETURN_IF_ERROR(QuantizeFloatBiasTensor(
+      gsl::make_span<const float>(reinterpret_cast<const float*>(original_bias_data.data()), num_channels),
+      weights_scales, activation_scale, new_bias_data, new_scales, new_offsets));
+
+  constexpr int32_t bias_quant_axis = 0;
+  QnnQuantParamsWrapper new_quant_params = (new_scales.size() == 1)
+                                               ? QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0])
+                                               : QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);
+
+  const std::string q_bias_name = NodeUnitBaseName(node_unit) + "_bias_q";
+  return qnn_model_wrapper.AddStaticBiasTensor(q_bias_name, bias_info.shape, QNN_DATATYPE_SFIXED_POINT_32,
+                                               std::move(new_quant_params), std::move(new_bias_data), input_names);
+}
+
+Ort::Status ProcessBiasForQuantizedOp(QnnModelWrapper& qnn_model_wrapper,
+                                      const Ort::Logger& logger,
+                                      const OrtNodeUnit& node_unit,
+                                      const OrtNodeUnitIODef& bias_def,
+                                      const QnnQuantParamsWrapper& act_quant_param,
+                                      const QnnQuantParamsWrapper& weight_quant_param,
+                                      std::vector<std::string>& input_names,
+                                      bool& was_handled) {
+  was_handled = false;
+
+  TensorInfo bias_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(bias_def, bias_info));
+  std::string bias_name = NodeUnitBaseName(node_unit) + "_bias";
+
+  if (!bias_info.is_initializer) {
+    return Ort::Status();  // Non-initializer: caller handles normally.
+  }
+
+  if (!act_quant_param.IsQuantized() || !weight_quant_param.IsQuantized()) {
+    return Ort::Status();  // Not quantized: caller handles normally.
+  }
+
+  // Collapse bias [1, N] → [N]: Gemm might have bias as [1], [N] or [1, N];
+  // QNN Conv2D require rank-1 bias [1] or [N].
+  if (bias_info.shape.size() == 2 && bias_info.shape[0] == 1) {
+    bias_info.shape = {bias_info.shape[1]};
+    bias_name = NodeUnitBaseName(node_unit) + "_bias_1d";
+    // If Gemm bias is per channel quantized and it was collapsed from [1, N] to [N],
+    // Change the quantization axis from 1 to 0
+    if (bias_info.quant_param.IsQuantized()) {
+      std::vector<float> scales;
+      std::vector<int32_t> offsets;
+      int32_t quant_axis = 0;
+      RETURN_IF_ERROR(GetBiasQuantScalesAndOffsets(bias_info.quant_param, scales, offsets, quant_axis));
+      if (quant_axis != 0) {
+        bias_info.quant_param = (scales.size() == 1)
+                                    ? QnnQuantParamsWrapper::PerTensor(scales[0], offsets[0])
+                                    : QnnQuantParamsWrapper::PerChannel(scales, offsets, /*axis=*/0);
+      }
+    }
+  }
+  RETURN_IF_NOT(act_quant_param.IsPerTensor(/*include_bw*/ true),
+                "Activation must be per-tensor quantized for quantized-domain bias processing");
+  float activation_scale = 0.0f;
+  int32_t unused_activation_offset = 0;
+  RETURN_IF_ERROR(act_quant_param.GetPerTensorScaleOffset(activation_scale, unused_activation_offset));
+
+  std::vector<float> weights_scales;
+  RETURN_IF_ERROR(GetWeightQuantScales(weight_quant_param, weights_scales));
+  RETURN_IF(weights_scales.empty(), "No weight scales found for bias quantization");
+
+  if (bias_info.quant_param.IsQuantized()) {
+    bool was_requantized = false;
+    RETURN_IF_ERROR(RequantizeBiasIfNeeded(qnn_model_wrapper, logger, node_unit, bias_def, bias_info,
+                                           weights_scales, activation_scale, input_names,
+                                           was_requantized));
+    if (!was_requantized) {
+      // Scales already match, register the bias as is.
+      std::vector<uint8_t> bias_data;
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, bias_data));
+      RETURN_IF_ERROR(qnn_model_wrapper.AddStaticBiasTensor(bias_name, bias_info.shape, bias_info.qnn_data_type,
+                                                            bias_info.quant_param.Copy(), std::move(bias_data), input_names));
+    }
+    was_handled = true;
+    return Ort::Status();
+  } else {
+    // Float bias: quantize using activation_scale * weight_scale[c].
+    RETURN_IF_ERROR(QuantizeFloatBias(qnn_model_wrapper, logger, node_unit, bias_def, bias_info,
+                                      weights_scales, activation_scale, input_names));
+    was_handled = true;
+    return Ort::Status();
+  }
 }
 
 }  // namespace utils

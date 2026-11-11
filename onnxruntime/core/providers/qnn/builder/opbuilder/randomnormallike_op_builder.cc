@@ -137,33 +137,24 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
   TensorInfo output_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
 
-  // Determine if we need to use UFIXED_POINT_8 and add a dequantize node
+  // HTP supports FP16 output natively. Generate FP32 outputs in FP16 and
+  // cast them to FP32 instead of quantizing and clipping the distribution.
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  bool need_dequantize = is_npu_backend;
+  bool need_cast = is_npu_backend && output_info.qnn_data_type == QNN_DATATYPE_FLOAT_32;
 
-  if (need_dequantize) {
-    // Create an intermediate tensor with UFIXED_POINT_8 data type
-    const std::string intermediate_output_name = utils::UniqueNameGenerator().New(output_name, "_uint8");
-
-    // Calculate quantization parameters based on the expected range of the normal distribution.
-    // Use mean ± 3*scale (std_dev) to cover ~99.7% of values.
-    float quant_min = mean - 3.0f * scale;
-    float quant_max = mean + 3.0f * scale;
-    float quant_scale = 0.0f;
-    int32_t zero_point = 0;
-    RETURN_IF_ERROR(utils::GetQuantParams(quant_min, quant_max, QNN_DATATYPE_UFIXED_POINT_8, quant_scale, zero_point));
-    QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper::PerTensor(quant_scale, zero_point);
+  if (need_cast) {
+    const std::string intermediate_output_name = utils::UniqueNameGenerator().New(output_name, "_fp16");
 
     QnnTensorWrapper intermediate_output_wrapper(intermediate_output_name,
                                                  QNN_TENSOR_TYPE_NATIVE,
-                                                 QNN_DATATYPE_UFIXED_POINT_8,
-                                                 std::move(quantize_param),
+                                                 QNN_DATATYPE_FLOAT_16,
+                                                 QnnQuantParamsWrapper(),
                                                  std::vector<uint32_t>(output_info.shape));
 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(intermediate_output_wrapper)),
                   "Failed to add intermediate output tensor.");
 
-    // Create the RandomNormalLike node with uint8 output
+    // Create the RandomNormalLike node with native FP16 output
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                       utils::UniqueNameGenerator().New(node_unit),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
@@ -174,28 +165,18 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
                       do_op_validation),
                   "Failed to create RandomNormalLike node.");
 
-    // Create the final output tensor with the original data type
-    QnnTensorWrapper output_wrapper(output_name,
-                                    tensor_type,
-                                    output_info.qnn_data_type,
-                                    output_info.quant_param.Copy(),
-                                    std::vector<uint32_t>(output_info.shape));
-
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)),
-                  "Failed to add output tensor.");
-
-    // Create a Dequantize node to convert from uint8 to float32
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, "_dequantize"),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_DEQUANTIZE,
-                      {intermediate_output_name},
-                      {output_name},
-                      {},
-                      do_op_validation),
-                  "Failed to create Dequantize node.");
+    // Cast the native FP16 samples to the requested FP32 output type.
+    RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(
+        utils::UniqueNameGenerator().New(node_unit, "_cast"),
+        intermediate_output_name,
+        output_name,
+        tensor_type,
+        output_info.qnn_data_type,
+        output_info.quant_param.Copy(),
+        std::vector<uint32_t>(output_info.shape),
+        do_op_validation));
   } else {
-    // For non-NPU backends, use the original data type directly
+    // Use native FP16 or the fixed-point output encoding supplied by the QDQ selector.
     QnnTensorWrapper output_wrapper(output_name,
                                     tensor_type,
                                     output_info.qnn_data_type,

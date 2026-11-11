@@ -148,6 +148,37 @@ inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
          qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
 }
 
+// Returns true if the QNN data type is an 8-bit fixed-point quantized type.
+inline bool IsQuant8bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 ||
+         qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8;
+}
+
+// Returns true if the QNN data type is a 4-bit fixed-point quantized type.
+inline bool IsQuant4bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_4 ||
+         qnn_data_type == QNN_DATATYPE_SFIXED_POINT_4;
+}
+
+// Bit width (4, 8, 16) of a fixed-point QNN type, or 0 if not fixed-point.
+inline int FixedPointBitWidth(Qnn_DataType_t qnn_data_type) {
+  if (IsQuant4bit(qnn_data_type)) return 4;
+  if (IsQuant8bit(qnn_data_type)) return 8;
+  if (IsQuant16bit(qnn_data_type)) return 16;
+  return 0;
+}
+
+// True if `a` and `b` are a mismatched convertible (4/8/16-bit) fixed-point pair.
+inline bool NeedsPrecisionConvert(Qnn_DataType_t a, Qnn_DataType_t b) {
+  return a != b && FixedPointBitWidth(a) != 0 && FixedPointBitWidth(b) != 0;
+}
+
+inline bool IsNarrowingQuantOutput(Qnn_DataType_t activation_qnn_data_type, Qnn_DataType_t output_qnn_data_type) {
+  const int act_bitwidth = FixedPointBitWidth(activation_qnn_data_type);
+  const int output_bitwidth = FixedPointBitWidth(output_qnn_data_type);
+  return act_bitwidth != 0 && output_bitwidth != 0 && act_bitwidth > output_bitwidth;
+}
+
 // Name generator that produces unique QNN node names by appending a counter suffix,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
 class UniqueNameGeneratorImpl {
@@ -201,6 +232,17 @@ static Ort::Status InvertPerm(gsl::span<const IntType> perm, /*out*/ gsl::span<I
   return Ort::Status();
 }
 
+template <typename IntType>
+inline bool IsIdentityPerm(gsl::span<const IntType> perm) {
+  static_assert(std::is_integral<IntType>::value, "permutation arrays must contain integer elements");
+  for (size_t i = 0; i < perm.size(); ++i) {
+    if (perm[i] != static_cast<IntType>(i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Utility function that checks if an array of strings contains a specific string.
 // Used to validate ONNX operator attributes.
 template <size_t N>
@@ -212,6 +254,20 @@ static bool ArrayHasString(const std::array<std::string_view, N>& strings, std::
   }
 
   return false;
+}
+
+// Unary ops SimpleOpBuilder can Convert to a differing declared output precision.
+inline bool IsConvertCompatibleUnaryOp(std::string_view op_type) {
+  static constexpr std::array<std::string_view, 22> kOps = {
+      "Abs", "Asin", "Atan", "Ceil", "Cos", "Elu", "Exp", "Floor", "Gelu", "HardSigmoid", "HardSwish",
+      "LeakyRelu", "Log", "Neg", "Relu", "Round", "Sigmoid", "Sign", "Sin", "Softplus", "Sqrt", "Tanh"};
+  return ArrayHasString(kOps, op_type);
+}
+
+// Binary ops SimpleOpBuilder can Convert across a mismatched input or output precision.
+inline bool IsConvertCompatibleBinaryOp(std::string_view op_type) {
+  static constexpr std::array<std::string_view, 5> kOps = {"Add", "Div", "Mul", "Pow", "Sub"};
+  return ArrayHasString(kOps, op_type);
 }
 
 std::pair<float, float> CheckMinMax(float rmin, float rmax);
@@ -233,6 +289,12 @@ Ort::Status GetQminQmax(const Qnn_DataType_t qnn_data_type,
   } else if (qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
     qmin = static_cast<T>(std::numeric_limits<uint16_t>::min());
     qmax = static_cast<T>(std::numeric_limits<uint16_t>::max());
+  } else if (qnn_data_type == QNN_DATATYPE_SFIXED_POINT_4) {
+    qmin = static_cast<T>(-8 + static_cast<int32_t>(symmetric));
+    qmax = static_cast<T>(7);
+  } else if (qnn_data_type == QNN_DATATYPE_UFIXED_POINT_4) {
+    qmin = static_cast<T>(0);
+    qmax = static_cast<T>(15);
   } else if (qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32) {
     qmin = static_cast<T>(std::numeric_limits<int32_t>::min() + static_cast<int32_t>(symmetric));
     qmax = static_cast<T>(std::numeric_limits<int32_t>::max());
@@ -533,6 +595,55 @@ Ort::Status PermuteShape(gsl::span<const T> input_shape, gsl::span<const P> perm
   return Ort::Status();
 }
 
+// Workaround for a QNN HTP backend bug: a non-identity, shape-changing Transpose that only
+// moves dimensions of size 1 preserves the flat element order and is therefore equivalent to a
+// Reshape. HTP can silently miscompute such a Transpose (for example, [128, 1, 128] with perm
+// [1, 0, 2] returns the transposed data instead of the original order).
+//
+// The lowering is semantically valid on every QNN backend, so callers apply it unconditionally.
+// `output_shape` must equal the permuted input shape, and `perm` must be a valid permutation.
+// Zero-sized dimensions are rejected to keep empty tensors on the original Transpose path.
+// TODO: Remove this workaround and its call sites once the downstream QNN HTP bug is fixed.
+// https://github.com/onnxruntime/onnxruntime-qnn/issues/1020
+inline bool NeedsHtpTransposeReshapeWorkaround(gsl::span<const uint32_t> input_shape,
+                                               gsl::span<const uint32_t> perm,
+                                               gsl::span<const uint32_t> output_shape) {
+  const size_t rank = input_shape.size();
+  if (perm.size() != rank || output_shape.size() != rank || IsIdentityPerm(perm) ||
+      std::equal(input_shape.begin(), input_shape.end(), output_shape.begin())) {
+    return false;
+  }
+
+  std::vector<bool> seen_axis(rank, false);
+  bool has_previous_non_unit_axis = false;
+  uint32_t previous_non_unit_axis = 0;
+
+  for (size_t i = 0; i < rank; ++i) {
+    const uint32_t axis = perm[i];
+    if (axis >= rank || seen_axis[axis]) {
+      return false;
+    }
+    seen_axis[axis] = true;
+
+    const uint32_t dim = input_shape[axis];
+    if (dim == 0 || output_shape[i] != dim) {
+      return false;
+    }
+
+    // Moving size-1 dimensions does not change the flat element order. Non-unit dimensions must
+    // keep their relative order.
+    if (dim != 1) {
+      if (has_previous_non_unit_axis && axis < previous_non_unit_axis) {
+        return false;
+      }
+      previous_non_unit_axis = axis;
+      has_previous_non_unit_axis = true;
+    }
+  }
+
+  return true;
+}
+
 // Computes the broadcasted shape of two shapes following NumPy/ONNX broadcasting rules
 // (right-aligned dimensions; a dim of 1 broadcasts against any dim).
 template <typename T>
@@ -733,7 +844,8 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             float input_scale,
                             const std::vector<uint32_t>& output_shape,
                             bool output_symmetric,
-                            bool do_op_validation);
+                            bool do_op_validation,
+                            Qnn_TensorType_t output_tensor_type = QNN_TENSOR_TYPE_NATIVE);
 
 // Adds `output_name` and the op producing it. HTP Conv/MatMul/FullyConnected only emit their activation's
 // datatype, so a 16-bit activation with an 8-bit output is built as the op into a 16-bit intermediate
@@ -752,6 +864,13 @@ Ort::Status AddOpWithQuantizedOutput(QnnModelWrapper& qnn_model_wrapper,
                                      std::vector<uint32_t>&& output_shape,
                                      Qnn_DataType_t activation_qnn_data_type,
                                      bool do_op_validation);
+
+// Derives a `to_dtype` scale/offset that covers the same real-value range as `from_offset`/`from_scale`
+// (a `from_dtype` encoding), without building a Convert node. Shared by InsertConvertOp and the
+// mixed-precision bridge in mixed_precision_convert_utils.cc so the range-derivation math has one source.
+Ort::Status DeriveScaleOffsetForDtype(Qnn_DataType_t from_dtype, int32_t from_offset, float from_scale,
+                                      Qnn_DataType_t to_dtype, bool to_symmetric,
+                                      float& to_scale, int32_t& to_offset);
 
 /**
  * Get permutation to transpose given axis to the last one.
@@ -1009,6 +1128,20 @@ std::string PtrToString(const void* const ptr);
 Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
                                       gsl::span<const float> scales,
                                       std::vector<uint8_t>& fp16_bytes);
+
+// Processes a bias tensor for quantized ops (LPBQ Conv2D, etc.).
+// Handles: INT32 quantized (check/requantize if mismatch), float (quantize).
+// Sets was_handled=true if the bias was added to input_names.
+// Sets was_handled=false if the bias should be processed normally by the caller
+// (e.g., non-initializer, or activation/weight not quantized).
+Ort::Status ProcessBiasForQuantizedOp(QnnModelWrapper& qnn_model_wrapper,
+                                      const Ort::Logger& logger,
+                                      const OrtNodeUnit& node_unit,
+                                      const OrtNodeUnitIODef& bias_def,
+                                      const QnnQuantParamsWrapper& act_quant_param,
+                                      const QnnQuantParamsWrapper& weight_quant_param,
+                                      std::vector<std::string>& input_names,
+                                      bool& was_handled);
 
 }  // namespace utils
 }  // namespace qnn

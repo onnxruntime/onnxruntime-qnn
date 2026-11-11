@@ -3,8 +3,10 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #ifdef _WIN32
@@ -26,8 +28,14 @@
 
 #include "gtest/gtest.h"
 #include "onnxruntime_cxx_api.h"
+#include "onnxruntime_env_config_keys.h"
 
 #include "test/util/env_var_utils.h"
+
+#if defined(USE_QNN) && QNN_EP_INTERNAL_SYMBOL_ACCESS && \
+    defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__) && !defined(ORT_MINIMAL_BUILD)
+#include "test/providers/qnn/integration/qnn_test_utils.h"
+#endif
 
 std::unique_ptr<Ort::Env> ort_env;
 
@@ -56,7 +64,22 @@ extern "C" void ortenv_setup() {
     }
 
     Ort::ThreadingOptions tpo;
+#if defined(USE_QNN) && !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
+    // x86/x64 QNN HTP tests use the simulator and therefore have no physical NPU for ORT to discover.
+    // Explicitly opt the test environment into the compile-only virtual NPU advertised by the QNN EP.
+    Ort::KeyValuePairs env_configs;
+    env_configs.Add(kOrtEnvAllowVirtualDevices, "1");
+
+    OrtEnvCreationOptions env_options{};
+    env_options.version = ORT_API_VERSION;
+    env_options.logging_severity_level = log_level;
+    env_options.log_id = "Default";
+    env_options.threading_options = tpo;
+    env_options.config_entries = env_configs.GetConst();
+    ort_env.reset(new Ort::Env(&env_options));
+#else
     ort_env.reset(new Ort::Env(tpo, log_level, "Default"));
+#endif
   } catch (const std::exception& ex) {
     std::cerr << ex.what();
     std::exit(1);
@@ -91,11 +114,33 @@ int TEST_MAIN(int argc, char** argv) {
   _putenv_s("ORT_QNN_ENABLE_CPU_BACKEND", "1");
 #else
   setenv("ORT_QNN_ENABLE_CPU_BACKEND", "1", /*overwrite*/ 1);
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+  // QNN's Linux HTP runtime resolves its DSP skel through this process-global
+  // path. Provider tests run with their packaged QNN libraries as the working
+  // directory, so establish that known-good path before any test can load an
+  // intentionally invalid backend path.
+  if (std::getenv("ADSP_LIBRARY_PATH") == nullptr) {
+    const auto qnn_lib_dir = std::filesystem::current_path().string();
+    setenv("ADSP_LIBRARY_PATH", qnn_lib_dir.c_str(), /*overwrite*/ 0);
+  }
+#endif
 #endif
 #endif  // USE_QNN
 
   try {
     ortenv_setup();
+#if defined(USE_QNN) && QNN_EP_INTERNAL_SYMBOL_ACCESS && \
+    defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__) && !defined(ORT_MINIMAL_BUILD)
+    {
+      // Initialize QNN's existing logger through the shared Integration test helper.
+      // Scope cleanup leaves EP registration under each test's control.
+      const onnxruntime::test::RegisteredQnnEp qnn_ep{"qnn_test_init"};
+      if (!qnn_ep.valid) {
+        throw std::runtime_error("QNN EP registration failed during internal-symbol test setup: " +
+                                 qnn_ep.error_message);
+      }
+    }
+#endif
     ::testing::InitGoogleTest(&argc, argv);
 
     {

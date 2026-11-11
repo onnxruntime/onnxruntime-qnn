@@ -17,6 +17,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Configuration Options](#configuration-options)
 - [Flexible Context Binary (FCB) / multi-SoC EP context](#flexible-context-binary-fcb--multi-soc-ep-context)
 - [Supported ONNX operators](#supported-onnx-operators)
+- [QTI AISW block operators](#qti-aisw-block-operators)
 - [Running a model with QNN EP's HTP backend (Python)](#running-a-model-with-qnn-eps-htp-backend-python)
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
 - [Running an LLM model with QNN EP's Genie backend](#running-an-llm-model-with-qnn-eps-genie-backend)
@@ -43,11 +44,9 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.7.40        | v2.51.40          | v1.29.0              |
+| v2.8.0         | v2.52.0           | v1.29.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.7.40 was built for WinML with QAIRT 2.51.40 and is available only through WinML channels. 
-> **Note**: For mainline release of ORT QNN EP please use 2.7.0 which was built with QAIRT 2.51.0.
-> **Note**: ONNX Runtime QNN EP 2.7.0 and 2.7.40 were built and tested with ORT 1.29.0 but are compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.8.0 was built and tested with ORT 1.29.0 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
@@ -73,8 +72,8 @@ For build instructions, please see the [BUILD page](./build.md).
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
     | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.29.0` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.51.0` |
-  - **Version note:** QNN EP v2.7.0 was built and tested with QAIRT SDK 2.51.0; the public Android Maven runtime artifact is versioned `2.51.0`.
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.52.0` |
+  - **Version note:** QNN EP v2.8.0 was built and tested with QAIRT SDK 2.52.0; the public Android Maven runtime artifact is versioned `2.52.0`.
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
@@ -242,13 +241,20 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 
 |`"enable_block_quant_weight_optimization"`|Description|
 |---|---|
-|`"0"`|Default. Disabled. Block-quantized models use the standard compatibility path.|
-|`"1"`|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
+|'0'|Default. Disabled. Block-quantized models use the standard compatibility path.|
+|'1'|Enabled. Uses an optimized path for block-quantized weights when supported. If the optimized path is not available, QNN EP falls back to the standard compatibility path.|
+
+|`"use_native_matmul"`|Description|
+|---|---|
+|`"0"`|Default. MatMul, Gemm, and QLinearMatMul operators are translated to QNN FullyConnected (weight transposed from [K,N] to [N,K] at session creation time).|
+|`"1"`|Enabled. MatMul, Gemm, and QLinearMatMul operators are lowered to native QNN MatMul, eliminating host-side weight transposition. Reduces session creation time and peak host memory for large GenAI/MoE models.|
 
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
-|'1'|Enable the QNN HTP shared memory allocator. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
+|'1'|Enable QNN HTP shared-memory binding for this session. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
+
+For `onnxruntime_perf_test`, to use HTP shared-memory zero-copy, enable `enable_htp_shared_memory_allocator=1` and select a single QNN NPU device with `--select_ep_devices 1` (replace `1` with the appropriate device index).
 
 |`"enable_dx12_shared_memory_allocator"`|Description|
 |---|---|
@@ -745,15 +751,28 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
-|com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
-|com.microsoft:GroupQueryAttention|GPU and HTP backends (float precision); GPU support requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP support requires QAIRT SDK ≥ 2.49|
+|com.microsoft:GatherBlockQuantized|GPU backend only; weights/scales must have rank > 1; indices may be scalar or have rank < 4; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis must resolve to the trailing axis (`-1` is supported); symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
+|com.microsoft:GroupQueryAttention|GPU and HTP backends (float precision); GPU support requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP support requires QAIRT SDK ≥ 2.49. On HTP, GQA may run slower than on CPU and may exhibit accuracy deviations on certain models.|
 |com.microsoft:MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:RMSNormalization||
 |com.microsoft:QuickGelu||
 |com.microsoft:SimplifiedLayerNormalization||
+|qti_aisw:Buffer|QTI AISW block op. See [QTI AISW block operators](#qti-aisw-block-operators).|
+|qti_aisw:StatefulGru|QTI AISW block op. See [QTI AISW block operators](#qti-aisw-block-operators).|
+|qti_aisw:StatefulLstm|QTI AISW block op. See [QTI AISW block operators](#qti-aisw-block-operators).|
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
+
+### QTI AISW block operators
+
+QNN EP also supports the following Qualcomm block operators in the `qti_aisw` domain. Their definitions are distinct from standard ONNX operators. Please refer to [this page](https://docs.qualcomm.com/doc/80-63442-10/topic/blockop_definitions.html) for Qualcomm's Block-op definitions.
+
+|Operator|Inputs|Outputs|Attributes|
+|---|---|---|---|
+|`qti_aisw:Buffer`|- `data` (rank N)<br>- Optional scalar-BOOL `reset`|- `out`: same rank and type as `data`, with dimension `buffer_dim` set to `buffer_size`|- Required: `buffer_size`, `buffer_dim`.<br>- Optional: `buffer_padding=0`, `stride=1`, `mode=0` (`BLOCKING`)<br>- HTP backend requires `mode=1` (`NON_BLOCKING_LEFT`) or `mode=2` (`NON_BLOCKING_RIGHT`).|
+|`qti_aisw:StatefulGru`|- `X [seq, batch, input]`<br>- `W [directions, 3×hidden, input]`<br>- `R [directions, 3×hidden, hidden]`<br>- Optional `B [directions, 6×hidden]`<br>- Optional `sequence_lens [batch]`<br>- Optional `initial_h [directions, batch, hidden]`<br>- Optional scalar-BOOL `reset`|- Optional `Y [seq, directions, batch, hidden]`<br>- Optional `Y_h [directions, batch, hidden]`|- Required: `hidden_size`.<br>- Optional: `clip`, `direction=forward`, `linear_before_reset=0`.<br>- The QTI AISW Block-op definition does not define standard ONNX `activations` or `layout` attributes; its signature is sequence-major.|
+|`qti_aisw:StatefulLstm`|- `X [seq, batch, input]`<br>- `W [directions, 4×hidden, input]`<br>- `R [directions, 4×hidden, hidden]`<br>- Optional `B [directions, 8×hidden]`<br>- Optional `sequence_lens [batch]`<br>- Optional `initial_h [directions, batch, hidden]`<br>- Optional `initial_c [directions, batch, hidden]`<br>- Optional `P [directions, 3×hidden]`<br>- Optional scalar-BOOL `reset`|- Optional `Y [seq, directions, batch, hidden]`<br>- Optional `Y_h [directions, batch, hidden]`<br>- Optional `Y_c [directions, batch, hidden]`|- Required: `hidden_size`.<br>- Optional: `clip`, `direction=forward`, `input_forget=0`.<br>- The QTI AISW Block-op definition does not define standard ONNX `activations` or `layout` attributes; its signature is sequence-major.|
 
 ## Supported operator fusions
 
@@ -786,6 +805,8 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `ReduceMean → Sub → Pow(2) → ReduceMean → Add(ε) → Sqrt → Div → Mul(γ) → Add(β)` | `QNN_OP_LAYER_NORM` | Matches the manual LayerNorm decomposition. Gamma and beta must be constants. |
 | `Mul(scalar constant) → Softmax` | `QNN_OP_SOFTMAX` | The scalar multiplier is folded into the beta parameter of QNN's Softmax. |
 | `ReduceL2 → Add(ε) → Div(x, .)` | `QNN_OP_L2_NORM` | Avoids fp16 overflow in the ReduceL2→Sqrt decomposition by using HTP's native L2Norm kernel. Epsilon must be a constant scalar. |
+| `SequenceConstruct(t₀..tₙ₋₁) → SequenceAt(seq, pos)` | `QNN_OP_RESHAPE × N + QNN_OP_CONCAT + QNN_OP_GATHER` | Requires homogeneous element shapes. String/complex element types fall back to CPU EP. Negative `position` values are normalized at compile time (static) or via `QNN_OP_ELEMENT_WISE_ADD + QNN_OP_ELEMENT_WISE_SELECT` (dynamic). |
+| `SequenceConstruct(t₀..tₙ₋₁) → SequenceLength(seq)` | `QNN_OP_REDUCE_SUM × N + QNN_OP_ELEMENT_WISE_ADD × (N-1) + QNN_OP_RESHAPE + QNN_OP_ELEMENT_WISE_MULTIPLY + QNN_OP_CAST + QNN_OP_ELEMENT_WISE_ADD` | N is known at compile time. Each element is consumed by a `ReduceSum` (→ `{1,...,1}`) to ensure the HTP's graph connectivity requirement. FP32 and FP16 only; other dtypes, heterogeneous shapes, scalar elements, and symbolic dimensions fall back to CPU EP. |
 | `Reshape(ND→2D) → Gemm` | `QNN_OP_FULLY_CONNECTED` | Input Reshape must not be shared; Gemm: transA=0, transB=0, alpha=1, beta=1; weight must be a constant; input rank ≤ 4. CPU and HTP backends only. |
 | `Reshape(ND→2D) → Gemm → Reshape(2D→MD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 3-node variant; quantized weights supported. |
 | `Reshape(ND→2D) → Gemm → Reshape(2D→MD) → Reshape(MD→PD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 4-node variant; two consecutive output Reshapes. |
@@ -800,7 +821,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `Reshape(5D→6D) → Transpose → Reshape(6D→5D)` (unit dim) | `QNN_OP_RESHAPE + QNN_OP_TRANSPOSE` | Unit dimension must appear at the same index in the rank-6 intermediate. Does not apply to SpaceToDepth decompositions. |
 | `Gather(rank-5, axis=4) → Transpose → Reshape` | Multi-node QNN subgraph | Constant rank-2 indices (row-major or column-major). |
 | `Transpose → Reshape → Transpose` | `QNN_OP_RESHAPE` | Fires when the combined transformation reduces to a pure reshape (dimension-merging only, no reordering). Intermediate QDQ nodes are permitted. |
-| `Reshape → [Q → DQ]? → Transpose` | `QNN_OP_TRANSPOSE` or noop `QNN_OP_RESHAPE` | Fires when Reshape is equivalent to a permutation (same rank, non-1 dims in same relative order). Composes the reshape-implied perm with the Transpose perm; emits identity Reshape if composed perm is identity, or a single Transpose otherwise. |
+| `Reshape → [Q → DQ]? → Transpose` | `QNN_OP_TRANSPOSE` or `QNN_OP_RESHAPE` | Fires when Reshape is equivalent to a permutation (same rank, non-1 dims in same relative order). Composes the reshape-implied perm with the Transpose perm; emits a noop Reshape if the composed perm is identity, a Reshape if it only moves size-1 dimensions and changes shape, or a single Transpose otherwise. |
 
 ### Miscellaneous fusions
 

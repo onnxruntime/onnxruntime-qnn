@@ -1,3 +1,62 @@
+# ONNX Runtime QNN Execution Provider v2.8.0
+
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.29.0)<br>
+**QAIRT SDK Compatibility:** 2.52.0
+
+```
+pip install onnxruntime==1.29.0
+pip install onnxruntime-qnn==2.8.0
+```
+
+## New Ops and Fusions
+
+- **QTI AISW block operators** — Added plugin plumbing and op support for QTI AISW block operators. ([#910](https://github.com/onnxruntime/onnxruntime-qnn/pull/910), [#911](https://github.com/onnxruntime/onnxruntime-qnn/pull/911))
+- **Flatten-led Gemm fusions** — Fuses supported Flatten-led Gemm patterns and emits warnings for unsupported groups. ([#905](https://github.com/onnxruntime/onnxruntime-qnn/pull/905))
+- **SpaceToDepth stem fusion** — Adds QDQ-aware strided Slice+Concat stem fusion for SpaceToDepth. ([#820](https://github.com/onnxruntime/onnxruntime-qnn/pull/820))
+
+For the full list of supported operators, see [Supported ONNX Operators](execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators) and for supported fusions, see [Supported Operator Fusions](execution_providers/QNN-ExecutionProvider.md#supported-operator-fusions).
+
+## Improvements
+
+- **Multi-core NPU support** — Adds QNN EP support for multi-core NPU execution. ([#790](https://github.com/onnxruntime/onnxruntime-qnn/pull/790))
+- **ORT profiling timeline support** — Adds ORT profiling timeline integration for QNN EP events. ([#767](https://github.com/onnxruntime/onnxruntime-qnn/pull/767))
+- **Cross-device preparation on WoS** — Enables preparing QNN contexts on one Windows-on-Snapdragon device and running on another. ([#771](https://github.com/onnxruntime/onnxruntime-qnn/pull/771))
+- **SoC model to HTP architecture mapping** — Adds SoC model mapping to select the corresponding HTP architecture. ([#830](https://github.com/onnxruntime/onnxruntime-qnn/pull/830))
+- **Faster compiled-model session initialization** — Reuses the backend created during compatibility validation when loading EPContext models, avoiding a duplicate backend setup. ([#1006](https://github.com/onnxruntime/onnxruntime-qnn/pull/1006))
+- **Compiled-model encryption sample apps** — Wires the prepare and run encryption sample apps into the build. ([#799](https://github.com/onnxruntime/onnxruntime-qnn/pull/799))
+- **UDO reference sample scripts** — Adds reference scripts for building and using UDO packages. ([#757](https://github.com/onnxruntime/onnxruntime-qnn/pull/757))
+
+## Op Translation Fixes
+
+- **Slice** — Handles safe zero-sized Slice outputs used by Slice-to-Concat patterns and validates initializer lengths before indexing. ([#875](https://github.com/onnxruntime/onnxruntime-qnn/pull/875))
+- **Dynamic uint16 MatMul** — Gates dynamic uint16 MatMul conversion and increases the accepted U16-to-U8 quantization-error threshold to 15%. ([#793](https://github.com/onnxruntime/onnxruntime-qnn/pull/793), [#1030](https://github.com/onnxruntime/onnxruntime-qnn/pull/1030))
+- **MatMulNBits** — Fixes padded zero-point handling. ([#856](https://github.com/onnxruntime/onnxruntime-qnn/pull/856))
+- **Gemm absorbed-Reshape path** — Rejects dynamic bias in the absorbed Reshape to FullyConnected path instead of generating an invalid graph. ([#860](https://github.com/onnxruntime/onnxruntime-qnn/pull/860))
+- **GRU with dynamic input shapes** — Rejects unsupported dynamic-shape GRU nodes during partitioning so they fall back to CPU instead of failing during QNN graph finalization. ([#872](https://github.com/onnxruntime/onnxruntime-qnn/pull/872))
+- **RMSNormalization** — Decomposes broadcast-scale RMSNormalization as native RMSNorm plus scale for unsupported broadcast-scale cases. ([#854](https://github.com/onnxruntime/onnxruntime-qnn/pull/854))
+- **InstanceNormalization** — Supports rank-5 InstanceNormalization by flattening to rank 4. ([#897](https://github.com/onnxruntime/onnxruntime-qnn/pull/897))
+- **ScaleSoftmax** — Restricts the fusion to the last axis. ([#899](https://github.com/onnxruntime/onnxruntime-qnn/pull/899))
+- **HardSigmoidMul fusion** — Fixes missing reversed Mul input ordering. ([#535](https://github.com/onnxruntime/onnxruntime-qnn/pull/535))
+
+## Bug Fixes
+
+- **SSR graph execute with EP context weight sharing** — Fixes and re-enables the SSRGraphExecuteEpContextWeightSharing test path. ([#732](https://github.com/onnxruntime/onnxruntime-qnn/pull/732))
+- **Shared context singleton lifetime** — Fixes a stale SharedContext singleton leak. ([#822](https://github.com/onnxruntime/onnxruntime-qnn/pull/822))
+- **Tensor and permutation validation** — Validates tensor indices during setup and ChannelShuffle permutations during translation. ([#913](https://github.com/onnxruntime/onnxruntime-qnn/pull/913), [#915](https://github.com/onnxruntime/onnxruntime-qnn/pull/915))
+- **Android and Windows build fixes** — Fixes Android builds when `JAVA_HOME` points to JDK < 17 and fixes a Windows ARM64 debug unreachable-code warning. ([#814](https://github.com/onnxruntime/onnxruntime-qnn/pull/814), [#884](https://github.com/onnxruntime/onnxruntime-qnn/pull/884))
+
+**Full Changelog:** [rel-2.7.0...rel-2.8.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.7.0...rel-2.8.0)
+
+## Contributors
+
+This release includes contributions from:
+
+[Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [chunghow-qti](https://github.com/chunghow-qti), [Calvin Nguyen](https://github.com/quic-calvnguy), [Chun-Chih Teng](https://github.com/qti-chuteng), [Hua-Yu Chou](https://github.com/huaychou), [Hung-Jui Wang](https://github.com/qti-hungjuiw), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Matthew Sinclair](https://github.com/qti-mattsinc), [Min Fong Hong](https://github.com/minfhong-qti), [Nischay Mamidi](https://github.com/qti-niscmami), [Pranjal Singh Thakur](https://github.com/pratha-qti), [Shubham Patel](https://github.com/qti-shubham), [Tirupathi Reddy T](https://github.com/tirupath-qti), [Tzu-Hsuan Wei](https://github.com/tzuhsuanwei), [Yu-Hung Chuang](https://github.com/yuhuchua-qti), [Yuduo Wu](https://github.com/qti-yuduo)
+
+---
+
+---
+
 # ONNX Runtime QNN Execution Provider v2.7.40
 
 **ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.29.0)<br>

@@ -31,7 +31,7 @@
 #include "QnnLog.h"
 #include "QnnTypes.h"
 
-#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && !BUILD_QNN_EP_STATIC_LIB
 #include <d3d12.h>
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
@@ -40,6 +40,8 @@ using Microsoft::WRL::ComPtr;
 namespace onnxruntime {
 namespace test {
 constexpr const char* kOnnxDomain = "";
+// ONNX domain used by the QNN block-op test models.
+constexpr const char* kQtiAiswDomain = "qti_aisw";
 constexpr const char* kQnnExecutionProvider = "QNNExecutionProvider";
 constexpr const char* kCpuExecutionProvider = "CPUExecutionProvider";
 
@@ -898,6 +900,40 @@ void InferenceModel(const std::string& model_data,
                     std::function<void(const Ort::Session&)>* graph_checker = nullptr,
                     Ort::CustomOpDomain* custom_op_domain = nullptr);
 
+// Creates a session with the QNN EP for the given serialized model and verifies node-to-EP
+// assignment, WITHOUT running inference. Use for the qti_aisw block ops (Buffer / StatefulLstm /
+// StatefulGru), which have no CPU kernel (so there is no meaningful reference to compare against)
+// and whose graphs compile on the QNN HTP backend but require real NPU hardware to finalize/run.
+// The QNN EP factory supplies the qti_aisw placeholder schema, so the model loads even though
+// these ops have no registered ONNX schema.
+void VerifyQnnEpModelAssignment(const std::string& model_data,
+                                const char* log_id,
+                                const ProviderOptions& provider_options,
+                                ExpectedEPNodeAssignment expected_ep_assignment,
+                                OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR);
+
+// Runs a stateful QNN model in one session. With a reset input it runs true, false, true and
+// verifies that reset restores the initial state. Without one it runs twice and verifies that the
+// BlockOp default reset=false retains state. The model must have an output sensitive to retained
+// state. Pass nullptr for reset_input_name when the model omits the optional reset input.
+void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
+                                    const char* log_id,
+                                    const ProviderOptions& provider_options,
+                                    int opset,
+                                    const char* reset_input_name);
+
+// Compares a stateful QNN RNN against an equivalent standard ONNX RNN on CPU. It runs the
+// stateful model with reset=true, then with reset=false, and feeds the first QNN state outputs
+// into the standard model for the second reference inference.
+void VerifyQnnStatefulRnnNumerics(const GetTestModelFn& build_stateful_case,
+                                  const GetTestModelFn& build_reference_case,
+                                  const char* log_id,
+                                  const ProviderOptions& provider_options,
+                                  int opset,
+                                  const char* reset_input_name,
+                                  const std::vector<std::string>& reference_state_input_names,
+                                  float abs_tolerance);
+
 /**
  * If the ORT_UNIT_TEST_ENABLE_QNN_SAVER environment variable is enabled (set to 1), this function modifies
  * the QNN EP provider options to enable the QNN Saver backend, which dumps QNN API calls (and weights) to disk.
@@ -1172,8 +1208,11 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                                  std::function<void(const Ort::Session&)>* qnn_ep_graph_checker = nullptr,
-                                 Ort::CustomOpDomain* custom_op_domain = nullptr) {
-  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
+                                 Ort::CustomOpDomain* custom_op_domain = nullptr,
+                                 bool skip_v68_qdq = true) {
+  if (skip_v68_qdq) {
+    CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
+  }
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -1273,7 +1312,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   TryEnableQNNSaver(qnn_options);
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   qnn_options["num_graph_prepare_threads"] = "1";
@@ -1525,7 +1564,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   qnn_options["num_graph_prepare_threads"] = "1";
@@ -1634,7 +1673,7 @@ inline void MakeTestInput(ModelTestBuilder& builder,
 //
 // i.e., initial bias => manual quantization (int32) => DQ => final float bias
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder, const std::string& name, const TestInputDef<float>& bias_def, float bias_scale,
-                                 bool use_contrib_qdq = false);
+                                 bool use_contrib_qdq = false, int32_t bias_zero_point = 0);
 
 /**
  * Returns a function that builds a model with a single operator with N inputs type InputType1 and M inputs
@@ -1959,8 +1998,11 @@ class QnnHTPBackendTests : public ::testing::Test {
 #endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
   }
 
+  // Initializes and caches QNN HTP platform attributes without requiring this test fixture's SetUp().
+  static Ort::Status EnsurePlatformAttributes(const Ort::Logger& logger);
+
   // Query QNN platform attributes by directly calling QNN APIs
-  Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
+  static Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
 
   static std::optional<QnnHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.
   static BackendSupport cached_htp_support_;                                               // Set by the first test using this fixture.
@@ -2137,11 +2179,11 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   } while (0)
 #endif
 
-// Skips the test on every platform EXCEPT native ARM64 Windows.
+// Skips the test on every platform EXCEPT ARM64/ARM64EC Windows.
 // The Genie execution pathway in the QNN EP is only available on ARM64 Windows
-// (_WIN32 + _M_ARM64 or __aarch64__). All other platforms must skip.
+// (_WIN32 + _M_ARM64, _M_ARM64EC, or __aarch64__). All other platforms must skip.
 // Uses AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after the skip.
-#if !defined(_WIN32) || (!defined(__aarch64__) && !defined(_M_ARM64))
+#if !defined(_WIN32) || (!defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC))
 #define QNN_SKIP_TEST_ON_NON_ARM64_WINDOWS(reason) \
   if (::testing::internal::AlwaysTrue()) {         \
     GTEST_SKIP() << (reason);                      \
@@ -2161,7 +2203,7 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
       static_assert(true, "");                                                                         \
   }
 
-#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && !BUILD_QNN_EP_STATIC_LIB
 
 inline HRESULT CreateD3D12Buffer(
     ID3D12Device* device,
@@ -2198,11 +2240,11 @@ inline HRESULT CreateD3D12Buffer(
 #endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
 
 // Cross device prepare is available on WoS starting from QAIRT 2.51 (QNN API 2.40).
-#if defined(_WIN32) && defined(_M_ARM64)
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 #if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
 #define QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
 #endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
-#endif  // defined(_WIN32) && defined(_M_ARM64)
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 }  // namespace test
 }  // namespace onnxruntime

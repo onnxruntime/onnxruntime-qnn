@@ -11,7 +11,7 @@
 
 namespace onnxruntime {
 namespace test {
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Runs a non-QDQ model on HTP and compares output to CPU EP.
 template <typename SignalType = float, typename StepType = int64_t>
@@ -173,7 +173,7 @@ TEST_F(QnnHTPBackendTests, StftOp_Float_Rank2Signal) {
       ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 
