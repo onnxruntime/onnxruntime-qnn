@@ -30,7 +30,9 @@ std::string CheckPad(const std::vector<int64_t>& input_shape, const std::vector<
     MockInitSpec spec;
     spec.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64;
     spec.dims = {static_cast<int64_t>(pads.size())};
-    spec.raw_bytes.resize(pads.size() * sizeof(int64_t));
+    // The registry's GetTensorData stub requires backing storage even for a zero-element tensor.
+    // Keep dims == {0} for empty pads so unpacking still produces an empty vector and reaches the guard.
+    spec.raw_bytes.resize(pads.empty() ? sizeof(int64_t) : pads.size() * sizeof(int64_t));
     if (!pads.empty()) {
       std::memcpy(spec.raw_bytes.data(), pads.data(), spec.raw_bytes.size());
     }
@@ -57,10 +59,10 @@ TEST(QnnUnit_Pad_ComponentTest, InvalidPadsLength_RejectsAttributeAndInitializer
       for (const std::string mode : {"constant", "reflect", "edge"}) {
         for (const std::vector<int64_t> pads : {std::vector<int64_t>{}, {1}, {1, 0, 0}, {-1, 0, 0}, {1, 0, 0, 0, 0}, {1, 0, 0, 0, 0, 0}}) {
           SCOPED_TRACE("initializer=" + std::to_string(initializer) + " validate=" + std::to_string(validate) +
-                       " mode=" + mode + " length=" + std::to_string(pads.size()));
+                       " mode=" + mode + " pads=" + ::testing::PrintToString(pads));
           auto error = CheckPad({4, 4}, pads, mode, initializer, validate);
           ASSERT_FALSE(error.empty());
-          EXPECT_NE(error.find("twice the rank of input 0"), std::string::npos);
+          EXPECT_NE(error.find("twice the rank of input 0"), std::string::npos) << error;
         }
       }
     }
