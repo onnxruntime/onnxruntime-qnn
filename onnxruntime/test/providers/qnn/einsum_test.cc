@@ -666,8 +666,8 @@ TEST_F(QnnGPUBackendTests, DISABLED_EinsumMatMulBroadcastTransposeY) {
       /*tolerance=*/1e-4f);
 }
 
-// TODO: Re-enable. Failed on QAIRT 3.36.1.
-TEST_F(QnnGPUBackendTests, DISABLED_EinsumReduceSumMulBroadcastX) {
+// Regression test for reduce-sum/multiply Einsum with broadcast on the GPU backend.
+TEST_F(QnnGPUBackendTests, EinsumReduceSumMulBroadcastX) {
   const std::vector<int64_t> shape0{1, 3, 2, 4};
   const std::vector<int64_t> shape1{2, 3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
