@@ -1675,6 +1675,10 @@ python tools/python/gen_qnn_ctx_onnx_model.py --qnn_bin qnn_ctx.bin
 
 Use `--qnn_context_binary_utility /path/to/qnn-context-binary-utility` when the utility is not on `PATH`. On Windows, use the `.exe` from the QAIRT `bin/x86_64-windows-msvc` directory; on Linux, use the executable from `bin/x86_64-linux-clang`. The existing `--qnn_json` option remains available for pre-generated converter or context-binary metadata. The script creates multiple `model_x_ctx.onnx` files, each containing an `EPContext` node for a different QNN graph in the shared context binary.
 
+Context metadata creates one `<graph>_qnn_ctx_fp32_io.onnx` model per graph in the current directory, or `<graph>_qnn_ctx.onnx` with `--quantized_IO`. Converter JSON creates `<json-stem>_qnn_ctx.onnx` beside the JSON file. The wrappers preserve the QNN tensor layout; no layout conversion is performed. Float I/O supports scalar scale-offset quantization for 8-bit and 16-bit fixed-point tensors. Use `--quantized_IO` to retain native tensor types for other quantization encodings.
+
+The default embeds the binary in each wrapper. With `--disable_embed_mode`, the wrapper references a path relative to its own directory. If the binary is outside that directory, the script copies it beside the wrapper and refuses to overwrite an existing binary with different contents. Keep the referenced binary with the wrappers when deploying them.
+
 
 ## Usage
 
