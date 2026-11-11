@@ -2,16 +2,23 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 #
-# Drives the full prepare_app -> run_app round trip and reports PASS/FAIL.
+# Drives the prepare_app -> run_app round trip and reports PASS/FAIL.
 #
 # Runs prepare_app (compile + encrypt, dumps answer_prepare.raw from the
 # plaintext model) then run_app (decrypt + run, dumps answer_run.raw from the
 # decrypted context model), then compares the two answer files itself.
 #
-# Usage:
-#   python encryption_test.py <prepare_app.exe> <run_app.exe> <input_model.onnx>
+# Same-machine usage (both exes installed locally):
+#   python encryption_test.py roundtrip <prepare_app.exe> <run_app.exe> <input_model.onnx>
 #                              <input.raw> [--xor-key 5a] [--tol 1e-3]
 #                              [--workdir DIR] [--htp-arch ARCH]
+#
+# Cross-device usage (prepare_app and run_app run on different machines):
+#   python encryption_test.py prepare <prepare_app.exe> <input_model.onnx> <input.raw>
+#                              [--xor-key 5a] [--workdir DIR] [--htp-arch ARCH]
+#   python encryption_test.py run <run_app.exe> <ctx_model> <cipher_bin>
+#                              <input.raw> [--xor-key 5a] [--workdir DIR]
+#   python encryption_test.py compare <answer_prepare.raw> <answer_run.raw> [--tol 1e-3]
 
 import argparse
 import subprocess
@@ -76,49 +83,104 @@ def compare_raw(path_a, path_b, tol):
     return True
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("prepare_app", help="path to prepare_app(.exe)")
-    parser.add_argument("run_app", help="path to run_app(.exe)")
-    parser.add_argument("input_model", help="ONNX model prepare_app compiles (e.g. a QDQ model)")
-    parser.add_argument("input_raw", help="float32 .raw input fed to both the plaintext and decrypted model")
-    parser.add_argument("--xor-key", default=DEFAULT_XOR_KEY, help="1-byte XOR key in hex (default 5a)")
-    parser.add_argument("--tol", type=float, default=DEFAULT_ABS_TOL, help="max allowed abs diff")
-    parser.add_argument("--workdir", default=".", help="directory for intermediate/output files")
-    parser.add_argument("--htp-arch", default=None, help="optional target HTP arch passed to prepare_app")
-    args = parser.parse_args()
-
+def do_prepare(args):
     workdir = Path(args.workdir)
     workdir.mkdir(parents=True, exist_ok=True)
 
-    ctx_model = workdir / "enc_ctx.onnx"
-    cipher_bin = workdir / "enc_cipher.bin"
-    answer_prepare = workdir / "answer_prepare.raw"
-    answer_run = workdir / "answer_run.raw"
+    args.ctx_model = str(workdir / "enc_ctx.onnx")
+    args.cipher_bin = str(workdir / "enc_cipher.bin")
+    args.answer_prepare = str(workdir / "answer_prepare.raw")
 
     prepare_cmd = [
         args.prepare_app,
         args.input_model,
-        str(ctx_model),
-        str(cipher_bin),
+        args.ctx_model,
+        args.cipher_bin,
         args.xor_key,
         args.input_raw,
-        str(answer_prepare),
+        args.answer_prepare,
     ]
     if args.htp_arch:
         prepare_cmd.append(args.htp_arch)
     if not run_app(prepare_cmd, "prepare_app"):
         return 1
 
-    run_cmd = [args.run_app, str(ctx_model), str(cipher_bin), args.xor_key, args.input_raw, str(answer_run)]
-    if not run_app(run_cmd, "run_app"):
-        return 1
-
-    if not compare_raw(answer_prepare, answer_run, args.tol):
-        return 1
-
+    print("[encryption_test] prepare done. Copy these to the run device's workdir:")
+    print(f"  {args.ctx_model}")
+    print(f"  {args.cipher_bin}")
+    print(f"  {args.input_raw} (as input.raw, if not already there)")
+    print(f"  {args.answer_prepare} (needed later for compare)")
     return 0
 
 
+def do_run(args):
+    workdir = Path(args.workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    args.answer_run = str(workdir / "answer_run.raw")
+    run_cmd = [args.run_app, args.ctx_model, args.cipher_bin, args.xor_key, args.input_raw, args.answer_run]
+    if not run_app(run_cmd, "run_app"):
+        return 1
+
+    print("[encryption_test] run done. Copy this back to compare against answer_prepare.raw:")
+    print(f"  {args.answer_run}")
+    return 0
+
+
+def do_compare(args):
+    return 0 if compare_raw(args.answer_prepare, args.answer_run, args.tol) else 1
+
+
+def do_roundtrip(args):
+    if do_prepare(args) != 0:
+        return 1
+    if do_run(args) != 0:
+        return 1
+    return do_compare(args)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="phase", required=True)
+
+    p_roundtrip = sub.add_parser("roundtrip", help="run prepare_app then run_app on the same machine")
+    p_roundtrip.add_argument("prepare_app", help="path to prepare_app(.exe)")
+    p_roundtrip.add_argument("run_app", help="path to run_app(.exe)")
+    p_roundtrip.add_argument("input_model", help="ONNX model prepare_app compiles (e.g. a QDQ model)")
+    p_roundtrip.add_argument("input_raw", help="float32 .raw input fed to both the plaintext and decrypted model")
+    p_roundtrip.add_argument("--xor-key", default=DEFAULT_XOR_KEY, help="1-byte XOR key in hex (default 5a)")
+    p_roundtrip.add_argument("--tol", type=float, default=DEFAULT_ABS_TOL, help="max allowed abs diff")
+    p_roundtrip.add_argument("--workdir", default=".", help="directory for intermediate/output files")
+    p_roundtrip.add_argument("--htp-arch", default=None, help="optional target HTP arch passed to prepare_app")
+    p_roundtrip.set_defaults(func=do_roundtrip)
+
+    p_prepare = sub.add_parser("prepare", help="run only prepare_app (e.g. on the x86 compile host)")
+    p_prepare.add_argument("prepare_app", help="path to prepare_app(.exe)")
+    p_prepare.add_argument("input_model", help="ONNX model prepare_app compiles (e.g. a QDQ model)")
+    p_prepare.add_argument("input_raw", help="float32 .raw input fed to the plaintext model")
+    p_prepare.add_argument("--xor-key", default=DEFAULT_XOR_KEY, help="1-byte XOR key in hex (default 5a)")
+    p_prepare.add_argument("--workdir", default=".", help="directory for intermediate/output files")
+    p_prepare.add_argument("--htp-arch", default=None, help="optional target HTP arch passed to prepare_app")
+    p_prepare.set_defaults(func=do_prepare)
+
+    p_run = sub.add_parser("run", help="run only run_app (e.g. on the ARM64 device)")
+    p_run.add_argument("run_app", help="path to run_app(.exe)")
+    p_run.add_argument("ctx_model", help="enc_ctx.onnx produced by the prepare phase (copied over)")
+    p_run.add_argument("cipher_bin", help="enc_cipher.bin produced by the prepare phase (copied over)")
+    p_run.add_argument("input_raw", help="float32 .raw input fed to the decrypted model")
+    p_run.add_argument("--xor-key", default=DEFAULT_XOR_KEY, help="1-byte XOR key in hex (default 5a)")
+    p_run.add_argument("--workdir", default=".", help="directory for the run-phase output file")
+    p_run.set_defaults(func=do_run)
+
+    p_compare = sub.add_parser("compare", help="compare answer_prepare.raw against answer_run.raw")
+    p_compare.add_argument("answer_prepare", help="answer_prepare.raw from the prepare phase")
+    p_compare.add_argument("answer_run", help="answer_run.raw from the run phase")
+    p_compare.add_argument("--tol", type=float, default=DEFAULT_ABS_TOL, help="max allowed abs diff")
+    p_compare.set_defaults(func=do_compare)
+
+    args = parser.parse_args()
+    sys.exit(args.func(args))
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

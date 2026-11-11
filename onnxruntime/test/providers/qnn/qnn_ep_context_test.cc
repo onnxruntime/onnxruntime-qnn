@@ -30,7 +30,7 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 static void LoadOnnxModelFromFile(const std::string& path, onnx::ModelProto& out_model) {
   std::ifstream fin(path, std::ios::in | std::ios::binary);
   if (!fin) {
@@ -165,7 +165,7 @@ void QnnContextBinaryMultiPartitionTestBody(bool single_ep_node = true) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -352,7 +352,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -418,7 +418,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -465,7 +465,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embe
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -512,7 +512,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -564,7 +564,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInB
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -675,7 +675,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_Outpu
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -753,7 +753,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_SetFlags_ErrorIfOutputFileAlreadyExists) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -801,7 +801,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_ErrorIfCompilingACompiledModel) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -871,7 +871,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompil
 
   ProviderOptions qnn_options = {{"backend_type", "htp"}};
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   qnn_options["num_graph_prepare_threads"] = "1";
@@ -1014,7 +1014,7 @@ void EpCtxCpuNodeWithExternalIniFileTestBody(bool expect_external_ini_file, bool
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -1132,7 +1132,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -1181,7 +1181,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected2) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -1235,7 +1235,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationNoOverWrite) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -1368,7 +1368,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGeneration2InputTypes) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -1423,7 +1423,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGeneration2InputsOrderIssue) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -1489,7 +1489,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_QnnContextGenerationNodeNamePrefix) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -1556,7 +1556,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -1668,7 +1668,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
       throw std::runtime_error("Error reading model");
   }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -2155,10 +2155,10 @@ static void DumpModelWithSharedCtx(ProviderOptions provider_options,
   so.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
 
 #ifndef __aarch64__
-#ifndef _M_ARM64
+#if !defined(_M_ARM64) && !defined(_M_ARM64EC)
   // weight sharing only available for v73 and higher
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SC8380XP);
-#endif  // !_M_ARM64
+#endif  // !defined(_M_ARM64) && !defined(_M_ARM64EC)
 #endif  // !__aarch64__
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -2208,7 +2208,7 @@ static void GetModelInputNames(const std::string& model_path,
 // The 2nd session uses graph from 1st session
 // 4. Run the 2nd session
 TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2218,7 +2218,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -2264,7 +2264,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   EXPECT_TRUE(file_size_1 > 0);
 
   // only load and run the session on real device
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
   Ort::SessionOptions so1;
   so1.SetLogId("so1");
   so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
@@ -2327,7 +2327,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 
 TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2340,7 +2340,7 @@ TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["backend_type"] = "htp";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -2385,7 +2385,7 @@ TEST_F(QnnHTPBackendTests, VTCMBackupBufferSharing) {
 
   provider_options["enable_vtcm_backup_buffer_sharing"] = "1";
   // only load and run the session on real device
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
   Ort::SessionOptions so1;
   so1.SetLogId("so1");
 
@@ -2453,7 +2453,7 @@ static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_i
     provider_options["htp_reused_io_limit_mb"] = htp_reused_io_limit_mb;
   }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -2499,7 +2499,7 @@ static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_i
   EXPECT_TRUE(file_size_1 > 0);
 
   // only load and run the session on real device
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
   Ort::SessionOptions so1;
   so1.SetLogId("so1");
   so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
@@ -2553,7 +2553,7 @@ static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_i
                                             output_names_c.data(), 1);
   auto ort_outputs2 = session2.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
                                    output_names_c.data(), 1);
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
   for (auto model_path : onnx_model_paths) {
     std::remove(model_path.c_str());
@@ -2565,7 +2565,7 @@ static void RunSharedContextWithFileMappingDisabledTest(const char* htp_reused_i
 }
 
 TEST_F(QnnHTPBackendTests, FileMapping_Off) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2581,7 +2581,7 @@ TEST_F(QnnHTPBackendTests, HtpSharedResourceOptimization_HtpReusedIoLimitMb_Load
 #if QNN_API_VERSION_MAJOR < 2 || \
     (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34)
   GTEST_SKIP() << "htp_reused_io_limit_mb requires QAIRT 2.45 or later (QNN API >= 2.34).";
-#elif !defined(__aarch64__) && !defined(_M_ARM64)
+#elif !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
   GTEST_SKIP() << "contextCreateFromBinaryListAsync execution requires a real ARM64 HTP device.";
 #elif defined(__ANDROID__)
   GTEST_SKIP() << "Weight sharing on Android devices is disabled";
@@ -2593,7 +2593,7 @@ TEST_F(QnnHTPBackendTests, HtpSharedResourceOptimization_HtpReusedIoLimitMb_Load
 // For Ort sessions to generate the context binary, with session option ep.share_ep_contexts enabled
 // Ort sessions will share the QnnBackendManager, so that all graphs from all models compile into the same Qnn context
 TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -2603,7 +2603,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -2670,7 +2670,7 @@ TEST_F(QnnHTPBackendTests, LoadFromArrayWithQnnEpContextGenPathValidation) {
   provider_options["backend_path"] = "libQnnHtp.so";
 #endif
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -2719,7 +2719,7 @@ TEST_F(QnnHTPBackendTests, QnnEpDynamicOptions) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -2838,7 +2838,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_InputFile_WriteOutputModelBytes) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -2886,7 +2886,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -2908,7 +2908,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
   EXPECT_EQ(status.GetErrorMessage(), "Error from OrtOutStreamWriteFunc callback");
 }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
 // Tests setting num_graph_prepare_threads to compile model
 // 1. Compile model with 2 threads
 // 2. Check for successful compilation (_ctx.onnx model should exist)
@@ -3027,7 +3027,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
                                       output_names_c.data(), 1);
   std::filesystem::remove(output_model_file);
 }
-#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
+#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
 
 struct CustomInitializerHandlerState {
   const ORTCHAR_T* external_file_path = nullptr;
@@ -3102,7 +3102,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_InputFile_OutputFile_InitializerHandler) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -3229,7 +3229,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_CtxFileWritten) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -3267,7 +3267,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_ErrorsWhenContextCacheNotSet) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -3310,7 +3310,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -3389,7 +3389,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_DefaultThreads_CompileSucceeds)
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -3428,7 +3428,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -3477,7 +3477,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_Execution
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -3537,7 +3537,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_Execution
 // [Case 1] Non-GPU backend (HTP) + share_ep_contexts=true:
 // HTP weight sharing is active: both sessions compile into the same .bin.
 TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -3547,7 +3547,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGenHtpBackendNoGpuConfig) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -3621,7 +3621,7 @@ TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -3702,9 +3702,9 @@ TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
 }
 #endif  // QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
 
 // GPU backend does not support QDQ (quantized) ops. This creates a plain float
 // Add model that GPU can compile into a context binary.
@@ -3845,7 +3845,7 @@ TEST_F(QnnGPUBackendTests, QnnContextGenGpuNoWeightSharing) {
   ASSERT_EQ(std::remove(bin1.c_str()), 0);
   ASSERT_EQ(std::remove(bin2.c_str()), 0);
 }
-#endif  // defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#endif  // defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
 
 // Utility class to help create enviornment using HNRD for testing.
 // Expected usage is used along with smart pointer to automatically restore temporarily moved libraries.
@@ -3895,14 +3895,14 @@ class HnrdTestHandle {
 // ============================================================
 // prepare_and_load tests
 // ============================================================
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Test 1: prepare_and_load with context_enable=0 (Path A) — inference works in single session.
 TEST_F(QnnHTPBackendTests, PrepareAndLoad_PathA_InferenceWorks) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -3952,7 +3952,7 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_PathB_PersistsAndRuns) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -4088,7 +4088,7 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeRespected) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -4131,13 +4131,16 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeRespected) {
   ASSERT_EQ(std::remove(ctx_path.c_str()), 0);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_WIN32) && defined(_M_ARM64)
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 TEST_F(QnnHTPBackendTests, CrossDevicePrepare) {
 #ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
-  GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+  // Use AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after GTEST_SKIP().
+  if (::testing::internal::AlwaysTrue()) {
+    GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+  }
 #endif
 
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
@@ -4169,7 +4172,7 @@ TEST_F(QnnHTPBackendTests, CrossDevicePrepare) {
   std::filesystem::remove(output_model_file);
 }
 
-#endif  // defined(_WIN32) && defined(_M_ARM64)
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 }  // namespace test
 }  // namespace onnxruntime

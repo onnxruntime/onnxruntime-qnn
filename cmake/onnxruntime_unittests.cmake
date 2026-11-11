@@ -223,6 +223,8 @@ file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
 # TODO: Re-enable the recent op testcases
 list(REMOVE_ITEM onnxruntime_test_framework_src
      "${TEST_SRC_DIR}/providers/qnn/optimizer/transpose_optimizer_test.cc")
+list(REMOVE_ITEM onnxruntime_test_framework_src
+     "${TEST_SRC_DIR}/providers/qnn/component/qnn_ort_api_test_bridge.cc")
 
 # qnn_op_tracing_serialization.cc is compiled directly into the test binary so
 # that QnnFrameworkOpTraceUnit tests can call ComputeTraceSummary and
@@ -350,6 +352,8 @@ block()
     SOURCES ${onnxruntime_provider_test_srcs}
     LIBS ${onnxruntime_provider_test_libs}
     DEPENDS ${onnxruntime_provider_test_deps}
+    # Accuracy tests are run by the dedicated accuracy validation flow.
+    TEST_ARGS "--gtest_filter=-QnnAcc_*"
   )
 
   # Expose QNN SDK headers to unit tests via an interface target
@@ -365,6 +369,9 @@ block()
     # uniform across all TUs in a binary. Suppress the define so the genie TUs match
     # the rest of the test binary.
     target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_BUILD)
+    # Accuracy tests exercise QNN through the public plugin EP API and do not
+    # require direct access to QNN EP-internal symbols.
+    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ENABLE_ACCURACY_TESTS=1)
     if(onnxruntime_BUILD_QNN_UDO_TEST)
       target_compile_definitions(onnxruntime_provider_test PRIVATE BUILD_QNN_UDO_TEST)
     endif()
@@ -391,26 +398,18 @@ block()
     target_compile_options(onnxruntime_provider_test PRIVATE -Wno-error=shorten-64-to-32)
   endif()
 
-  # Coverage build: link against the SHARED QNN EP library so tests can call
-  # EP-internal functions directly. Coverage is recorded in the .so's .gcda files and
-  # collected by lcov --directory <build_dir> (recursive search finds them automatically).
-  if(ENABLE_COVERAGE AND UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+  # Internal-symbol test build: link against the SHARED QNN EP library so tests
+  # can call EP-internal functions directly.
+  if(onnxruntime_qnn_internal_test_symbols_enabled)
     target_link_libraries(onnxruntime_provider_test PRIVATE onnxruntime_providers_qnn)
     # QNN_EP_INTERNAL_SYMBOL_ACCESS gates test code that depends on EP-internal symbols.
     # It tracks whether the test binary is link-time bound to the SHARED EP library
     # (i.e., the cmake conditions above hold), not whether any production source is
-    # under #if. When the macro is off, tier test bodies (component/, snapshot/,
-    # session_snapshot/, accuracy/) compile to empty translation units, so
-    # non-coverage builds do not see undefined references.
-    # Today this is only enabled under ENABLE_COVERAGE; once the UT migration plan
-    # stabilises, the gate can be widened to other CI build configurations without
-    # touching the test code.
+    # under #if. When the macro is off, direct-access tier test bodies
+    # (component/, snapshot/, session_snapshot/) compile to empty translation units, so
+    # builds without internal-symbol access do not see undefined references.
+    # Coverage builds and explicit internal-symbol builds enable this gate.
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_INTERNAL_SYMBOL_ACCESS=1)
-    # Accuracy tier: gates the per-op accuracy test files (e.g.
-    # accuracy/builder/opbuilder/clip_test.cc). Shares the
-    # INTERNAL_SYMBOL_ACCESS prereqs (Linux x86_64 + shared QNN EP), so it
-    # is enabled together with coverage rather than as a separate opt-in.
-    target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ACCURACY_UT=1)
   endif()
 
   if(WIN32)

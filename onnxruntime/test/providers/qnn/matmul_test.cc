@@ -308,11 +308,27 @@ static void RunQDQBlockQuantMatMulOpTest(
     QDQTolerance tolerance = QDQTolerance(),
     ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
     int opset = 21,
-    bool use_contrib_qdq = false) {
+    bool use_contrib_qdq = false,
+    const char* graph_test_name = nullptr) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["enable_block_quant_weight_optimization"] = "1";
+
+  std::filesystem::path graph_dir;
+  auto cleanup = gsl::finally([&graph_dir]() {
+    if (!graph_dir.empty()) {
+      std::filesystem::remove_all(graph_dir);
+    }
+  });
+  if (graph_test_name != nullptr) {
+    graph_dir = std::filesystem::temp_directory_path() /
+                (std::string("MatMulOp_QDQ_BlockQuant_") + graph_test_name);
+    std::filesystem::remove_all(graph_dir);
+    ASSERT_TRUE(std::filesystem::create_directories(graph_dir));
+    provider_options["dump_json_qnn_graph"] = "1";
+    provider_options["json_qnn_graph_dir"] = graph_dir.string();
+  }
 
   const size_t num_input_elems = static_cast<size_t>(
       std::accumulate(shape_input.begin(), shape_input.end(), static_cast<int64_t>(1), std::multiplies<int64_t>()));
@@ -327,6 +343,13 @@ static void RunQDQBlockQuantMatMulOpTest(
       BuildQDQBlockQuantMatMulTestCase<InputQType, WeightQType, OutputQType>(
           input_def, weight_def, block_size, weight_quant_axis, use_contrib_qdq),
       provider_options, opset, expected_ep_assignment, tolerance);
+
+  if (!graph_dir.empty() && !::testing::Test::IsSkipped()) {
+    AssertOpInQnnGraph(graph_dir, "Convert", 1);
+    AssertConvertOutputDataType(graph_dir,
+                                std::is_same_v<OutputQType, uint8_t> ? QNN_DATATYPE_UFIXED_POINT_8
+                                                                     : QNN_DATATYPE_SFIXED_POINT_8);
+  }
 }
 
 //
@@ -364,7 +387,110 @@ TEST_F(QnnCPUBackendTests, MatMulOp) {
   // RunMatMulOpTest({2, 3, 3, 3}, {3, 2}, true, false);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+// Tests for the `use_native_matmul` session config option.
+// When set to "1", the QNN EP routes rank-2 static-weight MatMul to QNN_OP_MAT_MUL instead
+// of QNN_OP_FULLY_CONNECTED. The tests use the JSON graph dump to assert the exact op type
+// present in the compiled QNN graph.
+
+// Rank-2 static weight: verify the QNN graph emits MatMul (not FullyConnected) when the
+// use_native_matmul flag is set.
+TEST_F(QnnHTPBackendTests, MatMulDisableFC_2D_StaticWeight) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulDisableFC_2D_StaticWeight";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["use_native_matmul"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // A: [4, 8] dynamic;  B: [8, 3] static initializer.
+  RunQnnModelTest(
+      BuildMatMulOpTestCase(
+          TestInputDef<float>({4, 8}, false, GetSequentialFloatData({4, 8}, 0.01f, 0.02f)),
+          TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
+      provider_options,
+      /*opset=*/18,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "MatMul", 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 0);
+}
+
+// Rank-3 activation, rank-2 static weight: verify MatMul (not FullyConnected) when the
+// use_native_matmul flag is set.
+TEST_F(QnnHTPBackendTests, MatMulDisableFC_3D_StaticWeight) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulDisableFC_3D_StaticWeight";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["use_native_matmul"] = "1";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // A: [2, 4, 8] dynamic;  B: [8, 3] static initializer.
+  RunQnnModelTest(
+      BuildMatMulOpTestCase(
+          TestInputDef<float>({2, 4, 8}, false, GetSequentialFloatData({2, 4, 8}, 0.01f, 0.02f)),
+          TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
+      provider_options,
+      /*opset=*/18,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "MatMul", 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 0);
+}
+
+// Regression guard: without the flag, the default behaviour (FullyConnected) is preserved.
+TEST_F(QnnHTPBackendTests, MatMulDefaultUsesFC) {
+  namespace fs = std::filesystem;
+
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulDefaultUsesFC";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  // use_native_matmul is intentionally NOT set; default is false (FullyConnected).
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  // Same shapes as MatMulDisableFC_2D_StaticWeight.
+  RunQnnModelTest(
+      BuildMatMulOpTestCase(
+          TestInputDef<float>({4, 8}, false, GetSequentialFloatData({4, 8}, 0.01f, 0.02f)),
+          TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
+      provider_options,
+      /*opset=*/18,
+      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(graph_dir, "MatMul", 0);
+}
+
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 //
 // HTP tests:
@@ -757,12 +883,12 @@ static void RunDynamicInput1QuantErrorTest(const char* test_name,
   }
 }
 
-// A 16-bit activation with an 8-bit output stays in one node unit: the op runs at 16 bits and a Convert narrows it.
+// A mismatched activation/output precision stays in one node unit via a Convert.
 template <typename ActivationQType, typename WeightQType, typename OutputQType>
-static void RunNarrowingOutputTest(const char* test_name, bool weight_is_initializer,
-                                   Qnn_DataType_t expected_convert_type) {
+static void RunMixedPrecisionOutputTest(const char* test_name, bool weight_is_initializer,
+                                        Qnn_DataType_t expected_convert_type) {
   namespace fs = std::filesystem;
-  const fs::path graph_dir = fs::temp_directory_path() / (std::string("MatMulOp_QDQ_NarrowingOutput_") + test_name);
+  const fs::path graph_dir = fs::temp_directory_path() / (std::string("MatMulOp_QDQ_MixedPrecisionOutput_") + test_name);
   fs::remove_all(graph_dir);
   ASSERT_TRUE(fs::create_directories(graph_dir));
   auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
@@ -785,31 +911,61 @@ static void RunNarrowingOutputTest(const char* test_name, bool weight_is_initial
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationU8Output_StaticWeight) {
-  RunNarrowingOutputTest<uint16_t, uint8_t, uint8_t>("u16_u8_static", /*weight_is_initializer=*/true,
-                                                     QNN_DATATYPE_UFIXED_POINT_8);
+  RunMixedPrecisionOutputTest<uint16_t, uint8_t, uint8_t>("u16_u8_static", /*weight_is_initializer=*/true,
+                                                          QNN_DATATYPE_UFIXED_POINT_8);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationU8Output_DynamicInput1) {
-  RunNarrowingOutputTest<uint16_t, uint8_t, uint8_t>("u16_u8_dynamic", /*weight_is_initializer=*/false,
-                                                     QNN_DATATYPE_UFIXED_POINT_8);
+  RunMixedPrecisionOutputTest<uint16_t, uint8_t, uint8_t>("u16_u8_dynamic", /*weight_is_initializer=*/false,
+                                                          QNN_DATATYPE_UFIXED_POINT_8);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationS8Output_StaticWeight) {
-  RunNarrowingOutputTest<uint16_t, uint8_t, int8_t>("u16_s8_static", /*weight_is_initializer=*/true,
-                                                    QNN_DATATYPE_SFIXED_POINT_8);
+  RunMixedPrecisionOutputTest<uint16_t, uint8_t, int8_t>("u16_s8_static", /*weight_is_initializer=*/true,
+                                                         QNN_DATATYPE_SFIXED_POINT_8);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_S16ActivationS8Output_StaticWeight) {
-  RunNarrowingOutputTest<int16_t, int8_t, int8_t>("s16_s8_static", /*weight_is_initializer=*/true,
-                                                  QNN_DATATYPE_SFIXED_POINT_8);
+  RunMixedPrecisionOutputTest<int16_t, int8_t, int8_t>("s16_s8_static", /*weight_is_initializer=*/true,
+                                                       QNN_DATATYPE_SFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationU16Output_StaticWeight) {
+  RunMixedPrecisionOutputTest<uint8_t, uint8_t, uint16_t>("u8_u16_static", /*weight_is_initializer=*/true,
+                                                          QNN_DATATYPE_UFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationU16Output_DynamicInput1) {
+  RunMixedPrecisionOutputTest<uint8_t, uint8_t, uint16_t>("u8_u16_dynamic", /*weight_is_initializer=*/false,
+                                                          QNN_DATATYPE_UFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_S8ActivationS16Output_StaticWeight) {
+  RunMixedPrecisionOutputTest<int8_t, int8_t, int16_t>("s8_s16_static", /*weight_is_initializer=*/true,
+                                                       QNN_DATATYPE_SFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationU16Output_U16Weight_DynamicInput1) {
+  RunMixedPrecisionOutputTest<uint8_t, uint16_t, uint16_t>("u8_u16w_u16_dynamic", /*weight_is_initializer=*/false,
+                                                           QNN_DATATYPE_UFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationS8Output_StaticWeight) {
+  RunMixedPrecisionOutputTest<uint8_t, uint8_t, int8_t>("u8_s8_static", /*weight_is_initializer=*/true,
+                                                        QNN_DATATYPE_SFIXED_POINT_8);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationS16Output_StaticWeight) {
+  RunMixedPrecisionOutputTest<uint16_t, int8_t, int16_t>("u16_s16_static", /*weight_is_initializer=*/true,
+                                                         QNN_DATATYPE_SFIXED_POINT_16);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8) {
-  RunDynamicInput1QuantErrorTest("low_error", 0.0f, 0.2f, QNN_DATATYPE_UFIXED_POINT_8);
+  RunDynamicInput1QuantErrorTest("low_error", 0.0f, 60.0f, QNN_DATATYPE_UFIXED_POINT_8);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_HighQuantErrorUsesSymmetricU16) {
-  RunDynamicInput1QuantErrorTest("high_error", 0.0f, 100.0f, QNN_DATATYPE_UFIXED_POINT_16);
+  RunDynamicInput1QuantErrorTest("high_error", 0.0f, 80.0f, QNN_DATATYPE_UFIXED_POINT_16);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16SymmetricDynamicInput1_PassesThrough) {
@@ -958,12 +1114,8 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_static_weight) {
         provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
   }
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-
-#if defined(__linux__)
 
 // Tests MatMul with ONNX block-quantized (BQ) weight using the BQ -> QNN LPBQ conversion path.
-// Currently BQ -> LPBQ conversion is only supported on Linux. It will be later enabled for windows as well.
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant) {
   RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
   RunQDQBlockQuantMatMulOpTest<int16_t, Int4x2, int16_t>({4, 128}, {128, 64}, 32, 0, QDQTolerance(0.05f));
@@ -972,9 +1124,15 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant) {
   RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint16_t>({2, 3, 4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f));
 }
 
-#endif  // defined(__linux__)
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant_U16ActivationU8Output) {
+  RunQDQBlockQuantMatMulOpTest<uint16_t, Int4x2, uint8_t>(
+      {4, 16}, {16, 8}, 8, 0, QDQTolerance(0.05f), ExpectedEPNodeAssignment::All, 21, false,
+      "u16_u8");
+}
 
-#if defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
+
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 //
 // GPU tests:
 //
@@ -1033,7 +1191,7 @@ TEST_F(QnnGPUBackendTests, MatMulOp_rank1) {
   RunMatMulOpTest({2, 3, 3, 3}, {3}, false, false, ExpectedEPNodeAssignment::All, "gpu");
 }
 
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime

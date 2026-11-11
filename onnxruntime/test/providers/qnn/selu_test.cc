@@ -87,7 +87,7 @@ TEST_F(QnnCPUBackendTests, Selu_CustomAlphaGamma) {
 // HTP tests across x86_64 and ARM64 Windows, x86_64 and ARM64 Linux
 //
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // FP32 with default attrs.
 TEST_F(QnnHTPBackendTests, Selu_FP32_DefaultAttrs) {
@@ -139,14 +139,14 @@ TEST_F(QnnHTPBackendTests, Selu_FP16_CustomAlphaGamma) {
                   ExpectedEPNodeAssignment::All,
                   22, 0.016f);
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 //
 // HTP tests only for ARM64 Architecture
 // Only supported on v81+ Architecture
 //
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 static void RunSeluHTPBF16Test(const std::vector<TestInputDef<float>>& input_defs,
                                const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
@@ -182,9 +182,9 @@ TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_CustomAlphaGamma) {
                      22, 0.016f);
 }
 
-#endif  // #if defined(__aarch64__) || defined(_M_ARM64)
+#endif  // #if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 //
 // GPU tests
@@ -207,7 +207,7 @@ TEST_F(QnnGPUBackendTests, Selu_CustomAlphaGamma) {
               "gpu", 22, 0.016f);
 }
 
-#endif  // defined(_M_ARM64) — GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) — GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime

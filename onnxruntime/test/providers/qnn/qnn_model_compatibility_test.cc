@@ -8,10 +8,12 @@
 #include <string>
 #include <vector>
 
+#include <gsl/util>
+#include <gtest/gtest.h>
+
 #include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpCommon.h"
 #include "QnnSdkBuildId.h"
-#include "gtest/gtest.h"
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
@@ -31,16 +33,13 @@ namespace test {
 // Expected usage is used along with smart pointer to automatically restore temporarily moved libraries.
 class HnrdTestHandle {
  public:
-  HnrdTestHandle(uint32_t htp_arch, bool keep_prepare_lib = false) : htp_arch_(htp_arch) {
-    // Move Prepare/Skel/Stub libraries to a temporary directory to trigger HNRD.
+  HnrdTestHandle(uint32_t htp_arch) : htp_arch_(htp_arch) {
+    // Move Skel/Stub libraries to a temporary directory to trigger HNRD.
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
     temp_dir_ = std::string("temp_") + info->test_suite_name() + "-" + info->name();
 
     std::filesystem::create_directory(temp_dir_);
     for (const std::string& lib : GetRelatedLibs()) {
-      if (keep_prepare_lib && lib.find("HtpPrepare") != std::string::npos) {
-        continue;
-      }
       if (std::filesystem::exists(lib)) {
         std::filesystem::rename(lib, temp_dir_ / lib);
       }
@@ -61,12 +60,10 @@ class HnrdTestHandle {
  private:
   std::vector<std::string> GetRelatedLibs() {
 #ifdef _WIN32
-    return {"QnnHtpPrepare.dll",
-            "libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
+    return {"libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
             "QnnHtpV" + std::to_string(htp_arch_) + "Stub.dll"};
 #else
-    return {"libQnnHtpPrepare.so",
-            "libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
+    return {"libQnnHtpV" + std::to_string(htp_arch_) + "Skel.so",
             "libQnnHtpV" + std::to_string(htp_arch_) + "Stub.so"};
 #endif
   }
@@ -75,7 +72,7 @@ class HnrdTestHandle {
   std::filesystem::path temp_dir_;
 };
 
-#if defined(_WIN32) && defined(_M_ARM64)
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 TEST_F(QnnHTPBackendTests, ModelCompatibility_SelfValidate_CbTradRtTrad) {
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   std::filesystem::path output_model_file("mul_1_ctx.onnx");
@@ -236,7 +233,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbHnrdRtHnrd
 
   std::filesystem::remove(output_model_file);
 }
-#endif  // defined(_WIN32) && defined(_M_ARM64)
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 struct CompatibilityTestInfoV1 {
   uint32_t backend_id = QNN_BACKEND_ID_HTP;
@@ -346,7 +343,7 @@ std::string GetInfoFromModelMetadata(const ORTCHAR_T* output_model_file) {
 TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
   const uint32_t htp_arch = static_cast<uint32_t>(platform_attrs.htp_arch);
 #else
   const uint32_t htp_arch = 73;
@@ -360,7 +357,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
 
   CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   qnn_options["num_graph_prepare_threads"] = "1";
@@ -398,7 +395,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
   std::filesystem::remove(output_model_file);
 }
 
-#if !defined(_M_ARM64) && !defined(__aarch64__)
+#if !defined(_M_ARM64) && !defined(_M_ARM64EC) && !defined(__aarch64__)
 
 TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MapHtpArchFromSocModel) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
@@ -577,19 +574,22 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MultiSoc_Override
   std::filesystem::remove(output_model_file);
 }
 
-#endif  // !defined(_M_ARM64) && !defined(__aarch64__)
+#endif  // !defined(_M_ARM64) && !defined(_M_ARM64EC) && !defined(__aarch64__)
 
-#if defined(_WIN32) && defined(_M_ARM64)
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_HostModeNoHnrd) {
 #ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
-  GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+  // Use AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after GTEST_SKIP().
+  if (::testing::internal::AlwaysTrue()) {
+    GTEST_SKIP() << "Skip as HTP cross device prepare is not available in this build.";
+  }
 #endif
 
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
   const uint32_t htp_arch = static_cast<uint32_t>(platform_attrs.htp_arch);
   // Host mode is not affected by missing Stub/Skel libraries.
-  auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(htp_arch, /*keep_prepare_lib*/ true);
+  auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(htp_arch);
 
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx.onnx");
@@ -931,7 +931,23 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_CbMoreVtcm) {
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
-#endif  // defined(_WIN32) && defined(_M_ARM64)
+
+TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_NoHnrdWithoutPrepareLib) {
+  // Rename prepare lib to pretend it does not exist and rename it back later.
+  const std::string prepare_lib_path = "QnnHtpPrepare.dll";
+  const std::string prepare_lib_temp_path = "QnnHtpPrepare_temp.dll";
+  ASSERT_TRUE(std::filesystem::exists(prepare_lib_path));
+  std::filesystem::rename(prepare_lib_path, prepare_lib_temp_path);
+  auto cleanup = gsl::finally([&prepare_lib_path, &prepare_lib_temp_path]() {
+    std::filesystem::rename(prepare_lib_temp_path, prepare_lib_path);
+  });
+
+  CompatibilityTestInfoV2 test_info;
+  test_info.FillPlatformInfo();
+
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
+}
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 }  // namespace test
 }  // namespace onnxruntime

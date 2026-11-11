@@ -10,21 +10,50 @@
 #include <stdexcept>
 #include <vector>
 
-#ifndef _WIN32
-#include <dlfcn.h>
-#endif
-
 #include "QnnInterface.h"
 
 #include "core/providers/qnn/ort_api.h"
 #include "test/providers/qnn/infra/backend_contexts.h"
 #include "test/providers/qnn/infra/mock_init_registry.h"
 #include "test/providers/qnn/infra/mock_node_unit.h"
+#include "test/providers/qnn/infra/qnn_module_state_test_utils.h"
 #include "test/providers/qnn/infra/qnn_test_logger.h"
 #include "test/providers/qnn/infra/stub_backend_manager.h"
 
 namespace onnxruntime {
 namespace test {
+
+inline const char* QnnHtpBackendLibraryName() {
+#ifdef _WIN32
+  return "QnnHtp.dll";
+#else
+  return "libQnnHtp.so";
+#endif
+}
+
+inline const char* QnnIrBackendLibraryName() {
+#ifdef _WIN32
+  return "QnnIr.dll";
+#else
+  return "libQnnIr.so";
+#endif
+}
+
+inline const char* QnnSaverBackendLibraryName() {
+#ifdef _WIN32
+  return "QnnSaver.dll";
+#else
+  return "libQnnSaver.so";
+#endif
+}
+
+inline std::basic_string<ORTCHAR_T> QnnHtpBackendLibraryPath() {
+#ifdef _WIN32
+  return ORT_TSTR("QnnHtp.dll");
+#else
+  return ORT_TSTR("libQnnHtp.so");
+#endif
+}
 
 // Reusable OrtApi stub tables for function-level unit tests.
 struct OrtApiStubContext {
@@ -66,13 +95,18 @@ struct QnnRealHtpBackendContext {
   Qnn_BackendHandle_t backend_handle = nullptr;
 
   QnnRealHtpBackendContext() {
-#ifndef _WIN32
-    lib_handle_ = ::dlopen("libQnnHtp.so", RTLD_NOW | RTLD_GLOBAL);
-    if (!lib_handle_) return;
+    void* lib_handle = nullptr;
+    if (!OrtLoadDynamicLibrary(QnnHtpBackendLibraryPath(), /*global_symbols=*/true, &lib_handle).IsOK()) {
+      return;
+    }
+    lib_handle_ = lib_handle;
 
     using GetProvidersFn = Qnn_ErrorHandle_t (*)(const QnnInterface_t***, uint32_t*);
-    auto get_providers = reinterpret_cast<GetProvidersFn>(
-        ::dlsym(lib_handle_, "QnnInterface_getProviders"));
+    void* get_providers_symbol = nullptr;
+    if (!OrtGetSymbolFromLibrary(lib_handle_, "QnnInterface_getProviders", &get_providers_symbol).IsOK()) {
+      return;
+    }
+    auto get_providers = reinterpret_cast<GetProvidersFn>(get_providers_symbol);
     if (!get_providers) return;
 
     const QnnInterface_t** providers = nullptr;
@@ -87,16 +121,15 @@ struct QnnRealHtpBackendContext {
       return;
     }
     initialized_ = true;
-#endif
   }
 
   ~QnnRealHtpBackendContext() {
-#ifndef _WIN32
     if (initialized_ && qnn_interface.backendFree) {
       qnn_interface.backendFree(backend_handle);
     }
-    if (lib_handle_) ::dlclose(lib_handle_);
-#endif
+    if (lib_handle_) {
+      (void)OrtUnloadDynamicLibrary(lib_handle_);
+    }
   }
 
   bool IsValid() const { return initialized_; }

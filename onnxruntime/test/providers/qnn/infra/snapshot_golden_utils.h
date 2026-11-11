@@ -26,17 +26,34 @@ inline std::string GetGoldenRootDir() {
   return (env != nullptr && env[0] != '\0') ? std::string(env) : std::string();
 }
 
-// Remove fields that are not stable across test runs.
+// Remove or neutralize fields that are not stable across test runs.
 inline nlohmann::json& NormalizeQnnJSONGraph(nlohmann::json& graph) {
   auto graph_it = graph.find("graph");
-  if (graph_it == graph.end() || !graph_it->is_object()) return graph;
-  auto tensors_it = graph_it->find("tensors");
-  if (tensors_it == graph_it->end() || !tensors_it->is_object()) return graph;
-  for (auto& tensor : tensors_it->items()) {
-    if (tensor.value().is_object()) {
-      tensor.value().erase("id");
+  if (graph_it != graph.end() && graph_it->is_object()) {
+    auto tensors_it = graph_it->find("tensors");
+    if (tensors_it != graph_it->end() && tensors_it->is_object()) {
+      for (auto& tensor : tensors_it->items()) {
+        if (tensor.value().is_object()) {
+          tensor.value().erase("id");
+        }
+      }
     }
   }
+
+  auto op_types_it = graph.find("op_types");
+  if (op_types_it != graph.end() && op_types_it->is_array()) {
+    const bool all_strings = std::all_of(op_types_it->begin(), op_types_it->end(),
+                                         [](const nlohmann::json& op_type) {
+                                           return op_type.is_string();
+                                         });
+    if (all_strings) {
+      std::sort(op_types_it->begin(), op_types_it->end(),
+                [](const nlohmann::json& lhs, const nlohmann::json& rhs) {
+                  return lhs.get_ref<const std::string&>() < rhs.get_ref<const std::string&>();
+                });
+    }
+  }
+
   return graph;
 }
 

@@ -651,7 +651,9 @@ static Ort::Status AddBinaryOpNode(QnnModelWrapper& qnn_model_wrapper,
 }
 
 // ---------------------------------------------------------------------------
-// Helper: emit a MatMul node (with optional transpose_in1).
+// Helper: emit a MatMul node (transpose_in0 is always false; transpose_in1 is
+// caller-controlled). Both params are emitted explicitly, since qairt-dlc-info
+// asserts their presence once either one is non-default.
 // ---------------------------------------------------------------------------
 static Ort::Status AddMatMulNode(QnnModelWrapper& qnn_model_wrapper,
                                  const OrtNodeUnit& node_unit,
@@ -671,14 +673,18 @@ static Ort::Status AddMatMulNode(QnnModelWrapper& qnn_model_wrapper,
   const std::string node_name = utils::UniqueNameGenerator().New(node_unit, "_matmul");
 
   std::vector<std::string> param_names;
-  if (transpose_in1) {
-    RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper,
-                                       node_unit.Index(),
-                                       node_name,
-                                       true,
-                                       QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1,
-                                       param_names));
-  }
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper,
+                                     node_unit.Index(),
+                                     node_name,
+                                     false,
+                                     QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN0,
+                                     param_names));
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper,
+                                     node_unit.Index(),
+                                     node_name,
+                                     transpose_in1,
+                                     QNN_OP_MAT_MUL_PARAM_TRANSPOSE_IN1,
+                                     param_names));
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 #include <gsl/gsl_util>
 #include "gtest/gtest.h"
@@ -101,7 +102,8 @@ static GetTestModelFn BuildF32ConvTestCase(const std::string& conv_op_type, cons
   };
 }
 
-// Creates a graph with a single Q/DQ Conv operator with mismatched bias scales to test bias requantization.
+// Creates a graph with a single Q/DQ Conv operator with configurable bias scale and zero-point
+// to test bias requantization.
 template <typename ActivationQType, typename WeightQType>
 static GetTestQDQModelFn<ActivationQType> BuildQDQConvBiasRequantTestCase(
     const std::string& conv_op_type,
@@ -113,10 +115,13 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvBiasRequantTestCase(
     const std::vector<int64_t>& dilations,
     std::optional<int64_t> group,
     const std::string& auto_pad = "NOTSET",
-    bool use_contrib_qdq = false) {
+    bool use_contrib_qdq = false,
+    int32_t bias_zero_point = 0,
+    bool use_correct_bias_scale = false) {
   return [conv_op_type, input_def, weights_def, bias_def, strides, pads,
-          dilations, group, auto_pad, use_contrib_qdq](ModelTestBuilder& builder,
-                                                       std::vector<QuantParams<ActivationQType>>& output_qparams) {
+          dilations, group, auto_pad, use_contrib_qdq,
+          bias_zero_point, use_correct_bias_scale](ModelTestBuilder& builder,
+                                                   std::vector<QuantParams<ActivationQType>>& output_qparams) {
     std::vector<std::string> conv_input_names;
 
     // input -> Q/DQ ->
@@ -135,12 +140,13 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvBiasRequantTestCase(
 
     // bias -> Create bias with MISMATCHED scale to trigger requantization
     if (!bias_def.GetShape().empty()) {
-      // Intentionally use a WRONG bias scale that doesn't match (input_scale * weight_scale)
-      // This should trigger the bias requantization logic in QNN EP
+      // Use a mismatched bias scale by default to trigger requantization, or the matching scale
+      // when testing a non-zero bias zero-point as the independent trigger.
       const float correct_bias_scale = input_qparams.scale * weights_qparams.scale;
-      const float wrong_bias_scale = correct_bias_scale * 2.5f;  // Intentionally wrong scale
+      const float bias_scale = use_correct_bias_scale ? correct_bias_scale : correct_bias_scale * 2.5f;
 
-      conv_input_names.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, wrong_bias_scale, use_contrib_qdq));
+      conv_input_names.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale,
+                                                      use_contrib_qdq, bias_zero_point));
     }
 
     // Conv attrs (must be provided at node creation)
@@ -308,13 +314,15 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvPerChannelBiasRequantTestC
 }
 
 // Float32 reference for the QDQ shared-bias test below.
-static GetTestModelFn BuildF32SharedBiasTwoConvTestCase(const TestInputDef<float>& input_a_def,
-                                                        const TestInputDef<float>& input_b_def,
-                                                        const TestInputDef<float>& weights_def,
-                                                        const TestInputDef<float>& bias_def) {
-  return [input_a_def, input_b_def, weights_def, bias_def](ModelTestBuilder& builder) {
+static GetTestModelFn BuildF32SharedBiasThreeConvTestCase(const TestInputDef<float>& input_a_def,
+                                                          const TestInputDef<float>& input_b_def,
+                                                          const TestInputDef<float>& input_c_def,
+                                                          const TestInputDef<float>& weights_def,
+                                                          const TestInputDef<float>& bias_def) {
+  return [input_a_def, input_b_def, input_c_def, weights_def, bias_def](ModelTestBuilder& builder) {
     MakeTestInput<float>(builder, "input_a", input_a_def);
     MakeTestInput<float>(builder, "input_b", input_b_def);
+    MakeTestInput<float>(builder, "input_c", input_c_def);
     MakeTestInput<float>(builder, "weights", weights_def);
     MakeTestInput<float>(builder, "bias", bias_def);
 
@@ -330,24 +338,30 @@ static GetTestModelFn BuildF32SharedBiasTwoConvTestCase(const TestInputDef<float
     };
     add_conv("ConvA", "input_a", "output_a");
     add_conv("ConvB", "input_b", "output_b");
+    add_conv("ConvC", "input_c", "output_c");
   };
 }
 
-// Two Convs share one per-channel quantized int32 bias initializer, quantized at input_a's scale.
-// The declared bias scale therefore matches activation_scale * weight_scale for ConvA only, so
-// ConvB's bias must be requantized against its own activation scale.
+// Multiple Convs share one per-channel quantized int32 bias initializer. The declared bias scale
+// can be selected to match one, neither, or none of the consumers, so each Conv may need a
+// consumer-specific bias tensor.
 template <typename ActivationQType, typename WeightQType>
-static GetTestQDQModelFn<ActivationQType> BuildQDQSharedBiasTwoConvTestCase(
+static GetTestQDQModelFn<ActivationQType> BuildQDQSharedBiasThreeConvTestCase(
     const TestInputDef<float>& input_a_def,
     const TestInputDef<float>& input_b_def,
+    const TestInputDef<float>& input_c_def,
     const TestInputDef<float>& weights_def,
-    const TestInputDef<float>& bias_def) {
-  return [input_a_def, input_b_def, weights_def, bias_def](
+    const TestInputDef<float>& bias_def,
+    bool use_float_bias = false,
+    float bias_scale_factor = 1.0f) {
+  return [input_a_def, input_b_def, input_c_def, weights_def, bias_def, use_float_bias, bias_scale_factor](
              ModelTestBuilder& builder, std::vector<QuantParams<ActivationQType>>& output_qparams) {
     MakeTestInput<float>(builder, "input_a", input_a_def);
     MakeTestInput<float>(builder, "input_b", input_b_def);
+    MakeTestInput<float>(builder, "input_c", input_c_def);
     const QuantParams<ActivationQType> qp_a = GetTestInputQuantParams<ActivationQType>(input_a_def);
     const QuantParams<ActivationQType> qp_b = GetTestInputQuantParams<ActivationQType>(input_b_def);
+    const QuantParams<ActivationQType> qp_c = GetTestInputQuantParams<ActivationQType>(input_c_def);
     const std::string input_a_dq = AddQDQNodePair<ActivationQType>(builder, "qdq_input_a", "input_a",
                                                                    qp_a.scale, qp_a.zero_point);
     const std::string input_b_dq = AddQDQNodePair<ActivationQType>(builder, "qdq_input_b", "input_b",
@@ -368,14 +382,18 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQSharedBiasTwoConvTestCase(
     std::vector<float> bias_scales(num_channels);
     std::vector<int32_t> bias_zero_points(num_channels, 0);
     for (size_t i = 0; i < num_channels; ++i) {
-      bias_scales[i] = qp_a.scale * weight_scales[i];
+      bias_scales[i] = qp_a.scale * weight_scales[i] * bias_scale_factor;
     }
-    std::vector<int32_t> quantized_biases(SizeOfShape(bias_def.GetShape()));
-    QuantizeValues<float, int32_t>(bias_def.GetRawData(), quantized_biases, bias_def.GetShape(),
-                                   bias_scales, bias_zero_points, /*axis*/ 0);
-    builder.MakeInitializer<int32_t>("bias_quant", bias_def.GetShape(), quantized_biases);
-    builder.MakeInitializer<float>("bias_scale", {static_cast<int64_t>(num_channels)}, bias_scales);
-    builder.MakeInitializer<int32_t>("bias_zp", {static_cast<int64_t>(num_channels)}, bias_zero_points);
+    if (use_float_bias) {
+      builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
+    } else {
+      std::vector<int32_t> quantized_biases(SizeOfShape(bias_def.GetShape()));
+      QuantizeValues<float, int32_t>(bias_def.GetRawData(), quantized_biases, bias_def.GetShape(),
+                                     bias_scales, bias_zero_points, /*axis*/ 0);
+      builder.MakeInitializer<int32_t>("bias_quant", bias_def.GetShape(), quantized_biases);
+      builder.MakeInitializer<float>("bias_scale", {static_cast<int64_t>(num_channels)}, bias_scales);
+      builder.MakeInitializer<int32_t>("bias_zp", {static_cast<int64_t>(num_channels)}, bias_zero_points);
+    }
 
     // Each Conv needs its own DQ over the shared initializers and its own Q on its output, or it
     // forms no QDQ node unit and is built as a float Conv.
@@ -387,11 +405,16 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQSharedBiasTwoConvTestCase(
       builder.AddDequantizeLinearNode("WeightDQ_" + tag, "weights_quant", weight_scales, weight_zero_points,
                                       weights_dq, weights_dq_attrs, /*use_contrib_qdq*/ false);
 
-      std::vector<ONNX_NAMESPACE::AttributeProto> bias_dq_attrs;
-      bias_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
-      const std::string bias_dq = "bias_dq_" + tag;
-      builder.AddNode("BiasDQ_" + tag, "DequantizeLinear", {"bias_quant", "bias_scale", "bias_zp"},
-                      {bias_dq}, kOnnxDomain, bias_dq_attrs);
+      std::string bias_dq;
+      if (use_float_bias) {
+        bias_dq = "bias";
+      } else {
+        std::vector<ONNX_NAMESPACE::AttributeProto> bias_dq_attrs;
+        bias_dq_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+        bias_dq = "bias_dq_" + tag;
+        builder.AddNode("BiasDQ_" + tag, "DequantizeLinear", {"bias_quant", "bias_scale", "bias_zp"},
+                        {bias_dq}, kOnnxDomain, bias_dq_attrs);
+      }
 
       std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
       conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
@@ -406,6 +429,9 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQSharedBiasTwoConvTestCase(
     };
     add_conv("A", input_a_dq, "conv_a_out", 0);
     add_conv("B", input_b_dq, "conv_b_out", 1);
+    const std::string input_c_dq = AddQDQNodePair<ActivationQType>(builder, "qdq_input_c", "input_c",
+                                                                   qp_c.scale, qp_c.zero_point);
+    add_conv("C", input_c_dq, "conv_c_out", 2);
   };
 }
 
@@ -534,6 +560,65 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvTestCase(
     // op_output -> Q -> DQ -> output
     AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(
         builder, "qdq_out", q_input_name, output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
+  };
+}
+
+// Like BuildQDQConvTestCase, but the output Q/DQ pair can use a different type than the input,
+// exercising the Conv precision-bridge Convert insertion.
+template <typename ActivationQType, typename WeightQType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQConvMixedDtypeTestCase(
+    const std::string& conv_op_type,
+    const TestInputDef<float>& input_def,
+    const TestInputDef<float>& weights_def,
+    const TestInputDef<float>& bias_def,
+    const std::vector<int64_t>& strides,
+    const std::vector<int64_t>& pads,
+    const std::vector<int64_t>& dilations,
+    std::optional<int64_t> group,
+    const std::string& auto_pad = "NOTSET") {
+  return [conv_op_type, input_def, weights_def, bias_def, strides, pads, dilations, group,
+          auto_pad](ModelTestBuilder& builder, std::vector<QuantParams<OutputQType>>& output_qparams) {
+    std::vector<std::string> conv_input_names;
+
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
+    conv_input_names.push_back(
+        AddQDQNodePair<ActivationQType>(builder, "qdq_input", "input", input_qparams.scale, input_qparams.zero_point));
+
+    MakeTestInput<float>(builder, "weights", weights_def);
+    // Signed weight types must be symmetric: QNN rejects a nonzero zero-point for a signed weight.
+    const bool weight_symmetric = std::is_signed<WeightQType>::value;
+    const QuantParams<WeightQType> weights_qparams =
+        GetTestInputQuantParams<WeightQType>(weights_def, weight_symmetric);
+    conv_input_names.push_back(
+        AddQDQNodePair<WeightQType>(builder, "qdq_weights", "weights", weights_qparams.scale,
+                                    weights_qparams.zero_point));
+
+    if (!bias_def.GetShape().empty()) {
+      const float bias_scale = input_qparams.scale * weights_qparams.scale;
+      conv_input_names.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale));
+    }
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", auto_pad));
+    if (group.has_value()) {
+      conv_attrs.push_back(builder.MakeScalarAttribute("group", group.value()));
+    }
+    if (!pads.empty() && auto_pad == "NOTSET") {
+      conv_attrs.push_back(builder.MakeIntsAttribute("pads", pads));
+    }
+    if (!strides.empty()) {
+      conv_attrs.push_back(builder.MakeIntsAttribute("strides", strides));
+    }
+    if (!dilations.empty()) {
+      conv_attrs.push_back(builder.MakeIntsAttribute("dilations", dilations));
+    }
+
+    builder.AddNode("Conv", conv_op_type, conv_input_names, {"conv_out"}, kOnnxDomain, conv_attrs);
+
+    // op_output -> Q(OutputQType) -> DQ -> output. OutputQType may differ from ActivationQType.
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(
+        builder, "qdq_out", "conv_out", output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
 
@@ -1108,7 +1193,7 @@ TEST_F(QnnCPUBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
                 ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // The bug is from a QDQ model, and Conv node gets processed before it's producer Mul node
 // A Transpose node gets inserted between Mul and the dynamic weight tensor shape on Conv
@@ -1347,6 +1432,44 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_BiasRequantization) {
                        QDQTolerance(0.015f));
 }
 
+// Test bias requantization when the bias zero-point is non-zero, even though the bias scale matches
+// (activation_scale * weight_scale). This ensures the bias offset alone triggers requantization.
+TEST_F(QnnHTPBackendTests, ConvU8S8S32_BiasRequantization_NonZeroZeroPoint) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, -10.0f, 10.0f);
+  TestInputDef<float> weights_def({3, 2, 2, 2}, true, -1.0f, 5.0f);
+  TestInputDef<float> bias_def({3}, true, -1.0f, 1.0f);
+
+  TestQDQModelAccuracy(BuildF32ConvTestCase("Conv",
+                                            input_def,
+                                            weights_def,
+                                            bias_def,
+                                            {1, 1},
+                                            {0, 0, 0, 0},
+                                            {1, 1},
+                                            1,
+                                            "NOTSET"),
+                       BuildQDQConvBiasRequantTestCase<uint8_t, int8_t>("Conv",
+                                                                        input_def,
+                                                                        weights_def,
+                                                                        bias_def,
+                                                                        {1, 1},
+                                                                        {0, 0, 0, 0},
+                                                                        {1, 1},
+                                                                        1,
+                                                                        "NOTSET",
+                                                                        false,
+                                                                        5,
+                                                                        true),
+                       provider_options,
+                       13,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(0.015f));
+}
+
 // Test per-channel bias requantization when bias scales don't match (weight_scale[i] * activation_scale)
 // This test uses a bias with intentionally wrong scales that would cause QDQ to fail against CPU,
 // but the requantization logic should correct it, allowing the test to pass.
@@ -1389,10 +1512,9 @@ TEST_F(QnnHTPBackendTests, ConvU8S8S32_PerChannel_BiasRequantization) {
                        QDQTolerance(0.015f));
 }
 
-// Two Convs share one quantized int32 bias initializer but read activations whose scales differ by
-// 10x, so the bias scale can only match one of them and the other must be requantized
-TEST_F(QnnHTPBackendTests, ConvU8S8S32_SharedBiasInitializer_TinyScales) {
-  const std::filesystem::path json_dir = "ConvU8S8S32_SharedBiasInitializer_TinyScales";
+static void RunConvU8S8S32SharedBiasTest(const char* test_name, bool use_float_bias,
+                                         float bias_scale_factor) {
+  const std::filesystem::path json_dir = test_name;
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
@@ -1412,14 +1534,18 @@ TEST_F(QnnHTPBackendTests, ConvU8S8S32_SharedBiasInitializer_TinyScales) {
                                   GetFloatDataInRange(-0.16f, 0.16f, SizeOfShape(input_shape)));
   TestInputDef<float> input_b_def(input_shape, false,
                                   GetFloatDataInRange(-0.016f, 0.016f, SizeOfShape(input_shape)));
+  TestInputDef<float> input_c_def(input_shape, false,
+                                  GetFloatDataInRange(-0.0016f, 0.0016f, SizeOfShape(input_shape)));
   TestInputDef<float> weight_def(weight_shape, true,
                                  GetFloatDataInRange(-0.03f, 0.03f, SizeOfShape(weight_shape)));
   TestInputDef<float> bias_def(bias_shape, true,
                                GetFloatDataInRange(-0.03f, 0.03f, SizeOfShape(bias_shape)));
 
-  TestQDQModelAccuracy(BuildF32SharedBiasTwoConvTestCase(input_a_def, input_b_def, weight_def, bias_def),
-                       BuildQDQSharedBiasTwoConvTestCase<uint8_t, int8_t>(input_a_def, input_b_def,
-                                                                          weight_def, bias_def),
+  TestQDQModelAccuracy(BuildF32SharedBiasThreeConvTestCase(input_a_def, input_b_def, input_c_def,
+                                                           weight_def, bias_def),
+                       BuildQDQSharedBiasThreeConvTestCase<uint8_t, int8_t>(input_a_def, input_b_def, input_c_def,
+                                                                            weight_def, bias_def, use_float_bias,
+                                                                            bias_scale_factor),
                        provider_options,
                        13,  // opset
                        ExpectedEPNodeAssignment::All,
@@ -1428,8 +1554,29 @@ TEST_F(QnnHTPBackendTests, ConvU8S8S32_SharedBiasInitializer_TinyScales) {
   if (::testing::Test::IsSkipped()) {
     return;
   }
-  AssertOpInQnnGraph(json_dir, "Conv2d", 2);
+  AssertOpInQnnGraph(json_dir, "Conv2d", 3);
   AssertNodeInputsDistinctInQnnGraph(json_dir, "Conv2d", /*input_index=*/2);
+}
+
+// ConvA, ConvB, and ConvC share one quantized int32 bias initializer. The bias scale matches
+// ConvA only; ConvB and ConvC require different requantized bias tensors.
+TEST_F(QnnHTPBackendTests, ConvU8S8S32_SharedBiasInitializer_TinyScales) {
+  RunConvU8S8S32SharedBiasTest("ConvU8S8S32_SharedBiasInitializer_TinyScales",
+                               /*use_float_bias=*/false, /*bias_scale_factor=*/1.0f);
+}
+
+// Multiple Convs share one float bias initializer. Each consumer must get its own quantized bias
+// tensor because the required bias scale depends on that consumer's activation scale.
+TEST_F(QnnHTPBackendTests, ConvU8S8S32_SharedFloatBiasInitializer_TinyScales) {
+  RunConvU8S8S32SharedBiasTest("ConvU8S8S32_SharedFloatBiasInitializer_TinyScales",
+                               /*use_float_bias=*/true, /*bias_scale_factor=*/1.0f);
+}
+
+// Multiple Convs share one quantized int32 bias initializer whose declared scale matches neither
+// consumer, forcing every consumer down the derived-bias path.
+TEST_F(QnnHTPBackendTests, ConvU8S8S32_SharedBiasInitializer_ScaleMatchesNeither) {
+  RunConvU8S8S32SharedBiasTest("ConvU8S8S32_SharedBiasInitializer_ScaleMatchesNeither",
+                               /*use_float_bias=*/false, /*bias_scale_factor=*/2.0f);
 }
 
 // Conv with a u16 activation and a u8 output, as produced by mixed-precision LLM exports.
@@ -1494,6 +1641,163 @@ TEST_F(QnnHTPBackendTests, ConvU16U8_U8Output) {
 
 TEST_F(QnnHTPBackendTests, ConvU16U8_U8Output_1D) {
   RunConvU16ActivationU8OutputTest("1d", {1, 4, 6}, {3, 4, 2});
+}
+
+// Conv activation quantized u8, output quantized u16: exercises OrtConvNodeGroupSelector's
+// precision-bridge relaxation and ConvOpBuilder's Convert insertion (see conv_op_builder.cc).
+// The u16-in/u8-out direction is covered above by ConvU16U8_U8Output (narrowing-output path).
+TEST_F(QnnHTPBackendTests, Conv2D_U8In_U16Out_Mixed) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint8_t, uint8_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// HTP requires activation bitwidth >= weight bitwidth: a u8 activation feeding a u16 weight must be
+// upconverted to u16 (see conv_op_builder.cc's weight-bitwidth check). Output is also u16, so this is
+// the same act-to-output bridge as Conv2D_U8In_U16Out_Mixed, just weight-driven instead of output-driven.
+TEST_F(QnnHTPBackendTests, Conv2D_U8In_U16Weight_Mixed) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint8_t, uint16_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Signed int16 weight variant of Conv2D_U8In_U16Weight_Mixed: u8 activation, s16 weight, u16 output.
+TEST_F(QnnHTPBackendTests, Conv2D_U8In_S16Weight_U16Out_Mixed) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint8_t, int16_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// A u16 weight with a u8 declared output can't be satisfied without downconverting the weight, which
+// ConvOpBuilder never does; the node must fall back rather than form an invalid QDQ group.
+TEST_F(QnnHTPBackendTests, Conv2D_U16Weight_U8Out_Rejected) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint8_t, uint16_t, uint8_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::None);
+}
+
+// V68 HTP only supports a16w8 among the 16-bit-activation combos, not a16w16 (unlike later HTP
+// archs). A u16 activation with a u16 weight must be rejected on V68 (see conv_op_builder.cc).
+TEST_F(QnnHTPBackendTests, Conv2D_U16Act_U16Weight_RejectedOnV68) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8350);
+#else
+  if (!HasPlatformAttributes() || GetPlatformAttributes().htp_arch != QNN_HTP_DEVICE_ARCH_V68) {
+    GTEST_SKIP() << "Test requires V68 HTP.";
+  }
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint16_t, uint16_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::None);
+}
+
+// Regression guard: a16w8 (16-bit activation, 8-bit weight) must still be accepted on V68 -- only
+// the a16w16 combo is rejected there.
+TEST_F(QnnHTPBackendTests, Conv2D_U16Act_U8Weight_AcceptedOnV68) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8350);
+#else
+  if (!HasPlatformAttributes() || GetPlatformAttributes().htp_arch != QNN_HTP_DEVICE_ARCH_V68) {
+    GTEST_SKIP() << "Test requires V68 HTP.";
+  }
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint16_t, uint8_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Regression guard: a16w16 must still be accepted on non-V68 arches (here V73/SM8550), since the
+// new V68-specific rejection must not over-reject on other HTP archs.
+TEST_F(QnnHTPBackendTests, Conv2D_U16Act_U16Weight_AcceptedOnV73) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint16_t, uint16_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
 }
 
 // Tests QDQ Conv where activation and weight are per-tensor quantized but bias is a plain float
@@ -3500,7 +3804,7 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
       } else if (bias_per_channel) {
         // Per-channel quantized bias: distinct quantized value and scale per output channel (DQ axis=0).
         // Use INT32-quantized bias directly (no QL node — avoids ORT QL opset validation for INT32).
-        // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qnn_ep_utils.cc:741).
+        // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qdq_node_group_selector.cc:741).
         // Non-zero quant values ensure the per-channel scale indexing is actually exercised.
         // Omit zero_point (symmetric): ORT per-axis DQ requires zp be null or 1D of size OC.
         std::vector<int32_t> bias_quant(static_cast<size_t>(OC));
@@ -3957,9 +4261,9 @@ TEST_F(QnnHTPBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
                                      ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 //
 // GPU tests:
 //
@@ -4300,7 +4604,7 @@ TEST_F(QnnGPUBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
                 "gpu");
 }
 
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime

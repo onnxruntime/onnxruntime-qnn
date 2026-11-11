@@ -77,9 +77,19 @@ option(onnxruntime_CROSS_COMPILING "Cross compiling onnx runtime" OFF)
 option(onnxruntime_GCOV_COVERAGE "Compile with options necessary to run code coverage" OFF)
 option(onnxruntime_DONT_VECTORIZE "Do not vectorize operations in Eigen" OFF)
 
-# Coverage builds are only supported on Linux with GCC.
-# Pass -DENABLE_COVERAGE=ON to cmake to enable (e.g. via build.sh --enable-coverage).
+# ENABLE_COVERAGE controls GCC coverage instrumentation and is supported only on Linux.
+# QNN internal-symbol access is a separate test capability without instrumentation. The
+# QCOM Linux build wrapper enables both for coverage builds to preserve the existing suite.
 option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
+option(onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS
+       "Build QNN EP with internal symbols exported for tests. Do not use for production binaries." OFF)
+
+# This mode must keep the QNN EP export/link configuration and its direct-access
+# test bodies in lockstep. It is consumed by both provider and unit-test targets.
+set(onnxruntime_qnn_internal_test_symbols_enabled OFF)
+if(onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS)
+  set(onnxruntime_qnn_internal_test_symbols_enabled ON)
+endif()
 
 option(onnxruntime_USE_FULL_PROTOBUF "Link to libprotobuf instead of libprotobuf-lite when this option is ON" OFF)
 option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS "Dump debug information about node inputs and outputs when executing the model." OFF)
@@ -431,7 +441,10 @@ endif()
 include(external/onnxruntime_prebuilt.cmake)
 
 # Generate onnxruntime_config.h
-file (STRINGS "${REPO_ROOT}/VERSION_NUMBER" ORT_VERSION)
+file (STRINGS "${REPO_ROOT}/VERSION_NUMBER" ORT_QNN_EP_VERSION)
+file (READ "${REPO_ROOT}/qcom/packages.yml" _packages_yml)
+string(REGEX MATCH "ort_prebuilt_windows_x64:[^\n]*\n[[:space:]]*version:[[:space:]]*([0-9.]+)" _ort_ver_match "${_packages_yml}")
+set(ORT_VERSION "${CMAKE_MATCH_1}")
 
 set(ORT_PROVIDER_FLAGS)
 list(APPEND ORT_PROVIDER_FLAGS -DUSE_QNN=1)
@@ -462,18 +475,20 @@ if (NOT QNN_ARCH_ABI)
 endif()
 
 if (MSVC OR ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-    file(GLOB QNN_LIB_FILES LIST_DIRECTORIES false "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/libQnn*.so"
-                                            "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/Qnn*.dll"
+    file(GLOB QNN_LIB_FILES LIST_DIRECTORIES false "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/Genie*.dll"
+                                            "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/HtpPrepare.dll"
                                             "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/libGenie*.so"
-                                            "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/Genie*.dll"
                                             "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/libHtpPrepare.so"
-                                            "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/HtpPrepare.dll")
+                                            "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/libQnn*.so"
+                                            "${onnxruntime_QNN_HOME}/lib/${QNN_ARCH_ABI}/Qnn*.dll")
     if (${QNN_ARCH_ABI} STREQUAL "aarch64-windows-msvc" OR ${QNN_ARCH_ABI} STREQUAL "arm64x-windows-msvc")
       file(GLOB EXTRA_HTP_LIB LIST_DIRECTORIES false "${onnxruntime_QNN_HOME}/lib/hexagon-v68/unsigned/libQnnHtpV68Skel.so"
-                                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libQnnHtpV73Skel.so"
                                                     "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libqnnhtpv73.cat"
+                                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libQnnHtpV73Skel.so"
+                                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libqnnhtpv81.cat"
                                                     "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libQnnHtpV81Skel.so"
-                                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libqnnhtpv81.cat")
+                                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v85/unsigned/libqnnhtpv85.cat"
+                                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v85/unsigned/libQnnHtpV85Skel.so")
       list(APPEND QNN_LIB_FILES ${EXTRA_HTP_LIB})
     elseif(${QNN_ARCH_ABI} STREQUAL "aarch64-ubuntu-gcc9.4")
       list(APPEND QNN_LIB_FILES "${onnxruntime_QNN_HOME}/lib/hexagon-v68/unsigned/libQnnHtpV68Skel.so")
@@ -483,7 +498,8 @@ if (MSVC OR ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
                                 "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libQnnHtpV73Skel.so"
                                 "${onnxruntime_QNN_HOME}/lib/hexagon-v75/unsigned/libQnnHtpV75Skel.so"
                                 "${onnxruntime_QNN_HOME}/lib/hexagon-v79/unsigned/libQnnHtpV79Skel.so"
-                                "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libQnnHtpV81Skel.so")
+                                "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libQnnHtpV81Skel.so"
+                                "${onnxruntime_QNN_HOME}/lib/hexagon-v85/unsigned/libQnnHtpV85Skel.so")
     endif()
     message(STATUS "QNN lib files: " ${QNN_LIB_FILES})
 endif()
@@ -789,11 +805,11 @@ set(VERSION_BUILD_PART       0 CACHE STRING "Third part of numeric file/product 
 set(VERSION_PRIVATE_PART     0 CACHE STRING "Fourth part of numeric file/product version.")
 set(VERSION_STRING       "Internal Build" CACHE STRING "String representation of file/product version.")
 if(VERSION_MAJOR_PART STREQUAL "0" AND VERSION_MINOR_PART STREQUAL "0" AND VERSION_BUILD_PART STREQUAL "0" AND VERSION_PRIVATE_PART STREQUAL "0")
-    string(REPLACE "." ";"  ORT_VERSION_STRING_LIST ${ORT_VERSION})
+    string(REPLACE "." ";"  ORT_VERSION_STRING_LIST ${ORT_QNN_EP_VERSION})
     list(GET ORT_VERSION_STRING_LIST 0 VERSION_MAJOR_PART)
     list(GET ORT_VERSION_STRING_LIST 1 VERSION_MINOR_PART)
     list(GET ORT_VERSION_STRING_LIST 2 VERSION_BUILD_PART)
-    set(VERSION_STRING ${ORT_VERSION})
+    set(VERSION_STRING ${ORT_QNN_EP_VERSION})
 endif()
 
 
@@ -928,7 +944,7 @@ configure_package_config_file(
 
 write_basic_package_version_file(
     "${PROJECT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
-    VERSION ${ORT_VERSION}
+    VERSION ${ORT_QNN_EP_VERSION}
     COMPATIBILITY SameMajorVersion)
 
 install(

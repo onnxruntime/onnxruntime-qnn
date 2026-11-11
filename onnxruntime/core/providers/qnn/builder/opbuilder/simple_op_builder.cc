@@ -3,6 +3,8 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/folded_static_utils.h"
+#include "core/providers/qnn/builder/opbuilder/mixed_precision_convert_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
@@ -17,6 +19,11 @@ class SimpleOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(SimpleOpBuilder);
 
  protected:
+  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger,
+                            std::vector<std::string>& input_names,
+                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           std::vector<std::string>&& input_names,
@@ -32,12 +39,6 @@ class SimpleOpBuilder : public BaseOpBuilder {
 
  private:
   Ort::Status ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
-  Ort::Status ProcessSigmoidOrTanhOutput(QnnModelWrapper& qnn_model_wrapper,
-                                         const OrtNodeUnit& node_unit,
-                                         std::vector<std::string>&& input_names,
-                                         std::vector<std::string>&& param_tensor_names,
-                                         const Ort::Logger& logger,
-                                         bool do_op_validation) const ORT_MUST_USE_RESULT;
 
   static constexpr std::array<std::string_view, 3> gridsample_supported_modes = {"bilinear", "nearest", "linear"};
   static constexpr std::array<std::string_view, 3> gridsample_supported_padding_modes = {"zeros", "border", "reflection"};
@@ -54,6 +55,17 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     std::string padding_mode = node_helper.Get("padding_mode", "zeros");
     RETURN_IF_NOT(utils::ArrayHasString(gridsample_supported_padding_modes, padding_mode),
                   ("GridSample does not support padding_mode " + padding_mode).c_str());
+
+    // QNN HTP supports rank <= 5 for 8/16-bit fixed-point GridSample, rank <= 4 for float.
+    TensorInfo input_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+    const bool is_fixed_point = utils::IsQuant8bit(input_info.qnn_data_type) ||
+                                utils::IsQuant16bit(input_info.qnn_data_type);
+    const size_t max_rank = is_fixed_point ? 5 : 4;
+    RETURN_IF(input_info.shape.size() > max_rank,
+              ("QNN EP does not support GridSample with input rank > " + std::to_string(max_rank) +
+               (is_fixed_point ? " (fixed-point)." : " (floating-point)."))
+                  .c_str());
   }
 
   const auto qnn_backend_type = qnn_model_wrapper.GetQnnBackendType();
@@ -128,6 +140,21 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
+Ort::Status SimpleOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                           const OrtNodeUnit& node_unit,
+                                           const Ort::Logger& logger,
+                                           std::vector<std::string>& input_names,
+                                           bool do_op_validation) const {
+  RETURN_IF_ERROR(BaseOpBuilder::ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation));
+
+  // Only HTP was validated for this Convert; the relaxed selectors are backend-agnostic, so guard here.
+  // See OrtBinaryNodeGroupSelector's relaxation in qdq_node_group_selector.cc for context.
+  if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    return Ort::Status();
+  }
+  return utils::AlignBinaryInputPrecision(qnn_model_wrapper, node_unit, input_names, do_op_validation);
+}
+
 // Limit to float type for now
 Ort::Status ProcessNodeAttribute(QnnModelWrapper& qnn_model_wrapper,
                                  const OrtNodeUnit& node_unit,
@@ -175,6 +202,49 @@ Ort::Status ProcessModeAttribute(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), mode_value,
                                          QNN_OP_DEPTH_TO_SPACE_PARAM_MODE, param_tensor_names));
 
+  return Ort::Status();
+}
+
+// DepthToSpace and SpaceToDepth only permute elements, so a per-tensor input scale
+// and zero-point applies unchanged to the output. Pre-register it instead of emitting
+// plain uint8, which QNN backend validation rejects (fatal: pass 1 skips validation
+// for these ops). Per-channel quant is excluded: the channel axis and count both change.
+Ort::Status PropagatePerTensorInputQuantToOutput(QnnModelWrapper& qnn_model_wrapper,
+                                                 const OrtNodeUnit& node_unit,
+                                                 const std::vector<std::string>& input_names) {
+  const auto& outputs = node_unit.Outputs();
+  if (outputs.empty() || input_names.empty()) {
+    return Ort::Status();
+  }
+  const std::string& output_name = outputs[0].name;
+  if (qnn_model_wrapper.IsQnnTensorWrapperExist(output_name)) {
+    return Ort::Status();
+  }
+  const std::string& input_name = input_names[0];
+  if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
+    return Ort::Status();
+  }
+  const QnnTensorWrapper& input_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_name);
+  const QnnQuantParamsWrapper& input_quant_param = input_wrapper.GetQnnQuantParams();
+  if (!input_quant_param.IsPerTensor()) {
+    return Ort::Status();
+  }
+  TensorInfo output_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
+  if (output_info.quant_param.IsQuantized()) {
+    return Ort::Status();
+  }
+  Qnn_TensorType_t tensor_type = QNN_TENSOR_TYPE_NATIVE;
+  if (qnn_model_wrapper.IsGraphOutput(output_name)) {
+    tensor_type = QNN_TENSOR_TYPE_APP_READ;
+  }
+  QnnTensorWrapper output_wrapper(output_name,
+                                  tensor_type,
+                                  input_wrapper.GetTensorDataType(),
+                                  input_quant_param.Copy(),
+                                  std::move(output_info.shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)),
+                "Failed to add tensor.");
   return Ort::Status();
 }
 
@@ -414,6 +484,61 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 #endif
   }
 
+  // Work around slow HTP GELU on channels-first rank-3 tensors after layout propagation.
+  // TODO: Revisit/remove this workaround when HTP rank-3 GELU layout performance is fixed.
+  // Match only the observed post-layout GELU -> Transpose pattern. Move that transpose before
+  // a rank-2 view that preserves the channel width; the added inverse transpose can cancel with
+  // the original consumer during QNN optimization.
+  if (op_type == "Gelu" && qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
+      qnn_model_wrapper.IsPostLayoutTransform() && node_unit.UnitType() == OrtNodeUnit::Type::SingleNode) {
+    TensorInfo input_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+    if (input_info.shape.size() == 3 &&
+        (input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32 || input_info.qnn_data_type == QNN_DATATYPE_FLOAT_16)) {
+      const auto& shape = input_info.shape;
+      const auto outputs = Ort::ConstNode(&node_unit.GetNode()).GetOutputs();
+      const auto consumers = outputs[0].GetConsumers();
+      if (consumers.size() == 1 && consumers[0].node != nullptr &&
+          Ort::ConstNode(consumers[0].node).GetOperatorType() == "Transpose") {
+        const auto perm = OrtNodeAttrHelper(*consumers[0].node).Get("perm", std::vector<int64_t>{});
+        const std::string& output_name = node_unit.Outputs()[0].name;
+        if (perm == std::vector<int64_t>{0, 2, 1} && !qnn_model_wrapper.IsGraphOutput(output_name)) {
+          const std::vector<uint32_t> view_shape{shape[0], shape[2], shape[1]};
+          const uint64_t rows = static_cast<uint64_t>(view_shape[0]) * view_shape[1];
+          if (rows > 0 && rows <= std::numeric_limits<uint32_t>::max() && view_shape[2] > 0) {
+            const std::vector<uint32_t> flat_shape{static_cast<uint32_t>(rows), view_shape[2]};
+            auto& names = utils::UniqueNameGenerator();
+            const std::string view_input = names.New(node_unit.Name() + "_gelu_channels_last");
+            const std::string flat_input = names.New(node_unit.Name() + "_gelu_flat_input");
+            const std::string flat_output = names.New(node_unit.Name() + "_gelu_flat_output");
+            const std::string view_output = names.New(node_unit.Name() + "_gelu_channels_last_output");
+            RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), input_names[0], view_input,
+                                                               shape, {0, 2, 1}, view_shape, input_info.qnn_data_type,
+                                                               input_info.quant_param, do_op_validation));
+            RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(view_input, flat_input, view_shape, flat_shape,
+                                                             input_info.qnn_data_type, input_info.quant_param,
+                                                             do_op_validation));
+            QnnTensorWrapper flat_output_tensor(flat_output, QNN_TENSOR_TYPE_NATIVE, input_info.qnn_data_type,
+                                                input_info.quant_param.Copy(), std::vector<uint32_t>(flat_shape));
+            RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(flat_output_tensor)),
+                          "Failed to add rank-2 GELU output tensor.");
+            RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(names.New(node_unit), QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                          QNN_OP_GELU, {flat_input}, {flat_output}, {}, do_op_validation),
+                          "Failed to add rank-2 GELU node.");
+            RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(flat_output, view_output, flat_shape, view_shape,
+                                                             input_info.qnn_data_type, input_info.quant_param,
+                                                             do_op_validation, false, false));
+            RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), view_output, output_name,
+                                                               view_shape, {0, 2, 1}, shape, input_info.qnn_data_type,
+                                                               input_info.quant_param, do_op_validation, false,
+                                                               false));
+            return Ort::Status();
+          }
+        }
+      }
+    }
+  }
+
   std::vector<std::string> param_tensor_names;
   // Add attribute
   if (op_type == "LpNormalization") {
@@ -468,6 +593,7 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   if (op_type == "DepthToSpace") {
     RETURN_IF_ERROR(ProcessBlockSizeAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
     RETURN_IF_ERROR(ProcessModeAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
+    RETURN_IF_ERROR(PropagatePerTensorInputQuantToOutput(qnn_model_wrapper, node_unit, input_names));
   }
 
   if (op_type == "SpaceToDepth") {
@@ -475,6 +601,7 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                            static_cast<uint32_t>(QNN_OP_SPACE_TO_DEPTH_MODE_DCR),
                                            QNN_OP_SPACE_TO_DEPTH_PARAM_MODE, param_tensor_names));
+    RETURN_IF_ERROR(PropagatePerTensorInputQuantToOutput(qnn_model_wrapper, node_unit, input_names));
   }
 
   if (op_type == "GridSample") {
@@ -490,57 +617,34 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                         GetQnnOpType(op_type), do_op_validation);
   }
 
+  // A Convert-compatible op's declared output precision may differ from what it now natively
+  // computes at (e.g. 16-bit in, declared 8-bit out); compute at native precision, then Convert.
+  // 1. Only HTP was validated for this Convert; the relaxed selectors are backend-agnostic, so
+  // guard here. Also only applies to ops SimpleOpBuilder knows how to Convert.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      (utils::IsConvertCompatibleUnaryOp(op_type) || utils::IsConvertCompatibleBinaryOp(op_type)) &&
+      !input_names.empty()) {
+    // 2. Read the declared (Q-node) output precision, applying any op-specific override first.
+    TensorInfo output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
+    if (output_info.quant_param.IsQuantized()) {
+      RETURN_IF_ERROR(OverrideOutputQuantParam(qnn_model_wrapper, node_unit, logger, input_names, 0,
+                                               output_info.qnn_data_type, output_info.quant_param));
+    }
+    // 3. Compare against the precision the op will actually compute at (input_names[0]'s dtype).
+    const Qnn_DataType_t native_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+    const bool needs_convert = utils::NeedsPrecisionConvert(native_dtype, output_info.qnn_data_type);
+    if (needs_convert) {
+      return utils::InsertOutputPrecisionConvert(qnn_model_wrapper, node_unit, std::move(input_names),
+                                                 std::move(param_tensor_names), do_op_validation,
+                                                 GetQnnOpType(op_type), native_dtype, output_info);
+    }
+  }
+
   return ProcessOutputs(qnn_model_wrapper, node_unit,
                         std::move(input_names),
                         std::move(param_tensor_names),
                         logger, do_op_validation, GetQnnOpType(op_type));
-}
-
-/**
- * Overrides offset and scale quantization parameters for operators (e.g., Sigmoid or Tanh) that require
- * specific values. Returns true if the quantization parameters were overridden.
- *
- * \param op_type The ONNX operator type.
- * \param qnn_data_type The QNN tensor data type.
- * \param quant_params Output scale/offset parameter that may be overridden.
- * \return True if the offset and scale were overridden.
- */
-static bool OverrideQuantParams(const std::string& op_type, Qnn_DataType_t qnn_data_type,
-                                Qnn_ScaleOffset_t& quant_params) {
-  const int32_t orig_offset = quant_params.offset;
-  const float orig_scale = quant_params.scale;
-
-  if (op_type == "Sigmoid" || op_type == "HardSigmoid") {
-    switch (qnn_data_type) {
-      case QNN_DATATYPE_UFIXED_POINT_16:
-        quant_params.offset = 0;
-        quant_params.scale = 1.0f / 65536.0f;
-        break;
-      case QNN_DATATYPE_SFIXED_POINT_16:
-        quant_params.offset = 0;
-        quant_params.scale = 1.0f / 32768.0f;
-        break;
-      default:
-        break;  // Do nothing.
-    }
-  }
-
-  if (op_type == "Tanh") {
-    switch (qnn_data_type) {
-      case QNN_DATATYPE_UFIXED_POINT_16:
-        quant_params.offset = -32768;
-        quant_params.scale = 1.0f / 32768.0f;
-        break;
-      case QNN_DATATYPE_SFIXED_POINT_16:
-        quant_params.offset = 0;
-        quant_params.scale = 1.0f / 32768.0f;
-        break;
-      default:
-        break;  // Do nothing.
-    }
-  }
-
-  return quant_params.offset != orig_offset || quant_params.scale != orig_scale;
 }
 
 Ort::Status SimpleOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
@@ -565,7 +669,7 @@ Ort::Status SimpleOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model
     const std::string& output_name = output.name;
 
     if (quant_param.IsPerTensor(/*include_bw*/ false)) {
-      if (OverrideQuantParams(op_type, qnn_data_type, quant_param.Get().scaleOffsetEncoding)) {
+      if (utils::OverrideActivationFixedEncoding(op_type, qnn_data_type, quant_param.Get().scaleOffsetEncoding)) {
         const int32_t offset = quant_param.Get().scaleOffsetEncoding.offset;
         const float scale = quant_param.Get().scaleOffsetEncoding.scale;
 

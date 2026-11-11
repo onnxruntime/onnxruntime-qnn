@@ -50,8 +50,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          # No submodules: the gate only needs git history, not the working tree.
+          fetch-depth: 1
+          # No submodules: the gate only needs the checked-out tree and PR base tree.
       - name: Detect changed paths
         id: gate
         run: |
@@ -70,8 +70,17 @@ jobs:
             exit 1
           fi
 
-          if ! changed=$(git diff --name-only "origin/${base_ref}...HEAD"); then
-            echo "::error::git diff against origin/${base_ref}...HEAD failed"
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          if [ -z "${base_sha}" ]; then
+            echo "::error::pull_request.base.sha is empty (base_ref=${base_ref})"
+            exit 1
+          fi
+
+          # A full checkout downloads every remote branch. Fetch only the exact
+          # target-branch snapshot needed for this PR.
+          git fetch --no-tags --depth=1 origin "${base_sha}"
+          if ! changed=$(git diff --name-only "${base_sha}" HEAD); then
+            echo "::error::git diff against ${base_ref} (${base_sha}) failed"
             exit 1
           fi
 
@@ -87,6 +96,15 @@ jobs:
           else
             echo "code=false" >> "${GITHUB_OUTPUT}"
           fi
+
+      - name: Prune Git history from the runner workspace
+        if: always()
+        continue-on-error: true
+        run: |
+          git for-each-ref --format='delete %(refname)' refs/remotes refs/tags |
+            git update-ref --stdin
+          git reflog expire --expire=now --all
+          git gc --prune=now
 
   build-linux-aarch64-oe-gcc11_2:
     if: ${{ inputs.do_all }}
@@ -131,6 +149,27 @@ jobs:
       test_wheel: false
       upload_test_archive: true
       upload_wheel: true
+
+  # Keep this non-required shadow validation alongside the shipping Linux build until its
+  # test inventory and reliability are established. It exercises both QnnUnit_* and legacy
+  # tests against a Release build with QNN EP internal symbols and no coverage instrumentation.
+  build-and-test-linux-x86_64-internal-symbols:
+    if: ${{ inputs.do_all }}
+    needs: [archive-testdata, path-filter]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: x86_64
+      target_py_vsn: None
+      qnn_internal_test_symbols: true
+      run_tests: true
+      build_test_same_runner: true
+      # This is validation-only; do not publish a non-shipping wheel or test archive.
+      upload_wheel: false
+      upload_test_archive: false
 
   build-and-test-linux-arm64:
     if: ${{ inputs.do_all }}
@@ -196,6 +235,26 @@ jobs:
       testdata_archive_artifact_name: testdata-zip
       target_py_vsn: ${{ inputs.target_py_vsn }}
 
+  # Keep this non-required shadow validation alongside the shipping build until its
+  # test inventory and reliability are established. It exercises both QnnUnit_* and
+  # legacy tests against the internal-symbol provider DLL.
+  build-and-test-windows-x86_64-internal-symbols:
+    if: ${{ inputs.do_all }}
+    needs: [archive-testdata, path-filter]
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
+      nightly_build: ${{ inputs.nightly_build }}
+      target_arch: x86_64
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      qnn_internal_test_symbols: true
+      run_tests: true
+      build_test_same_runner: true
+      # This is validation-only; do not publish a non-shipping wheel or test archive.
+      upload_wheel: false
+      upload_test_archive: false
+
   lint:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
@@ -207,6 +266,9 @@ jobs:
       - name: Run Linting Tool
         run: |
           python3 qcom/build_and_test.py lint
+      - name: Run QNN script tests
+        run: |
+          venv/bin/python -m pytest qcom/scripts/all/tests qcom/scripts/linux/tests -q
 
   build-android-aarch64:
     if: ${{ inputs.do_all }}

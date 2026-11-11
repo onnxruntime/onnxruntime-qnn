@@ -12,7 +12,7 @@
 
 namespace onnxruntime {
 namespace test {
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Function that builds a QDQ model with an InstanceNormalization operator.
 template <typename ActivationQType, typename ScaleQType>
@@ -193,16 +193,26 @@ TEST_F(QnnHTPBackendTests, InstanceNormU16U8Rank3_BatchSizeNot1_Initializer) {
                                             true);  // Use contrib Q/DQ ops for 16-bit support.
 }
 
-// Check that QNN InstanceNorm operator does not handle inputs with rank > 4.
+// Check that QNN compiles DQ -> InstanceNormalization -> Q as a single unit.
+// Rank-5 inputs are flattened to rank 4 (D*H merge).
 TEST_F(QnnHTPBackendTests, InstanceNormU8U8Rank5) {
   RunInstanceNormQDQTest(TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f),
                          TestInputDef<float>({2}, true, -2.0f, 2.0f),
                          TestInputDef<float>({2}, true, -3.0f, 3.0f),
                          {},
-                         ExpectedEPNodeAssignment::None);
+                         ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+// Rank-5 flattening has no batch restriction (unlike the rank-3 batch wrap).
+TEST_F(QnnHTPBackendTests, InstanceNormU8U8Rank5_BatchSizeNot1) {
+  RunInstanceNormQDQTest(TestInputDef<float>({2, 2, 3, 3, 3}, false, -10.0f, 10.0f),
+                         TestInputDef<float>({2}, true, -2.0f, 2.0f),
+                         TestInputDef<float>({2}, true, -3.0f, 3.0f),
+                         {},
+                         ExpectedEPNodeAssignment::All);
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

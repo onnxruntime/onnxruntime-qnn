@@ -18,7 +18,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Re-implement testcases from test/contrib_ops/matmul_4bits_test.cc.
 
@@ -301,7 +301,16 @@ static void RunHtpQDQMatMulNBitsTest(const TestParams params,
   }
 }
 
-#if defined(_M_ARM64)
+bool IsNativeBqExpected([[maybe_unused]] QnnHtpDevice_Arch_t htp_arch) {
+#if defined(__linux__) && !defined(__aarch64__)
+  // Assume SoC model is set at least V81, which is the case in the above test functions.
+  return true;
+#else
+  return htp_arch >= QNN_HTP_DEVICE_ARCH_V81;
+#endif  // defined(__linux__) && !defined(__aarch64__)
+}
+
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 // QNN GPU only support FP16 activations and Q4_0 weights, with zero_points = 8
 // Accumulation with larger channel accumulates more error. Set higher abs_error with respect to K.
 TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_M1_N128_K512_withZp) {
@@ -343,7 +352,7 @@ TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_M10_N128_K512) {
   params.has_zero_point = false;
   RunMatMulNBitsTest<4>(params);
 }
-#endif  // defined(_M_ARM64)
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B2_BS16) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
@@ -646,7 +655,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS32) {
   params.K = 64;
   params.block_size = 32;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/IsNativeBqExpected(htp_arch));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K64_B4_BS32_ZP) {
@@ -696,7 +705,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64) {
   params.K = 128;
   params.block_size = 64;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/IsNativeBqExpected(htp_arch));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B4_BS64_ZP) {
@@ -722,7 +731,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B4_BS128) {
   params.K = 256;
   params.block_size = 128;
   params.has_zero_point = false;
-  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/htp_arch >= QNN_HTP_DEVICE_ARCH_V81);
+  RunHtpQDQMatMulNBitsTest<4, uint16_t>(params, /*expect_native_bq=*/IsNativeBqExpected(htp_arch));
 }
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N64_K256_B4_BS128_ZP) {
@@ -1178,7 +1187,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K64_B4_BS16_AZP) {
   RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

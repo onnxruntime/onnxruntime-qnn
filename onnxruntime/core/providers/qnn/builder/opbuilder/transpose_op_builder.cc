@@ -7,7 +7,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/opbuilder/qdq_constant_folding.h"
+#include "core/providers/qnn/builder/opbuilder/folded_static_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -30,6 +30,7 @@ class TransposeOpBuilder : public BaseOpBuilder {
  private:
   Ort::Status ProcessPermAttribute(QnnModelWrapper& qnn_model_wrapper,
                                    const OrtNodeUnit& node_unit,
+                                   const std::vector<uint32_t>& perm,
                                    std::vector<std::string>& param_tensor_names) const;
 };
 
@@ -38,7 +39,6 @@ static Ort::Status GetTransposePerm(QnnModelWrapper& qnn_model_wrapper,
                                     /*out*/ std::vector<uint32_t>& perm) {
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape");
-  // set default perm
   uint32_t rank = static_cast<uint32_t>(input_shape.size());
   std::vector<int64_t> transpose_perm(rank);
   for (uint32_t i = 0; i < rank; ++i) {
@@ -53,15 +53,11 @@ static Ort::Status GetTransposePerm(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-// Only inputs produced by an earlier Q/DQ fold are handled here; ORT's transpose optimizer already
-// folds Transposes of real initializers. Such inputs arise when a constant sits behind a Q/DQ chain
-// the optimizer cannot push through, and keeping the Transpose at runtime makes its consumer read
-// an activation instead of a static tensor.
+// STATIC inputs come from Q/DQ chains the optimizer cannot push through.
 static Ort::Status TryFoldConstantTranspose(QnnModelWrapper& qnn_model_wrapper,
                                             const OrtNodeUnit& node_unit,
                                             const std::string& input_name) {
   const std::string& output_name = node_unit.Outputs()[0].name;
-  // An earlier fusion may already have registered the output as a NATIVE tensor that expects a producer.
   RETURN_IF(qnn_model_wrapper.IsQnnTensorWrapperExist(output_name), "Transpose output is already registered.");
 
   const QnnTensorWrapper& input_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_name);
@@ -92,9 +88,10 @@ static Ort::Status TryFoldConstantTranspose(QnnModelWrapper& qnn_model_wrapper,
   }
 
   std::vector<uint8_t> input_bytes;
-  RETURN_IF_ERROR(GetEffectivelyConstantTensorBytes(qnn_model_wrapper, input_name, input_bytes));
+  RETURN_IF_ERROR(GetConstantOrFoldedBytes(qnn_model_wrapper, input_name, input_bytes));
   RETURN_IF(input_bytes.size() != SafeInt<size_t>(num_elems) * elem_size,
             "Folded Transpose input byte size mismatch with shape.");
+  RETURN_IF(input_bytes.size() > kFoldedStaticMaxBytes, "Folded Transpose input too large to fold.");
 
   std::vector<uint8_t> output_bytes(input_bytes.size());
   std::vector<uint32_t> index(rank, 0);
@@ -119,16 +116,15 @@ static Ort::Status TryFoldConstantTranspose(QnnModelWrapper& qnn_model_wrapper,
                                   std::move(output_shape), std::move(output_bytes));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)),
                 "Failed to add folded Transpose output tensor.");
-  qnn_model_wrapper.MarkTensorAsFoldedConstant(output_name);
   return Ort::Status();
 }
 
 Ort::Status TransposeOpBuilder::ProcessPermAttribute(QnnModelWrapper& qnn_model_wrapper,
                                                      const OrtNodeUnit& node_unit,
+                                                     const std::vector<uint32_t>& perm,
                                                      std::vector<std::string>& param_tensor_names) const {
-  std::vector<uint32_t> perm_data;
-  RETURN_IF_ERROR(GetTransposePerm(qnn_model_wrapper, node_unit, perm_data));
-  std::vector<uint32_t> perm_shape{static_cast<uint32_t>(perm_data.size())};
+  std::vector<uint32_t> perm_shape{static_cast<uint32_t>(perm.size())};
+  std::vector<uint32_t> perm_data(perm);
 
   QnnParamWrapper transpose_param(node_unit.Index(), node_unit.Name(), QNN_OP_TRANSPOSE_PARAM_PERM,
                                   std::move(perm_shape), std::move(perm_data));
@@ -147,7 +143,9 @@ Ort::Status TransposeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     return Ort::Status();
   }
 
-  if (qnn_model_wrapper.IsFoldedConstant(input_names[0]) &&
+  // Folding is build-only: validation checks the runtime Transpose, which is also the fallback when a fold
+  // is declined.
+  if (!do_op_validation && IsFoldedStaticTensor(qnn_model_wrapper, input_names[0]) &&
       !qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].name)) {
     Ort::Status fold_status = TryFoldConstantTranspose(qnn_model_wrapper, node_unit, input_names[0]);
     if (fold_status.IsOK()) {
@@ -159,8 +157,8 @@ Ort::Status TransposeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                     .c_str());
   }
 
-  std::vector<std::string> param_tensor_names;
-  RETURN_IF_ERROR(ProcessPermAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
+  std::vector<uint32_t> perm;
+  RETURN_IF_ERROR(GetTransposePerm(qnn_model_wrapper, node_unit, perm));
 
   const auto& output_name = node_unit.Outputs()[0].name;
   std::vector<std::string> output_names;
@@ -194,6 +192,28 @@ Ort::Status TransposeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Outputs()[0].shape, output_shape), "Cannot get shape");
 
   const QnnTensorWrapper& input_tensor_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
+  const QnnQuantParamsWrapper& input_quant_param = input_tensor_wrapper.GetQnnQuantParams();
+
+  // Workaround for QNN HTP Transpose miscomputation (issue #1020). Keep the Transpose
+  // path when an int64 output cast must be emitted or the quantization is per-channel.
+  if (!needs_int64_cast && !input_quant_param.IsPerChannel()) {
+    std::vector<uint32_t> input_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape");
+    if (utils::NeedsHtpTransposeReshapeWorkaround(input_shape, perm, output_shape)) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Lowering Transpose node '" + node_unit.Name() +
+                   "' to Reshape because its perm only reorders size-1 dimensions.")
+                      .c_str());
+      return qnn_model_wrapper.AddReshapeNode(input_names[0], output_name, input_shape, output_shape,
+                                              input_tensor_wrapper.GetTensorDataType(),
+                                              input_quant_param, do_op_validation,
+                                              qnn_model_wrapper.IsGraphInput(input_names[0]),
+                                              is_graph_output);
+    }
+  }
+
+  std::vector<std::string> param_tensor_names;
+  RETURN_IF_ERROR(ProcessPermAttribute(qnn_model_wrapper, node_unit, perm, param_tensor_names));
 
   // If a cast to int64 is needed, add the cast node
   if (needs_int64_cast) {

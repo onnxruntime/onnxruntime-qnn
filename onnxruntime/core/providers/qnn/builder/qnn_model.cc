@@ -20,8 +20,11 @@
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_ep_profiler.h"
-#include "core/providers/qnn/qnn_ep_utils.h"
+#include "core/providers/qnn/builder/qdq_node_group_selector.h"
 #include "core/providers/qnn/shared_context.h"
+#ifdef _WIN32
+#include "core/providers/qnn/qnn_external_resource_importer.h"
+#endif
 
 namespace onnxruntime {
 namespace qnn {
@@ -70,9 +73,9 @@ std::vector<std::string> ResolveGraphInputOutputOrder(
 bool QnnModel::GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::Logger& /* logger */) {
   bool rt = true;
 
-  graph_info_ = std::make_unique<GraphInfo>(model_wrapper.GetQnnGraph(),
+  graph_info_ = std::make_unique<GraphInfo>(qnn_graph_emitter_->Graph(),
                                             model_wrapper.GetQnnGraphName(),
-                                            model_wrapper.GetQnnGraphContext(),
+                                            qnn_graph_emitter_->Context(),
                                             std::move(model_wrapper.GetGraphInputTensorWrappers()),
                                             std::move(model_wrapper.GetGraphOutputTensorWrappers()));
 
@@ -309,7 +312,8 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
       ProfilingMethodType::COMPOSE_GRAPHS,
       profiling_scope));
 
-  bool rt = qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, context.graph_configs);
+  bool rt = qnn_model_wrapper.CreateQnnGraph(*qnn_graph_emitter_, qnn_backend_manager_->GetQnnContext(),
+                                             graph_name, context.graph_configs);
 
   RETURN_IF_NOT(rt, "Failed to initialize qnn_model_wrapper.");
 
@@ -391,16 +395,12 @@ Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
       ProfilingMethodType::FINALIZE,
       profiling_scope));
 
-  Qnn_ErrorHandle_t status = qnn_backend_manager_->GetQnnInterface().graphFinalize(graph_info_->Graph(),
-                                                                                   profiling_scope.Handle(),
-                                                                                   nullptr);
+  Ort::Status finalize_status = qnn_graph_emitter_->Finalize(profiling_scope.Handle());
 
   profiling_scope.Complete(profiling_info);
 
-  if (QNN_GRAPH_NO_ERROR != status) {
-    return MAKE_EP_FAIL(("Failed to finalize QNN graph. " +
-                         utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), status))
-                            .c_str());
+  if (!finalize_status.IsOK()) {
+    return finalize_status;
   }
 
   // NOTE: This function returns immediately when profiling is disabled.
@@ -474,18 +474,12 @@ Ort::Status QnnModel::ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs,
     return Ort::Status();  // Nothing runtime-applicable was requested.
   }
 
-  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
-  RETURN_IF(nullptr == qnn_interface.graphSetConfig,
-            "Invalid function pointer for graphSetConfig; cannot apply runtime graph configs.");
-  Qnn_ErrorHandle_t rt = qnn_interface.graphSetConfig(graph_info_->Graph(), graph_configs);
-  if (QNN_SUCCESS != rt) {
+  const Ort::Status set_config_status = qnn_graph_emitter_->SetConfig(graph_configs);
+  if (!set_config_status.IsOK()) {
     // QNN_GRAPH_ERROR_GRAPH_FINALIZED here means an option in the set is not runtime-settable
     // on this SDK and must move back to compile-time wiring in InitQnnHtpGraphConfigs.
-    const std::string message = "Failed to apply runtime graph configs for graph: " +
-                                graph_info_->Name() + ". " +
-                                utils::FormatQnnError(qnn_interface, rt);
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, message.c_str());
-    return MAKE_EP_FAIL(message.c_str());
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, set_config_status.GetErrorMessage().c_str());
+    return MAKE_EP_FAIL(set_config_status.GetErrorMessage().c_str());
   }
 
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
@@ -493,37 +487,70 @@ Ort::Status QnnModel::ApplyRuntimeGraphConfigs(const HtpGraphConfigs_t& configs,
   return Ort::Status();
 }
 
-static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
-                                                       const Ort::Logger& logger,
-                                                       QnnBackendManager& qnn_backend_manager,
-                                                       const OrtMemoryInfo* ort_value_memory_info,
-                                                       void* ort_value_data, uint32_t ort_value_data_size,
-                                                       Qnn_ContextHandle_t qnn_context,
-                                                       Qnn_Tensor_t& qnn_tensor) {
+Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& logger,
+                                                          const OrtMemoryInfo* ort_value_memory_info,
+                                                          void* ort_value_data,
+                                                          uint32_t ort_value_data_size,
+                                                          Qnn_ContextHandle_t qnn_context,
+                                                          Qnn_Tensor_t& qnn_tensor) {
   // either set qnn_tensor memHandle or clientBuf
   OrtMemoryInfoDeviceType ort_value_memory_info_device_type;
-  ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
-  OrtDeviceMemoryType ort_value_memory_info_device_memory_type = ort_api.MemoryInfoGetDeviceMemType(ort_value_memory_info);
+  api_ptrs_.ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
+  OrtDeviceMemoryType ort_value_memory_info_device_memory_type =
+      api_ptrs_.ort_api.MemoryInfoGetDeviceMemType(ort_value_memory_info);
   const bool uses_shared_memory =
       ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
       ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE;
   const bool uses_imported_memory =
       ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_GPU &&
       ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_DEFAULT;
+  const QnnAllocatorType qnn_allocator_type = qnn_backend_manager_->GetQnnAllocatorType();
+  bool has_matching_shared_allocation = false;
+  if (IsHtpSharedMemoryAllocator(qnn_allocator_type)) {
+    has_matching_shared_allocation = HtpSharedMemoryAllocator::IsAllocationTracked(ort_value_data);
+  }
+#ifdef _WIN32
+  else if (IsDx12SharedMemoryAllocator(qnn_allocator_type)) {
+    has_matching_shared_allocation = Dx12SharedMemoryAllocator::IsAllocationTracked(ort_value_data);
+  }
+  const bool can_use_imported_memory =
+      uses_imported_memory && QnnExternalResourceImporterImpl::FindImportMemory(ort_value_data);
+#else
+  const bool can_use_imported_memory = false;
+#endif
+  const bool can_use_shared_memory = uses_shared_memory && has_matching_shared_allocation;
 
-  if (uses_shared_memory || uses_imported_memory) {
+  if (uses_imported_memory && !can_use_imported_memory) {
+    return MAKE_EP_FAIL("GPU DEFAULT memory is not a registered imported memory handle.");
+  }
+
+  if (can_use_shared_memory || can_use_imported_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t memHandle to ORT tensor shared memory.");
     Qnn_MemHandle_t qnn_mem_handle{};
-    RETURN_IF_ERROR(qnn_backend_manager.GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
-                                                                      qnn_mem_handle));
+    RETURN_IF_ERROR(qnn_backend_manager_->GetOrRegisterContextMemHandle(qnn_context, ort_value_data, qnn_tensor,
+                                                                        qnn_mem_handle));
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_MEMHANDLE);
     SetQnnTensorMemHandle(qnn_tensor, qnn_mem_handle);
   } else {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
     SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
+    if (!zero_copy_fallback_warned_ &&
+        (uses_shared_memory || uses_imported_memory || qnn_allocator_type != QnnAllocatorType::NONE)) {
+      zero_copy_fallback_warned_ = true;
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                  "QNN zero-copy memory binding was not used; falling back to clientBuf.");
+    }
   }
 
+  return Ort::Status();
+}
+
+Ort::Status QnnModel::RetrieveGraph(GraphInfo& graph_info, Qnn_ContextHandle_t context) {
+  // RetrieveGraph leaves the emitter unchanged on failure, so metadata remains
+  // attached to the same graph/context pair until a replacement succeeds.
+  RETURN_IF_ERROR(qnn_graph_emitter_->RetrieveGraph(context, graph_info.Name()));
+  graph_info.ResetHandles(qnn_graph_emitter_->Graph(), qnn_graph_emitter_->Context());
   return Ort::Status();
 }
 
@@ -532,7 +559,6 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
               ("SSR recovery: reloading QNN context for graph: " + graph_info_->Name()).c_str());
 
   Qnn_ContextHandle_t old_context = graph_info_->GraphContext();
-  std::string graph_name = graph_info_->Name();
 
   // Clear tensor I/O metadata (will be rebuilt after recovery).
   qnn_input_infos_.clear();
@@ -559,15 +585,8 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
     }
   }  // release recovery_lock
 
-  // Retrieve our graph from the (new or reused) context.
-  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
-  Qnn_GraphHandle_t new_graph = nullptr;
-  auto rt = qnn_interface.graphRetrieve(new_context, graph_name.c_str(), &new_graph);
-  RETURN_IF(QNN_SUCCESS != rt,
-            ("SSR recovery: graphRetrieve failed for graph: " + graph_name).c_str());
-
-  // Update graph_info_ with the new handles (tensor metadata is preserved).
-  graph_info_->ResetHandles(new_graph, new_context);
+  // Retrieve our graph and replace both handle pairs (tensor metadata is preserved).
+  RETURN_IF_ERROR(RetrieveGraph(*graph_info_, new_context));
 
   // Re-build the tensor I/O metadata against the new graph handles.
   RETURN_IF_ERROR(SetupQnnInputOutput(logger));
@@ -633,9 +652,7 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorData(ort_input_tensor, &raw_data));
 
     RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
-        api_ptrs_.ort_api,
         logger,
-        *qnn_backend_manager_,
         static_cast<const OrtMemoryInfo*>(input_tensor_mem_info),
         const_cast<void*>(raw_data), qnn_input_info.tensor_byte_size,
         graph_info_->GraphContext(),
@@ -679,16 +696,12 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorMutableData(ort_output_tensor, &mutable_data));
 
     RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
-        api_ptrs_.ort_api,
         logger,
-        *qnn_backend_manager_,
         static_cast<const OrtMemoryInfo*>(output_tensor_mem_info),
         mutable_data, qnn_output_info.tensor_byte_size,
         graph_info_->GraphContext(),
         qnn_outputs.back()));
   }
-
-  const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
 
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Start execute QNN graph:" + graph_info_->Name()).c_str());
 
@@ -732,13 +745,12 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
 
   RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
 
-  execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
-                                              qnn_inputs.data(),
-                                              static_cast<uint32_t>(qnn_inputs.size()),
-                                              qnn_outputs.data(),
-                                              static_cast<uint32_t>(qnn_outputs.size()),
-                                              profile_backend_handle,
-                                              nullptr);
+  execute_status = qnn_graph_emitter_->Execute(qnn_inputs.data(),
+                                               static_cast<uint32_t>(qnn_inputs.size()),
+                                               qnn_outputs.data(),
+                                               static_cast<uint32_t>(qnn_outputs.size()),
+                                               profile_backend_handle,
+                                               nullptr);
 
   profiling_scope.Complete(profiling_info);
 
@@ -876,7 +888,9 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
     RETURN_IF(input_count < tensor_count, "The count of graph inputs should be at least the count of tensor_wrapper!");
     qnn_tensor_infos.resize(input_count);
   } else {
-    qnn_tensor_infos.resize(tensor_count);
+    auto output_count = graph_outputs_.indices.size();
+    RETURN_IF(output_count < tensor_count, "The count of graph outputs should be at least the count of tensor_wrapper!");
+    qnn_tensor_infos.resize(output_count);
   }
 
   for (auto& tensor_wrapper : tensor_wrappers) {
@@ -888,24 +902,24 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
     const auto& tensor_name = tensor_wrapper.GetName();
     auto qnn_index = is_input ? GetGraphInputIndex(tensor_name) : GetOutputIndex(tensor_name);
     auto ort_index = is_input ? GetOrtInputIndex(tensor_name) : qnn_index;
+    RETURN_IF(qnn_index >= qnn_tensor_infos.size(),
+              ("QNN tensor index is out of range for tensor: " + tensor_name).c_str());
 
     QnnTensorInfo& qnn_tensor_info = qnn_tensor_infos[qnn_index];
     qnn_tensor_info.tensor_wrapper = &tensor_wrapper;
     qnn_tensor_info.tensor_byte_size = static_cast<uint32_t>(length);
     qnn_tensor_info.ort_index = ort_index;
   }
-  // The number of graph inputs and the number of tensor wrappers may not match.
+  // The number of graph inputs/outputs and the number of tensor wrappers may not match.
   // - For example, for ResizeNearestNeighbor op, Qnn only cares about the 1st input,
   //   so the rest of the inputs are not converted to tensor wrappers.
   // - However, these remaining inputs still appear in the graph inputs, resulting in
   //   a discrepancy in the input quantities.
-  // If not all inputs are used, erase the empty allocations in qnn_tensor_infos.
-  if (is_input) {
-    qnn_tensor_infos.erase(std::remove_if(qnn_tensor_infos.begin(),
-                                          qnn_tensor_infos.end(),
-                                          [](QnnTensorInfo qnn_tensor_info) { return qnn_tensor_info.tensor_wrapper == nullptr; }),
-                           qnn_tensor_infos.end());
-  }
+  // If not all inputs/outputs are used, erase the empty allocations in qnn_tensor_infos.
+  qnn_tensor_infos.erase(std::remove_if(qnn_tensor_infos.begin(),
+                                        qnn_tensor_infos.end(),
+                                        [](QnnTensorInfo qnn_tensor_info) { return qnn_tensor_info.tensor_wrapper == nullptr; }),
+                         qnn_tensor_infos.end());
   return Ort::Status();
 }
 
@@ -1094,6 +1108,8 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
   uint32_t graph_input_num = 0;
   uint32_t graph_output_num = 0;
   if (qnn_sys_ctx_graph_info.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1) {
+    RETURN_IF(qnn_sys_ctx_graph_info.graphInfoV1.graphName == nullptr,
+              "Context graph name is null.");
     graph_name.assign(qnn_sys_ctx_graph_info.graphInfoV1.graphName);
     graph_input_num = qnn_sys_ctx_graph_info.graphInfoV1.numGraphInputs;
     graph_output_num = qnn_sys_ctx_graph_info.graphInfoV1.numGraphOutputs;
@@ -1103,6 +1119,8 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
   }
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 18)  // start from 2.25
   else if (qnn_sys_ctx_graph_info.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_2) {
+    RETURN_IF(qnn_sys_ctx_graph_info.graphInfoV2.graphName == nullptr,
+              "Context graph name is null.");
     graph_name.assign(qnn_sys_ctx_graph_info.graphInfoV2.graphName);
     graph_input_num = qnn_sys_ctx_graph_info.graphInfoV2.numGraphInputs;
     graph_output_num = qnn_sys_ctx_graph_info.graphInfoV2.numGraphOutputs;
@@ -1113,6 +1131,8 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
 #endif
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)  // start from 2.28
   else if (qnn_sys_ctx_graph_info.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
+    RETURN_IF(qnn_sys_ctx_graph_info.graphInfoV3.graphName == nullptr,
+              "Context graph name is null.");
     graph_name.assign(qnn_sys_ctx_graph_info.graphInfoV3.graphName);
     graph_input_num = qnn_sys_ctx_graph_info.graphInfoV3.numGraphInputs;
     graph_output_num = qnn_sys_ctx_graph_info.graphInfoV3.numGraphOutputs;
@@ -1140,16 +1160,13 @@ Ort::Status QnnModel::DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_
     output_tensor_wrappers.push_back(std::move(tensorwrapper));
   }
 
-  Qnn_GraphHandle_t graph;
-  auto qnn_interface = qnn_backend_manager_->GetQnnInterface();
-  auto rt = qnn_interface.graphRetrieve(context, graph_name.c_str(), &graph);
-  RETURN_IF(QNN_SUCCESS != rt, "Failed to retrieve QNN graph.");
-
-  graph_info_ = std::make_unique<GraphInfo>(graph,
-                                            graph_name,
-                                            context,
-                                            std::move(input_tensor_wrappers),
-                                            std::move(output_tensor_wrappers));
+  auto graph_info = std::make_unique<GraphInfo>(nullptr,
+                                                graph_name,
+                                                nullptr,
+                                                std::move(input_tensor_wrappers),
+                                                std::move(output_tensor_wrappers));
+  RETURN_IF_ERROR(RetrieveGraph(*graph_info, context));
+  graph_info_ = std::move(graph_info);
 
   return Ort::Status();
 }

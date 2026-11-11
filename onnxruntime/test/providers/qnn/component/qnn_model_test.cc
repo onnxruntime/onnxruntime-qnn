@@ -13,6 +13,8 @@
 
 #include "gtest/gtest.h"
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "HTP/QnnHtpDevice.h"
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
@@ -25,6 +27,174 @@
 
 namespace onnxruntime {
 namespace test {
+
+namespace {
+
+template <typename Tag, typename Tag::type Member>
+struct QnnModelPrivateMember {
+  friend typename Tag::type GetQnnModelPrivateMember(Tag) { return Member; }
+};
+
+struct SetupTensorsTag {
+  using type = Ort::Status (qnn::QnnModel::*)(std::vector<qnn::QnnTensorInfo>&,
+                                              const std::vector<qnn::QnnTensorWrapper>&,
+                                              bool);
+  friend type GetQnnModelPrivateMember(SetupTensorsTag);
+};
+
+template struct QnnModelPrivateMember<SetupTensorsTag, &qnn::QnnModel::SetupTensors>;
+
+struct BindQnnTensorMemoryTag {
+  using type = Ort::Status (qnn::QnnModel::*)(const Ort::Logger&,
+                                              const OrtMemoryInfo*,
+                                              void*,
+                                              uint32_t,
+                                              Qnn_ContextHandle_t,
+                                              Qnn_Tensor_t&);
+  friend type GetQnnModelPrivateMember(BindQnnTensorMemoryTag);
+};
+
+template struct QnnModelPrivateMember<BindQnnTensorMemoryTag,
+                                      &qnn::QnnModel::BindQnnTensorMemoryToOrtValueMemory>;
+
+struct GraphInfoTag {
+  using type = std::unique_ptr<qnn::GraphInfo> qnn::QnnModel::*;
+  friend type GetQnnModelPrivateMember(GraphInfoTag);
+};
+template struct QnnModelPrivateMember<GraphInfoTag, &qnn::QnnModel::graph_info_>;
+
+struct GraphEmitterTag {
+  using type = std::unique_ptr<qnn::QnnGraphEmitter> qnn::QnnModel::*;
+  friend type GetQnnModelPrivateMember(GraphEmitterTag);
+};
+template struct QnnModelPrivateMember<GraphEmitterTag, &qnn::QnnModel::qnn_graph_emitter_>;
+
+struct BackendContextsTag {
+  using type = std::vector<Qnn_ContextHandle_t> qnn::QnnBackendManager::*;
+  friend type GetQnnModelPrivateMember(BackendContextsTag);
+};
+template struct QnnModelPrivateMember<BackendContextsTag, &qnn::QnnBackendManager::contexts_>;
+
+struct ModelGraphContextStub {
+  Qnn_GraphHandle_t graph;
+  Qnn_ErrorHandle_t result = QNN_SUCCESS;
+};
+
+void InstallModelGraphStubs(QNN_INTERFACE_VER_TYPE& qnn_interface) {
+  qnn_interface.graphRetrieve = [](Qnn_ContextHandle_t context, const char*,
+                                   Qnn_GraphHandle_t* graph) -> Qnn_ErrorHandle_t {
+    const auto& stub = *static_cast<ModelGraphContextStub*>(context);
+    *graph = stub.graph;
+    return stub.result;
+  };
+  qnn_interface.errorGetMessage = [](Qnn_ErrorHandle_t, const char** message) -> Qnn_ErrorHandle_t {
+    *message = "stub QNN error";
+    return QNN_SUCCESS;
+  };
+}
+
+Ort::Status DeserializeStubGraph(qnn::QnnModel& model, ModelGraphContextStub& context) {
+  qnn::QnnTensorWrapper input("x", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                              qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  qnn::QnnTensorWrapper output("y", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4});
+  Qnn_Tensor_t input_tensor = input.GetQnnTensor();
+  Qnn_Tensor_t output_tensor = output.GetQnnTensor();
+  QnnSystemContext_GraphInfo_t info{};
+  info.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1;
+  info.graphInfoV1.graphName = const_cast<char*>("graph");
+  info.graphInfoV1.numGraphInputs = 1;
+  info.graphInfoV1.graphInputs = &input_tensor;
+  info.graphInfoV1.numGraphOutputs = 1;
+  info.graphInfoV1.graphOutputs = &output_tensor;
+  return model.DeserializeGraphInfoFromBinaryInfo(info, &context);
+}
+
+}  // namespace
+
+TEST(QnnUnit_ModelTest, DeserializeKeepsEmitterAndMetadataHandlesTogetherOnSuccessAndFailure) {
+  StubApiEnv env;
+  StubBackendManager backend(env.api_ptrs, env.logger);
+  InstallModelGraphStubs(backend.QnnInterface());
+  qnn::QnnModel model(backend.GetMutable(), env.api_ptrs);
+  auto& graph_info = model.*GetQnnModelPrivateMember(GraphInfoTag{});
+  auto& emitter = model.*GetQnnModelPrivateMember(GraphEmitterTag{});
+
+  int original_graph = 0;
+  int replacement_graph = 0;
+  ModelGraphContextStub original_context{&original_graph};
+  ModelGraphContextStub replacement_context{&replacement_graph};
+  ASSERT_TRUE(DeserializeStubGraph(model, original_context).IsOK());
+  ASSERT_TRUE(DeserializeStubGraph(model, replacement_context).IsOK());
+  ASSERT_NE(graph_info, nullptr);
+  EXPECT_EQ(graph_info->Graph(), &replacement_graph);
+  EXPECT_EQ(graph_info->GraphContext(), &replacement_context);
+  EXPECT_EQ(emitter->Graph(), graph_info->Graph());
+  EXPECT_EQ(emitter->Context(), graph_info->GraphContext());
+
+  const auto* previous_metadata = graph_info.get();
+  original_context.result = QNN_COMMON_ERROR_INVALID_ARGUMENT;
+  EXPECT_FALSE(DeserializeStubGraph(model, original_context).IsOK());
+  EXPECT_EQ(graph_info.get(), previous_metadata);
+  EXPECT_EQ(emitter->Graph(), graph_info->Graph());
+  EXPECT_EQ(emitter->Context(), graph_info->GraphContext());
+
+  original_context.result = QNN_SUCCESS;
+  original_context.graph = nullptr;
+  EXPECT_FALSE(DeserializeStubGraph(model, original_context).IsOK());
+  EXPECT_EQ(graph_info.get(), previous_metadata);
+  EXPECT_EQ(graph_info->Graph(), &replacement_graph);
+  EXPECT_EQ(graph_info->GraphContext(), &replacement_context);
+  EXPECT_EQ(emitter->Graph(), graph_info->Graph());
+  EXPECT_EQ(emitter->Context(), graph_info->GraphContext());
+}
+
+TEST(QnnUnit_ModelTest, SsrRecoveryReusesNewContextAndReplacesBothHandlePairs) {
+  StubApiEnv env;
+  StubBackendManager backend(env.api_ptrs, env.logger);
+  backend.BackendType() = qnn::QnnBackendType::HTP;
+  InstallModelGraphStubs(backend.QnnInterface());
+  qnn::QnnModel model(backend.GetMutable(), env.api_ptrs);
+  InstallFakeGraphApiStubs(env.stub_ort_api);
+  OrtGlobalApiOverride api_override(&env.stub_ort_api);
+
+  FakeValueInfo x{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {4}};
+  FakeValueInfo y{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {4}};
+  FakeGraph graph{{}, {&x}, {&y}, {}};
+  FakeNode fused{"fused", "QnnPartition_0", "", 13, {&x}, {&y}};
+  std::vector<std::string> input_names{"x"};
+  std::vector<std::string> output_names{"y"};
+  qnn::ModelSettings settings{};
+  qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), env.logger,
+                                     &input_names, &output_names, &settings};
+  ASSERT_TRUE(model.SetGraphInputOutputInfo(model_context).IsOK());
+
+  int original_graph = 0;
+  int replacement_graph = 0;
+  ModelGraphContextStub original_context{&original_graph};
+  ModelGraphContextStub replacement_context{&replacement_graph};
+  ASSERT_TRUE(DeserializeStubGraph(model, original_context).IsOK());
+  auto& graph_info = model.*GetQnnModelPrivateMember(GraphInfoTag{});
+  auto& emitter = model.*GetQnnModelPrivateMember(GraphEmitterTag{});
+  const auto* previous_metadata = graph_info.get();
+  const auto* previous_inputs = graph_info->InputTensors().data();
+  const auto* previous_outputs = graph_info->OutputTensors().data();
+
+  // Simulate another model having recovered the shared context: the old context
+  // is no longer tracked, and GetQnnContext(0) returns the replacement.
+  auto& contexts = (*backend.GetMutable()).*GetQnnModelPrivateMember(BackendContextsTag{});
+  contexts.push_back(&replacement_context);
+  ASSERT_FALSE(backend.Get()->HasContextHandle(&original_context));
+  ASSERT_TRUE(model.RecoverFromSSR(env.logger, qnn::EpContextIoDispatch()).IsOK());
+
+  EXPECT_EQ(graph_info.get(), previous_metadata);
+  EXPECT_EQ(graph_info->InputTensors().data(), previous_inputs);
+  EXPECT_EQ(graph_info->OutputTensors().data(), previous_outputs);
+  EXPECT_EQ(graph_info->Graph(), &replacement_graph);
+  EXPECT_EQ(graph_info->GraphContext(), &replacement_context);
+  EXPECT_EQ(emitter->Graph(), graph_info->Graph());
+  EXPECT_EQ(emitter->Context(), graph_info->GraphContext());
+}
 
 // ---------------------------------------------------------------------------
 // QnnModelMinimalTestContext
@@ -42,9 +212,20 @@ struct QnnModelMinimalTestContext {
   std::shared_ptr<qnn::QnnBackendManager> manager;
   std::unique_ptr<qnn::QnnModel> model;
 
-  QnnModelMinimalTestContext() {
+  explicit QnnModelMinimalTestContext(bool use_gpu_default_memory = false) {
+    stub_ort_api.MemoryInfoGetDeviceType = use_gpu_default_memory
+                                               ? +[](const OrtMemoryInfo*, OrtMemoryInfoDeviceType* device_type) noexcept {
+                                                   *device_type = OrtMemoryInfoDeviceType_GPU;
+                                                 }
+                                               : +[](const OrtMemoryInfo*, OrtMemoryInfoDeviceType* device_type) noexcept {
+                                                   *device_type = OrtMemoryInfoDeviceType_CPU;
+                                                 };
+    stub_ort_api.MemoryInfoGetDeviceMemType = [](const OrtMemoryInfo*) noexcept {
+      return OrtDeviceMemoryType_DEFAULT;
+    };
+
     qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnHtp.so";
+    cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -66,7 +247,7 @@ struct QnnModelMinimalTestContext {
 // QnnModelHtpTestContext
 //
 // Full context for tests that need a real QNN HTP backend (ComposeGraph,
-// FinalizeGraphs, etc.). Loads libQnnHtp.so and runs SetupBackend.
+// FinalizeGraphs, etc.). Loads the platform HTP backend and runs SetupBackend.
 // On x86_64 the validation path works but execution requires HTP hardware.
 // Tests should call GTEST_SKIP() when IsValid() returns false.
 // ---------------------------------------------------------------------------
@@ -89,7 +270,7 @@ struct QnnModelHtpTestContext {
     };
 
     qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnHtp.so";
+    cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -130,6 +311,17 @@ TEST(QnnUnit_ModelTest, Deserialize_UnsupportedVersion_ReturnsError) {
   EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
 }
 
+TEST(QnnUnit_ModelTest, Deserialize_Version1_NullGraphName_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  QnnSystemContext_GraphInfo_t info{};
+  info.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1;
+
+  Qnn_ContextHandle_t fake_ctx = nullptr;
+  EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
+}
+
 TEST(QnnUnit_ModelTest, Deserialize_Version1_NullInputTensors_ReturnsError) {
   QnnModelMinimalTestContext ctx;
   ASSERT_TRUE(ctx.IsValid());
@@ -163,6 +355,17 @@ TEST(QnnUnit_ModelTest, Deserialize_Version1_NullOutputTensors_ReturnsError) {
 }
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 18)
+TEST(QnnUnit_ModelTest, Deserialize_Version2_NullGraphName_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  QnnSystemContext_GraphInfo_t info{};
+  info.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_2;
+
+  Qnn_ContextHandle_t fake_ctx = nullptr;
+  EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
+}
+
 TEST(QnnUnit_ModelTest, Deserialize_Version2_NullInputTensors_ReturnsError) {
   // Covers the V2 conditional branch at lines 844-849.
   QnnModelMinimalTestContext ctx;
@@ -180,6 +383,17 @@ TEST(QnnUnit_ModelTest, Deserialize_Version2_NullInputTensors_ReturnsError) {
 #endif
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
+TEST(QnnUnit_ModelTest, Deserialize_Version3_NullGraphName_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  QnnSystemContext_GraphInfo_t info{};
+  info.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3;
+
+  Qnn_ContextHandle_t fake_ctx = nullptr;
+  EXPECT_FALSE(ctx.model->DeserializeGraphInfoFromBinaryInfo(info, fake_ctx).IsOK());
+}
+
 TEST(QnnUnit_ModelTest, Deserialize_Version3_NullInputTensors_ReturnsError) {
   // Covers the V3 conditional branch at lines 853-858.
   QnnModelMinimalTestContext ctx;
@@ -227,6 +441,78 @@ TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_Basic_PopulatesInputsOutputs) {
 
   auto status = ctx.model->SetGraphInputOutputInfo(mc);
   EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
+}
+
+TEST(QnnUnit_ModelTest, SetupTensors_SparseOutputIndex_ReturnsCompactedTensorInfo) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+  FakeValueInfo output0{"output0", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  FakeValueInfo output1{"output1", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  FakeGraph graph{{}, {}, {&output0, &output1}, {}};
+  FakeNode fused{"fused", "QnnPartition_0", "", 13, {}, {&output0, &output1}};
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names{"output0", "output1"};
+  qnn::ModelSettings settings{};
+  qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+                                     &input_names, &output_names, &settings};
+  ASSERT_TRUE(ctx.model->SetGraphInputOutputInfo(model_context).IsOK());
+
+  std::vector<qnn::QnnTensorWrapper> tensor_wrappers;
+  tensor_wrappers.emplace_back("output1", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  std::vector<qnn::QnnTensorInfo> tensor_infos;
+  const auto setup_tensors = GetQnnModelPrivateMember(SetupTensorsTag{});
+
+  const auto status = ((*ctx.model).*setup_tensors)(tensor_infos, tensor_wrappers, false);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  ASSERT_EQ(tensor_infos.size(), 1u);
+  EXPECT_EQ(tensor_infos[0].tensor_wrapper, &tensor_wrappers[0]);
+  EXPECT_EQ(tensor_infos[0].ort_index, 1u);
+}
+
+TEST(QnnUnit_ModelTest, SetupTensors_OutputCountLessThanTensorWrapperCount_ReturnsError) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+  FakeValueInfo output0{"output0", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  FakeGraph graph{{}, {}, {&output0}, {}};
+  FakeNode fused{"fused", "QnnPartition_0", "", 13, {}, {&output0}};
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names{"output0"};
+  qnn::ModelSettings settings{};
+  qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), ctx.logger,
+                                     &input_names, &output_names, &settings};
+  ASSERT_TRUE(ctx.model->SetGraphInputOutputInfo(model_context).IsOK());
+
+  std::vector<qnn::QnnTensorWrapper> tensor_wrappers;
+  tensor_wrappers.emplace_back("output0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  tensor_wrappers.emplace_back("output1", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1});
+  std::vector<qnn::QnnTensorInfo> tensor_infos;
+  const auto setup_tensors = GetQnnModelPrivateMember(SetupTensorsTag{});
+
+  const auto status = ((*ctx.model).*setup_tensors)(tensor_infos, tensor_wrappers, false);
+  EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_ModelTest, BindTensor_UnregisteredGpuDefaultMemory_ReturnsError) {
+  QnnModelMinimalTestContext ctx(/*use_gpu_default_memory=*/true);
+  ASSERT_TRUE(ctx.IsValid());
+
+  const auto bind_tensor_memory = GetQnnModelPrivateMember(BindQnnTensorMemoryTag{});
+  int data = 0;
+  Qnn_Tensor_t qnn_tensor = QNN_TENSOR_INIT;
+  const auto status = ((*ctx.model).*bind_tensor_memory)(
+      ctx.logger, reinterpret_cast<const OrtMemoryInfo*>(1), &data, sizeof(data), nullptr, qnn_tensor);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(status.GetErrorMessage(), "GPU DEFAULT memory is not a registered imported memory handle.");
 }
 
 // ---------------------------------------------------------------------------

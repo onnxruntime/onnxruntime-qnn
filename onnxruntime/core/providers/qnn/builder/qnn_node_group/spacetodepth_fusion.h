@@ -30,10 +30,14 @@ class SpaceToDepthFusion : public IQnnNodeGroup {
   SpaceToDepthFusion(gsl::span<const OrtNodeUnit* const> node_units,
                      uint32_t block_height,
                      uint32_t block_width,
-                     uint32_t mode)
+                     uint32_t mode,
+                     bool is_nhwc_decomp,
+                     bool output_is_nhwc)
       : block_height_(block_height),
         block_width_(block_width),
-        mode_(mode) {
+        mode_(mode),
+        is_nhwc_decomp_(is_nhwc_decomp),
+        output_is_nhwc_(output_is_nhwc) {
     node_units_.reserve(node_units.size());
     for (const OrtNodeUnit* node_unit : node_units) {
       node_units_.push_back(node_unit);
@@ -66,6 +70,8 @@ class SpaceToDepthFusion : public IQnnNodeGroup {
   uint32_t block_height_ = 0;
   uint32_t block_width_ = 0;
   uint32_t mode_ = 0;
+  bool is_nhwc_decomp_ = false;
+  bool output_is_nhwc_ = false;
 };
 
 }  // namespace qnn

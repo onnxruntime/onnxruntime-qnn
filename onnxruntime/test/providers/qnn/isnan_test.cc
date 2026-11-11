@@ -55,7 +55,7 @@ TEST_F(QnnCPUBackendTests, IsNaN_Mix_2d) {
                       0.0f);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -81,7 +81,7 @@ TEST_F(QnnHTPBackendTests, IsNaN_Mix_2d) {
                       "htp");
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

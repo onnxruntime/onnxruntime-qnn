@@ -5,9 +5,15 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include "qnn_module_state_test_utils.h"
+
 namespace onnxruntime {
 namespace test {
 namespace {
+
+#ifdef _WIN32
+ScopedProviderModuleOrtApiOverride g_provider_dll_ort_api_initializer{&Ort::GetApi()};
+#endif
 
 // Friend-injection helper: instantiating PrivateMember<Tag, Member> injects a
 // GetPrivateMemberPtr(Tag) overload into the surrounding namespace that returns
@@ -51,6 +57,7 @@ struct PrivateMember {
   template struct PrivateMember<TagName, &qnn::QnnBackendManager::member_name>
 
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnInterfaceTag, QNN_INTERFACE_VER_TYPE, qnn_interface_);
+QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnSystemInterfaceTag, QNN_SYSTEM_INTERFACE_VER_TYPE, qnn_sys_interface_);
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnBackendHandleTag, Qnn_BackendHandle_t, backend_handle_);
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnValidatorInterfaceTag, QNN_INTERFACE_VER_TYPE,
                                          qnn_validator_interface_);
@@ -79,6 +86,10 @@ QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnHtpArchTag, QnnHtpDevice_Arch_t, htp
 // accessor definition here, and declare it on StubBackendManager in the header.
 QNN_INTERFACE_VER_TYPE& StubBackendManager::QnnInterface() {
   return (*manager_).*GetPrivateMemberPtr(QnnInterfaceTag{});
+}
+
+QNN_SYSTEM_INTERFACE_VER_TYPE& StubBackendManager::SystemInterface() {
+  return (*manager_).*GetPrivateMemberPtr(QnnSystemInterfaceTag{});
 }
 
 Qnn_BackendHandle_t& StubBackendManager::BackendHandle() {

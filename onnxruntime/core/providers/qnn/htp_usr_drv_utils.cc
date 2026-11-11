@@ -366,7 +366,7 @@ Qnn_Version_t GetHtpUsrDrvVersion() {
 Ort::Status IsHtpUsrDrvEnabled(const std::string& backend_lib_dir, const uint32_t htp_arch, bool& enabled) {
   enabled = false;
 
-  // Since prepare/stub/skel libraries may not be packaged for x86 release (e.g., Windows x86 or Linux x86), their
+  // Since stub/skel libraries may not be packaged for x86 release (e.g., Windows x86 or Linux x86), their
   // absence does not indicate HNRD path will be adopted. Furthermore, non-QCOM devices do not support HNRD and thus no
   // need to check for it. Due to the difficulty of determining whether QCOM devices here, exploit whether HNRD library
   // exists at the expected path to indicate if we need to take HNRD into consideration.
@@ -400,18 +400,18 @@ Ort::Status IsHtpUsrDrvEnabled(const std::string& backend_lib_dir, const uint32_
 
   const std::filesystem::path backend_lib_dir_path(backend_lib_dir);
 
+  // Prepare lib is only mandatory in compile time but not in runtime (i.e., reload from EP Context model).
+  // Furthermore, current QNN-EP creates QNN device first before QNN backend tries to load prepare lib and thus its
+  // existence does not affect HNRD adoption. As a result, prepare lib is safe not checked here.
 #ifdef _WIN32
-  const std::string prepare_lib_path = "QnnHtpPrepare.dll";
   const std::string stub_lib_path = "QnnHtp" + htp_arch_string + "Stub.dll";
   const std::string skel_lib_path = "libQnnHtp" + htp_arch_string + "Skel.so";
 #else
-  const std::string prepare_lib_path = "libQnnHtpPrepare.so";
   const std::string stub_lib_path = "libQnnHtp" + htp_arch_string + "Stub.so";
   const std::string skel_lib_path = "libQnnHtp" + htp_arch_string + "Skel.so";
 #endif
 
-  if (!std::filesystem::exists(backend_lib_dir_path / prepare_lib_path) ||
-      !std::filesystem::exists(backend_lib_dir_path / stub_lib_path) ||
+  if (!std::filesystem::exists(backend_lib_dir_path / stub_lib_path) ||
       !std::filesystem::exists(backend_lib_dir_path / skel_lib_path)) {
     enabled = true;
   }

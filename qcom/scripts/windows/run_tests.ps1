@@ -152,13 +152,41 @@ $TestModelsViaEpPlugin = {
     if (Test-Path $ModelLog) { Remove-Item $ModelLog }
     if (Test-Path $ModelXml) { Remove-Item -Force $ModelXml }
 
-    & $OnnxEpTestRunnerExe `
-        -j 1 `
-        --plugin_ep_libs "qnn|onnxruntime_providers_qnn.dll" `
-        --plugin_eps qnn `
-        -i "backend_type|$Backend" `
-        $TestPath | Tee-Object -FilePath $ModelLog | Write-Host
-    $TestResult = $?
+    $RunnerTestPath = $TestPath
+    $FilteredTestPath = $null
+    $TestResult = $false
+    try {
+        if ($Suite -eq "node") {
+            # The upstream plugin runner takes a whole suite directory and has no
+            # per-case skip flag. Filter QNN-owned exclusions into a temporary copy.
+            $FilteredTestPath = Join-Path ([System.IO.Path]::GetTempPath()) ("qnn-model-tests-" + [guid]::NewGuid())
+            & py "${RepoRoot}\qcom\scripts\all\model_test_filter.py" `
+                --source $TestPath `
+                --destination $FilteredTestPath `
+                --suite $Suite `
+                --backend $Backend | Tee-Object -FilePath $ModelLog | Write-Host
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to prepare filtered QNN model suite '$Suite'."
+            }
+            $RunnerTestPath = $FilteredTestPath
+        }
+
+        & $OnnxEpTestRunnerExe `
+            -j 1 `
+            --plugin_ep_libs "qnn|onnxruntime_providers_qnn.dll" `
+            --plugin_eps qnn `
+            -i "backend_type|$Backend" `
+            $RunnerTestPath | Tee-Object -FilePath $ModelLog -Append | Write-Host
+        $TestResult = $LASTEXITCODE -eq 0
+    } finally {
+        if ($null -ne $FilteredTestPath -and (Test-Path -LiteralPath $FilteredTestPath)) {
+            try {
+                Remove-Item -LiteralPath $FilteredTestPath -Recurse -Force -ErrorAction Stop
+            } catch {
+                Write-Warning "Failed to remove filtered QNN model suite '$FilteredTestPath': $_"
+            }
+        }
+    }
 
     if (Test-Path $ModelLog) {
         py "${RepoRoot}\qcom\scripts\all\model_test_log_to_junit_xml.py" `

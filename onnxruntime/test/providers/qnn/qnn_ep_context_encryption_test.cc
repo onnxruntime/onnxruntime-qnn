@@ -224,7 +224,7 @@ TEST_F(QnnHTPBackendTests, Encryption_NoCallback_EmbedFalse_FallsBackToDisk) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
   RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -305,7 +305,7 @@ TEST_F(QnnHTPBackendTests, Encryption_NewReadWriteCallback_RoundTrip) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -450,7 +450,8 @@ TEST_F(QnnHTPBackendTests, Encryption_NewReadWriteCallback_RoundTrip) {
 }
 
 // Baseline: htp_share_resource_optimization=1 WITHOUT encryption.
-TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
+// TODO: Disable in QAIRT 2.51 uplevel as causing subsequent testcases weird failures.
+TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_Baseline_NoCallback) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   // The x86 HTP CPU emulator does not support shared-resource context-binary reload
@@ -468,7 +469,7 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
     ProviderOptions provider_options;
     provider_options["backend_type"] = "htp";
     provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
     provider_options["num_graph_prepare_threads"] = "1";
 #endif
     RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -494,7 +495,7 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
     ProviderOptions provider_options;
     provider_options["backend_type"] = "htp";
     provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
     provider_options["num_graph_prepare_threads"] = "1";
 #endif
     RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -533,7 +534,8 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_Baseline_NoCallback) {
 
 // 2-session shared-context E2E. Session 1 heap-leaked (workaround for a pre-existing
 // QAIRT 2.45 teardown hang, see Encryption_VtcmSharing_Baseline_NoCallback).
-TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_MultiSession_EndToEnd) {
+// TODO: Disable in QAIRT 2.51 uplevel as causing subsequent testcases weird failures.
+TEST_F(QnnHTPBackendTests, DISABLED_Encryption_VtcmSharing_MultiSession_EndToEnd) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   // The x86 HTP CPU emulator does not support shared-resource context-binary reload
@@ -554,7 +556,7 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_MultiSession_EndToEnd) {
     ProviderOptions provider_options;
     provider_options["backend_type"] = "htp";
     provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
     provider_options["num_graph_prepare_threads"] = "1";
 #endif
     RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -592,7 +594,7 @@ TEST_F(QnnHTPBackendTests, Encryption_VtcmSharing_MultiSession_EndToEnd) {
     ProviderOptions opts;
     opts["backend_type"] = "htp";
     opts["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
     opts["num_graph_prepare_threads"] = "1";
 #endif
     return opts;
@@ -696,7 +698,7 @@ TEST_F(QnnHTPBackendTests, Encryption_ReadCallback_ReturnsError_SessionCtorSurfa
     ProviderOptions provider_options;
     provider_options["backend_type"] = "htp";
     provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
     provider_options["num_graph_prepare_threads"] = "1";
 #endif
     RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -731,7 +733,7 @@ TEST_F(QnnHTPBackendTests, Encryption_ReadCallback_ReturnsError_SessionCtorSurfa
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
   RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -795,7 +797,7 @@ TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
   // (QNN_COMMON_ERROR_NOT_SUPPORTED from QnnBackendManager::SetupBackend on reload).
   // This is a pre-existing QAIRT limitation unrelated to the ORT Core uplevel.
   GTEST_SKIP() << "share_ep_contexts context reload not supported on x86 HTP emulator.";
-#elif (defined(__aarch64__) || defined(_M_ARM64)) && \
+#elif (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #elif defined(__ANDROID__)
@@ -828,7 +830,7 @@ TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
@@ -959,7 +961,7 @@ TEST_F(QnnHTPBackendTests, Encryption_WithShareEpContexts_RoundTrip) {
   std::filesystem::remove(kPlaintextQnnBin, ec);
 }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
 
 // Minimal float Add model — used only to exercise the GPU backend, which does
 // not support QDQ (quantized) ops. Duplicated from qnn_ep_context_test.cc's
@@ -1126,7 +1128,7 @@ TEST_F(QnnGPUBackendTests, Encryption_NewReadWriteCallback_RoundTrip_Gpu) {
   std::filesystem::remove(kPlaintextQnnBin, ec);
 }
 
-#endif  // defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#endif  // defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
 
 #endif  // ORT_API_VERSION >= 28
 

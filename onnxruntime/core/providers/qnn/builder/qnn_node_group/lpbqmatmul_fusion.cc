@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/qnn_bq_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -32,8 +33,6 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedMatMulFusion::TryFusion(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
   // Only HTP supports LPBQ encoding format
   // Looking for a MatMul to start search for MatMul w/ LPBQ encodings pattern.
   if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) || matmul_node_unit.OpType() != "MatMul") {
@@ -98,13 +97,14 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedMatMulFusion::TryFusion(
     return nullptr;
   }
 
-  if (!CreateOrValidateOnQnn(qnn_model_wrapper,
-                             *p_scale_dql_node_unit,
-                             p_w_ql_node_unit,
-                             matmul_node_unit,
-                             logger,
-                             true)
-           .IsOK()) {
+  if (Ort::Status status = CreateOrValidateOnQnn(qnn_model_wrapper,
+                                                 *p_scale_dql_node_unit,
+                                                 p_w_ql_node_unit,
+                                                 matmul_node_unit,
+                                                 logger,
+                                                 true);
+      !status.IsOK()) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Fusion failed: " + status.GetErrorMessage()).c_str());
     return nullptr;
   }
 
@@ -265,6 +265,8 @@ Ort::Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
   const OrtNodeUnitIODef& per_block_int_def = scale_dql_node_unit.Inputs()[0];
   const OrtValueInfo* per_block_int_scale_info = qnn_model_wrapper.GetConstantTensor(per_block_int_def.name);
   RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales<uint8_t>(per_block_int_scale_info, per_block_int_scale));
+  RETURN_IF_NOT(bq::IsValidLPBQPerBlockIntScale(gsl::span<const uint8_t>(per_block_int_scale)),
+                "Per-block int scale is out of expected range.");
   std::vector<int32_t> weight_offset(per_channel_float_scale.size(), 0);
   std::vector<uint32_t> block_scales_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(
@@ -282,13 +284,14 @@ Ort::Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
     block_scales_axis = 0;
   }
 
-  // Extract weight datatype from zeropoint (aka offset) of Input1 Quant param
-  bool is_int4_type = false;
+  // LPBQ expects signed int4 weight only.
+  RETURN_IF_NOT(mm_input_1_def.type == ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4,
+                "LPBQ weight must be signed int4 data type.");
   if (mm_input_1_def.quant_param.has_value() && mm_input_1_def.quant_param->zero_point != nullptr) {
-    ONNXTensorElementDataType elem_data_type;
-    RETURN_IF_ERROR(utils::GetOnnxTensorElemDataType(mm_input_1_def.quant_param->zero_point, elem_data_type));
-    is_int4_type = (elem_data_type == ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) ||
-                   (elem_data_type == ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4);
+    ONNXTensorElementDataType zp_data_type;
+    RETURN_IF_ERROR(utils::GetOnnxTensorElemDataType(mm_input_1_def.quant_param->zero_point, zp_data_type));
+    RETURN_IF_NOT(zp_data_type == ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4,
+                  "LPBQ weight must be signed int4 data type.");
   }
 
   std::vector<uint32_t> weight_shape;
@@ -324,14 +327,13 @@ Ort::Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
 
     // weight_data_type = 4 but store in int8 buffer
     size_t output_channel_axis = 0;  // MatMul requires axis to be rank-1
-    Qnn_DataType_t weight_data_type = is_int4_type ? QNN_DATATYPE_SFIXED_POINT_4 : QNN_DATATYPE_SFIXED_POINT_8;
     RETURN_IF_ERROR(qnn::utils::LowPowerBlockQuantizeData(float_data,
                                                           weight_shape,
                                                           per_channel_float_scale,
                                                           per_block_int_scale,
                                                           weight_offset,
                                                           quant_data,
-                                                          weight_data_type,
+                                                          QNN_DATATYPE_SFIXED_POINT_4,
                                                           output_channel_axis,
                                                           block_scales_axis,
                                                           block_size,
@@ -349,7 +351,7 @@ Ort::Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
     QnnQuantParamsWrapper weight_qparams;
     weight_qparams = QnnQuantParamsWrapper::LowPowerBlockwise(per_channel_float_scale, per_block_int_scale,
                                                               weight_offset, output_channel_axis,
-                                                              /*block_scale_bitwidth*/ is_int4_type ? 4 : 8);
+                                                              /*block_scale_bitwidth*/ 4);
 
     // Get weight tensor type from input of w_dql_tensor or output_dql_tensor
     Qnn_TensorType_t weight_tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
@@ -409,7 +411,7 @@ Ort::Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
     QnnQuantParamsWrapper weight_qparams;
     weight_qparams = QnnQuantParamsWrapper::LowPowerBlockwise(per_channel_float_scale, per_block_int_scale,
                                                               weight_offset, output_channel_axis,
-                                                              /*block_scale_bitwidth*/ is_int4_type ? 4 : 8);
+                                                              /*block_scale_bitwidth*/ 4);
 
     // Get weight tensor type from input of w_dql_tensor or output_dql_tensor
     Qnn_TensorType_t weight_tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
