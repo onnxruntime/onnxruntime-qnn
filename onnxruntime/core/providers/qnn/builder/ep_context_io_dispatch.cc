@@ -3,6 +3,8 @@
 
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 
+#include <memory>
+
 #if ORT_API_HAS_EPCONTEXT_ENCRYPTION && defined(_WIN32)
 #define QNN_EP_DECRYPT_SOURCE_IMPLEMENTATION
 #include "core/providers/qnn/builder/qnn_context_decrypt_source.h"
@@ -132,13 +134,15 @@ bool EpContextIoDispatch::HasSourceReadCallback() const noexcept {
 }
 
 Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<char>& out,
-                                      const std::string& validated_external_path) const {
+                                      const std::string& validated_external_path,
+                                      std::future<void>* source_cleanup) const {
   RETURN_IF_NOT(HasReadCallback(), "EPContext read callback is unavailable.");
 
   Ort::AllocatorWithDefaultOptions allocator;
   void* data = nullptr;
   size_t data_size = 0;
   OrtStatus* s = nullptr;
+  std::shared_ptr<char> source;
   if (map_decrypt_source_) {
     RETURN_IF_NOT(HasSourceReadCallback(), "Source mapping requires the private source-aware decrypt binding.");
 #if defined(QNN_FILE_MAPPED_WEIGHTS_AVAILABLE)
@@ -146,7 +150,6 @@ Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<
     RETURN_IF_NOT(logger_ || OrtLoggingManager::GetDefaultLoggerPtr(),
                   "Decrypt source mapping requires a session or registered default logger.");
     WindowsFileMapper mapper(logger_ ? *logger_ : OrtLoggingManager::GetDefaultLogger());
-    std::shared_ptr<char> source;
     size_t source_bytes = 0;
     RETURN_IF_ERROR(mapper.MapContextBinary(validated_external_path, source, source_bytes));
     try {
@@ -157,7 +160,6 @@ Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<
     } catch (...) {
       return Ort::Status("Source decrypt callback threw an exception.", ORT_FAIL);
     }
-    // All callback worker reads must finish before return; release ciphertext now.
 #else
     return Ort::Status("Decrypt source mapping requires Windows ARM64/HTP mapping support.", ORT_NOT_IMPLEMENTED);
 #endif
@@ -174,8 +176,31 @@ Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<
     return Ort::Status(
         ("OrtReadNamedBufferFunc returned invalid buffer for " + file_name).c_str(), ORT_FAIL);
   }
-  out.assign(static_cast<char*>(data), static_cast<char*>(data) + data_size);
-  allocator.Free(data);
+  auto free_output = gsl::finally([&] { allocator.Free(data); });
+  std::vector<char> plaintext(static_cast<char*>(data), static_cast<char*>(data) + data_size);
+  if (source) {
+    if (source_cleanup && !source_cleanup->valid()) {
+      try {
+        *source_cleanup = std::async(std::launch::async, [source = std::move(source)]() mutable noexcept {
+          source.reset();
+        });
+      } catch (const std::exception& e) {
+        // A failed launch destroys the task's captured source on this thread.
+        ORT_CXX_LOG_PTR(logger_, ORT_LOGGING_LEVEL_WARNING,
+                        ("Unable to start mapped source cleanup: " + std::string(e.what()) +
+                         "; releasing the source synchronously.")
+                            .c_str());
+      }
+      if (source_cleanup->valid()) {
+        ORT_CXX_LOG_PTR(logger_, ORT_LOGGING_LEVEL_INFO,
+                        "Overlapping mapped source cleanup with context loading.");
+      }
+    } else {
+      ORT_CXX_LOG_PTR(logger_, ORT_LOGGING_LEVEL_INFO,
+                      "Mapped source cleanup has no available per-load owner; releasing the source synchronously.");
+    }
+  }
+  out = std::move(plaintext);
   return Ort::Status();
 }
 
@@ -213,7 +238,8 @@ bool EpContextIoDispatch::HasSourceReadCallback() const noexcept { return false;
 
 Ort::Status EpContextIoDispatch::Read(const std::string& /*file_name*/,
                                       std::vector<char>& /*out*/,
-                                      const std::string& /*validated_external_path*/) const {
+                                      const std::string& /*validated_external_path*/,
+                                      std::future<void>* /*source_cleanup*/) const {
   return MAKE_EP_FAIL("EPContext encryption unavailable in this build.");
 }
 

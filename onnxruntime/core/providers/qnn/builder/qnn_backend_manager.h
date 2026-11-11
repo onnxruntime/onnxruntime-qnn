@@ -229,7 +229,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Builds the common context configs (priority + spill-fill) used by both binary-load paths.
   // first_group_handle: 0x0 for SSR (always a new group); GetQnnContext(0) for initial multi-
   // context load (joins the existing spill-fill group).
-  // Adding a new config here propagates to both LoadCachedQnnContextFromBuffer and ReloadContextForSSR.
+  // Initial loading appends optional acceleration separately; SSR uses only these common configs.
   Ort::Status BuildContextBinaryConfigs(
       int64_t max_spill_fill_size,
       Qnn_ContextHandle_t first_group_handle,

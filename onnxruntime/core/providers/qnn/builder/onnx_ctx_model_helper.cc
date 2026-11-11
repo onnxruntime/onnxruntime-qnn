@@ -217,8 +217,10 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   // the decrypted buffer immediately so QNN is never handed the on-disk ciphertext
   // via the file-mapping path below.
   if (io_dispatch.HasReadCallback()) {
+    std::future<void> source_cleanup;
     std::vector<char> decrypted;
-    RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted, context_binary_path_str));
+    RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted, context_binary_path_str,
+                                     &source_cleanup));
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(decrypted.data(),
                                                                static_cast<uint64_t>(decrypted.size()),
                                                                context_binary_path_str,
