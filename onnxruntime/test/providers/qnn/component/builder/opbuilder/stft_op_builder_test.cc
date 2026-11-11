@@ -78,8 +78,17 @@ class QnnUnit_StftInitializerContractTest : public ::testing::TestWithParam<Stft
   Ort::Status Run() {
     const auto* builder = qnn::GetOpBuilder("STFT");
     if (builder == nullptr) return Ort::Status("STFT builder not registered", ORT_FAIL);
-    auto node = MakeMockNodeUnit("STFT", inputs_, outputs_, "stft_initializer_contract", "", 17);
-    return builder->AddToModelBuilder(*wrapper_, node, context_.ort_logger, false);
+    OrtErrorCode error_code = ORT_OK;
+    std::string error_message;
+    {
+      auto node = MakeMockNodeUnit("STFT", inputs_, outputs_, "stft_initializer_contract", "", 17);
+      const auto status = builder->AddToModelBuilder(*wrapper_, node, context_.ort_logger, false);
+      if (status.IsOK()) return Ort::Status();
+      // Read and release the fake status before the node restores the global API.
+      error_code = status.GetErrorCode();
+      error_message = status.GetErrorMessage();
+    }
+    return Ort::Status(error_message.c_str(), error_code);
   }
 
   OpBuilderTestContext context_;
