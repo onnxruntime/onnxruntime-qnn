@@ -22,10 +22,7 @@ namespace {
 bool ShouldUseSymmetricU16ForMatMul(float input1_scale) {
   constexpr float kMaximumValueQuantError = 0.15f;
 
-  // Re-encoding U16 as U8 increases the value-domain quantization step from
-  // input1_scale to input1_scale * 65535 / 255. A value can move
-  // by at most half of that U8 step when it is rounded. Keep symmetric U16
-  // when that error exceeds the 15% value-domain budget.
+  // Keep symmetric U16 when the maximum U8 rounding error exceeds the absolute value-domain budget.
   const float u8_half_step = input1_scale * 65535.0f / 255.0f / 2.0f;
   return u8_half_step > kMaximumValueQuantError;
 }
@@ -406,7 +403,10 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
       // QNN offsets negate ONNX zero points, so symmetric uint16 uses -32768.
       constexpr int32_t kSymmetricU16Offset = -32768;
       if (quant_param.scaleOffsetEncoding.offset != kSymmetricU16Offset) {
+        const auto htp_arch = qnn_model_wrapper.GetHtpArch();
+        const bool supports_symmetric_u16 = htp_arch >= QNN_HTP_DEVICE_ARCH_V73;
         const bool use_symmetric_u16 =
+            (qnn_model_wrapper.GetModelSettings().htp_matmul_use_symmetric_uint16 && supports_symmetric_u16) ||
             ShouldUseSymmetricU16ForMatMul(quant_param.scaleOffsetEncoding.scale);
         RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
                                                convert_input_name,

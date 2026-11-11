@@ -302,6 +302,17 @@ struct GetPerThreadHtpPowerConfigsTag {
 template struct QnnEpPrivateMember<GetPerThreadHtpPowerConfigsTag,
                                    &QnnEp::GetPerThreadHtpPowerConfigs>;
 
+struct GetModelSettingsTag {
+  using type = qnn::ModelSettings QnnEp::*;
+  friend type GetQnnEpPrivateMember(GetModelSettingsTag);
+};
+
+template struct QnnEpPrivateMember<GetModelSettingsTag, &QnnEp::model_settings_>;
+
+const qnn::ModelSettings& GetModelSettingsForTest(const QnnEp& ep) {
+  return ep.*GetQnnEpPrivateMember(GetModelSettingsTag{});
+}
+
 void GetPerThreadHtpPowerConfigsForTest(
     QnnEp& ep, qnn::PerThreadHtpPowerConfigs_t& configs,
     const OrtRunOptions* run_options) {
@@ -1337,6 +1348,25 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_UseNativeMatMulInvalidValue_LogsVerbo
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
                "Invalid value for ep.qnnexecutionprovider.use_native_matmul");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpMatMulUseSymmetricUint16_ParsesValues) {
+  for (const char* value : {static_cast<const char*>(nullptr), "0", "1", "invalid"}) {
+    SCOPED_TRACE(value ? value : "default");
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    if (value) {
+      ctx.session_config[EPKey("htp_matmul_use_symmetric_uint16")] = value;
+    }
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    EXPECT_EQ(GetModelSettingsForTest(*ep).htp_matmul_use_symmetric_uint16,
+              value && std::string(value) == "1");
+    if (value && std::string(value) == "invalid") {
+      ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                   "Invalid value for ep.qnnexecutionprovider.htp_matmul_use_symmetric_uint16");
+    }
+  }
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresNegative_Succeeds) {

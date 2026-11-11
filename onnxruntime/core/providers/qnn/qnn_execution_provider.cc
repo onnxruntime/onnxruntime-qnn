@@ -1312,6 +1312,9 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                       false,
                                                       logger_);
 
+  model_settings_.htp_matmul_use_symmetric_uint16 = ParseBoolOption(
+      ort_api, session_options_, FormatEPConfigKey("htp_matmul_use_symmetric_uint16"), false, logger_);
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,
