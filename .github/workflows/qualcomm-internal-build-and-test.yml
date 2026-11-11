@@ -191,8 +191,8 @@ jobs:
       test_runner_arch: arm64
 
   # Keep this non-required shadow validation alongside the shipping build until its
-  # test inventory and reliability are established. It builds and tests on a native
-  # ARM64 runner so the internal-symbol QNN provider runs against the Linux HTP device.
+  # test inventory and reliability are established. Build in the manylinux container
+  # on X64, then run the internal-symbol QNN provider on the native Linux HTP device.
   build-and-test-linux-arm64-internal-symbols:
     if: ${{ inputs.do_all }}
     needs: [archive-testdata, path-filter]
@@ -203,12 +203,12 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: aarch64_manylinux_2_34
-      build_runner_arch: ARM64
       test_runner_arch: arm64
-      target_py_vsn: ${{ inputs.target_py_vsn }}
+      testdata_archive_artifact_name: testdata-tarbz2
+      target_py_vsn: None
       qnn_internal_test_symbols: true
       run_tests: true
-      build_test_same_runner: true
+      build_test_same_runner: false
       # This is validation-only; do not publish a non-shipping wheel or test archive.
       upload_wheel: false
       upload_test_archive: false
