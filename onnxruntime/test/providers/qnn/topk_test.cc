@@ -98,6 +98,72 @@ TEST_F(QnnCPUBackendTests, TopK_Ties_Int32) {
   }
 }
 
+// Runtime INT64 inputs need a cast before reversal, and both graph outputs
+// need casts back to INT64. Verify assignment so CPU fallback cannot hide a failure.
+TEST_F(QnnCPUBackendTests, TopK_Ties_Int64GraphOutputs) {
+  for (int64_t largest : {0, 1}) {
+    for (int64_t k : {1, 3, 6}) {
+      SCOPED_TRACE("largest=" + std::to_string(largest) + ", k=" + std::to_string(k));
+      RunTopKTestOnCPU<int64_t>(TestInputDef<int64_t>({1, 6}, false, {5, 5, -1, 5, -2, 5}),
+                                TestInputDef<int64_t>({1}, true, {k}),
+                                {test::MakeAttribute("largest", largest)}, ExpectedEPNodeAssignment::All);
+    }
+  }
+}
+
+TEST_F(QnnCPUBackendTests, TopK_Ties_Int64NonLastAxis) {
+  for (int64_t axis : {1, -2}) {
+    for (int64_t largest : {0, 1}) {
+      SCOPED_TRACE("axis=" + std::to_string(axis) + ", largest=" + std::to_string(largest));
+      RunTopKTestOnCPU<int64_t>(TestInputDef<int64_t>({1, 6, 2}, false,
+                                                      {5, 0, 5, 0, -1, 2, 5, 0, -2, 1, 5, 0}),
+                                TestInputDef<int64_t>({1}, true, {3}),
+                                {test::MakeAttribute("axis", axis), test::MakeAttribute("largest", largest)},
+                                ExpectedEPNodeAssignment::All);
+    }
+  }
+}
+
+// INT64 values consumed inside the QNN partition stay native INT32, without
+// an unnecessary graph-output cast before the consumer.
+TEST_F(QnnCPUBackendTests, TopK_Ties_Int64ValuesConsumedByCast) {
+  for (int64_t axis : {-1, 1, -2}) {
+    SCOPED_TRACE("axis=" + std::to_string(axis));
+    auto build = [axis](ModelTestBuilder& builder) {
+      const bool last_axis = axis == -1;
+      MakeTestInput<int64_t>(builder, "input",
+                             last_axis ? TestInputDef<int64_t>({1, 6}, false, {5, 5, -1, 5, -2, 5})
+                                       : TestInputDef<int64_t>({1, 6, 2}, false,
+                                                               {5, 0, 5, 0, -1, 2, 5, 0, -2, 1, 5, 0}));
+      MakeTestInput<int64_t>(builder, "k", TestInputDef<int64_t>({1}, true, {3}));
+      builder.MakeOutput("cast_values");
+      builder.MakeOutput("indices");
+      builder.AddNode("TopK", "TopK", {"input", "k"}, {"values", "indices"},
+                      kOnnxDomain, {test::MakeAttribute("axis", axis)});
+      builder.AddNode("Cast", "Cast", {"values"}, {"cast_values"}, kOnnxDomain,
+                      {test::MakeAttribute("to", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType_INT32))});
+    };
+    RunQnnModelTest(build, {{"backend_type", "cpu"}}, 19,
+                    EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)});
+  }
+}
+
+TEST_F(QnnCPUBackendTests, TopK_Ties_Int64SharedInputAndUnnamedNodes) {
+  auto build = [](ModelTestBuilder& builder) {
+    MakeTestInput<int64_t>(builder, "input",
+                           TestInputDef<int64_t>({1, 6, 2}, false, {5, 0, 5, 0, -1, 2, 5, 0, -2, 1, 5, 0}));
+    MakeTestInput<int64_t>(builder, "k", TestInputDef<int64_t>({1}, true, {3}));
+    for (const std::string suffix : {"_a", "_b"}) {
+      builder.MakeOutput("values" + suffix);
+      builder.MakeOutput("indices" + suffix);
+      builder.AddNode("", "TopK", {"input", "k"}, {"values" + suffix, "indices" + suffix},
+                      kOnnxDomain, {test::MakeAttribute("axis", static_cast<int64_t>(1))});
+    }
+  };
+  RunQnnModelTest(build, {{"backend_type", "cpu"}}, 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)});
+}
+
 TEST_F(QnnCPUBackendTests, TopK_Ties_LongZeroRun) {
   RunTopKTestOnCPU<float>(TestInputDef<float>({1, 1280}, false, std::vector<float>(1280, 0.0f)),
                           TestInputDef<int64_t>({1}, true, {20}), {}, ExpectedEPNodeAssignment::All);
@@ -285,6 +351,27 @@ static void RunQDQTopKTestOnHTP(const TestInputDef<float>& input_def,
                        provider_options,
                        opset,
                        expected_ep_assignment);
+}
+
+// Exercise the INT64 input/output casts around the complete HTP decomposition.
+TEST_F(QnnHTPBackendTests, TopK_Ties_Int64GraphOutputs) {
+  for (int64_t axis : {-1, 1, -2}) {
+    for (int64_t largest : {0, 1}) {
+      for (int64_t k : {1, 3, 6}) {
+        SCOPED_TRACE("axis=" + std::to_string(axis) + ", largest=" + std::to_string(largest) +
+                     ", k=" + std::to_string(k));
+        const auto input_def = axis == -1
+                                   ? TestInputDef<int64_t>({1, 6}, false, {5, 5, -1, 5, -2, 5})
+                                   : TestInputDef<int64_t>({1, 6, 2}, false,
+                                                           {5, 0, 5, 0, -1, 2, 5, 0, -2, 1, 5, 0});
+        RunQnnModelTest(BuildTopKTestCase<int64_t>(input_def, TestInputDef<int64_t>({1}, true, {k}),
+                                                   {test::MakeAttribute("axis", axis),
+                                                    test::MakeAttribute("largest", largest)}),
+                        {{"backend_type", "htp"}}, 19,
+                        EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)});
+      }
+    }
+  }
 }
 
 // Check the same tie rule after QDQ folding, where duplicate quantized values are common.
