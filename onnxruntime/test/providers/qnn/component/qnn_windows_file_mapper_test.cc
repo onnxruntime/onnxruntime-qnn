@@ -42,7 +42,7 @@ class QnnWindowsFileMapperTest : public ::testing::Test {
 TEST_F(QnnWindowsFileMapperTest, EmptyFileFailsAtCreateFileMappingAndPreservesOutput) {
   auto logger = MakeNullLogger();
   qnn::WindowsFileMapper mapper(logger);
-  auto owner = std::shared_ptr<char>(new char, std::default_delete<char>());
+  qnn::FileMappingInterface::MappedMemoryPtr owner(new char[1], [](void* ptr) { delete[] static_cast<char*>(ptr); });
   auto* original = owner.get();
   auto status = mapper.MapContextBinary(path_.string(), owner);
   EXPECT_FALSE(status.IsOK());
@@ -53,7 +53,7 @@ TEST_F(QnnWindowsFileMapperTest, EmptyFileFailsAtCreateFileMappingAndPreservesOu
 TEST_F(QnnWindowsFileMapperTest, ContextOwnedViewsSurviveMapperAndReleaseIndependently) {
   Fill();
   auto logger = MakeNullLogger();
-  std::shared_ptr<char> first, second;
+  qnn::FileMappingInterface::MappedMemoryPtr first, second;
   {
     qnn::WindowsFileMapper mapper(logger);
     ASSERT_TRUE(mapper.MapContextBinary(path_.string(), first).IsOK());

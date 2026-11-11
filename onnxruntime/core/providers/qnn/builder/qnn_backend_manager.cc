@@ -1083,7 +1083,7 @@ static Qnn_ErrorHandle_t MapDmaDataCallback(Qnn_ContextBinaryDataRequest_t reque
     ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: notify_param is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
-  auto callback_info = reinterpret_cast<QnnBackendManager::FileMappingCallbackInfo_t*>(notify_param);
+  auto callback_info = reinterpret_cast<QnnBackendManager::DmaCallbackInfo*>(notify_param);
 
   if (callback_info->backend_manager == nullptr) {
     ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: QnnBackendManager is null");
@@ -1095,7 +1095,7 @@ static Qnn_ErrorHandle_t MapDmaDataCallback(Qnn_ContextBinaryDataRequest_t reque
 
 Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t request,
                                                 Qnn_ContextBinaryDmaDataResponse_t* response,
-                                                const FileMappingCallbackInfo_t& callback_info) {
+                                                const DmaCallbackInfo& callback_info) {
   void* const mapped_base_ptr = callback_info.mapped_file_ptr;
   const auto file_size = callback_info.file_size;
   if (response == nullptr) {
@@ -1135,8 +1135,15 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
   }
 
   std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
-  const auto rpcmem_library = std::atomic_load(&rpcmem_library_);
-  if (!rpcmem_library || !rpcmem_library->Api().register_buf || !rpcmem_library->Api().to_fd) {
+  const auto& rpcmem_library = rpcmem_library_;
+  if (!rpcmem_library) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Cannot import DMA data: FastRPC library is unavailable.");
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
+  }
+  if (!rpcmem_library->Api().register_buf || !rpcmem_library->Api().to_fd) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR,
+                    !rpcmem_library->Api().register_buf ? "Cannot import DMA data: FastRPC register_buf is unavailable."
+                                                        : "Cannot import DMA data: FastRPC to_fd is unavailable.");
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
 
@@ -1145,17 +1152,20 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
                                      [unaligned_data_ptr, size](const auto& buffer) {
                                        return buffer.data == unaligned_data_ptr && buffer.size == size;
                                      });
-  // Import an exact range once; each request retains a separate owner record.
-  if (existing == mapped_fastrpc_buffers_.end()) {
+  // Import an exact range once; retain one record per outstanding SDK request.
+  int fd;
+  if (existing != mapped_fastrpc_buffers_.end()) {
+    fd = existing->fd;
+  } else {
     rpcmem_library->Api().register_buf(unaligned_data_ptr, size, 0,
                                        rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
-  }
-
-  // register_buf has no status; to_fd confirms that the range was imported.
-  auto fd = rpcmem_library->Api().to_fd(unaligned_data_ptr);
-  if (fd == -1) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to register DMA data mapping to RPCMEM");
-    return QNN_CONTEXT_ERROR_MEM_ALLOC;
+    // register_buf has no status; to_fd confirms that this new range was imported.
+    fd = rpcmem_library->Api().to_fd(unaligned_data_ptr);
+    if (fd == -1) {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR,
+                      "FastRPC to_fd returned -1 after importing the DMA range.");
+      return QNN_CONTEXT_ERROR_MEM_ALLOC;
+    }
   }
 
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, ("Created DMA data mapping with address: " + utils::PtrToString(unaligned_data_ptr)).c_str());
@@ -1165,7 +1175,7 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
   response->dataStartOffset = 0;
   response->alignedSize = size;
 
-  mapped_fastrpc_buffers_.push_back({unaligned_data_ptr, size, &callback_info});
+  mapped_fastrpc_buffers_.push_back({unaligned_data_ptr, size, fd, &callback_info});
 
   return QNN_SUCCESS;
 }
@@ -1177,7 +1187,7 @@ static Qnn_ErrorHandle_t ReleaseDmaDataCallback(Qnn_ContextBinaryDmaDataMem_t da
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
-  auto callback_info = reinterpret_cast<QnnBackendManager::FileMappingCallbackInfo_t*>(notify_param);
+  auto callback_info = reinterpret_cast<QnnBackendManager::DmaCallbackInfo*>(notify_param);
 
   if (callback_info->backend_manager == nullptr) {
     ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "ReleaseDmaDataCallback: QnnBackendManager is null");
@@ -1188,29 +1198,46 @@ static Qnn_ErrorHandle_t ReleaseDmaDataCallback(Qnn_ContextBinaryDmaDataMem_t da
 }
 
 Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem,
-                                                    const FileMappingCallbackInfo_t& callback_info) {
+                                                    const DmaCallbackInfo& callback_info) {
   const auto* logger = OrtLoggingManager::HasDefaultLogger() ? &OrtLoggingManager::GetDefaultLogger() : nullptr;
-  if (callback_info.mapped_file_ptr == nullptr || data_mem.dmaBuffer.data == nullptr || data_mem.memSize == 0) {
-    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR, "Invalid DMA release pointer or size.");
+  if (callback_info.mapped_file_ptr == nullptr) {
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR, "DMA load has no mapped file.");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+  if (data_mem.dmaBuffer.data == nullptr) {
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR, "DMA release data pointer is null.");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+  if (data_mem.memSize == 0) {
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR, "DMA release size is zero.");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
   ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_INFO,
                   ("Releasing DMA mapping: " + utils::PtrToString(data_mem.dmaBuffer.data)).c_str());
 
   std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
-  const auto rpcmem_library = std::atomic_load(&rpcmem_library_);
+  const auto& rpcmem_library = rpcmem_library_;
   const auto mapping = std::find_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
                                     [&callback_info, &data_mem](const auto& buffer) {
-                                      return buffer.owner == &callback_info &&
+                                      return buffer.dma_load == &callback_info &&
                                              buffer.data == data_mem.dmaBuffer.data &&
                                              buffer.size == data_mem.memSize;
                                     });
   if (mapping == mapped_fastrpc_buffers_.end()) {
-    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR, "DMA release does not match this owner's registration.");
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR, "DMA release does not match an outstanding request for this binary load.");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
-  if (!rpcmem_library || !rpcmem_library->Api().register_buf || !rpcmem_library->Api().to_fd ||
-      !DeregisterMappedDmaBuffer(*mapping, rpcmem_library->Api())) {
+  if (!rpcmem_library) {
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR, "Cannot release DMA data: FastRPC library is unavailable.");
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
+  }
+  if (!rpcmem_library->Api().register_buf || !rpcmem_library->Api().to_fd) {
+    ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR,
+                    !rpcmem_library->Api().register_buf ? "Cannot release DMA data: FastRPC register_buf is unavailable."
+                                                        : "Cannot release DMA data: FastRPC to_fd is unavailable.");
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
+  }
+  if (!DeregisterMappedDmaBuffer(*mapping, rpcmem_library->Api())) {
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
   mapped_fastrpc_buffers_.erase(mapping);
@@ -1225,7 +1252,7 @@ struct ContextCreateAsyncCallbackInfo {
   // mutable process-wide shared state when the callback runs.
   QnnBackendManager* backend_manager;
   const std::vector<std::string>* ep_node_names;
-  QnnBackendManager::FileMappingCallbackInfo_t* dma_owner = nullptr;
+  QnnBackendManager::DmaCallbackInfo* dma_load = nullptr;
 };
 
 // Per QnnContext.h, QnnContext_createFromBinaryListAsync blocks until every notification has fired,
@@ -1246,8 +1273,8 @@ static void ContextCreateAsyncCallback(Qnn_ContextHandle_t context,
   }
 
   const auto* callback_info = static_cast<const ContextCreateAsyncCallbackInfo*>(notify_param);
-  if (callback_info->dma_owner) {
-    callback_info->dma_owner->context = context;
+  if (callback_info->dma_load) {
+    callback_info->dma_load->context = context;
   }
   if (callback_info->backend_manager != nullptr && callback_info->ep_node_names != nullptr) {
     callback_info->backend_manager->ProcessContextFromBinListAsync(context, *callback_info->ep_node_names);
@@ -1318,7 +1345,7 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
   size_t buffer_size;
   RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_size));
 
-  buffer.AllocateUninitialized(buffer_size);
+  buffer.Allocate(buffer_size);
 
   std::ifstream cache_file(context_bin_filepath.c_str(), std::ifstream::binary);
   RETURN_IF(!cache_file || !cache_file.good(), ("Failed to read context binary from: " + context_bin_filepath).c_str());
@@ -1378,86 +1405,67 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
   RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
             "Invalid function pointer for contextCreateFromBinary.");
 
-  Qnn_ErrorHandle_t rt = QNN_SUCCESS;
-#ifndef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  use_dma_loading = false;
-#endif
-
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  if (use_dma_loading && (!file_mapper_ || !std::atomic_load(&rpcmem_library_))) {
+  if (use_dma_loading && !qnn_interface_.contextCreateFromBinaryWithCallback) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                    "DMA file mapper or FastRPC library is unavailable; using ordinary context loading.");
-    use_dma_loading = false;
-  }
-  if (use_dma_loading && file_mapper_) {
-    if (!qnn_interface_.contextCreateFromBinaryWithCallback) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                      "QNN DMA callback API is unavailable; using contextCreateFromBinary with the existing context binary buffer.");
-      use_dma_loading = false;
-    }
-  }
-  if (use_dma_loading && file_mapper_) {
+                    "QNN DMA callback API is unavailable; using contextCreateFromBinary with the existing context binary buffer.");
+  } else if (use_dma_loading) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Attempting EPContext binary loading with DMA callbacks.");
-    auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(bin_buffer, buffer_length, this);
-    auto* dma_owner = notify_param_ptr.get();
+    auto callback_info = std::make_unique<DmaCallbackInfo>(bin_buffer, buffer_length, this);
+    auto* dma_load = callback_info.get();
 
     Qnn_ContextBinaryCallback_t callbacks;
     callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
     callbacks.dmaBufferCallback.version = QNN_CONTEXT_CALLBACK_DMA_BUFFER_VERSION_1;
     callbacks.dmaBufferCallback.v1.dataProvide = MapDmaDataCallback;
     callbacks.dmaBufferCallback.v1.dataRelease = ReleaseDmaDataCallback;
-    callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
+    callbacks.dmaBufferCallback.v1.notifyParam = dma_load;
 
-    {
-      std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
-      file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
-    }
+    dma_callback_infos_.push_back(std::move(callback_info));
 
-    rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_,
-                                                            device_handle_,
-                                                            context_configs,
-                                                            &callbacks,
-                                                            bin_buffer,
-                                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
-                                                            &context,
-                                                            profile_handle,
-                                                            NULL);
+    auto rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_,
+                                                                 device_handle_,
+                                                                 context_configs,
+                                                                 &callbacks,
+                                                                 bin_buffer,
+                                                                 static_cast<Qnn_ContextBinarySize_t>(buffer_length),
+                                                                 &context,
+                                                                 profile_handle,
+                                                                 nullptr);
     if (rt == QNN_SUCCESS) {
-      dma_owner->context = context;
-    } else {
-      DeallocateMappedDmaBuffers(dma_owner);
-      use_dma_loading = false;
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                      ("contextCreateFromBinaryWithCallback failed (" + QnnErrorHandleToString(rt) +
-                       "). Retrying contextCreateFromBinary with the same context binary buffer.")
-                          .c_str());
+      dma_load->context = context;
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "EPContext binary loaded using DMA callbacks.");
+      return Ort::Status();
     }
+    DeallocateMappedDmaBuffers(dma_load);
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                    ("contextCreateFromBinaryWithCallback failed (" + QnnErrorHandleToString(rt) +
+                     "). Retrying contextCreateFromBinary with the same context binary buffer.")
+                        .c_str());
   }
+#else
+  ORT_UNUSED_PARAMETER(use_dma_loading);
 #endif
 
-  if (!use_dma_loading || rt != QNN_SUCCESS) {
-    // The caller keeps the context binary buffer alive; reuse it after DMA failure instead of reading the file again.
-    EpContextBuffer file_buffer;
-    if (bin_buffer == nullptr) {
-      RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, file_buffer, io_dispatch));
-      bin_buffer = static_cast<void*>(file_buffer.data());
-      buffer_length = static_cast<uint64_t>(file_buffer.size());
-    }
-
-    rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
-                                                device_handle_,
-                                                context_configs,
-                                                bin_buffer,
-                                                static_cast<Qnn_ContextBinarySize_t>(buffer_length),
-                                                &context,
-                                                profile_handle);
+  // Reuse the caller's buffer after DMA failure instead of reading the file again.
+  EpContextBuffer file_buffer;
+  if (bin_buffer == nullptr) {
+    RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, file_buffer, io_dispatch));
+    bin_buffer = file_buffer.data();
+    buffer_length = static_cast<uint64_t>(file_buffer.size());
   }
 
+  auto rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
+                                                   device_handle_,
+                                                   context_configs,
+                                                   bin_buffer,
+                                                   static_cast<Qnn_ContextBinarySize_t>(buffer_length),
+                                                   &context,
+                                                   profile_handle);
   RETURN_IF(QNN_SUCCESS != rt,
             ("contextCreateFromBinary failed. Error: " + QnnErrorHandleToString(rt)).c_str());
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
-                  use_dma_loading ? "EPContext binary loaded using DMA callbacks."
-                                  : "EPContext binary loaded using contextCreateFromBinary.");
+                  "EPContext binary loaded using contextCreateFromBinary.");
   return Ort::Status();
 }
 
@@ -1476,7 +1484,7 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Try native mapping with DMA loading; callbacks supply their own plaintext.
-  if (file_mapped_weights_enabled_ && file_mapper_ && std::atomic_load(&rpcmem_library_) && !io_dispatch.HasReadCallback()) {
+  if (file_mapped_weights_enabled_ && file_mapper_ && GetRpcMemLibrary() && !io_dispatch.HasReadCallback()) {
     RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
     RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
 
@@ -1574,7 +1582,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   configs_vec.push_back(nullptr);
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  if (file_mapped_weights_enabled_ && file_mapper_ && std::atomic_load(&rpcmem_library_) && !io_dispatch.HasReadCallback()) {
+  if (file_mapped_weights_enabled_ && file_mapper_ && GetRpcMemLibrary() && !io_dispatch.HasReadCallback()) {
     // Retry without DMA callbacks if list creation fails.
     auto res = CreateContextFromListAsyncWithCallback(configs_vec.data(), context_bin_map);
     if (!res.IsOK()) {
@@ -1687,7 +1695,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
       return MAKE_EP_FAIL(("Context binary of " + context_bin_filepath + " is v" + version_str + ". DMA callback loading requires version >= 3.3.3; this list attempt cannot proceed.").c_str());
     }
 
-    auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(buffer, buffer_size, this);
+    auto notify_param_ptr = std::make_unique<DmaCallbackInfo>(buffer, buffer_size, this);
     callback_infos.push_back({this, it.second.get(), notify_param_ptr.get()});
 
     Qnn_ContextBinaryCallback_t context_file_map_callbacks;
@@ -1697,10 +1705,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     context_file_map_callbacks.dmaBufferCallback.v1.dataRelease = ReleaseDmaDataCallback;
     context_file_map_callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
 
-    {
-      std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
-      file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
-    }
+    dma_callback_infos_.push_back(std::move(notify_param_ptr));
     context_callbacks_list.push_back(std::move(context_file_map_callbacks));
 
     // Callbacks require QnnContext_ParamsV2_t which is new to QNN API 2.32
@@ -1730,8 +1735,8 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                                 nullptr);
   if (QNN_CONTEXT_NO_ERROR != result) {
     for (const auto& info : callback_infos) {
-      if (info.dma_owner->context == nullptr) {
-        DeallocateMappedDmaBuffers(info.dma_owner);
+      if (info.dma_load->context == nullptr) {
+        DeallocateMappedDmaBuffers(info.dma_load);
       }
     }
   }
@@ -2029,18 +2034,18 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Ordinary loading needs only a CPU view. Keep it scoped to this load, with
   // metadata destroyed before the view is unmapped. Legacy DMA keeps its cached view.
-  std::shared_ptr<char> mapping_owner;
+  FileMappingInterface::MappedMemoryPtr mapped_binary;
   if (file_mapped_weights_enabled_ && buffer_length == 0) {
     RETURN_IF(io_dispatch.HasReadCallback(), "The decryption read callback must supply a plaintext context binary buffer before loading.");
     RETURN_IF(!file_mapper_, "File mapper is uninitialized.");
     RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
-    use_dma_loading = std::atomic_load(&rpcmem_library_) != nullptr &&
+    use_dma_loading = GetRpcMemLibrary() != nullptr &&
                       qnn_interface_.contextCreateFromBinaryWithCallback != nullptr;
     if (use_dma_loading) {
       RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
     } else {
-      RETURN_IF_ERROR(file_mapper_->MapContextBinary(context_bin_filepath, mapping_owner));
-      bin_buffer = mapping_owner.get();
+      RETURN_IF_ERROR(file_mapper_->MapContextBinary(context_bin_filepath, mapped_binary));
+      bin_buffer = mapped_binary.get();
     }
   }
 #endif
@@ -2181,10 +2186,13 @@ Ort::Status QnnBackendManager::SetupBackend(
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-    // A decryption callback skips FastRPC setup without disabling mapping on this shared manager.
-    // A later native session can supply the FastRPC library needed for DMA.
-    if (file_mapped_weights_enabled_ && !std::atomic_load(&rpcmem_library_) && rpcmem_library) {
-      std::atomic_store(&rpcmem_library_, rpcmem_library);
+    // A previous callback-only session may have initialized this shared manager without FastRPC.
+    // Attach it when a later native session needs to load a new context with DMA.
+    {
+      std::lock_guard<std::mutex> dma_lock(mapped_fastrpc_buffers_mutex_);
+      if (file_mapped_weights_enabled_ && !rpcmem_library_ && rpcmem_library) {
+        rpcmem_library_ = std::move(rpcmem_library);
+      }
     }
 #endif
 
@@ -2234,7 +2242,10 @@ Ort::Status QnnBackendManager::SetupBackend(
   // Backend is determined after LoadBackend() or LoadQnnSerializerBackend()
   if (enable_file_mapped_weights && !file_mapper_ && GetQnnBackendType() == QnnBackendType::HTP) {
     // FastRPC is needed for DMA import, not for a CPU mapping used by ordinary loading.
-    std::atomic_store(&rpcmem_library_, rpcmem_library);
+    {
+      std::lock_guard<std::mutex> dma_lock(mapped_fastrpc_buffers_mutex_);
+      rpcmem_library_ = std::move(rpcmem_library);
+    }
     file_mapped_weights_enabled_ = true;
     file_mapper_ = std::make_unique<WindowsFileMapper>(*logger_ptr_);
   }
@@ -3362,12 +3373,17 @@ Ort::Status QnnBackendManager::AddContextToDlc() {
   return system_dlc_plugin_->AddContextToDlc(GetQnnContext());
 }
 
+std::shared_ptr<RpcMemLibrary> QnnBackendManager::GetRpcMemLibrary() {
+  std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
+  return rpcmem_library_;
+}
+
 bool QnnBackendManager::DeregisterMappedDmaBuffer(const MappedDmaBuffer& buffer, const RpcMemApi& api) {
-  const auto users = std::count_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
-                                   [&buffer](const auto& entry) {
-                                     return entry.data == buffer.data && entry.size == buffer.size;
-                                   });
-  if (users > 1) {
+  const auto requests = std::count_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
+                                      [&buffer](const auto& entry) {
+                                        return entry.data == buffer.data && entry.size == buffer.size;
+                                      });
+  if (requests > 1) {
     return true;
   }
 
@@ -3379,27 +3395,31 @@ bool QnnBackendManager::DeregisterMappedDmaBuffer(const MappedDmaBuffer& buffer,
                    rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
   if (api.to_fd(buffer.data) != -1) {
     ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_ERROR,
-                    ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(buffer.data)).c_str());
+                    ("FastRPC to_fd still returns a descriptor after deregistering buffer: " + utils::PtrToString(buffer.data)).c_str());
     return false;
   }
   return true;
 }
 
-void QnnBackendManager::DeallocateMappedDmaBuffers(const FileMappingCallbackInfo_t* owner) {
+void QnnBackendManager::DeallocateMappedDmaBuffers(const DmaCallbackInfo* dma_load) {
   std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
-  const auto rpcmem_library = std::atomic_load(&rpcmem_library_);
+  const auto& rpcmem_library = rpcmem_library_;
   if (mapped_fastrpc_buffers_.empty() || !rpcmem_library ||
       !rpcmem_library->Api().register_buf || !rpcmem_library->Api().to_fd) {
     return;
   }
 
   for (auto it = mapped_fastrpc_buffers_.begin(); it != mapped_fastrpc_buffers_.end();) {
-    if ((!owner || it->owner == owner) && DeregisterMappedDmaBuffer(*it, rpcmem_library->Api())) {
-      it = mapped_fastrpc_buffers_.erase(it);
-    } else {
+    if (dma_load && it->dma_load != dma_load) {
+      ++it;
+      continue;
+    }
+    if (!DeregisterMappedDmaBuffer(*it, rpcmem_library->Api())) {
       // Keep failed deregistrations for destruction-time retry.
       ++it;
+      continue;
     }
+    it = mapped_fastrpc_buffers_.erase(it);
   }
 }
 

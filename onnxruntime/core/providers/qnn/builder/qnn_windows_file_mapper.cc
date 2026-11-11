@@ -45,7 +45,7 @@ Ort::Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& b
     return Ort::Status();
   }
 
-  std::shared_ptr<char> mapped_memory;
+  MappedMemoryPtr mapped_memory;
   RETURN_IF_ERROR(MapContextBinary(bin_filepath, mapped_memory));
   *mapped_data_ptr = mapped_memory.get();
   mapped_memory_ptrs_.emplace(bin_filepath, std::move(mapped_memory));
@@ -53,7 +53,7 @@ Ort::Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& b
 }
 
 Ort::Status WindowsFileMapper::MapContextBinary(const std::string& bin_filepath,
-                                                std::shared_ptr<char>& mapped_memory) {
+                                                MappedMemoryPtr& mapped_memory) {
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("Creating context bin file mapping for " + bin_filepath).c_str());
   RETURN_IF(bin_filepath.empty(), "Context bin file path is empty");
 
@@ -99,8 +99,7 @@ Ort::Status WindowsFileMapper::MapContextBinary(const std::string& bin_filepath,
               ORT_LOGGING_LEVEL_INFO,
               ("Created mapview pointer with address " + utils::PtrToString(mapped_base_ptr) + " for context bin " + bin_filepath).c_str());
 
-  mapped_memory = std::shared_ptr<char>(reinterpret_cast<char*>(mapped_base_ptr),
-                                        [](char* ptr) { UnmapFile(ptr); });
+  mapped_memory = MappedMemoryPtr(static_cast<char*>(mapped_base_ptr), UnmapFile);
 
   return Ort::Status();
 }

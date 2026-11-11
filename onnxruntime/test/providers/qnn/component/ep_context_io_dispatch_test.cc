@@ -157,6 +157,10 @@ TEST(QnnUnit_EpContextIoDispatchTest, AdoptsCallbackAllocationAndPreservesOutput
   EXPECT_EQ(bytes.data(), state.returned);
   EXPECT_EQ(bytes.size(), 32u);
   EXPECT_EQ(bytes.data()[0], 42);
+  auto* previous = bytes.data();
+  ASSERT_TRUE(dispatch.Read("replacement.bin", bytes).IsOK());
+  EXPECT_NE(bytes.data(), previous);
+  EXPECT_EQ(bytes.data(), state.returned);
   auto* original = bytes.data();
   state.fail_after_free = true;
   EXPECT_FALSE(dispatch.Read("failed.bin", bytes).IsOK());
@@ -167,9 +171,31 @@ TEST(QnnUnit_EpContextIoDispatchTest, AdoptsCallbackAllocationAndPreservesOutput
 }
 #endif
 
+TEST(QnnUnit_EpContextIoDispatchTest, AllocationReplacesPreviousBufferAndPreservesItOnFailure) {
+  qnn::EpContextBuffer bytes;
+  bytes.Allocate(32);
+  auto* previous = bytes.data();
+  bytes.Allocate(64);
+  EXPECT_NE(bytes.data(), previous);
+  EXPECT_EQ(bytes.size(), 64u);
+  bytes.data()[0] = 42;
+  auto* retained = bytes.data();
+  OrtApi failing_api = Ort::GetApi();
+  failing_api.AllocatorAlloc = [](OrtAllocator*, size_t, void**) noexcept -> OrtStatus* {
+    return Ort::GetApi().CreateStatus(ORT_FAIL, "stub allocation failure");
+  };
+  {
+    OrtGlobalApiOverride override(&failing_api);
+    EXPECT_THROW(bytes.Allocate(128), Ort::Exception);
+  }
+  EXPECT_EQ(bytes.data(), retained);
+  EXPECT_EQ(bytes.size(), 64u);
+  EXPECT_EQ(bytes.data()[0], 42);
+}
+
 TEST(QnnUnit_EpContextIoDispatchTest, MovedBufferRetainsDataAndEmptiesSource) {
   qnn::EpContextBuffer source;
-  source.AllocateUninitialized(32);
+  source.Allocate(32);
   source.data()[0] = 42;
   auto* original = source.data();
   auto destination = std::move(source);

@@ -1373,6 +1373,12 @@ Ort::Session session(env, ctx_model_path, inference_session_options);
 
 If no callback is registered, the EP uses the legacy plaintext behavior.
 
+A registered read callback supplies a decoded context binary buffer, which the EP passes to
+ordinary QNN context loading without copying the callback output. Native file-mapped weight
+loading is bypassed for that callback load; the decoded buffer is not DMA-imported. This does
+not disable file mapping for other sessions that share the backend manager. For initial
+single-context native loading, a CPU file view can be used independently of FastRPC DMA support.
+
 **What is (and isn't) covered:**
 
 - Only the standard EPContext artifact is encrypted: the external `_qnn.bin` (or the

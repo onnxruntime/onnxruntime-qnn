@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -16,15 +17,16 @@ namespace qnn {
 
 class FileMappingInterface {
  public:
+  using MappedMemoryPtr = std::unique_ptr<char[], std::function<void(void*)>>;
+
   virtual ~FileMappingInterface() = default;
 
   virtual Ort::Status GetContextBinMappedMemoryPtr(const std::string& bin_filepath,
                                                    void** mapped_data_ptr) = 0;
 
-  // Returns an independently owned view. A context can keep this mapping alive
-  // without retaining the mapper or another context's DMA callback state.
+  // Returns a caller-owned read-only view.
   virtual Ort::Status MapContextBinary(const std::string& bin_filepath,
-                                       std::shared_ptr<char>& mapped_memory) = 0;
+                                       MappedMemoryPtr& mapped_memory) = 0;
 };
 
 }  // namespace qnn

@@ -14,18 +14,22 @@ namespace qnn {
 
 // Owns default-allocator output without copying; the allocator is owned by ORT.
 class EpContextBuffer {
-  using Owner = std::unique_ptr<char, Ort::detail::AllocatedFree>;
+  using OwnedBufferPtr = std::unique_ptr<void, Ort::detail::AllocatedFree>;
 
  public:
-  char* data() const noexcept { return data_.get(); }
+  char* data() const noexcept { return static_cast<char*>(data_.get()); }
+
   size_t size() const noexcept { return data_ ? size_ : 0; }
+
   void Adopt(void* data, size_t size) {
     OrtAllocator* allocator = nullptr;
     Ort::ThrowOnError(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator));
-    data_ = Owner(static_cast<char*>(data), Ort::detail::AllocatedFree(allocator));
+    data_ = OwnedBufferPtr(data, Ort::detail::AllocatedFree(allocator));
     size_ = size;
   }
-  void AllocateUninitialized(size_t size) {
+
+  // Replaces the previous allocation only after the new allocation succeeds.
+  void Allocate(size_t size) {
     OrtAllocator* allocator = nullptr;
     Ort::ThrowOnError(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator));
     void* data = nullptr;
@@ -33,12 +37,12 @@ class EpContextBuffer {
     if (size != 0 && data == nullptr) {
       ORT_CXX_API_THROW("Failed to allocate context binary buffer.", ORT_FAIL);
     }
-    data_ = Owner(static_cast<char*>(data), Ort::detail::AllocatedFree(allocator));
+    data_ = OwnedBufferPtr(data, Ort::detail::AllocatedFree(allocator));
     size_ = size;
   }
 
  private:
-  Owner data_{nullptr, Ort::detail::AllocatedFree(nullptr)};
+  OwnedBufferPtr data_{nullptr, Ort::detail::AllocatedFree(nullptr)};
   size_t size_ = 0;
 };
 
