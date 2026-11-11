@@ -1410,6 +1410,25 @@ class TaskLibrary:
     if is_host_windows():
 
         @task
+        @depends(["build_ort_windows_arm64_internal_symbols"])
+        def test_ort_windows_arm64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Testing ONNX Runtime for Windows on ARM64 with QNN EP internal test symbols",
+                    self.__venv_path,
+                    "arm64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_test_symbols=True,
+                )
+            )
+
+    if is_host_windows():
+
+        @task
         @depends(["build_ort_windows_arm64"])
         def test_ort_windows_arm64_pygpu(self, plan: Plan) -> str:
             assert self.__target_py_version is not None
