@@ -190,7 +190,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: ${{ github.workspace }}/build/windows-arm64-internal-symbols/${{ inputs.build_config }}/
 
-      - name: Restore one CTest process and exclude HTP reduction and shape families for diagnosis
+      - name: Restore one CTest process and exclude known single-process failures for diagnosis
         if: ${{ inputs.has_code_changes && inputs.qnn_internal_test_symbols }}
         shell: powershell
         run: |

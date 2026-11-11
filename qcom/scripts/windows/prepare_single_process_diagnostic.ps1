@@ -45,4 +45,4 @@ $manifest = [ordered]@{
     binaries = @($hashes)
 }
 $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $binaryRoot 'single-process-diagnostic.json') -Encoding utf8
-Write-Host "Diagnostic only: one registered CTest process; $(@($selection.excluded_for_diagnosis).Count) HTP reduction/reshape/resize/expand cases excluded; original binaries reused."
+Write-Host "Diagnostic only: one registered CTest process; $(@($selection.excluded_for_diagnosis).Count) HTP cases excluded, including observed single-process failures; original binaries reused."

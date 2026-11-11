@@ -1,14 +1,16 @@
 {
   "source_run_id": "42949588575",
-  "filter": "-QnnAcc_*:QnnHTPBackendTests.Reduce*:QnnHTPBackendTests.ArgMaxMin*:QnnHTPBackendTests.Reshape*:QnnHTPBackendTests.Resize*:QnnHTPBackendTests.Expand*",
+  "filter": "-QnnAcc_*:QnnHTPBackendTests.Reduce*:QnnHTPBackendTests.ArgMaxMin*:QnnHTPBackendTests.Reshape*:QnnHTPBackendTests.Resize*:QnnHTPBackendTests.Expand*:QnnHTPBackendTests.Concat_EmptyInitializer:QnnHTPBackendTests.Concat_EmptyInput:QnnHTPBackendTests.ScatterElementsEndToEndNegativeIndexInGraph:QnnHTPBackendTests.ScatterElementsNegativeIndexNegativeAxis:QnnHTPBackendTests.ScatterElementsNegativeIndexNonDefaultAxis:QnnHTPBackendTests.ScatterElementsSharedNegativeIndicesDifferentAxes:QnnHTPBackendTests.ScatterElementsSharedNegativeIndicesInitializer:QnnHTPBackendTests.Selu_FP16:QnnHTPBackendTests.Selu_FP16_CustomAlphaGamma:QnnHTPBackendTests.Selu_FP32_CustomAlphaGamma:QnnHTPBackendTests.Selu_FP32_DefaultAttrs:QnnHTPBackendTests.Selu_FP32_as_FP16:QnnHTPBackendTests.Selu_FP32_as_FP16_CustomAlphaGamma:QnnHTPBackendTests.UnaryOp_Elu:QnnHTPBackendTests.UnaryOp_Elu_U16:QnnHTPBackendTests.UnaryOp_Gelu:QnnHTPBackendTests.UnaryOp_Gelu_U16:QnnHTPBackendTests.UnaryOp_Sigmoid:QnnHTPBackendTests.UnaryOp_Sigmoid_U16:QnnHTPBackendTests.UnaryOp_Swish_FP16:QnnHTPBackendTests.UnaryOp_Swish_QDQ_U16:QnnHTPBackendTests.UnaryOp_Swish_QDQ_U8:QnnHTPBackendTests.UnaryOp_Tan_QDQ_U16:QnnHTPBackendTests.UnaryOp_Tan_QDQ_U8:QnnHTPBackendTests.UnaryOp_Tanh:QnnHTPBackendTests.UnaryOp_Tanh_U16:QnnHTPBackendTests.VariadicOp_Sum_3Inputs_BroadcastMixedRank_U8",
   "original_active_cases": 3335,
-  "expected_active_cases": 3233,
+  "expected_active_cases": 3206,
   "excluded_for_diagnosis": [
     "QnnHTPBackendTests.ArgMaxMinU8_AxisLast",
     "QnnHTPBackendTests.ArgMaxMinU8_DefaultAttrs",
     "QnnHTPBackendTests.ArgMaxMinU8_NotKeepDims",
     "QnnHTPBackendTests.ArgMaxMinU8_RankGreaterThan4_Unsupported",
     "QnnHTPBackendTests.ArgMaxMinU8_SelectLastIndex_NonZero_Unsupported",
+    "QnnHTPBackendTests.Concat_EmptyInitializer",
+    "QnnHTPBackendTests.Concat_EmptyInput",
     "QnnHTPBackendTests.Expand_4D",
     "QnnHTPBackendTests.Expand_5D",
     "QnnHTPBackendTests.Expand_6D",
@@ -105,7 +107,32 @@
     "QnnHTPBackendTests.ResizeU8_NonIntScaleLinearPytorchHalfPixel_EmitsResizeBilinear",
     "QnnHTPBackendTests.Resize_DownSample_Linear_AlignCorners",
     "QnnHTPBackendTests.Resize_DownSample_Linear_HalfPixel",
-    "QnnHTPBackendTests.Resize_DownSample_Nearest_TfHalfPixelForNN"
+    "QnnHTPBackendTests.Resize_DownSample_Nearest_TfHalfPixelForNN",
+    "QnnHTPBackendTests.ScatterElementsEndToEndNegativeIndexInGraph",
+    "QnnHTPBackendTests.ScatterElementsNegativeIndexNegativeAxis",
+    "QnnHTPBackendTests.ScatterElementsNegativeIndexNonDefaultAxis",
+    "QnnHTPBackendTests.ScatterElementsSharedNegativeIndicesDifferentAxes",
+    "QnnHTPBackendTests.ScatterElementsSharedNegativeIndicesInitializer",
+    "QnnHTPBackendTests.Selu_FP16",
+    "QnnHTPBackendTests.Selu_FP16_CustomAlphaGamma",
+    "QnnHTPBackendTests.Selu_FP32_CustomAlphaGamma",
+    "QnnHTPBackendTests.Selu_FP32_DefaultAttrs",
+    "QnnHTPBackendTests.Selu_FP32_as_FP16",
+    "QnnHTPBackendTests.Selu_FP32_as_FP16_CustomAlphaGamma",
+    "QnnHTPBackendTests.UnaryOp_Elu",
+    "QnnHTPBackendTests.UnaryOp_Elu_U16",
+    "QnnHTPBackendTests.UnaryOp_Gelu",
+    "QnnHTPBackendTests.UnaryOp_Gelu_U16",
+    "QnnHTPBackendTests.UnaryOp_Sigmoid",
+    "QnnHTPBackendTests.UnaryOp_Sigmoid_U16",
+    "QnnHTPBackendTests.UnaryOp_Swish_FP16",
+    "QnnHTPBackendTests.UnaryOp_Swish_QDQ_U16",
+    "QnnHTPBackendTests.UnaryOp_Swish_QDQ_U8",
+    "QnnHTPBackendTests.UnaryOp_Tan_QDQ_U16",
+    "QnnHTPBackendTests.UnaryOp_Tan_QDQ_U8",
+    "QnnHTPBackendTests.UnaryOp_Tanh",
+    "QnnHTPBackendTests.UnaryOp_Tanh_U16",
+    "QnnHTPBackendTests.VariadicOp_Sum_3Inputs_BroadcastMixedRank_U8"
   ],
   "excluded_groups": {
     "QnnHTPBackendTests.Reduce*": 27,
@@ -113,5 +140,7 @@
     "QnnHTPBackendTests.Reshape*": 34,
     "QnnHTPBackendTests.Resize*": 30,
     "QnnHTPBackendTests.Expand*": 6
-  }
+  },
+  "additional_failed_cases": 26,
+  "additional_interrupted_cases": 1
 }
