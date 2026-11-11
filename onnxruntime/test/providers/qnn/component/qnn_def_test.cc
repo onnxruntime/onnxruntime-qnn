@@ -123,6 +123,29 @@ TEST(QnnUnit_DefTest, QnnTensorWrapper_MovesBwFloatBlockQuantizationStorage) {
   EXPECT_FLOAT_EQ(copied.Get().bwFloatBlockEncoding.floatScaleOffset[1].offset, offsets[1]);
 }
 
+TEST(QnnUnit_DefTest, QnnTensorWrapper_DeserializeRejectsUnsupportedTensorTypesBeforeReadingMetadata) {
+  const std::vector<uint32_t> dims{2, 4};
+  for (auto version : {QNN_TENSOR_VERSION_1, QNN_TENSOR_VERSION_2}) {
+    SCOPED_TRACE(static_cast<int>(version));
+    for (auto tensor_type : {QNN_TENSOR_TYPE_NATIVE, QNN_TENSOR_TYPE_STATIC, QNN_TENSOR_TYPE_NULL,
+                             QNN_TENSOR_TYPE_APP_READWRITE, QNN_TENSOR_TYPE_UNDEFINED}) {
+      SCOPED_TRACE(static_cast<int>(tensor_type));
+      qnn::QnnTensorWrapper wrapper("existing_io", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                                    qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>(dims));
+      Qnn_Tensor_t raw{};
+      raw.version = version;
+      qnn::SetQnnTensorType(raw, tensor_type);
+      // Leave the name and shape pointers null: reject the type before consuming any metadata.
+      auto status = wrapper.Init(raw);
+      ASSERT_FALSE(status.IsOK());
+      EXPECT_NE(status.GetErrorMessage().find("only supports APP_READ and APP_WRITE"), std::string::npos);
+      EXPECT_EQ(wrapper.GetName(), "existing_io");
+      EXPECT_EQ(wrapper.GetTensorType(), QNN_TENSOR_TYPE_APP_READ);
+      EXPECT_EQ(wrapper.GetTensorDims(), dims);
+    }
+  }
+}
+
 TEST(QnnUnit_DefTest, QnnTensorWrapper_DeserializeRejectsBlockQuantizedGraphIO) {
   const std::vector<uint32_t> dims{2, 4};
   for (auto version : {QNN_TENSOR_VERSION_1, QNN_TENSOR_VERSION_2}) {

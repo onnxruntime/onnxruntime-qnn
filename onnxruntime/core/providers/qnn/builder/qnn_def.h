@@ -387,14 +387,14 @@ class QnnTensorWrapper {
     SetQnnTensorQParams(qnn_tensor_, quant_params_.Get());
   }
 
-  // Initialize from a raw Qnn_Tensor_t. This method is currently used for graph inputs/outputs
-  // when deserializing from cached context object. Possible return errors due to:
-  //   - Unexpected Qnn_TensorType_t: only handle graph inputs/outputs, not static initializers with data buffers.
+  // Initialize graph inputs/outputs from a raw Qnn_Tensor_t when deserializing a cached context.
+  // Possible return errors due to:
+  //   - Unexpected Qnn_TensorType_t: only APP_READ and APP_WRITE are supported.
   //   - Unexpected quantization encoding.
   Ort::Status Init(const Qnn_Tensor_t& qnn_tensor) {
-    Qnn_TensorType_t tensor_type = GetQnnTensorType(qnn_tensor);
-    RETURN_IF(tensor_type == QNN_TENSOR_TYPE_STATIC,
-              "QnnTensorWrapper::Init(const Qnn_Tensor_t&) does not support static initializers");
+    const Qnn_TensorType_t tensor_type = GetQnnTensorType(qnn_tensor);
+    RETURN_IF(tensor_type != QNN_TENSOR_TYPE_APP_READ && tensor_type != QNN_TENSOR_TYPE_APP_WRITE,
+              "QnnTensorWrapper::Init(const Qnn_Tensor_t&) only supports APP_READ and APP_WRITE graph inputs/outputs");
 
     tensor_name_ = GetQnnTensorName(qnn_tensor);
     client_buf_.clear();
@@ -417,6 +417,8 @@ class QnnTensorWrapper {
     dimensions_.assign(shape_data, shape_data + shape_rank);
     SetQnnTensorDim(qnn_tensor_, dimensions_);
 
+    // QnnModel::SetupTensors uses QnnTensorHasDynamicShape to reject dynamic graph I/O.
+    // Own these flags so that check remains valid after the cached-context parser storage is released.
     uint8_t* is_dynamic_dimensions = GetQnnTensorIsDynamicDimensions(qnn_tensor);
     if (is_dynamic_dimensions != nullptr) {
       is_dynamic_dimensions_.assign(is_dynamic_dimensions, is_dynamic_dimensions + shape_rank);
