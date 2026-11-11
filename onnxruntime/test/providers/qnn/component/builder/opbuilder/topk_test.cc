@@ -3,6 +3,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <cstring>
 #include <string>
 
 #include "gtest/gtest.h"
@@ -16,6 +17,42 @@ using namespace onnxruntime::qnn;
 
 namespace onnxruntime {
 namespace test {
+
+// GetCapability must reject the complete decomposition if any added QNN op
+// is unsupported, so ORT can fall back before graph compilation.
+TEST(QnnUnit_TopK_ComponentTest, ValidatesReverseAndIndexMapping) {
+  const IOpBuilder* builder = GetOpBuilder("TopK");
+  ASSERT_NE(builder, nullptr);
+  for (const char* rejected_op : {QNN_OP_STRIDED_SLICE, QNN_OP_ELEMENT_WISE_SUBTRACT}) {
+    SCOPED_TRACE(rejected_op);
+    g_mock_init_reg.clear();
+    g_mock_init_reg.AddScalarInt64("k", 2);
+    OpBuilderTestContext ctx;
+    SetupMockInitRegistryStubs(ctx);
+    struct ValidationState {
+      const char* rejected_op;
+      bool rejected = false;
+    } state{rejected_op};
+    ctx.backend_handle = &state;
+    ctx.qnn_interface.backendValidateOpConfig = [](Qnn_BackendHandle_t handle,
+                                                   Qnn_OpConfig_t config) -> Qnn_ErrorHandle_t {
+      auto& validation = *static_cast<ValidationState*>(handle);
+      if (std::strcmp(config.v1.typeName, validation.rejected_op) == 0) {
+        validation.rejected = true;
+        return QNN_COMMON_ERROR_NOT_SUPPORTED;
+      }
+      return QNN_SUCCESS;
+    };
+    auto wrapper = ctx.CreateWrapper(ModelSettings{});
+    auto input = MakeMockIODef("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, std::vector<int64_t>{1, 6});
+    auto k = MakeMockIODef("k", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, std::vector<int64_t>{1});
+    auto values = MakeMockIODef("values", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, std::vector<int64_t>{1, 2});
+    auto indices = MakeMockIODef("indices", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, std::vector<int64_t>{1, 2});
+    auto node_unit = MakeMockNodeUnit("TopK", {input, k}, {values, indices}, "topk_node");
+    EXPECT_FALSE(builder->IsOpSupported(*wrapper, node_unit, ctx.ort_logger).IsOK());
+    EXPECT_TRUE(state.rejected);
+  }
+}
 
 TEST(QnnUnit_TopK_ComponentTest, RejectsSecondOutputAxisOutsideRank) {
   const IOpBuilder* builder = GetOpBuilder("TopK");

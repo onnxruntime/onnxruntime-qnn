@@ -61,6 +61,83 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
 // CPU tests:
 //
 
+// Repeated values at the K boundary must select smaller original indices.
+// Compare both values and INT64 graph-output indices with the ORT CPU EP.
+TEST_F(QnnCPUBackendTests, TopK_Ties_PreferSmallerIndices) {
+  for (int64_t largest : {0, 1}) {
+    for (int64_t k : {1, 3, 6}) {
+      SCOPED_TRACE("largest=" + std::to_string(largest) + ", k=" + std::to_string(k));
+      for (const auto& data : std::vector<std::vector<float>>{
+               {0, 0, 0, 0, 0, 0}, {5, 5, 1, 5, 2, 5}, {1, 4, 4, 4, 0, 4}}) {
+        RunTopKTestOnCPU<float>(TestInputDef<float>({1, 6}, false, data),
+                                TestInputDef<int64_t>({1}, true, {k}),
+                                {test::MakeAttribute("largest", largest)}, ExpectedEPNodeAssignment::All);
+      }
+    }
+  }
+}
+
+TEST_F(QnnCPUBackendTests, TopK_Ties_NonLastAxis) {
+  for (int64_t axis : {1, -2}) {
+    for (int64_t largest : {0, 1}) {
+      SCOPED_TRACE("axis=" + std::to_string(axis) + ", largest=" + std::to_string(largest));
+      RunTopKTestOnCPU<float>(TestInputDef<float>({1, 6, 2}, false,
+                                                  {5, 0, 5, 0, 1, 2, 5, 0, 2, 1, 5, 0}),
+                              TestInputDef<int64_t>({1}, true, {3}),
+                              {test::MakeAttribute("axis", axis), test::MakeAttribute("largest", largest)},
+                              ExpectedEPNodeAssignment::All);
+    }
+  }
+}
+
+TEST_F(QnnCPUBackendTests, TopK_Ties_Int32) {
+  for (int64_t largest : {0, 1}) {
+    RunTopKTestOnCPU<int32_t>(TestInputDef<int32_t>({1, 6}, false, {5, 5, 1, 5, 2, 5}),
+                              TestInputDef<int64_t>({1}, true, {3}),
+                              {test::MakeAttribute("largest", largest)}, ExpectedEPNodeAssignment::All);
+  }
+}
+
+TEST_F(QnnCPUBackendTests, TopK_Ties_LongZeroRun) {
+  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 1280}, false, std::vector<float>(1280, 0.0f)),
+                          TestInputDef<int64_t>({1}, true, {20}), {}, ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, TopK_SingleElementAxis) {
+  RunTopKTestOnCPU<float>(TestInputDef<float>({2, 1}, false, {1, 2}),
+                          TestInputDef<int64_t>({1}, true, {1}), {}, ExpectedEPNodeAssignment::All);
+}
+
+// The corrected indices must also be visible to downstream nodes inside a partition.
+TEST_F(QnnCPUBackendTests, TopK_Ties_IndicesConsumedByGather) {
+  auto build = [](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", TestInputDef<float>({6}, false, {5, 5, 1, 5, 2, 5}));
+    MakeTestInput<int64_t>(builder, "k", TestInputDef<int64_t>({1}, true, {3}));
+    MakeTestInput<int32_t>(builder, "table", TestInputDef<int32_t>({6}, true, {10, 20, 30, 40, 50, 60}));
+    builder.MakeOutput("values");
+    builder.MakeOutput("selected");
+    builder.AddNode("TopK", "TopK", {"input", "k"}, {"values", "indices"});
+    builder.AddNode("Gather", "Gather", {"table", "indices"}, {"selected"});
+  };
+  RunQnnModelTest(build, {{"backend_type", "cpu"}}, 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)});
+}
+
+TEST_F(QnnCPUBackendTests, TopK_Ties_SharedInputAndUnnamedNodes) {
+  auto build = [](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 6, 2}, false, {5, 0, 5, 0, 1, 2, 5, 0, 2, 1, 5, 0}));
+    MakeTestInput<int64_t>(builder, "k", TestInputDef<int64_t>({1}, true, {3}));
+    for (const std::string suffix : {"_a", "_b"}) {
+      builder.MakeOutput("values" + suffix);
+      builder.MakeOutput("indices" + suffix);
+      builder.AddNode("", "TopK", {"input", "k"}, {"values" + suffix, "indices" + suffix},
+                      kOnnxDomain, {test::MakeAttribute("axis", static_cast<int64_t>(1))});
+    }
+  };
+  RunQnnModelTest(build, {{"backend_type", "cpu"}}, 19,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)});
+}
+
 // Test that TopK with a dynamic K input is not supported by QNN EP.
 TEST_F(QnnCPUBackendTests, TopK_DynamicK_Unsupported) {
   RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
@@ -208,6 +285,46 @@ static void RunQDQTopKTestOnHTP(const TestInputDef<float>& input_def,
                        provider_options,
                        opset,
                        expected_ep_assignment);
+}
+
+// Check the same tie rule after QDQ folding, where duplicate quantized values are common.
+TEST_F(QnnHTPBackendTests, TopK_Ties_U8_PreferSmallerIndices) {
+  for (int64_t largest : {0, 1}) {
+    for (int64_t k : {1, 3, 6}) {
+      SCOPED_TRACE("largest=" + std::to_string(largest) + ", k=" + std::to_string(k));
+      for (const auto& data : std::vector<std::vector<float>>{
+               {0, 0, 0, 0, 0, 0}, {5, 5, 1, 5, 2, 5}, {1, 4, 4, 4, 0, 4}}) {
+        RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 6}, false, data),
+                                     TestInputDef<int64_t>({1}, true, {k}),
+                                     {test::MakeAttribute("largest", largest)}, ExpectedEPNodeAssignment::All);
+      }
+    }
+  }
+}
+
+TEST_F(QnnHTPBackendTests, TopK_Ties_U8_NonLastAxis) {
+  for (int64_t axis : {1, -2}) {
+    for (int64_t largest : {0, 1}) {
+      RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 6, 2}, false,
+                                                       {5, 0, 5, 0, 1, 2, 5, 0, 2, 1, 5, 0}),
+                                   TestInputDef<int64_t>({1}, true, {3}),
+                                   {test::MakeAttribute("axis", axis), test::MakeAttribute("largest", largest)},
+                                   ExpectedEPNodeAssignment::All);
+    }
+  }
+}
+
+TEST_F(QnnHTPBackendTests, TopK_Ties_U16_PreferSmallerIndices) {
+  for (int64_t largest : {0, 1}) {
+    RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 6}, false, {5, 5, 1, 5, 2, 5}),
+                                  TestInputDef<int64_t>({1}, true, {3}),
+                                  {test::MakeAttribute("largest", largest)}, ExpectedEPNodeAssignment::All, 21);
+  }
+}
+
+TEST_F(QnnHTPBackendTests, TopK_Ties_U8_LongZeroRun) {
+  RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 1280}, false, std::vector<float>(1280, 0.0f)),
+                               TestInputDef<int64_t>({1}, true, {20}), {}, ExpectedEPNodeAssignment::All);
 }
 
 // Test 8-bit QDQ TopK on HTP backend: top 2 largest floats from last axis
