@@ -53,10 +53,9 @@ static Ort::Status ReadStftScalar(QnnModelWrapper& qnn_model_wrapper,
             (std::string("STFT ") + parameter_name + " must be an int32 or int64 initializer.").c_str());
 
   std::vector<uint8_t> data;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, data));
   const bool is_int32 = input_info.qnn_data_type == QNN_DATATYPE_INT_32;
-  RETURN_IF(data.size() != (is_int32 ? sizeof(int32_t) : sizeof(int64_t)),
-            (std::string("STFT ") + parameter_name + " initializer byte count must match one scalar.").c_str());
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
+      input_info.initializer_tensor, data, true, is_int32 ? sizeof(int32_t) : sizeof(int64_t)));
 
   int64_t scalar = 0;
   if (is_int32) {

@@ -102,9 +102,7 @@ Ort::Status NonMaxSuppressionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model
     std::vector<uint8_t> buf;
     const auto* t = qnn_model_wrapper.GetConstantTensor(inputs[2].name);
     RETURN_IF(t == nullptr, "NonMaxSuppression: failed to get constant tensor for max_output_boxes_per_class.");
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(t, buf));
-    RETURN_IF(buf.size() != sizeof(int64_t),
-              "NonMaxSuppression: max_output_boxes_per_class must be a scalar int64 initializer.");
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(t, buf, true, sizeof(int64_t)));
     int64_t max_output_boxes_per_class = *reinterpret_cast<const int64_t*>(buf.data());
     RETURN_IF(max_output_boxes_per_class <= 0,
               "NonMaxSuppression: max_output_boxes_per_class must be > 0 for QNN "
@@ -173,9 +171,7 @@ Ort::Status NonMaxSuppressionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
     std::vector<uint8_t> buf;
     const auto* t = qnn_model_wrapper.GetConstantTensor(inputs[2].name);
     RETURN_IF(t == nullptr, "NonMaxSuppression: failed to get constant tensor for max_output_boxes_per_class.");
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(t, buf));
-    RETURN_IF(buf.size() != sizeof(int64_t),
-              "NonMaxSuppression: max_output_boxes_per_class must be a scalar int64 initializer.");
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(t, buf, true, sizeof(int64_t)));
     int64_t val = *reinterpret_cast<const int64_t*>(buf.data());
     max_boxes_selected = SafeInt<uint32_t>(val);
   }
@@ -186,9 +182,7 @@ Ort::Status NonMaxSuppressionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
     std::vector<uint8_t> buf;
     const auto* t = qnn_model_wrapper.GetConstantTensor(inputs[3].name);
     RETURN_IF(t == nullptr, "NonMaxSuppression: failed to get constant tensor for iou_threshold.");
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(t, buf));
-    RETURN_IF(buf.size() != sizeof(float),
-              "NonMaxSuppression: iou_threshold must be a scalar float initializer.");
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(t, buf, true, sizeof(float)));
     iou_threshold = *reinterpret_cast<const float*>(buf.data());
   }
 
@@ -198,9 +192,7 @@ Ort::Status NonMaxSuppressionOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
     std::vector<uint8_t> buf;
     const auto* t = qnn_model_wrapper.GetConstantTensor(inputs[4].name);
     RETURN_IF(t == nullptr, "NonMaxSuppression: failed to get constant tensor for score_threshold.");
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(t, buf));
-    RETURN_IF(buf.size() != sizeof(float),
-              "NonMaxSuppression: score_threshold must be a scalar float initializer.");
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(t, buf, true, sizeof(float)));
     score_threshold = *reinterpret_cast<const float*>(buf.data());
   }
 

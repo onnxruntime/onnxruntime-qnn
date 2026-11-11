@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <numeric>
 #include <utility>
 #include <vector>
@@ -1182,39 +1183,59 @@ void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::st
 
 Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializer,
                                                    std::vector<uint8_t>& unpacked_tensor,
-                                                   const bool unpack_sub_byte_to_8_bit) const {
+                                                   const bool unpack_sub_byte_to_8_bit,
+                                                   std::optional<size_t> expected_byte_size) const {
+  RETURN_IF(initializer == nullptr, "Initializer to unpack must not be null.");
+  const OrtTypeInfo* type_info = nullptr;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoTypeInfo(initializer, &type_info));
+  const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
+  RETURN_IF(tensor_type_and_shape_info == nullptr, "Initializer to unpack must be a tensor.");
+  ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
+
+  size_t num_dims = 0;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetDimensionsCount(tensor_type_and_shape_info, &num_dims));
+  std::vector<int64_t> shape(num_dims);
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetDimensions(tensor_type_and_shape_info, shape.data(), shape.size()));
+  RETURN_IF(std::any_of(shape.begin(), shape.end(), [](int64_t dim) { return dim < 0; }),
+            "Initializer shape must not contain negative dimensions.");
+  size_t num_elements = 0;
+  size_t packed_byte_size = 0;
+  try {
+    num_elements = utils::GetOnnxTensorDataSizeInBytes(shape, ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8);
+    packed_byte_size = utils::GetOnnxTensorDataSizeInBytes(num_elements, onnx_data_type);
+  } catch (const std::exception& error) {
+    return MAKE_EP_FAIL(error.what());
+  }
+  const bool is_sub_byte = onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4 ||
+                           onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 ||
+                           onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2 ||
+                           onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2;
+  const size_t output_byte_size = unpack_sub_byte_to_8_bit && is_sub_byte ? num_elements : packed_byte_size;
+  RETURN_IF(expected_byte_size.has_value() && *expected_byte_size != output_byte_size,
+            "Initializer byte count does not match the caller's expected size.");
+
   const ORTCHAR_T* model_path = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetModelPath(&ort_graph_, &model_path));
   RETURN_IF_ERROR(utils::UnpackInitializerData(api_ptrs_.ort_api,
                                                initializer,
                                                std::filesystem::path(model_path),
-                                               unpacked_tensor));
-
-  const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoTypeInfo(initializer, &type_info));
-  const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
-  ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
+                                               unpacked_tensor,
+                                               packed_byte_size));
+  RETURN_IF(unpacked_tensor.size() != packed_byte_size,
+            "Initializer byte count does not match its declared shape and element type.");
 
   // If unpack_sub_byte_to_8_bit is true, unpack 2-bit/4-bit elements to one byte each because
   // QNN HTP treats sub-byte int2/int4 as a full int8.
   if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
-    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
-    const size_t num_int4_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
-    RETURN_IF_ERROR(utils::UnpackInt4ToInt8<true>(num_int4_elems, unpacked_tensor));
+    RETURN_IF_ERROR(utils::UnpackInt4ToInt8<true>(num_elements, unpacked_tensor));
   } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4) {
-    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
-    const size_t num_uint4_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
-    RETURN_IF_ERROR(utils::UnpackInt4ToInt8<false>(num_uint4_elems, unpacked_tensor));
+    RETURN_IF_ERROR(utils::UnpackInt4ToInt8<false>(num_elements, unpacked_tensor));
   } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2) {
-    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
-    const size_t num_int2_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
-    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<true>(num_int2_elems, unpacked_tensor));
+    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<true>(num_elements, unpacked_tensor));
   } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2) {
-    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
-    const size_t num_uint2_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
-    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<false>(num_uint2_elems, unpacked_tensor));
+    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<false>(num_elements, unpacked_tensor));
   }
 
   return Ort::Status();

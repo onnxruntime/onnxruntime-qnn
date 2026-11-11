@@ -984,10 +984,13 @@ Ort::Status ReadExternalData(const OrtApi& ort_api,
                              const std::filesystem::path& model_path,
                              std::vector<uint8_t>& unpacked_tensor);
 
+// expected_byte_size checks external storage before allocating or reading it.
+// QnnModelWrapper also validates the size returned for embedded initializers.
 Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const OrtValueInfo* initializer,
                                   const std::filesystem::path& model_path,
-                                  std::vector<uint8_t>& unpacked_tensor);
+                                  std::vector<uint8_t>& unpacked_tensor,
+                                  std::optional<size_t> expected_byte_size = std::nullopt);
 
 /*
    Converts a pointer into a string

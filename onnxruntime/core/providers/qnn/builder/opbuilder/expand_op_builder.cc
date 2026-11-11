@@ -65,9 +65,8 @@ Ort::Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   uint32_t shape_rank = shape[0];
   std::vector<uint8_t> unpacked_tensor;
   const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_tensor, unpacked_tensor));
-  RETURN_IF_NOT(unpacked_tensor.size() == static_cast<size_t>(shape_rank) * sizeof(int64_t),
-                "Expand shape initializer byte count does not match its declared shape.");
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
+      input_tensor, unpacked_tensor, true, static_cast<size_t>(shape_rank) * sizeof(int64_t)));
   const int64_t* shape_data_int64 = reinterpret_cast<const int64_t*>(unpacked_tensor.data());
   std::vector<uint32_t> input_shape(shape_rank, 0);
   std::transform(shape_data_int64, shape_data_int64 + shape_rank, input_shape.begin(),

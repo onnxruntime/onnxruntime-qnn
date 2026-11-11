@@ -7,6 +7,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <string>
 #include <utility>
@@ -2178,13 +2179,19 @@ Ort::Status ReadExternalData(const OrtApi& ort_api,
 Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const OrtValueInfo* initializer,
                                   const std::filesystem::path& model_path,
-                                  std::vector<uint8_t>& unpacked_tensor) {
+                                  std::vector<uint8_t>& unpacked_tensor,
+                                  std::optional<size_t> expected_byte_size) {
+  RETURN_IF(initializer == nullptr, "Initializer to unpack must not be null.");
   OrtExternalInitializerInfo* external_initializer = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer));
-  if (external_initializer) {
-    RETURN_IF_ERROR(ReadExternalData(ort_api, external_initializer, model_path, unpacked_tensor));
-    ort_api.ReleaseExternalInitializerInfo(external_initializer);
-    return Ort::Status();
+  OrtStatus* status = ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer);
+  std::unique_ptr<OrtExternalInitializerInfo, FuncDeleter<OrtExternalInitializerInfo>> external_info(
+      external_initializer, FuncDeleter<OrtExternalInitializerInfo>{ort_api.ReleaseExternalInitializerInfo});
+  ORT_CXX_RETURN_ON_API_FAIL(status);
+  if (external_info) {
+    RETURN_IF(expected_byte_size.has_value() &&
+                  ort_api.ExternalInitializerInfo_GetByteSize(external_info.get()) != *expected_byte_size,
+              "Initializer byte count does not match its declared shape and element type.");
+    return ReadExternalData(ort_api, external_info.get(), model_path, unpacked_tensor);
   }
 
   const OrtTypeInfo* type_info = nullptr;
