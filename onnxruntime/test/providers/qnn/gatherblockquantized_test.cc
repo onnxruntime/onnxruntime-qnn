@@ -226,7 +226,7 @@ static void RunGatherBlockQuantizedTest(
     ms_opset->set_domain(kMSDomain);
     ms_opset->set_version(1);
 
-    helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+    helper.model_.set_ir_version(kTestModelIRVersion);
 
     std::string model_data;
     helper.model_.SerializeToString(&model_data);
