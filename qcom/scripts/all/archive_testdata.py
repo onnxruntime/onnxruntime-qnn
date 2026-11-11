@@ -208,14 +208,19 @@ def _generate_onnx_node_tests(output_dir: Path) -> bool:
     function regenerates it on-the-fly using onnx.backend.test.case.node.collect_testcases().
     The generator runs in a subprocess so archive_testdata.py stays stdlib-only.
 
+    By default the current interpreter (sys.executable) is used. Set the environment
+    variable ARCHIVE_TESTDATA_ONNX_PYTHON to an interpreter path that has onnx installed
+    when the system Python does not (e.g. a CI venv created before invoking this script).
+
     Returns True on success, False if onnx is not importable in the current interpreter.
     """
+    onnx_python = os.environ.get("ARCHIVE_TESTDATA_ONNX_PYTHON") or sys.executable
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(_ONNX_NODE_GEN_SCRIPT)
         script = f.name
     try:
         result = subprocess.run(
-            [sys.executable, script, str(output_dir)],
+            [onnx_python, script, str(output_dir)],
             check=False,
             capture_output=True,
             text=True,
