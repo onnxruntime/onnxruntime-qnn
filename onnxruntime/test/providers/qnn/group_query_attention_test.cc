@@ -772,6 +772,34 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_FP32) {
   RunGQATest(config);
 }
 
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_Broadcast_Prefill_FP32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  // Initial prefill permits batch=2. Bias broadcasts over batch and heads, with query-dependent rows.
+  GqaTestConfig<float, int32_t> config{
+      TestInputDef<float>({2, 4, 512}, false, -1.0f, 1.0f),
+      TestInputDef<int32_t>({2}, true, std::vector<int32_t>{3, 3}),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{4})};
+  config.past_key_def.emplace(std::vector<int64_t>{2, 4, 4, 32}, false, -1.0f, 1.0f);
+  config.past_value_def.emplace(std::vector<int64_t>{2, 4, 4, 32}, false, -1.0f, 1.0f);
+  // Favor different causal keys so ignoring bias or reusing one query's bias changes the output.
+  config.attention_bias_def.emplace(std::vector<int64_t>{1, 1, 4, 4}, false,
+                                    std::vector<float>{16.0f, 0.0f, 0.0f, 0.0f,
+                                                       0.0f, 16.0f, 0.0f, 0.0f,
+                                                       16.0f, 0.0f, 0.0f, 0.0f,
+                                                       0.0f, 0.0f, 0.0f, 16.0f});
+  config.num_heads = 8;
+  config.kv_num_heads = 4;
+  config.do_rotary = 0;
+  config.backend_name = "htp";
+  config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  config.op_affinity_path = affinity_config.path().string();
+#if !defined(__linux__)
+  config.use_shared_memory_allocator = true;
+#endif  // !defined(__linux__)
+  RunGQATest(config);
+}
+
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_SlidingWindowCache_FP32) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
