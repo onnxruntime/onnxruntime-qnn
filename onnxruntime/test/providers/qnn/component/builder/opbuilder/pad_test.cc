@@ -57,7 +57,7 @@ TEST(QnnUnit_Pad_ComponentTest, InvalidPadsLength_RejectsAttributeAndInitializer
   for (bool initializer : {false, true}) {
     for (bool validate : {false, true}) {
       for (const std::string mode : {"constant", "reflect", "edge"}) {
-        for (const std::vector<int64_t> pads : {std::vector<int64_t>{}, {1}, {1, 0, 0}, {-1, 0, 0}, {1, 0, 0, 0, 0}, {1, 0, 0, 0, 0, 0}}) {
+        for (const std::vector<int64_t>& pads : {std::vector<int64_t>{}, {1}, {1, 0, 0}, {-1, 0, 0}, {1, 0, 0, 0, 0}, {1, 0, 0, 0, 0, 0}}) {
           SCOPED_TRACE("initializer=" + std::to_string(initializer) + " validate=" + std::to_string(validate) +
                        " mode=" + mode + " pads=" + ::testing::PrintToString(pads));
           auto error = CheckPad({4, 4}, pads, mode, initializer, validate);
@@ -79,7 +79,7 @@ TEST(QnnUnit_Pad_ComponentTest, ReflectZeroDimension_RejectsBeforeUnsignedSubtra
 
 TEST(QnnUnit_Pad_ComponentTest, ReflectPaddingAtOrAboveDimension_RejectsBothEnds) {
   for (bool initializer : {false, true}) {
-    for (const std::vector<int64_t> pads : {std::vector<int64_t>{4, 0, 0, 0}, {0, 0, 4, 0}, {5, 0, 0, 0}, {0, 0, 5, 0}}) {
+    for (const std::vector<int64_t>& pads : {std::vector<int64_t>{4, 0, 0, 0}, {0, 0, 4, 0}, {5, 0, 0, 0}, {0, 0, 5, 0}}) {
       auto error = CheckPad({4, 4}, pads, "reflect", initializer);
       ASSERT_FALSE(error.empty());
       EXPECT_NE(error.find("Pad amount should not be greater"), std::string::npos);
@@ -91,7 +91,7 @@ TEST(QnnUnit_Pad_ComponentTest, MixedPadsDimensionOverflow_RejectsBeforeAddition
   const int64_t max_dimension = std::numeric_limits<uint32_t>::max();
   for (bool initializer : {false, true}) {
     // Exercise overflow at the beginning pad and at the end pad separately.
-    for (const std::vector<int64_t> pads : {std::vector<int64_t>{1, -1, 0, 0}, {0, -1, 1, 0}, {1, -1, 1, 0}}) {
+    for (const std::vector<int64_t>& pads : {std::vector<int64_t>{1, -1, 0, 0}, {0, -1, 1, 0}, {1, -1, 1, 0}}) {
       auto error = CheckPad({max_dimension, 4}, pads, "constant", initializer);
       ASSERT_FALSE(error.empty());
       EXPECT_NE(error.find("padded dimension exceeds uint32 range"), std::string::npos);
