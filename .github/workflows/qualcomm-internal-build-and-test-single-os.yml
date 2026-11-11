@@ -4,6 +4,7 @@
 name: Qualcomm Internal Single OS Build
 
 permissions:
+  actions: read
   contents: read
   checks: write
 
@@ -124,6 +125,8 @@ on:
     inputs: *common_inputs
 
 env:
+  # Diagnostic branch only: reuse the passing CI binaries, without rebuilding.
+  QNN_SINGLE_PROCESS_DIAGNOSTIC_RUN_ID: "42949588575"
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
 
   # Cross compilation on Windows adds a folder to the build directory.
@@ -163,11 +166,11 @@ jobs:
           exit 1
 
       - name: Initialize submodules
-        if: ${{ inputs.has_code_changes }}
+        if: ${{ inputs.has_code_changes && env.QNN_SINGLE_PROCESS_DIAGNOSTIC_RUN_ID == '' }}
         run: git submodule update --init --recursive
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
-        if: ${{ inputs.has_code_changes }}
+        if: ${{ inputs.has_code_changes && env.QNN_SINGLE_PROCESS_DIAGNOSTIC_RUN_ID == '' }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
@@ -177,6 +180,26 @@ jobs:
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
           ${{ inputs.upload_test_archive == true && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
+
+      - name: Reuse passing internal-symbol binaries for the single-process diagnostic
+        if: ${{ inputs.has_code_changes && inputs.qnn_internal_test_symbols }}
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-windows-arm64-test-inputs
+          run-id: ${{ env.QNN_SINGLE_PROCESS_DIAGNOSTIC_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ github.workspace }}/build/windows-arm64-internal-symbols/${{ inputs.build_config }}/
+
+      - name: Restore one CTest process and exclude only HTP ReduceL2 for diagnosis
+        if: ${{ inputs.has_code_changes && inputs.qnn_internal_test_symbols }}
+        shell: powershell
+        run: |
+          if ('${{ inputs.target_os }}' -ne 'windows' -or '${{ inputs.target_arch }}' -ne 'arm64' -or '${{ inputs.build_config }}' -ne 'Release') {
+            throw 'This diagnostic branch only supports Windows ARM64 Release internal-symbol validation.'
+          }
+          & .\qcom\scripts\windows\prepare_single_process_reducel2_diagnostic.ps1 `
+            -ArtifactRoot '${{ github.workspace }}/build/windows-arm64-internal-symbols/Release' `
+            -SourceRunId '${{ env.QNN_SINGLE_PROCESS_DIAGNOSTIC_RUN_ID }}'
 
       # Internal-symbol binaries must not be published to Artifactory. This
       # temporary Actions artifact is used only to execute them on the ARM64
@@ -363,12 +386,16 @@ jobs:
       - name: Test Windows ARM64 QNN internal-symbol build
         if: ${{ inputs.has_code_changes && inputs.qnn_internal_test_symbols }}
         timeout-minutes: 60
-        run: >
-          python.exe qcom/build_and_test.py
-          --target-py-version ${{ inputs.target_py_vsn }}
-          --config ${{ inputs.build_config }}
-          create_venv
-          test_ort_windows_arm64_internal_symbols --only
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $diagnosticLog = '${{ github.workspace }}/single-process-reducel2-flow.log'
+          & python.exe qcom/build_and_test.py `
+            --target-py-version '${{ inputs.target_py_vsn }}' `
+            --config '${{ inputs.build_config }}' `
+            create_venv test_ort_windows_arm64_internal_symbols --only 2>&1 |
+            Tee-Object -FilePath $diagnosticLog
+          exit $LASTEXITCODE
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
@@ -411,6 +438,8 @@ jobs:
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/reduce-l2-diagnostic.json
+            ${{ github.workspace }}/single-process-reducel2-flow.log
 
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
