@@ -51,12 +51,20 @@ namespace test {
 
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
-static void SetMockSSRAlwaysCrash(bool always_crash) {
+static void SetMockSSRFatalError(bool fatal_error) {
   HMODULE mod = GetModuleHandleW(L"QnnMockSSR.dll");
   ASSERT_NE(mod, nullptr) << "QnnMockSSR.dll is not loaded in this process.";
-  auto set_fn = reinterpret_cast<void (*)(bool)>(GetProcAddress(mod, "SetMockSSRAlwaysCrash"));
-  ASSERT_NE(set_fn, nullptr) << "SetMockSSRAlwaysCrash not exported by QnnMockSSR.dll.";
-  set_fn(always_crash);
+  auto set_fn = reinterpret_cast<void (*)(bool)>(GetProcAddress(mod, "SetMockSSRFatalError"));
+  ASSERT_NE(set_fn, nullptr) << "SetMockSSRFatalError not exported by QnnMockSSR.dll.";
+  set_fn(fatal_error);
+}
+
+static void SetMockSSRRetryFatalError(bool fatal_error) {
+  HMODULE mod = GetModuleHandleW(L"QnnMockSSR.dll");
+  ASSERT_NE(mod, nullptr) << "QnnMockSSR.dll is not loaded in this process.";
+  auto set_fn = reinterpret_cast<void (*)(bool)>(GetProcAddress(mod, "SetMockSSRRetryFatalError"));
+  ASSERT_NE(set_fn, nullptr) << "SetMockSSRRetryFatalError not exported by QnnMockSSR.dll.";
+  set_fn(fatal_error);
 }
 
 // Reads the EPContext ONNX skeleton file and extracts the relative path of the
@@ -391,12 +399,10 @@ TEST_F(QnnMockSSRBackendTests, DISABLED_SSRGraphExecuteEpContextNonEmbedModeCpuF
   CleanUpCtxFile(context_model_file);
 }
 
-// Test that SSR in JIT flow (no EPContext, no .bin file) returns the unrecoverable-SSR
-// error code (QNN_SSR_UNRECOVERABLE_ERROR_CODE) to the user. In JIT mode, the graph is compiled
-// at runtime with no external binary to reload from, so SSR recovery is impossible. The
-// error must not be ORT_EP_FAIL, so the application can distinguish NPU crashes from other
-// EP failures.
-TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsUnrecoverableError) {
+// Test that a fatal SSR communication error in JIT flow returns the unrecoverable-SSR
+// error code (QNN_SSR_UNRECOVERABLE_ERROR_CODE) to the user. The error must not be
+// ORT_EP_FAIL, so the application can distinguish NPU crashes from other EP failures.
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteFatalJitReturnsUnrecoverableError) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   const std::string op_type = "Atan";
@@ -469,7 +475,10 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsUnrecoverableError) {
   ScopedOrtSession scoped(std::move(registered_ep_device),
                           Ort::Session(*ort_env, model_data.data(), model_data.size(), so));
 
-  // Step 4: Run inference — SSR fires, recovery is impossible, expect QNN_SSR_UNRECOVERABLE_ERROR_CODE.
+  SetMockSSRFatalError(true);
+  auto restore_default_ssr_error = gsl::finally([]() { SetMockSSRFatalError(false); });
+
+  // Step 4: Run inference. Fatal SSR fires, so expect QNN_SSR_UNRECOVERABLE_ERROR_CODE.
   auto qnn_in_name = scoped.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
   auto qnn_out_name = scoped.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
 
@@ -484,7 +493,8 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsUnrecoverableError) {
     FAIL() << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " exception but Run() succeeded.";
   } catch (const Ort::Exception& e) {
     EXPECT_EQ(e.GetOrtErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE)
-        << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " for SSR in JIT flow, got error code: " << e.GetOrtErrorCode()
+        << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " for fatal SSR in JIT flow, got error code: "
+        << e.GetOrtErrorCode()
         << ", message: " << e.what();
   }
 }
@@ -792,10 +802,9 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextWeightSharing) {
 #endif
 }
 
-// Test that a double crash returns the unrecoverable-SSR error code
-// (QNN_SSR_UNRECOVERABLE_ERROR_CODE) to the user. An embed_mode=0 context is recoverable in
-// principle, but always-crash mode makes the post-recovery retry fail too.
-TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteDoubleCrashReturnsUnrecoverableError) {
+// Test that a fatal communication error on the post-recovery retry returns the
+// unrecoverable-SSR error code (QNN_SSR_UNRECOVERABLE_ERROR_CODE) to the user.
+TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteRetryFatalReturnsUnrecoverableError) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   const std::string context_model_file = "./ssr_double_crash_test.onnx";
@@ -830,9 +839,9 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteDoubleCrashReturnsUnrecoverableErr
       << "Context model file was not generated: " << context_model_file;
 
   // -----------------------------------------------------------------------
-  // Step 2: Load the context model via QnnMockSSR.dll with always-crash mode.
-  //         SSR fires, recovery reloads from the .bin file and retries, but the
-  //         retried graphExecute crashes again -> expect QNN_SSR_UNRECOVERABLE_ERROR_CODE.
+  // Step 2: Load the context model via QnnMockSSR.dll. The first graphExecute
+  //         returns 1007, recovery reloads the .bin file, and the retry returns
+  //         fatal 1011 -> expect QNN_SSR_UNRECOVERABLE_ERROR_CODE.
   // -----------------------------------------------------------------------
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
@@ -850,8 +859,8 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteDoubleCrashReturnsUnrecoverableErr
 #endif
 
   // Arm only now — session construction loads the DLL but doesn't execute the graph yet.
-  SetMockSSRAlwaysCrash(true);
-  auto disarm_always_crash = gsl::finally([]() { SetMockSSRAlwaysCrash(false); });
+  SetMockSSRRetryFatalError(true);
+  auto disarm_retry_fatal = gsl::finally([]() { SetMockSSRRetryFatalError(false); });
 
   auto in_name = scoped.session().GetInputNameAllocated(0, Ort::AllocatorWithDefaultOptions());
   auto out_name = scoped.session().GetOutputNameAllocated(0, Ort::AllocatorWithDefaultOptions());

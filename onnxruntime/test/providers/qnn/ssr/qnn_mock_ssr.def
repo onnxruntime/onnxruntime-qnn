@@ -1,6 +1,7 @@
 LIBRARY QnnMockSSR
 EXPORTS
     QnnInterface_getProviders
-    SetMockSSRAlwaysCrash
+    SetMockSSRFatalError
+    SetMockSSRRetryFatalError
     SetMockSSRInjectionPoint
     QnnMockSSR_WasInjectionPointHit
