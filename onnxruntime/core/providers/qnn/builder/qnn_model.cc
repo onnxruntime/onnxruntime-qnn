@@ -31,6 +31,11 @@ namespace qnn {
 
 namespace {
 
+bool IsQnnSsrError(Qnn_ErrorHandle_t status) {
+  return status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION ||
+         status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL;
+}
+
 // Resolves the correct I/O order for a QNN fused subgraph, preferring ONNX declaration order.
 // For each ONNX-declared name, tries `tensor_name_overrides_reversed` first (handles renames),
 // then a direct match. Fallback to fused_order if any name is unresolvable. Appends partition-
@@ -826,12 +831,19 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 #endif
   RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
 
-  if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+  if (IsQnnSsrError(execute_status)) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
     if (ort_profiler) {
       ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
     }
 #endif
+    if (execute_status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL) {
+      std::ostringstream oss;
+      oss << "NPU crashed. Fatal SSR communication failure. Error code: " << execute_status;
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+      return Ort::Status(oss.str().c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+    }
+
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
                 "NPU crashed. SSR detected during QNN graph execute.");
     if (!context_bin_filepath_.empty()) {
@@ -840,7 +852,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 
       // Retry once with fresh context and re-bound tensors.
       RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
-      if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+      if (IsQnnSsrError(execute_status)) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
         if (ort_profiler) {
           ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);

@@ -31,6 +31,7 @@ uint32_t real_numProviders{0};
 // g_ssr_fired is reset in QnnInterface_getProviders (called once per new session/test).
 // Declared at file scope so QnnInterface_getProviders can reset it on all platforms.
 static bool g_ssr_fired = false;
+static bool g_inject_fatal_error = false;
 
 // The default intentionally preserves the original mock behavior: inject SSR on
 // the first graphExecute call. Setup-time injection points are test-only hooks
@@ -46,12 +47,20 @@ enum class MockSSRInjectionPoint : uint32_t {
 static MockSSRInjectionPoint g_injection_point = MockSSRInjectionPoint::kGraphExecute;
 static bool g_injection_point_hit = false;
 
-// Forces every graphExecute to fail, so a retry after SSR recovery crashes again.
-// Exported (see .def) because no header exists for this DLL.
-static bool g_always_crash_mode = false;
+// Makes the first graphExecute return 1007, then returns fatal 1011 when QNN EP
+// retries execution after reloading the context during SSR recovery.
+static bool g_inject_fatal_error_after_ssr = false;
 
-extern "C" void SetMockSSRAlwaysCrash(bool always_crash) {
-  g_always_crash_mode = always_crash;
+// Selects whether graphExecute injects the recoverable (1007) or fatal (1011)
+// system communication error. Tests must restore the default explicitly.
+extern "C" void SetMockSSRFatalError(bool fatal_error) {
+  g_inject_fatal_error = fatal_error;
+  g_ssr_fired = false;
+}
+
+extern "C" void SetMockSSRRetryFatalError(bool fatal_error) {
+  g_inject_fatal_error_after_ssr = fatal_error;
+  g_ssr_fired = false;
 }
 
 // Selects the QNN API at which this mock reports
@@ -120,8 +129,8 @@ struct StaticInit {
 
 #if defined(_WIN32)
 
-// Intercepts graphExecute: returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION on the first call
-// per session, then forwards to real HTP on subsequent calls.
+// Intercepts graphExecute: returns the configured QNN system communication error on the
+// first call per session, then forwards to real HTP on subsequent calls.
 QNN_API
 Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
                                    const Qnn_Tensor_t* inputs,
@@ -130,13 +139,14 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
                                    uint32_t numOutputs,
                                    Qnn_ProfileHandle_t profileHandle,
                                    Qnn_SignalHandle_t signalHandle) {
-  if (g_always_crash_mode) {
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  if (g_inject_fatal_error_after_ssr && g_ssr_fired) {
+    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL;
   }
   if (InjectAt(MockSSRInjectionPoint::kGraphExecute) && !g_ssr_fired) {
     g_ssr_fired = true;
     g_file_mapping_used_for_recovery = false;  // Reset: anything after this is recovery.
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+    return g_inject_fatal_error ? QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL
+                                : QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
   }
   if (!real_providerList) {
     return QNN_COMMON_ERROR_GENERAL;
