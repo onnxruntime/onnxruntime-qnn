@@ -22,6 +22,7 @@ from types import FrameType
 from typing import NamedTuple
 
 import backoff
+import httpx
 import requests
 from extract_testdata import MAPPING as _TESTDATA_MAPPING
 from extract_testdata import extract_to_staging
@@ -197,6 +198,9 @@ class Run(ABC):
     def is_done(self):
         return self.status in [RunStatus.SUCCESS, RunStatus.FAILED, RunStatus.ABORTED]
 
+    def needs_cleanup(self) -> bool:
+        return not self.is_done()
+
     @abstractmethod
     def abort(self) -> None:
         pass
@@ -216,7 +220,7 @@ class TestRuns:
 
     def abort(self) -> None:
         for run in self._runs:
-            if not run.is_done():
+            if run.needs_cleanup():
                 try:
                     run.abort()
                 except Exception:
@@ -298,9 +302,16 @@ class QdcClient:
             qdc_headers["X-QCOM-OnBehalfOf"] = on_behalf_of
 
         self._client = Client(base_url=self.api_url, headers=qdc_headers)
+        # Cancellation must not inherit the SDK's unlimited default timeout or
+        # the normal six-attempt retry policy while the workflow is shutting down.
+        self._cancellation_client = Client(base_url=self.api_url, headers=qdc_headers, timeout=httpx.Timeout(5.0))
 
-    def get_job_status(self, job_id: int) -> JobType0:
-        response = self.get_jobs_id(job_id)
+    def get_job_status(self, job_id: int, *, cancellation: bool = False) -> JobType0:
+        response = (
+            get_jobs_job_id.sync_detailed(job_id=job_id, client=self._cancellation_client)
+            if cancellation
+            else self.get_jobs_id(job_id)
+        )
 
         if response.status_code != 200:
             raise RuntimeError(
@@ -348,15 +359,14 @@ class QdcClient:
             raise RuntimeError(result.message)
         return result  # type: ignore[return-value]
 
-    @retry_with_backoff()
     def abort_job(self, *args, **kwargs) -> Response["JobType0 | None"]:
         result = post_jobs_job_id_abort.sync_detailed(
-            client=self._client,
+            client=self._cancellation_client,
             *args,  # noqa: B026
             **kwargs,
         )
-        if isinstance(result, ErrorMessageType0):
-            raise RuntimeError(result.message)
+        if isinstance(result.parsed, ErrorMessageType0):
+            raise RuntimeError(result.parsed.message)
         return result  # type: ignore[return-value]
 
     @retry_with_backoff()
@@ -563,14 +573,22 @@ class QdcRunner:
         if self._log_dir is not None:
             log_dir = Path(str(self._log_dir).replace("%p", platform.name.lower()))
             if status != RunStatus.ABORTED:
+                if platform == Platform.WINDOWS:
+                    # Recursive report publishing already supports per-job directories.
+                    # Never validate reports left by a different job or a partial retry.
+                    log_dir /= str(job_id)
+                    if log_dir.exists():
+                        shutil.rmtree(log_dir)
                 logging.info(f"Downloading log files to {log_dir}.")
-                self._client.download_logs(job_id, log_dir)
                 if platform == Platform.WINDOWS:
                     try:
+                        self._client.download_logs(job_id, log_dir)
                         validate_windows_results(log_dir)
-                    except ValueError as error:
+                    except Exception as error:
                         logging.error("%s", error)
                         return RunStatus.FAILED
+                else:
+                    self._client.download_logs(job_id, log_dir)
             return status
 
         if platform == Platform.WINDOWS and status == RunStatus.SUCCESS:
@@ -754,7 +772,22 @@ class QdcRunner:
         return QdcRun(self, platform, test_name, job_id, job_url)
 
     def abort_run(self, job_id: int) -> None:
-        self._client.abort_job(job_id)
+        deadline = time.monotonic() + 60
+        terminal_states = (JobState.CANCELED, JobState.COMPLETED)
+        if self._client.get_job_status(job_id, cancellation=True).state in terminal_states:
+            return
+        response = self._client.abort_job(job_id)
+        if not 200 <= response.status_code < 300:
+            raise RuntimeError(f"QDC cancellation failed: job={job_id}, HTTP={response.status_code}")
+        if isinstance(response.parsed, ErrorMessageType0):
+            raise RuntimeError(response.parsed.message)
+        while time.monotonic() < deadline:
+            if self._client.get_job_status(job_id, cancellation=True).state in terminal_states:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(2.0, remaining))
+        raise TimeoutError(f"Termination not confirmed for QDC job {job_id}")
 
     def get_run_status(self, job_id: int, platform: Platform) -> RunStatus:
         # Approximate mapping of state and result
@@ -800,18 +833,30 @@ class QdcRun(Run):
         self.runner = runner
         self.job_id = job_id
         self._submitted_at = time.monotonic()
+        self.remote_terminal_confirmed = False
+
+    def needs_cleanup(self) -> bool:
+        return not self.remote_terminal_confirmed
 
     def abort(self) -> None:
         logging.warning(f"Aborting {self.test_name}")
         self.runner.abort_run(self.job_id)
+        self.remote_terminal_confirmed = True
+        if not self.is_done():
+            self.status = RunStatus.ABORTED
 
     def poll(self) -> None:
         self.status = self.runner.get_run_status(self.job_id, self.platform)
+        if self.is_done():
+            self.remote_terminal_confirmed = True
         if self.status in (RunStatus.PENDING, RunStatus.UNKNOWN):
             if time.monotonic() - self._submitted_at > self.runner.queue_timeout_seconds:
                 logging.error("QDC queue timeout for %s", self.test_name)
-                self.abort()
                 self.status = RunStatus.FAILED
+                try:
+                    self.abort()
+                except Exception:
+                    logging.exception("Queue-timeout cancellation failed for %s; cleanup will retry", self.test_name)
 
     def get_farm_name(self) -> str:
         return "QDC"

@@ -88,6 +88,13 @@ try {
     Start-Transcript -Path (Join-Path $LogDir "bootstrap_stdout.txt") | Out-Null
     $TranscriptStarted = $true
     $Settings = Get-Content (Join-Path $PayloadRoot "qdc_windows_config.json") -Raw | ConvertFrom-Json
+    # The host must distinguish a smoke run from a full run even if some logs fail to download.
+    $QdcManifestPath = Join-Path $LogDir "required-reports.results.txt"
+    @{
+        test_mode = $Settings.test_mode
+        build_config = $Settings.build_config
+        ctest_reports = @()
+    } | ConvertTo-Json | Set-Content -LiteralPath $QdcManifestPath -Encoding UTF8
     if ((Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash -ne $Settings.python_sha256) {
         throw "Python installer SHA-256 mismatch."
     }
@@ -205,7 +212,8 @@ exit /b %PROBE_EXIT_CODE%
     Write-Host "Verified HTP v$($Settings.expected_htp_arch) inference on QDC."
 
     if ($Settings.test_mode -eq "full") {
-        & (Join-Path $TestRoot "run_tests.ps1") -Config $Config -PythonExe $PythonExe -TestRepoRoot $PayloadRoot
+        & (Join-Path $TestRoot "run_tests.ps1") -Config $Config -PythonExe $PythonExe `
+            -TestRepoRoot $PayloadRoot -QdcManifestPath $QdcManifestPath
         Assert-HtpResults -Report (Join-Path $BinaryRoot "onnxruntime_provider_test.exe.$Config.results.xml")
     } elseif ($Settings.test_mode -ne "smoke") {
         throw "Unsupported test mode: $($Settings.test_mode)"

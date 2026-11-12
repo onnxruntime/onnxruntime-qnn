@@ -10,7 +10,9 @@ param(
     [Parameter(HelpMessage = "Python executable for test helpers")]
     [string]$PythonExe = "py",
     [Parameter(HelpMessage = "Repo root of the extracted test payload")]
-    [string]$TestRepoRoot = ""
+    [string]$TestRepoRoot = "",
+    [Parameter(HelpMessage = "Path to the report manifest created by QDC bootstrap")]
+    [string]$QdcManifestPath = ""
 )
 
 $RootDir = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)").Path
@@ -61,6 +63,34 @@ $NewBuildDirectoryBackslashes = ($NewBuildDirectory -replace "/", "\\")
     -replace $OldBuildDirectoryRegex, $NewBuildDirectory `
     -replace $OldBuildDirectoryBackslashesRegex, $NewBuildDirectoryBackslashes |
     Out-File -Encoding ascii $CTestTestFile
+
+# Record every JUnit output registered by CTest when bootstrap supplies a manifest.
+if ($QdcManifestPath) {
+    if (-not (Test-Path -LiteralPath $QdcManifestPath -PathType Leaf)) {
+        throw "QDC report manifest not found: $QdcManifestPath"
+    }
+    Push-Location $RootDir
+    try {
+        $CTestPlanJson = & $CTestExe --build-config $Config --show-only=json-v1
+        if ($LASTEXITCODE -ne 0) { throw "Failed to enumerate CTest reports." }
+        $CTestPlan = ($CTestPlanJson -join "`n") | ConvertFrom-Json
+        $CTestReports = @(
+            foreach ($Test in $CTestPlan.tests) {
+                foreach ($Argument in $Test.command) {
+                    if ($Argument.StartsWith("--gtest_output=xml:")) {
+                        [System.IO.Path]::GetFileName($Argument.Substring("--gtest_output=xml:".Length))
+                    }
+                }
+            }
+        )
+        if ($CTestReports.Count -eq 0) { throw "CTest did not register any JUnit reports." }
+        $Manifest = Get-Content -LiteralPath $QdcManifestPath -Raw | ConvertFrom-Json
+        $Manifest.ctest_reports = @($CTestReports | Select-Object -Unique)
+        $Manifest | ConvertTo-Json | Set-Content -LiteralPath $QdcManifestPath -Encoding UTF8
+    } finally {
+        Pop-Location
+    }
+}
 
 # Figure out if HTP is available
 if ((Get-HostArch) -eq "arm64") {

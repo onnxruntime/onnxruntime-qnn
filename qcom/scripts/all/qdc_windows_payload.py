@@ -17,11 +17,42 @@ from package_manager import PACKAGE_CONFIG, FileCache, PackageManager
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_PACKAGE = "python_312_windows_arm64"
+DEFAULT_WINDOWS_HTP_ARCH = 81
 
 
 def validate_windows_results(log_dir: Path) -> None:
     """Require device outcome evidence even when QDC reports transport success."""
+    manifests = list(log_dir.rglob("required-reports.results.txt"))
+    if len(manifests) != 1:
+        raise ValueError("Windows QDC requires exactly one required-reports.results.txt manifest")
+    try:
+        manifest = json.loads(manifests[0].read_text(encoding="utf-8-sig"))
+        required = {"bootstrap.results.xml", "htp-smoke.results.xml"}
+        if manifest["test_mode"] == "full":
+            config = manifest["build_config"]
+            if config not in ("Release", "Debug", "RelWithDebInfo"):
+                raise ValueError("Unsupported build configuration")
+            ctest_reports = manifest["ctest_reports"]
+            if not isinstance(ctest_reports, list) or not ctest_reports:
+                raise ValueError("CTest report list is missing or empty")
+            required.update(ctest_reports)
+            required.add(f"onnxruntime_provider_test.exe.{config}.results.xml")
+            required.update(
+                f"{suite}_model_tests.results.xml" for suite in ("node", "float32", "qdq", "qdq-with-context-cache")
+            )
+        elif manifest["test_mode"] != "smoke":
+            raise ValueError("Unsupported Windows test mode")
+        if any(not isinstance(name, str) or Path(name).name != name for name in required):
+            raise ValueError("Expected report names must be filenames")
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"Invalid Windows QDC report manifest: {error}") from error
     reports = list(log_dir.rglob("*.results.xml"))
+    names = [report.name for report in reports]
+    if len(names) != len(set(names)):
+        raise ValueError("Duplicate Windows QDC report names")
+    missing = required - set(names)
+    if missing:
+        raise ValueError(f"Windows QDC reports are missing: {sorted(missing)}")
     bootstrap_passed = False
     for report in reports:
         try:
@@ -42,6 +73,17 @@ def validate_windows_results(log_dir: Path) -> None:
                 )
                 if not bootstrap_passed:
                     raise ValueError("Bootstrap did not report a completed test")
+            elif report.name in required:
+                cases = list(root.iter("testcase"))
+                if report.name == "htp-smoke.results.xml" or report.name.startswith("onnxruntime_provider_test.exe."):
+                    cases = [case for case in cases if case.get("classname", "").startswith("QnnHTP")]
+                if not any(
+                    case.find("skipped") is None
+                    and case.get("status", "run") == "run"
+                    and case.get("result", "completed") in ("complete", "completed")
+                    for case in cases
+                ):
+                    raise ValueError("No completed, non-skipped test cases")
         except (ElementTree.ParseError, ValueError) as error:
             raise ValueError(f"Invalid or failed Windows QDC report {report}: {error}") from error
     if not bootstrap_passed:
@@ -68,17 +110,21 @@ def prepare_windows_payload(
     models_dir: Path | None = None,
     installer: Path | None = None,
     python_info: dict[str, str] | None = None,
+    htp_arch: int = DEFAULT_WINDOWS_HTP_ARCH,
 ) -> Path:
     """Add bootstrap, installer, models and testdata to a copy of the build artifact.
 
     Keep every original entry at its original path. Multi-config binaries and their
     testdata remain under <config>/<config>; ctest and run_tests.ps1 stay one level up.
     Optional local inputs allow payload verification without a device or downloads.
+    htp_arch selects runtime dependencies and smoke-test expectations, not the QDC device.
     """
     if config not in ("Release", "Debug", "RelWithDebInfo"):
         raise ValueError(f"Unsupported build config: {config}")
     if test_mode not in ("smoke", "full"):
         raise ValueError(f"Unsupported Windows test mode: {test_mode}")
+    if type(htp_arch) is not int or htp_arch <= 0:
+        raise ValueError(f"Invalid HTP architecture: {htp_arch}")
     if not testdata_archive.is_file():
         raise FileNotFoundError(f"Windows QDC requires testdata: {testdata_archive}")
 
@@ -98,9 +144,9 @@ def prepare_windows_payload(
             "onnxruntime_providers_qnn.dll",
             "QnnHtp.dll",
             "QnnSystem.dll",
-            "QnnHtpV81Stub.dll",
-            "libQnnHtpV81Skel.so",
-            "libqnnhtpv81.cat",
+            f"QnnHtpV{htp_arch}Stub.dll",
+            f"libQnnHtpV{htp_arch}Skel.so",
+            f"libqnnhtpv{htp_arch}.cat",
             "msvcp140.dll",
             "msvcp140_1.dll",
             "vcruntime140.dll",
@@ -145,7 +191,7 @@ def prepare_windows_payload(
                     **python_info,
                     "build_config": config,
                     "test_mode": test_mode,
-                    "expected_htp_arch": 81,
+                    "expected_htp_arch": htp_arch,
                 },
                 indent=2,
             ),

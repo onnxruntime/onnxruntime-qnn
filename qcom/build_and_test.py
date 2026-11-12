@@ -1437,7 +1437,13 @@ class TaskLibrary:
     if is_host_windows() or is_host_linux():
 
         @task
-        @depends(["create_qdc_venv", (is_host_windows(), "archive_ort_windows_arm64")])
+        @depends(
+            [
+                "create_qdc_venv",
+                (is_host_windows(), "archive_ort_windows_arm64"),
+                (is_host_windows(), "archive_testdata"),
+            ]
+        )
         def test_ort_qdc_windows_arm64(self, plan: Plan) -> str:
             return plan.add_step(
                 QdcTestsTask(

@@ -83,12 +83,12 @@ on:
 env:
   # The QDC results folder is a bit odd
   QDC_RESULTS_ARCH: "${{ inputs.target_os == 'windows' && 'windows' || (inputs.target_os == 'linux' && 'qualcomm_linux' || 'android') }}"
-  QDC_TEST_LABEL: "${{ inputs.target_os == 'windows' && 'htp-v81' || 'pynone' }}"
+  QDC_TEST_LABEL: "${{ inputs.target_os == 'windows' && 'qdc' || 'pynone' }}"
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
   test:
-    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-${{ inputs.target_os == 'windows' && 'htp-v81' || 'pynone' }}"
+    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-${{ inputs.target_os == 'windows' && 'qdc' || 'pynone' }}"
     # Fork PRs cannot access the required credentials. They remain blocked until
     # a maintainer dispatches the reviewed SHA through /approve-ci.
     if: ${{ github.event.pull_request.head.repo.fork != true }}

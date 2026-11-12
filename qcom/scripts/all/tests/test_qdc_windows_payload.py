@@ -9,11 +9,11 @@ import zipfile
 
 import pytest
 import qdc_windows_payload
-from qdc_windows_payload import prepare_windows_payload, validate_windows_results
+from qdc_windows_payload import DEFAULT_WINDOWS_HTP_ARCH, prepare_windows_payload, validate_windows_results
 
 
 @pytest.fixture
-def payload_inputs(tmp_path):
+def payload_inputs(tmp_path, htp_arch):
     installer = tmp_path / "python.exe"
     installer.write_bytes(b"fake installer")
     info = {"python_version": "3.12.10", "python_sha256": hashlib.sha256(installer.read_bytes()).hexdigest()}
@@ -26,10 +26,21 @@ def payload_inputs(tmp_path):
         folder = models / "testdata" / suite
         folder.mkdir(parents=True)
         (folder / "model.onnx").write_bytes(b"model")
-    return {"testdata_archive": data, "models_dir": models, "installer": installer, "python_info": info}
+    return {
+        "testdata_archive": data,
+        "models_dir": models,
+        "installer": installer,
+        "python_info": info,
+        "htp_arch": htp_arch,
+    }
 
 
-def write_archive(path, config="Release", multi_config=False, omit=""):
+@pytest.fixture(params=(73, 81))
+def htp_arch(request):
+    return request.param
+
+
+def write_archive(path, config="Release", multi_config=False, omit="", *, htp_arch):
     root = f"build/windows-arm64/{config}"
     binaries = f"{root}/{config}" if multi_config else root
     contents = {
@@ -45,9 +56,9 @@ def write_archive(path, config="Release", multi_config=False, omit=""):
         "onnxruntime_providers_qnn.dll",
         "QnnHtp.dll",
         "QnnSystem.dll",
-        "QnnHtpV81Stub.dll",
-        "libQnnHtpV81Skel.so",
-        "libqnnhtpv81.cat",
+        f"QnnHtpV{htp_arch}Stub.dll",
+        f"libQnnHtpV{htp_arch}Skel.so",
+        f"libqnnhtpv{htp_arch}.cat",
         "msvcp140.dll",
         "msvcp140_1.dll",
         "vcruntime140.dll",
@@ -79,7 +90,7 @@ def test_preserves_archive_and_places_data_next_to_binaries(
                 target.addfile(info, io.BytesIO(content))
         payload_inputs["testdata_archive"] = data
     source = tmp_path / "tests.zip"
-    originals = write_archive(source, config, multi_config)
+    originals = write_archive(source, config, multi_config, htp_arch=payload_inputs["htp_arch"])
     original_zip = source.read_bytes()
     result = prepare_windows_payload(source, tmp_path / "output", config=config, **payload_inputs)
     assert source.read_bytes() == original_zip
@@ -97,22 +108,42 @@ def test_preserves_archive_and_places_data_next_to_binaries(
         assert payload.read("installers/python-arm64.exe") == payload_inputs["installer"].read_bytes()
         settings = json.loads(payload.read("qdc_windows_config.json"))
         assert settings["build_config"] == config
-        assert settings["expected_htp_arch"] == 81
+        assert settings["expected_htp_arch"] == payload_inputs["htp_arch"]
         assert settings["test_mode"] == "full"
 
 
-def test_missing_v81_runtime_fails_before_downloading(tmp_path, payload_inputs, monkeypatch):
+@pytest.mark.parametrize("runtime", ("QnnHtpV{arch}Stub.dll", "libQnnHtpV{arch}Skel.so", "libqnnhtpv{arch}.cat"))
+def test_missing_htp_runtime_fails_before_downloading(tmp_path, payload_inputs, monkeypatch, runtime):
     monkeypatch.setattr(qdc_windows_payload, "fetch_python_installer", lambda: pytest.fail("Unexpected download"))
     source = tmp_path / "tests.zip"
-    write_archive(source, omit="libqnnhtpv81.cat")
-    with pytest.raises(ValueError, match="libqnnhtpv81.cat"):
-        prepare_windows_payload(source, tmp_path / "output", payload_inputs["testdata_archive"])
+    htp_arch = payload_inputs["htp_arch"]
+    missing_runtime = runtime.format(arch=htp_arch)
+    write_archive(source, omit=missing_runtime, htp_arch=htp_arch)
+    with pytest.raises(ValueError, match=missing_runtime):
+        prepare_windows_payload(source, tmp_path / "output", payload_inputs["testdata_archive"], htp_arch=htp_arch)
+
+
+def test_wrong_htp_runtime_is_rejected(tmp_path, payload_inputs):
+    source = tmp_path / "tests.zip"
+    other_arch = 73 if payload_inputs["htp_arch"] == 81 else 81
+    write_archive(source, htp_arch=other_arch)
+    with pytest.raises(ValueError, match="Incomplete Windows QDC test archive"):
+        prepare_windows_payload(source, tmp_path / "output", **payload_inputs)
+
+
+def test_default_htp_arch_is_preserved(tmp_path, payload_inputs):
+    source = tmp_path / "tests.zip"
+    write_archive(source, htp_arch=DEFAULT_WINDOWS_HTP_ARCH)
+    inputs = {key: value for key, value in payload_inputs.items() if key != "htp_arch"}
+    result = prepare_windows_payload(source, tmp_path / "output", **inputs)
+    with zipfile.ZipFile(result) as payload:
+        assert json.loads(payload.read("qdc_windows_config.json"))["expected_htp_arch"] == DEFAULT_WINDOWS_HTP_ARCH
 
 
 def test_smoke_does_not_download_or_bundle_model_zoo(tmp_path, payload_inputs, monkeypatch):
     monkeypatch.setattr(qdc_windows_payload, "PackageManager", lambda _: pytest.fail("Unexpected model download"))
     source = tmp_path / "tests.zip"
-    write_archive(source)
+    write_archive(source, htp_arch=payload_inputs["htp_arch"])
     payload_inputs["models_dir"] = None
     result = prepare_windows_payload(source, tmp_path / "output", test_mode="smoke", **payload_inputs)
     with zipfile.ZipFile(result) as payload:
@@ -122,7 +153,7 @@ def test_smoke_does_not_download_or_bundle_model_zoo(tmp_path, payload_inputs, m
 
 def test_corrupt_installer_is_rejected(tmp_path, payload_inputs):
     source = tmp_path / "tests.zip"
-    write_archive(source)
+    write_archive(source, htp_arch=payload_inputs["htp_arch"])
     payload_inputs["installer"].write_bytes(b"corrupted download")
     with pytest.raises(ValueError, match="SHA-256 mismatch"):
         prepare_windows_payload(source, tmp_path / "output", **payload_inputs)
@@ -130,7 +161,7 @@ def test_corrupt_installer_is_rejected(tmp_path, payload_inputs):
 
 def test_missing_model_suite_is_rejected(tmp_path, payload_inputs):
     source = tmp_path / "tests.zip"
-    write_archive(source)
+    write_archive(source, htp_arch=payload_inputs["htp_arch"])
     suite = payload_inputs["models_dir"] / "testdata/qdq-with-context-cache"
     (suite / "model.onnx").unlink()
     suite.rmdir()
@@ -140,7 +171,7 @@ def test_missing_model_suite_is_rejected(tmp_path, payload_inputs):
 
 def test_missing_testdata_handle_is_rejected(tmp_path, payload_inputs):
     source = tmp_path / "tests.zip"
-    write_archive(source)
+    write_archive(source, htp_arch=payload_inputs["htp_arch"])
     with zipfile.ZipFile(payload_inputs["testdata_archive"], "w") as archive:
         for handle in ("testdata", "pytorch-converted", "pytorch-operator"):
             archive.writestr(f"{handle}/sentinel.txt", handle)
@@ -155,6 +186,13 @@ def windows_results(tmp_path):
     (logs / "bootstrap.results.xml").write_text(
         '<testsuites><testsuite tests="1" failures="0"><testcase classname="QDCWindows" '
         'name="BootstrapAndTests" /></testsuite></testsuites>'
+    )
+    (logs / "required-reports.results.txt").write_text(
+        json.dumps({"test_mode": "smoke", "build_config": "Release", "ctest_reports": []})
+    )
+    (logs / "htp-smoke.results.xml").write_text(
+        '<testsuite><testcase classname="QnnHTPBackendTests" name="BinaryOp_Add4D" '
+        'status="run" result="completed" /></testsuite>'
     )
     return tmp_path
 
@@ -181,10 +219,11 @@ def test_failed_or_invalid_windows_results(windows_results, report):
         validate_windows_results(windows_results)
 
 
-def test_missing_bootstrap_results(tmp_path):
-    (tmp_path / "provider.results.xml").write_text('<testsuite tests="1" failures="0" />')
-    with pytest.raises(ValueError, match="bootstrap.results.xml is missing"):
-        validate_windows_results(tmp_path)
+@pytest.mark.parametrize("name", ("bootstrap.results.xml", "htp-smoke.results.xml"))
+def test_missing_required_smoke_results(windows_results, name):
+    (windows_results / "nested/QDC_logs" / name).unlink()
+    with pytest.raises(ValueError, match="reports are missing"):
+        validate_windows_results(windows_results)
 
 
 def test_skipped_bootstrap_results(windows_results):
@@ -193,4 +232,79 @@ def test_skipped_bootstrap_results(windows_results):
         '<testsuite><testcase classname="QDCWindows" name="BootstrapAndTests"><skipped /></testcase></testsuite>'
     )
     with pytest.raises(ValueError, match="Bootstrap did not report a completed test"):
+        validate_windows_results(windows_results)
+
+
+@pytest.fixture
+def full_windows_results(windows_results):
+    logs = windows_results / "nested/QDC_logs"
+    ctest_reports = ["onnxruntime_provider_test.exe.Release.results.xml", "other_unit_test.exe.Release.results.xml"]
+    (logs / "required-reports.results.txt").write_text(
+        json.dumps({"test_mode": "full", "build_config": "Release", "ctest_reports": ctest_reports})
+    )
+    names = ctest_reports + [
+        f"{suite}_model_tests.results.xml" for suite in ("node", "float32", "qdq", "qdq-with-context-cache")
+    ]
+    for name in names:
+        (logs / name).write_text(
+            '<testsuite><testcase classname="QnnHTPBackendTests" name="Test" '
+            'status="run" result="completed" /></testsuite>'
+        )
+    return windows_results
+
+
+def test_valid_full_windows_results(full_windows_results):
+    validate_windows_results(full_windows_results)
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "onnxruntime_provider_test.exe.Release.results.xml",
+        "other_unit_test.exe.Release.results.xml",
+        "node_model_tests.results.xml",
+        "float32_model_tests.results.xml",
+        "qdq_model_tests.results.xml",
+        "qdq-with-context-cache_model_tests.results.xml",
+    ),
+)
+def test_missing_required_full_results(full_windows_results, name):
+    (full_windows_results / "nested/QDC_logs" / name).unlink()
+    with pytest.raises(ValueError, match="reports are missing"):
+        validate_windows_results(full_windows_results)
+
+
+@pytest.mark.parametrize(
+    "cases",
+    (
+        "",
+        '<testcase status="notrun" result="suppressed" />',
+        '<testcase classname="QnnHTPBackendTests"><skipped /></testcase>',
+        '<testcase classname="QnnCPUBackendTests" status="run" result="completed" />',
+    ),
+)
+def test_no_completed_htp_tests(full_windows_results, cases):
+    report = full_windows_results / "nested/QDC_logs/onnxruntime_provider_test.exe.Release.results.xml"
+    report.write_text(f"<testsuite>{cases}</testsuite>")
+    with pytest.raises(ValueError, match="No completed, non-skipped"):
+        validate_windows_results(full_windows_results)
+
+
+def test_empty_ctest_manifest_is_rejected(full_windows_results):
+    (full_windows_results / "nested/QDC_logs/required-reports.results.txt").write_text(
+        json.dumps({"test_mode": "full", "build_config": "Release", "ctest_reports": []})
+    )
+    with pytest.raises(ValueError, match="CTest report list is missing or empty"):
+        validate_windows_results(full_windows_results)
+
+
+def test_missing_report_manifest_is_rejected(windows_results):
+    (windows_results / "nested/QDC_logs/required-reports.results.txt").unlink()
+    with pytest.raises(ValueError, match="exactly one"):
+        validate_windows_results(windows_results)
+
+
+def test_duplicate_reports_are_rejected(windows_results):
+    (windows_results / "bootstrap.results.xml").write_text("<testsuite />")
+    with pytest.raises(ValueError, match="Duplicate"):
         validate_windows_results(windows_results)
