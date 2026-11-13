@@ -405,8 +405,17 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
       if (quant_param.scaleOffsetEncoding.offset != kSymmetricU16Offset) {
         const auto htp_arch = qnn_model_wrapper.GetHtpArch();
         const bool supports_symmetric_u16 = htp_arch >= QNN_HTP_DEVICE_ARCH_V73;
+        const bool symmetric_u16_requested = qnn_model_wrapper.GetModelSettings().htp_matmul_use_symmetric_uint16;
+        if (symmetric_u16_requested && !supports_symmetric_u16) {
+          const std::string arch_name = htp_arch == QNN_HTP_DEVICE_ARCH_NONE ? "unknown"
+                                                                             : "v" + std::to_string(htp_arch);
+          const std::string warning = "htp_matmul_use_symmetric_uint16 is ignored for MatMul input '" +
+                                      convert_input_name + "': HTP architecture is " + arch_name +
+                                      ". HTP v73 or newer is required; using the default range heuristic.";
+          ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, warning.c_str());
+        }
         const bool use_symmetric_u16 =
-            (qnn_model_wrapper.GetModelSettings().htp_matmul_use_symmetric_uint16 && supports_symmetric_u16) ||
+            (symmetric_u16_requested && supports_symmetric_u16) ||
             ShouldUseSymmetricU16ForMatMul(quant_param.scaleOffsetEncoding.scale);
         RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
                                                convert_input_name,

@@ -25,6 +25,7 @@ struct MatMulConversionCase {
   float rhs_scale;
   uint16_t rhs_zero_point;
   Qnn_DataType_t expected_type;
+  const char* expected_arch_warning = nullptr;
   bool expect_convert = true;
   bool static_rhs = false;
   qnn::QnnBackendType backend_type = qnn::QnnBackendType::HTP;
@@ -71,8 +72,42 @@ TEST_P(QnnUnit_MatMulComponentTest, DynamicU16Conversion) {
                                    std::vector<int64_t>{2, 2}, lhs_scale, lhs_zp);
     auto node_unit = MakeMockQDQNodeUnit("MatMul", {lhs, rhs}, {output}, "matmul");
 
-    const auto status = builder->AddToModelBuilder(*wrapper, node_unit, ctx.ort_logger, do_op_validation);
+    std::vector<std::string> warnings;
+    OrtApi logging_api = Ort::GetApi();
+    logging_api.Logger_GetLoggingSeverityLevel =
+        [](const OrtLogger*, OrtLoggingLevel* severity) noexcept -> OrtStatus* {
+      *severity = ORT_LOGGING_LEVEL_WARNING;
+      return nullptr;
+    };
+    logging_api.Logger_LogMessage =
+        [](const OrtLogger* logger, OrtLoggingLevel severity, const char* message,
+           const ORTCHAR_T*, int, const char*) noexcept -> OrtStatus* {
+      if (severity == ORT_LOGGING_LEVEL_WARNING) {
+        auto* captured = reinterpret_cast<std::vector<std::string>*>(const_cast<OrtLogger*>(logger));
+        captured->emplace_back(message ? message : "");
+      }
+      return nullptr;
+    };
+    OrtGlobalApiOverride logging_override(&logging_api);
+    Ort::Logger logger(reinterpret_cast<const OrtLogger*>(&warnings));
+
+    const auto status = builder->AddToModelBuilder(*wrapper, node_unit, logger, do_op_validation);
     ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+
+    size_t warning_count = 0;
+    for (const auto& warning : warnings) {
+      if (warning.find("htp_matmul_use_symmetric_uint16") == std::string::npos) {
+        continue;
+      }
+      ++warning_count;
+      if (test_case.expected_arch_warning) {
+        EXPECT_NE(warning.find(std::string("HTP architecture is ") + test_case.expected_arch_warning),
+                  std::string::npos);
+      }
+      EXPECT_NE(warning.find("HTP v73 or newer is required"), std::string::npos);
+      EXPECT_NE(warning.find("using the default range heuristic"), std::string::npos);
+    }
+    EXPECT_EQ(warning_count, test_case.expected_arch_warning ? 1u : 0u);
 
     size_t convert_count = 0;
     for (const auto& [name, tensor] : wrapper->GetModelTensorsMap()) {
@@ -104,21 +139,33 @@ INSTANTIATE_TEST_SUITE_P(
         MatMulConversionCase{"EnabledHighRange", true, QNN_HTP_DEVICE_ARCH_V73, 0.002f, 32787,
                              QNN_DATATYPE_UFIXED_POINT_16},
         MatMulConversionCase{"EnabledV68", true, QNN_HTP_DEVICE_ARCH_V68, 0.0001525f, 32787,
-                             QNN_DATATYPE_UFIXED_POINT_8},
+                             QNN_DATATYPE_UFIXED_POINT_8, "v68"},
         MatMulConversionCase{"EnabledV69", true, QNN_HTP_DEVICE_ARCH_V69, 0.0001525f, 32787,
-                             QNN_DATATYPE_UFIXED_POINT_8},
+                             QNN_DATATYPE_UFIXED_POINT_8, "v69"},
         MatMulConversionCase{"EnabledV81", true, QNN_HTP_DEVICE_ARCH_V81, 0.0001525f, 32787,
                              QNN_DATATYPE_UFIXED_POINT_16},
         MatMulConversionCase{"UnspecifiedArch", true, QNN_HTP_DEVICE_ARCH_NONE, 0.0001525f, 32787,
+                             QNN_DATATYPE_UFIXED_POINT_8, "unknown"},
+        MatMulConversionCase{"DefaultUnspecifiedArch", false, QNN_HTP_DEVICE_ARCH_NONE, 0.0001525f, 32787,
                              QNN_DATATYPE_UFIXED_POINT_8},
+        MatMulConversionCase{"UnspecifiedArchHighRange", true, QNN_HTP_DEVICE_ARCH_NONE, 0.002f, 32787,
+                             QNN_DATATYPE_UFIXED_POINT_16, "unknown"},
+        MatMulConversionCase{"EnabledV69HighRange", true, QNN_HTP_DEVICE_ARCH_V69, 0.002f, 32787,
+                             QNN_DATATYPE_UFIXED_POINT_16, "v69"},
         MatMulConversionCase{"SymmetricDefault", false, QNN_HTP_DEVICE_ARCH_V73, 0.0001525f, 32768,
-                             QNN_DATATYPE_UFIXED_POINT_16, false},
+                             QNN_DATATYPE_UFIXED_POINT_16, nullptr, false},
         MatMulConversionCase{"SymmetricEnabled", true, QNN_HTP_DEVICE_ARCH_V73, 0.0001525f, 32768,
-                             QNN_DATATYPE_UFIXED_POINT_16, false},
+                             QNN_DATATYPE_UFIXED_POINT_16, nullptr, false},
+        MatMulConversionCase{"SymmetricUnspecifiedArch", true, QNN_HTP_DEVICE_ARCH_NONE, 0.0001525f, 32768,
+                             QNN_DATATYPE_UFIXED_POINT_16, nullptr, false},
         MatMulConversionCase{"StaticRhs", true, QNN_HTP_DEVICE_ARCH_V73, 0.0001525f, 32787,
-                             QNN_DATATYPE_SFIXED_POINT_16, true, true},
+                             QNN_DATATYPE_SFIXED_POINT_16, nullptr, true, true},
+        MatMulConversionCase{"StaticUnspecifiedArch", true, QNN_HTP_DEVICE_ARCH_NONE, 0.0001525f, 32787,
+                             QNN_DATATYPE_SFIXED_POINT_16, nullptr, true, true},
         MatMulConversionCase{"CpuBackend", true, QNN_HTP_DEVICE_ARCH_V73, 0.0001525f, 32787,
-                             QNN_DATATYPE_UFIXED_POINT_16, false, false, qnn::QnnBackendType::CPU}),
+                             QNN_DATATYPE_UFIXED_POINT_16, nullptr, false, false, qnn::QnnBackendType::CPU},
+        MatMulConversionCase{"CpuUnspecifiedArch", true, QNN_HTP_DEVICE_ARCH_NONE, 0.0001525f, 32787,
+                             QNN_DATATYPE_UFIXED_POINT_16, nullptr, false, false, qnn::QnnBackendType::CPU}),
     [](const ::testing::TestParamInfo<MatMulConversionCase>& info) { return info.param.name; });
 
 }  // namespace
