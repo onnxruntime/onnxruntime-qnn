@@ -15,6 +15,20 @@ from pathlib import Path
 QCOM_ROOT = Path(__file__).parent.parent.parent
 REPO_ROOT = QCOM_ROOT.parent
 
+_TARGET_PLATFORMS = (
+    "android-aarch64",
+    "linux-x86_64",
+    "linux-x86_64_ubuntu_22_04",
+    "linux-x86_64_ubuntu_22_04-internal-symbols",
+    "linux-aarch64_manylinux_2_34",
+    "linux-aarch64_manylinux_2_34-internal-symbols",
+    "linux-aarch64_oe_gcc11_2",
+    "windows-arm64",
+    "windows-arm64ec",
+    "windows-arm64x",
+    "windows-x86_64",
+)
+
 # Top-level files inside Release/ accepted purely by extension or exact name.
 _TOP_LEVEL_EXT_RE = re.compile(r"\.(dll|exe|cat|so|so\.[0-9.]+)$")
 _TOP_LEVEL_EXACT_NAMES = {
@@ -298,17 +312,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--target-platform",
         required=True,
-        choices=[
-            "android-aarch64",
-            "linux-x86_64",
-            "linux-x86_64_ubuntu_22_04",
-            "linux-aarch64_manylinux_2_34",
-            "linux-aarch64_oe_gcc11_2",
-            "windows-arm64",
-            "windows-arm64ec",
-            "windows-arm64x",
-            "windows-x86_64",
-        ],
+        choices=_TARGET_PLATFORMS,
     )
     parser.add_argument("--qairt-sdk-root", type=Path, required=True)
     parser.add_argument(

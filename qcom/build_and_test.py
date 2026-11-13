@@ -346,6 +346,38 @@ class TaskLibrary:
             )
         )
 
+    @implementation_detail
+    @depends(["create_venv"])
+    def _build_ort_linux_x86_64_ubuntu_22_04_internal_symbols(self, plan: Plan) -> str:
+        """In-container internal-symbol build steps for x86_64-ubuntu_22_04."""
+        extra_args = []
+
+        env = os.environ.copy()
+        if self.__docker_ccache_root is not None:
+            ccache_dir = self.__docker_ccache_root / "linux-x86_64-ubuntu_22_04"
+            env["CCACHE_DIR"] = str(ccache_dir)
+        else:
+            extra_args.append("--no-use-cache")
+
+        return plan.add_step(
+            BuildEpLinuxTask(
+                None,
+                self.__venv_path,
+                "linux",
+                "x86_64_ubuntu_22_04",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "build",
+                extra_args=extra_args if extra_args else None,
+                env=env,
+                build_archive=self.__build_archive,
+                qnn_internal_test_symbols=True,
+                build_dir_suffix="internal-symbols",
+            )
+        )
+
     if is_host_linux() or is_host_mac():
 
         @task
@@ -385,6 +417,25 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
+                )
+            )
+
+        @task
+        @depends(["build_ort_linux_aarch64_manylinux_2_34_internal_symbols", "create_venv"])
+        def archive_ort_linux_aarch64_manylinux_2_34_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Archiving ONNX Runtime for Linux with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "aarch64_manylinux_2_34",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "archive",
+                    qnn_internal_test_symbols=True,
+                    build_dir_suffix="internal-symbols",
                 )
             )
 
@@ -440,6 +491,25 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
+                )
+            )
+
+        @task
+        @depends(["build_ort_linux_x86_64_ubuntu_22_04_internal_symbols", "create_venv"])
+        def archive_ort_linux_x86_64_ubuntu_22_04_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Archiving ONNX Runtime for Linux x86_64 Ubuntu 22.04 with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64_ubuntu_22_04",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "archive",
+                    qnn_internal_test_symbols=True,
+                    build_dir_suffix="internal-symbols",
                 )
             )
 
@@ -717,6 +787,25 @@ class TaskLibrary:
                 inner_task="_build_ort_linux_x86_64_ubuntu_22_04",
                 docker_tag=UBUNTU_22_04_X86_64_TAG,
                 platform="linux/amd64",
+            ),
+        )
+
+    @public_task("Build ONNX Runtime for Linux x86_64 on Ubuntu 22.04 with QNN EP internal unit-test symbols")
+    @depends(["docker_build_ubuntu_22_04_x86_64"])
+    def build_ort_linux_x86_64_ubuntu_22_04_internal_symbols(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpDockerTask(
+                "Building ONNX Runtime for Linux x86_64 on Ubuntu 22.04 with QNN EP internal unit-test symbols",
+                "x86_64_ubuntu_22_04",
+                self.__config,
+                self.__target_py_version,
+                self.__qairt_sdk_root,
+                self.__docker_ccache_root,
+                self.__build_archive,
+                inner_task="_build_ort_linux_x86_64_ubuntu_22_04_internal_symbols",
+                docker_tag=UBUNTU_22_04_X86_64_TAG,
+                platform="linux/amd64",
+                build_dir_suffix="internal-symbols",
             ),
         )
 
@@ -1315,6 +1404,25 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
+                )
+            )
+
+        @task
+        @depends(["build_ort_linux_x86_64_ubuntu_22_04_internal_symbols"])
+        def test_ort_linux_x86_64_ubuntu_22_04_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Testing ONNX Runtime for Linux x86_64 Ubuntu 22.04 with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64_ubuntu_22_04",
+                    self.__config,
+                    None,  # Tests run against the activated host venv; no per-version wheel venv needed.
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_test_symbols=True,
+                    build_dir_suffix="internal-symbols",
                 )
             )
 
