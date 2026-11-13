@@ -2254,24 +2254,29 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalAllocationException
   EXPECT_EQ(g_external_initializer_releases, 1u);
 }
 
-TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalApiError_ReleasesPartialMetadata) {
+TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalApiError_PropagatesErrorWithoutMetadata) {
   g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
   g_tensor_dims = {1};
+  g_external_initializer_file_queries = 0;
   g_external_initializer_releases = 0;
   QnnModelWrapperTestContext ctx;
   SetupExternalUnpackStubs(ctx);
   ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo =
       [](const OrtValueInfo*, OrtExternalInitializerInfo** info) noexcept -> OrtStatus* {
-    *info = reinterpret_cast<OrtExternalInitializerInfo*>(&g_initializer_value_sentinel);
+    // The ORT API only publishes metadata after a successful lookup.
+    EXPECT_EQ(*info, nullptr);
     return Ort::Status("external metadata lookup failed", ORT_FAIL).release();
   };
   auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
-  std::vector<uint8_t> bytes;
+  std::vector<uint8_t> bytes{0xAB};
   const auto status = wrapper->UnpackInitializerData(
       reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel), bytes);
   ASSERT_FALSE(status.IsOK());
+  EXPECT_EQ(status.GetErrorCode(), ORT_FAIL);
   EXPECT_EQ(std::string(status.GetErrorMessage()), "external metadata lookup failed");
-  EXPECT_EQ(g_external_initializer_releases, 1u);
+  EXPECT_EQ(bytes, (std::vector<uint8_t>{0xAB}));
+  EXPECT_EQ(g_external_initializer_file_queries, 0u);
+  EXPECT_EQ(g_external_initializer_releases, 0u);
 }
 
 // UnpackZeroPoints: null input pointer → RETURN_IF fires → error.

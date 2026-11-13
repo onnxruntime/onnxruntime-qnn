@@ -2182,10 +2182,9 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   std::optional<size_t> expected_byte_size) {
   RETURN_IF(initializer == nullptr, "Initializer to unpack must not be null.");
   OrtExternalInitializerInfo* external_initializer = nullptr;
-  OrtStatus* external_info_status = ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer);
-  std::unique_ptr<OrtExternalInitializerInfo, FuncDeleter<OrtExternalInitializerInfo>> external_info(
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer));
+  auto external_info = std::unique_ptr<OrtExternalInitializerInfo, FuncDeleter<OrtExternalInitializerInfo>>(
       external_initializer, FuncDeleter<OrtExternalInitializerInfo>{ort_api.ReleaseExternalInitializerInfo});
-  ORT_CXX_RETURN_ON_API_FAIL(external_info_status);
   if (external_info) {
     RETURN_IF(expected_byte_size.has_value() &&
                   ort_api.ExternalInitializerInfo_GetByteSize(external_info.get()) != *expected_byte_size,
