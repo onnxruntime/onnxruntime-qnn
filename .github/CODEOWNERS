@@ -14,6 +14,6 @@
 /onnxruntime/core/providers/qnn/ @qti-kromero @quic-calvnguy @qti-chuteng @minfhong-qti @tirupath-qti
 
 # Compiler: graph/op lowering, and all QNN EP tests
-/onnxruntime/core/providers/qnn/builder/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng
-/onnxruntime/core/providers/qnn/op_affinity/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng @chunghow-qti
-/onnxruntime/test/providers/qnn/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng @yuhuchua-qti
+/onnxruntime/core/providers/qnn/builder/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng @yath1
+/onnxruntime/core/providers/qnn/op_affinity/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng @chunghow-qti @yath1
+/onnxruntime/test/providers/qnn/ @qti-ashwshan @qti-shubham @minfhong-qti @qti-yuduo @tirupath-qti @qti-chuteng @yuhuchua-qti @yath1
