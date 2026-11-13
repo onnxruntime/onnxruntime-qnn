@@ -1092,13 +1092,14 @@ class TaskLibrary:
 
     @task
     def extract_ort_windows_arm64(self, plan: Plan) -> str:
+        config_prefix = "" if self.__config == "Release" else f"{self.__config}-"
         return plan.add_step(
             CompositeTask(
                 None,
                 [
                     ExtractArchiveTask(
                         "Extracting per-arch ONNX Runtime archive",
-                        REPO_ROOT / "build" / "onnxruntime-tests-windows-arm64.zip",
+                        REPO_ROOT / "build" / f"onnxruntime-tests-{config_prefix}windows-arm64.zip",
                         REPO_ROOT,
                     ),
                     RunExecutablesTask(
@@ -1109,6 +1110,8 @@ class TaskLibrary:
                                 str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
                                 "--target-platform",
                                 "windows-arm64",
+                                "--build-config",
+                                self.__config,
                                 "--archive",
                                 str(REPO_ROOT / "build" / "onnxruntime-testdata.zip"),
                             ]
@@ -1431,10 +1434,16 @@ class TaskLibrary:
                 )
             )
 
-    if is_host_windows():
+    if is_host_windows() or is_host_linux():
 
         @task
-        @depends(["archive_ort_windows_arm64"])
+        @depends(
+            [
+                "create_qdc_venv",
+                (is_host_windows(), "archive_ort_windows_arm64"),
+                (is_host_windows(), "archive_testdata"),
+            ]
+        )
         def test_ort_qdc_windows_arm64(self, plan: Plan) -> str:
             return plan.add_step(
                 QdcTestsTask(
@@ -1442,7 +1451,14 @@ class TaskLibrary:
                     self.__venv_path,
                     ["windows"],
                     extra_args=[
-                        "--append-windows-package=onnx_models:model_tests/onnx_models",
+                        f"--config={self.__config}",
+                        f"--windows-test-mode={os.environ.get('QDC_WINDOWS_TEST_MODE', 'full')}",
+                        # Full Windows execution runs CTest plus four model suites. Keep the
+                        # device-job allowance separate from the QDC queue admission timeout.
+                        "--job-timeout-minutes=180",
+                        # A preceding full Windows run can occupy the single QDC target for
+                        # around 2 hours. Allow one normal run plus setup time to clear.
+                        "--queue-timeout-minutes=150",
                     ],
                 )
             )
