@@ -281,6 +281,8 @@ void SetQnnTensorClientBufSize(Qnn_Tensor_t& qnn_tensor, uint32_t client_buf_siz
 void SetQnnTensorClientBufData(Qnn_Tensor_t& qnn_tensor, void* client_buf_data);
 void SetQnnTensorMemHandle(Qnn_Tensor_t& qnn_tensor, Qnn_MemHandle_t mem_handle);
 void SetQnnTensorQParams(Qnn_Tensor_t& qnn_tensor, const Qnn_QuantizeParams_t& quantize_params);
+void SetQnnTensorIsDynamicDimensions(Qnn_Tensor_t& qnn_tensor,
+                                     gsl::span<const uint8_t> is_dynamic_dimensions);
 bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                             const Qnn_GraphHandle_t& graph,
                             const std::string& node_name,
@@ -336,7 +338,7 @@ class QnnTensorWrapper {
                    Qnn_TensorMemType_t mem_type = QNN_TENSORMEMTYPE_RAW) : tensor_name_(name),
                                                                            dimensions_(std::move(shape)),
                                                                            client_buf_(std::move(client_buf)),
-                                                                           quant_params_(quantize_params) {
+                                                                           quant_params_(std::move(quantize_params)) {
     if (data_type == QNN_DATATYPE_INT_64) {
       // QNN doesn't support int64_t, so we cast to int32_t.
       if (tensor_type == QNN_TENSOR_TYPE_NATIVE) {
@@ -385,14 +387,14 @@ class QnnTensorWrapper {
     SetQnnTensorQParams(qnn_tensor_, quant_params_.Get());
   }
 
-  // Initialize from a raw Qnn_Tensor_t. This method is currently used for graph inputs/outputs
-  // when deserializing from cached context object. Possible return errors due to:
-  //   - Unexpected Qnn_TensorType_t: only handle graph inputs/outputs, not static initializers with data buffers.
+  // Initialize graph inputs/outputs from a raw Qnn_Tensor_t when deserializing a cached context.
+  // Possible return errors due to:
+  //   - Unexpected Qnn_TensorType_t: only APP_READ and APP_WRITE are supported.
   //   - Unexpected quantization encoding.
   Ort::Status Init(const Qnn_Tensor_t& qnn_tensor) {
-    Qnn_TensorType_t tensor_type = GetQnnTensorType(qnn_tensor);
-    RETURN_IF(tensor_type == QNN_TENSOR_TYPE_STATIC,
-              "QnnTensorWrapper::Init(const Qnn_Tensor_t&) does not support static initializers");
+    const Qnn_TensorType_t tensor_type = GetQnnTensorType(qnn_tensor);
+    RETURN_IF(tensor_type != QNN_TENSOR_TYPE_APP_READ && tensor_type != QNN_TENSOR_TYPE_APP_WRITE,
+              "QnnTensorWrapper::Init(const Qnn_Tensor_t&) only supports APP_READ and APP_WRITE graph inputs/outputs");
 
     const char* tensor_name = GetQnnTensorName(qnn_tensor);
     RETURN_IF(tensor_name == nullptr, "Cached context tensor name is null");
@@ -403,6 +405,12 @@ class QnnTensorWrapper {
     SetQnnTensorName(qnn_tensor_, tensor_name_.c_str());
 
     const Qnn_QuantizeParams_t& src_quantize_param = GetQnnTensorQParams(qnn_tensor);
+    if (src_quantize_param.encodingDefinition == QNN_DEFINITION_DEFINED) {
+      RETURN_IF(src_quantize_param.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION ||
+                    src_quantize_param.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCK ||
+                    src_quantize_param.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK,
+                "Block-quantized graph inputs and outputs are not supported when deserializing cached contexts");
+    }
     RETURN_IF_ERROR(quant_params_.Init(src_quantize_param));
     SetQnnTensorQParams(qnn_tensor_, quant_params_.Get());
 
@@ -415,6 +423,16 @@ class QnnTensorWrapper {
               "Cached context tensor dimensions are null");
     dimensions_.assign(shape_data, shape_data + shape_rank);
     SetQnnTensorDim(qnn_tensor_, dimensions_);
+
+    // QnnModel::SetupTensors uses QnnTensorHasDynamicShape to reject dynamic graph I/O.
+    // Own these flags so that check remains valid after the cached-context parser storage is released.
+    uint8_t* is_dynamic_dimensions = GetQnnTensorIsDynamicDimensions(qnn_tensor);
+    if (is_dynamic_dimensions != nullptr) {
+      is_dynamic_dimensions_.assign(is_dynamic_dimensions, is_dynamic_dimensions + shape_rank);
+    } else {
+      is_dynamic_dimensions_.clear();
+    }
+    SetQnnTensorIsDynamicDimensions(qnn_tensor_, is_dynamic_dimensions_);
 
     SetQnnTensorMemType(qnn_tensor_, GetQnnTensorMemType(qnn_tensor));
 
@@ -488,11 +506,13 @@ class QnnTensorWrapper {
     std::swap(tensor_name_, other.tensor_name_);
     std::swap(tensor_name_override_, other.tensor_name_override_);
     std::swap(dimensions_, other.dimensions_);
+    std::swap(is_dynamic_dimensions_, other.is_dynamic_dimensions_);
     std::swap(client_buf_, other.client_buf_);
     std::swap(quant_params_, other.quant_params_);
     std::swap(qnn_tensor_, other.qnn_tensor_);
     SetQnnTensorName(qnn_tensor_, GetResolvedTensorName().c_str());
     SetQnnTensorDim(qnn_tensor_, dimensions_);
+    SetQnnTensorIsDynamicDimensions(qnn_tensor_, is_dynamic_dimensions_);
     SetQnnTensorClientBuf(qnn_tensor_, client_buf_);
     SetQnnTensorQParams(qnn_tensor_, quant_params_.Get());
   }
@@ -500,6 +520,7 @@ class QnnTensorWrapper {
   std::string tensor_name_;           // The tensor's actual name used inside QNN graph
   std::string tensor_name_override_;  // Optional override to original ONNX tensor name
   std::vector<uint32_t> dimensions_;
+  std::vector<uint8_t> is_dynamic_dimensions_;
   std::vector<uint8_t> client_buf_;
   Qnn_Tensor_t qnn_tensor_ = QNN_TENSOR_INIT;
   QnnQuantParamsWrapper quant_params_;
@@ -517,6 +538,10 @@ class QnnParamWrapper {
     ss << node_name << "_" << node_index << "_" << name;
     tensor_name_ = ss.str();
     qnn_param_.scalarParam = scalarParam;
+    if (scalarParam.dataType == QNN_DATATYPE_STRING && scalarParam.stringValue != nullptr) {
+      string_value_ = scalarParam.stringValue;
+      qnn_param_.scalarParam.stringValue = string_value_.c_str();
+    }
   }
 
   QnnParamWrapper(size_t node_index,
@@ -567,12 +592,16 @@ class QnnParamWrapper {
     std::swap(tensor_name_, other.tensor_name_);
     std::swap(shape_, other.shape_);
     std::swap(param_data_, other.param_data_);
+    std::swap(string_value_, other.string_value_);
     std::swap(qnn_param_, other.qnn_param_);
     qnn_param_.name = name_.c_str();
     if (qnn_param_.paramType == QNN_PARAMTYPE_TENSOR) {
       SetQnnTensorName(qnn_param_.tensorParam, tensor_name_.c_str());
       SetQnnTensorDim(qnn_param_.tensorParam, shape_);
       SetQnnTensorClientBuf(qnn_param_.tensorParam, param_data_);
+    } else if (qnn_param_.scalarParam.dataType == QNN_DATATYPE_STRING &&
+               qnn_param_.scalarParam.stringValue != nullptr) {
+      qnn_param_.scalarParam.stringValue = string_value_.c_str();
     }
   }
 
@@ -605,6 +634,7 @@ class QnnParamWrapper {
   std::string tensor_name_;
   std::vector<uint32_t> shape_;
   std::vector<uint8_t> param_data_;
+  std::string string_value_;
   Qnn_Param_t qnn_param_ = QNN_PARAM_INIT;
 };
 
