@@ -290,20 +290,8 @@ static void ParseVtcmSize(const std::string& vtcm_size_in_mb_string,
 static void ParseHtpArchitecture(const std::string& htp_arch_string,
                                  QnnHtpDevice_Arch_t& qnn_htp_arch,
                                  const Ort::Logger& logger) {
-  if (htp_arch_string.empty() || htp_arch_string == "0") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
-  } else if (htp_arch_string == "68") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V68;
-  } else if (htp_arch_string == "69") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V69;
-  } else if (htp_arch_string == "73") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V73;
-  } else if (htp_arch_string == "75") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V75;
-  } else if (htp_arch_string == "79") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V79;
-  } else if (htp_arch_string == "81") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V81;
+  if (const auto architecture = qnn::soc::ParseHtpArchitecture(htp_arch_string)) {
+    qnn_htp_arch = static_cast<QnnHtpDevice_Arch_t>(*architecture);
   } else {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("Invalid HTP architecture: " + htp_arch_string).c_str());
   }
