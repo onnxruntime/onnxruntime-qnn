@@ -398,7 +398,7 @@ static void RunShapeCompositionTest(const GetTestModelFn& build_model, int opset
   const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
   opset_id_proto->set_domain(kOnnxDomain);
   opset_id_proto->set_version(opset_version);
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
 

@@ -170,7 +170,7 @@ static void RunQnnOnlyBufferModel(const GetTestModelFn& build_test_case,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
@@ -475,7 +475,7 @@ TEST_F(QnnIRBackendTests, Buffer_FP32_IR_composition) {
   const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> qti_opset{builder.model_.add_opset_import()};
   qti_opset->set_domain(kQtiAiswDomain);
   qti_opset->set_version(1);
-  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  builder.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   builder.model_.SerializeToString(&model_data);

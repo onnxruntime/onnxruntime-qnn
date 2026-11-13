@@ -27,7 +27,18 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Create onnx venv for node test generation
+        # ONNX >= 1.23.0 removed the static node/ test corpus from the source tree.
+        # archive_testdata.py regenerates it via onnx.backend.test.case.node when
+        # ARCHIVE_TESTDATA_ONNX_PYTHON points to an interpreter with onnx installed.
+        # Use a venv so we don't depend on the system Python having pip.
+        run: |
+          python3 -m venv /tmp/onnx-gen-venv
+          /tmp/onnx-gen-venv/bin/pip install --quiet onnx==1.23.2 numpy
+
       - name: Build testdata archive
+        env:
+          ARCHIVE_TESTDATA_ONNX_PYTHON: /tmp/onnx-gen-venv/bin/python3
         run: python3 qcom/build_and_test.py archive_testdata
 
       # Artifactory steps are no-ops on fork PRs (secrets unavailable). The build still validates the script.

@@ -42,6 +42,12 @@ namespace test {
 constexpr const char* kOnnxDomain = "";
 // ONNX domain used by the QNN block-op test models.
 constexpr const char* kQtiAiswDomain = "qti_aisw";
+
+// ONNX 1.23.0 introduced IR version 14. ORT core v1.30.0 is built against ONNX 1.22.0
+// (IR_VERSION = 13) and rejects models with a higher IR version. Test models do not use
+// any IR 14-specific proto features, so cap at 10 for compatibility with all supported
+// ORT core versions.
+constexpr int64_t kTestModelIRVersion = 10;
 constexpr const char* kQnnExecutionProvider = "QNNExecutionProvider";
 constexpr const char* kCpuExecutionProvider = "CPUExecutionProvider";
 
@@ -1231,7 +1237,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  f32_helper.model_.set_ir_version(kTestModelIRVersion);
 
   f32_helper.model_.SerializeToString(&f32_model_data);
 
@@ -1280,7 +1286,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  qdq_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  qdq_helper.model_.set_ir_version(kTestModelIRVersion);
 
   qdq_helper.model_.SerializeToString(&qdq_model_data);
 
@@ -1493,7 +1499,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  f32_helper.model_.set_ir_version(kTestModelIRVersion);
   f32_helper.model_.SerializeToString(&f32_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
@@ -1537,7 +1543,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  f16_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  f16_helper.model_.set_ir_version(kTestModelIRVersion);
   f16_helper.model_.SerializeToString(&f16_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {

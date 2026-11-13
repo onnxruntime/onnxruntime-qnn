@@ -322,7 +322,7 @@ TEST_F(QnnMockSSRBackendTests, DISABLED_SSRGraphExecuteEpContextNonEmbedModeCpuF
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
@@ -418,7 +418,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsUnrecoverableError) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  f32_helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::string f32_model_data;
   f32_helper.model_.SerializeToString(&f32_model_data);
@@ -456,7 +456,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsUnrecoverableError) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  qdq_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  qdq_helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   qdq_helper.model_.SerializeToString(&model_data);
@@ -601,7 +601,7 @@ static void CreateQdqAddModel(const std::string& model_file_name) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::ofstream model_ofs(model_file_name, std::ios::binary);
   ASSERT_TRUE(model_ofs.good());
@@ -904,7 +904,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContext_Fp16ClampOverflow_Reappl
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
