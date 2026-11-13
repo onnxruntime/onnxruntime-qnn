@@ -8,7 +8,7 @@
 # source is NOT fetched or patched. Otherwise (source build) the version is parsed from the
 # pinned deps.txt URL and the ort_core source is fetched and patched as before.
 if(onnxruntime_ORT_HOME)
-  file(STRINGS "${PROJECT_SOURCE_DIR}/requirements.txt" _ort_python_requirement
+  file(STRINGS "${REPO_ROOT}/requirements.txt" _ort_python_requirement
        REGEX "^onnxruntime *>=")
   if(NOT _ort_python_requirement MATCHES ">= *([0-9]+\\.[0-9]+\\.[0-9]+)")
     message(FATAL_ERROR

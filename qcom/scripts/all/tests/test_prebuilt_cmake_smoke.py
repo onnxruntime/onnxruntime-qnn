@@ -63,7 +63,7 @@ def _configure(root: Path, env: dict[str, str], *definitions: str) -> subprocess
     cmake = os.environ.get("CMAKE_EXECUTABLE") or shutil.which("cmake")
     if cmake is None:
         raise unittest.SkipTest("cmake is not available")
-    command = [cmake, "-S", str(root), "-B", str(root / "build"), *definitions]
+    command = [cmake, "-S", str(root / "cmake"), "-B", str(root / "build"), *definitions]
     ninja = os.environ.get("NINJA_EXECUTABLE") or shutil.which("ninja")
     if ninja is not None:
         command.extend(["-G", "Ninja", f"-DCMAKE_MAKE_PROGRAM={ninja}"])
@@ -73,7 +73,7 @@ def _configure(root: Path, env: dict[str, str], *definitions: str) -> subprocess
 def _create_project(root: Path, sdk: Path, *, copy_target: bool = True) -> None:
     cmake_lists = f'''cmake_minimum_required(VERSION 3.26)
 project(ort_prebuilt_smoke NONE)
-set(PROJECT_SOURCE_DIR "{REPO_ROOT.as_posix()}")
+set(REPO_ROOT "${{PROJECT_SOURCE_DIR}}/..")
 set(onnxruntime_ORT_HOME "{sdk.as_posix()}")
 set(CMAKE_BUILD_TYPE "Release")
 function(onnxruntime_fetchcontent_declare)
@@ -89,7 +89,8 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/ort-version.txt" "${{ORT_CORE_VER}}")
         cmake_lists += f'''include("{PREBUILT_CMAKE.as_posix()}")
 file(WRITE "${{CMAKE_BINARY_DIR}}/selected-assets.txt" "${{onnxruntime_ORT_TEST_ASSETS_HOME}}")
 '''
-    _write(root / "CMakeLists.txt", cmake_lists)
+    _write(root / "cmake" / "CMakeLists.txt", cmake_lists)
+    shutil.copyfile(REPO_ROOT / "requirements.txt", root / "requirements.txt")
 
 
 class PrebuiltCmakeSmokeTest(unittest.TestCase):
@@ -215,6 +216,30 @@ class PrebuiltCmakeSmokeTest(unittest.TestCase):
             _create_runner(sdk)
             result = subprocess.run(command, check=False, capture_output=True, text=True, env=env, timeout=120)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_build_identity_missing_version_defers_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            sdk = root / "sdk"
+            assets = root / "assets"
+            sdk.mkdir()
+            assets.mkdir()
+            command = [sys.executable, str(IDENTITY_SCRIPT), f"--sdk={sdk}", f"--assets={assets}"]
+
+            result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, "")
+            missing_identity = json.loads(result.stdout)
+            self.assertEqual(missing_identity["sdk"], {"path": sdk.as_posix(), "version": None})
+            self.assertEqual(missing_identity["assets"], {"path": assets.as_posix(), "version": None})
+
+            _write(sdk / "VERSION_NUMBER", ORT_VERSION)
+            _write(assets / "VERSION_NUMBER", ORT_VERSION)
+            result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=120)
+            valid_identity = json.loads(result.stdout)
+            self.assertEqual(valid_identity["sdk"]["version"], ORT_VERSION)
+            self.assertEqual(valid_identity["assets"]["version"], ORT_VERSION)
+            self.assertNotEqual(missing_identity, valid_identity)
 
     def test_build_identity_tracks_assets_paths_presence_and_versions(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -9,11 +9,16 @@ from pathlib import Path
 
 
 def build_identity(sdk: str, assets: str) -> str:
-    def describe(root: str) -> dict[str, str] | None:
+    def describe(root: str) -> dict[str, str | None] | None:
         if not root:
             return None
         path = Path(root).resolve()
-        return {"path": path.as_posix(), "version": (path / "VERSION_NUMBER").read_text(encoding="utf-8").strip()}
+        try:
+            version = (path / "VERSION_NUMBER").read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            # Let CMake report the missing version file during configuration.
+            version = None
+        return {"path": path.as_posix(), "version": version}
 
     return json.dumps({"sdk": describe(sdk), "assets": describe(assets) if sdk else None}, sort_keys=True)
 
