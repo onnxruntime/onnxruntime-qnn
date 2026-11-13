@@ -230,7 +230,6 @@ jobs:
       target_arch: x86_64
       target_py_vsn: ${{ inputs.target_py_vsn }}
       qnn_internal_test_symbols: true
-      ci_job_suffix: "-internal-symbols"
       run_tests: true
       build_test_same_runner: true
       # This is validation-only; do not publish a non-shipping wheel or test archive.
