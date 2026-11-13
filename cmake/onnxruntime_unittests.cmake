@@ -142,33 +142,12 @@ function(AddTest)
   endif(onnxruntime_GENERATE_TEST_REPORTS)
 
 
-  if(_UT_TARGET STREQUAL "onnxruntime_provider_test" AND onnxruntime_USE_QNN AND
-     onnxruntime_qnn_internal_test_symbols_enabled AND WIN32 AND
-     onnxruntime_target_platform STREQUAL "ARM64")
-    # The internal-symbol EP DLL stays loaded across tests. Use separate,
-    # sequential CTest processes to bound the lifetime of native HTP resources.
-    foreach(shard RANGE 0 3)
-      set(shard_test_name "${_UT_TARGET}_${shard}")
-      set(shard_test_args ${TEST_ARGS})
-      list(TRANSFORM shard_test_args REPLACE "\\.results\\.xml" ".shard${shard}.results.xml")
-      add_test(NAME ${shard_test_name}
-        COMMAND ${_UT_TARGET} ${shard_test_args}
-        WORKING_DIRECTORY $<TARGET_FILE_DIR:${_UT_TARGET}>
-      )
-      set_tests_properties(${shard_test_name} PROPERTIES
-        ENVIRONMENT "GTEST_TOTAL_SHARDS=4;GTEST_SHARD_INDEX=${shard}"
-        RUN_SERIAL TRUE
-        TIMEOUT 10800
-      )
-    endforeach()
-  else()
     add_test(NAME ${_UT_TARGET}
-      COMMAND ${_UT_TARGET} ${TEST_ARGS}
-      WORKING_DIRECTORY $<TARGET_FILE_DIR:${_UT_TARGET}>
+    COMMAND ${_UT_TARGET} ${TEST_ARGS}
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:${_UT_TARGET}>
     )
     # Set test timeout to 3 hours.
     set_tests_properties(${_UT_TARGET} PROPERTIES TIMEOUT 10800)
-  endif()
 
 endfunction(AddTest)
 
