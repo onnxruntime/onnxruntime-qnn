@@ -304,12 +304,14 @@ Ort::Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                 "QNN EP: Cannot get shape for first input");
 
   if (input0_shape.size() == 3) {
-    return ProcessConv1DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
+    RETURN_IF_ERROR(ProcessConv1DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation));
   } else if (input0_shape.size() == 4 || input0_shape.size() == 5) {
-    return ProcessConv2D3DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
+    RETURN_IF_ERROR(ProcessConv2D3DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation));
+  } else {
+    return MAKE_EP_FAIL("QNN Conv only supports 3D(rank 5), 2D (rank 4) or 1D (rank 3) inputs.");
   }
 
-  return MAKE_EP_FAIL("QNN Conv only supports 3D(rank 5), 2D (rank 4) or 1D (rank 3) inputs.");
+  return utils::DequantizeWeightForGpuFloatActivation(qnn_model_wrapper, input_names, do_op_validation);
 }
 
 Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,

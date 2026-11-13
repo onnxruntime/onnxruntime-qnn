@@ -847,6 +847,14 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             bool do_op_validation,
                             Qnn_TensorType_t output_tensor_type = QNN_TENSOR_TYPE_NATIVE);
 
+// QNN GPU Conv/MatMul/FullyConnected have no kernel for a float activation with a signed INT8 weight. When
+// input_names[0] is a float activation and input_names[1] is such a weight (e.g. a weight-only QDQ group with a
+// constant per-channel weight), adds a QNN Dequantize on the weight and replaces input_names[1] with its float
+// output, so the op runs fully in float. No-op on other backends and datatypes.
+Ort::Status DequantizeWeightForGpuFloatActivation(QnnModelWrapper& qnn_model_wrapper,
+                                                  std::vector<std::string>& input_names,
+                                                  bool do_op_validation);
+
 // Adds `output_name` and the op producing it. HTP Conv/MatMul/FullyConnected only emit their activation's
 // datatype, so a 16-bit activation with an 8-bit output is built as the op into a 16-bit intermediate
 // spanning exactly the output's range, followed by a Convert into `output_name`. HTP also lacks float32
