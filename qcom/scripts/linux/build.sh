@@ -344,7 +344,7 @@ trap scrub_mirror EXIT
 if [ -n "${make_test_archive}" ]; then
   python "${REPO_ROOT}/qcom/scripts/all/archive_tests.py" \
     "--config=${config}" \
-    "--target-platform=${target_platform}-${target_arch}" \
+    "--target-platform=${build_dir_name}" \
     "--qairt-sdk-root=${qairt_sdk_root}"
 else
   cd "${REPO_ROOT}"
