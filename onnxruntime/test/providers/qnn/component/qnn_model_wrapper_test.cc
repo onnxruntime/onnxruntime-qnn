@@ -5,6 +5,10 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <stdexcept>
 
 #include "QnnBackend.h"
@@ -2017,6 +2021,262 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_INT8_ReturnsRawBytes) {
   ASSERT_TRUE(s.IsOK());
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(static_cast<int8_t>(result[0]), -5);
+}
+
+namespace {
+struct InitializerByteSizeCase {
+  ONNXTensorElementDataType type;
+  std::vector<int64_t> shape;
+  std::vector<uint8_t> packed_bytes;
+  std::vector<uint8_t> expanded_bytes;
+};
+
+// External metadata exposes the actual buffer length independently of the
+// declared shape. Malformed cases must fail before opening the external file.
+static std::filesystem::path g_external_initializer_path;
+static size_t g_external_initializer_byte_size = 0;
+static size_t g_external_initializer_file_queries = 0;
+static size_t g_external_initializer_releases = 0;
+
+void SetupExternalUnpackStubs(QnnModelWrapperTestContext& ctx) {
+  SetupUnpackStubs(ctx);
+  ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo =
+      [](const OrtValueInfo*, OrtExternalInitializerInfo** info) noexcept -> OrtStatus* {
+    *info = reinterpret_cast<OrtExternalInitializerInfo*>(&g_initializer_value_sentinel);
+    return nullptr;
+  };
+  ctx.stub_ort_api.ExternalInitializerInfo_GetFilePath =
+      [](const OrtExternalInitializerInfo*) noexcept -> const ORTCHAR_T* {
+    ++g_external_initializer_file_queries;
+    return g_external_initializer_path.c_str();
+  };
+  ctx.stub_ort_api.ExternalInitializerInfo_GetFileOffset =
+      [](const OrtExternalInitializerInfo*) noexcept -> int64_t { return 0; };
+  ctx.stub_ort_api.ExternalInitializerInfo_GetByteSize =
+      [](const OrtExternalInitializerInfo*) noexcept -> size_t { return g_external_initializer_byte_size; };
+  ctx.stub_ort_api.ReleaseExternalInitializerInfo =
+      [](OrtExternalInitializerInfo*) noexcept { ++g_external_initializer_releases; };
+}
+
+class QnnUnit_InitializerByteSizeTest : public ::testing::TestWithParam<InitializerByteSizeCase> {
+ protected:
+  void SetUp() override {
+    const auto& test_case = GetParam();
+    g_element_type = test_case.type;
+    g_tensor_dims = test_case.shape;
+    g_tensor_raw_data = test_case.packed_bytes.data();
+    g_external_initializer_byte_size = test_case.packed_bytes.size();
+    g_external_initializer_file_queries = 0;
+    g_external_initializer_releases = 0;
+    const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    g_external_initializer_path = std::filesystem::temp_directory_path() /
+                                  ("qnn_initializer_size_" + std::to_string(timestamp) + ".bin");
+    SetupExternalUnpackStubs(ctx_);
+    wrapper_ = ctx_.CreateWrapper(qnn::ModelSettings{});
+  }
+
+  void TearDown() override {
+    std::error_code error;
+    std::filesystem::remove(g_external_initializer_path, error);
+  }
+
+  void WriteExternalBytes() {
+    std::ofstream stream(g_external_initializer_path, std::ios::binary);
+    ASSERT_TRUE(stream.is_open());
+    const auto& bytes = GetParam().packed_bytes;
+    stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    ASSERT_TRUE(stream.good());
+  }
+
+  const OrtValueInfo* initializer_ = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
+  QnnModelWrapperTestContext ctx_;
+  std::unique_ptr<qnn::QnnModelWrapper> wrapper_;
+};
+}  // namespace
+
+TEST_P(QnnUnit_InitializerByteSizeTest, RejectsMismatchedExternalBytesBeforeReadingFile) {
+  for (const size_t byte_size : {size_t{0}, GetParam().packed_bytes.size() - 1, GetParam().packed_bytes.size() + 1}) {
+    SCOPED_TRACE(byte_size);
+    g_external_initializer_byte_size = byte_size;
+    std::vector<uint8_t> bytes{0xAA};
+    const auto status = wrapper_->UnpackInitializerData(initializer_, bytes);
+    ASSERT_FALSE(status.IsOK());
+    EXPECT_NE(std::string(status.GetErrorMessage()).find("byte count"), std::string::npos);
+    EXPECT_EQ(bytes, (std::vector<uint8_t>{0xAA}));
+  }
+  EXPECT_EQ(g_external_initializer_file_queries, 0u);
+  EXPECT_EQ(g_external_initializer_releases, 3u);
+}
+
+TEST_P(QnnUnit_InitializerByteSizeTest, AcceptsValidExternalBytesInBothUnpackingModes) {
+  WriteExternalBytes();
+  ASSERT_FALSE(::testing::Test::HasFatalFailure());
+  for (const bool expand_sub_byte : {false, true}) {
+    SCOPED_TRACE(expand_sub_byte);
+    std::vector<uint8_t> bytes;
+    const auto& expected = expand_sub_byte ? GetParam().expanded_bytes : GetParam().packed_bytes;
+    const auto status = wrapper_->UnpackInitializerData(initializer_, bytes, expand_sub_byte, expected.size());
+    ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+    EXPECT_EQ(bytes, expected);
+  }
+  EXPECT_EQ(g_external_initializer_file_queries, 2u);
+  EXPECT_EQ(g_external_initializer_releases, 2u);
+}
+
+TEST_P(QnnUnit_InitializerByteSizeTest, AcceptsValidEmbeddedBytesInBothUnpackingModes) {
+  ctx_.stub_ort_api.ValueInfo_GetExternalInitializerInfo = StubValueInfoGetExternalNull;
+  for (const bool expand_sub_byte : {false, true}) {
+    SCOPED_TRACE(expand_sub_byte);
+    std::vector<uint8_t> bytes;
+    const auto& expected = expand_sub_byte ? GetParam().expanded_bytes : GetParam().packed_bytes;
+    const auto status = wrapper_->UnpackInitializerData(initializer_, bytes, expand_sub_byte, expected.size());
+    ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+    EXPECT_EQ(bytes, expected);
+  }
+  EXPECT_EQ(g_external_initializer_releases, 0u);
+}
+
+TEST_P(QnnUnit_InitializerByteSizeTest, RejectsCallerSizeMismatchForEmbeddedAndExternalData) {
+  for (const bool external : {false, true}) {
+    SCOPED_TRACE(external);
+    ctx_.stub_ort_api.ValueInfo_GetExternalInitializerInfo = external
+        ? [](const OrtValueInfo*, OrtExternalInitializerInfo** info) noexcept -> OrtStatus* {
+      ADD_FAILURE() << "Mismatched caller size must be rejected before reading data";
+      *info = nullptr;
+      return nullptr;
+    }
+    : StubValueInfoGetExternalNull;
+    for (const bool expand_sub_byte : {false, true}) {
+      const auto& expected = expand_sub_byte ? GetParam().expanded_bytes : GetParam().packed_bytes;
+      std::vector<uint8_t> bytes;
+      const auto status = wrapper_->UnpackInitializerData(initializer_, bytes, expand_sub_byte, expected.size() + 1);
+      ASSERT_FALSE(status.IsOK());
+      EXPECT_NE(std::string(status.GetErrorMessage()).find("expected size"), std::string::npos);
+    }
+  }
+  EXPECT_EQ(g_external_initializer_file_queries, 0u);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    TensorTypes, QnnUnit_InitializerByteSizeTest,
+    ::testing::Values(
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}, {0, 0, 0x80, 0x3F}, {0, 0, 0x80, 0x3F}},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, {}, {1, 0, 0, 0}, {1, 0, 0, 0}},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, {}, std::vector<uint8_t>(8, 0), std::vector<uint8_t>(8, 0)},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, {2}, std::vector<uint8_t>(16, 0), std::vector<uint8_t>(16, 0)},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {2, 3, 2, 2}, std::vector<uint8_t>(96, 0), std::vector<uint8_t>(96, 0)},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {4}, {0xFF, 0, 1, 2}, {0xFF, 0, 1, 2}},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {4}, {1, 2, 3, 4}, {1, 2, 3, 4}},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, {3}, {1, 0, 1}, {1, 0, 1}},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, {3}, std::vector<uint8_t>(6, 0), std::vector<uint8_t>(6, 0)},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16, {3}, std::vector<uint8_t>(6, 0), std::vector<uint8_t>(6, 0)},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, {3}, {0xD1, 0x02}, {1, 13, 2}},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, {3}, {0xD1, 0x02}, {1, 13, 2}},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, {5}, {0xE4, 0x01}, {0, 1, 2, 3, 1}},
+        InitializerByteSizeCase{ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2, {5}, {0xE4, 0x01}, {0, 1, 2, 3, 1}}));
+
+TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_NullInitializer_ReturnsErrorBeforeApiCalls) {
+  QnnModelWrapperTestContext ctx;
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+  // Tensor and model-path API stubs are intentionally absent.
+  std::vector<uint8_t> bytes;
+  const auto status = wrapper->UnpackInitializerData(nullptr, bytes);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("must not be null"), std::string::npos);
+}
+
+TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_EmptyInitializer_RejectsScalarContract) {
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  g_tensor_dims = {0};
+  g_tensor_raw_data = nullptr;
+  QnnModelWrapperTestContext ctx;
+  SetupUnpackStubs(ctx);
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+  std::vector<uint8_t> bytes;
+  const auto status = wrapper->UnpackInitializerData(
+      reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel), bytes, true, sizeof(float));
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("expected size"), std::string::npos);
+  // A zero-element initializer is valid when the caller allows an empty tensor.
+  const auto empty_status = wrapper->UnpackInitializerData(
+      reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel), bytes);
+  EXPECT_TRUE(empty_status.IsOK()) << empty_status.GetErrorMessage();
+  EXPECT_TRUE(bytes.empty());
+}
+
+TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_InvalidShape_ReturnsErrorWithoutThrowing) {
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  QnnModelWrapperTestContext ctx;
+  SetupUnpackStubs(ctx);
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+  const auto* initializer = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
+  for (const auto& shape : {std::vector<int64_t>{-1},
+                            std::vector<int64_t>{std::numeric_limits<int64_t>::max(), 3},
+                            std::vector<int64_t>{std::numeric_limits<int64_t>::max()}}) {
+    g_tensor_dims = shape;
+    std::vector<uint8_t> bytes;
+    Ort::Status status;
+    ASSERT_NO_THROW(status = wrapper->UnpackInitializerData(initializer, bytes));
+    EXPECT_FALSE(status.IsOK());
+  }
+}
+
+TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ShapeApiFailure_PropagatesError) {
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  QnnModelWrapperTestContext ctx;
+  SetupUnpackStubs(ctx);
+  ctx.stub_ort_api.GetDimensionsCount = [](const OrtTensorTypeAndShapeInfo*, size_t*) noexcept -> OrtStatus* {
+    return Ort::Status("shape lookup failed", ORT_FAIL).release();
+  };
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+  std::vector<uint8_t> bytes;
+  const auto status = wrapper->UnpackInitializerData(
+      reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel), bytes);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_EQ(std::string(status.GetErrorMessage()), "shape lookup failed");
+}
+
+TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalAllocationException_ReleasesMetadata) {
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+  const size_t max_size = std::vector<uint8_t>().max_size();
+  // Exceed vector::max_size() so resize throws without attempting an allocation.
+  g_tensor_dims = {static_cast<int64_t>(max_size), 2};
+  g_external_initializer_byte_size = max_size * 2;
+  g_external_initializer_releases = 0;
+  g_external_initializer_path.clear();
+  QnnModelWrapperTestContext ctx;
+  SetupExternalUnpackStubs(ctx);
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+  std::vector<uint8_t> bytes;
+  EXPECT_THROW(wrapper->UnpackInitializerData(
+                   reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel), bytes),
+               std::length_error);
+  EXPECT_EQ(g_external_initializer_releases, 1u);
+}
+
+TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalApiError_PropagatesErrorWithoutMetadata) {
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+  g_tensor_dims = {1};
+  g_external_initializer_file_queries = 0;
+  g_external_initializer_releases = 0;
+  QnnModelWrapperTestContext ctx;
+  SetupExternalUnpackStubs(ctx);
+  ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo =
+      [](const OrtValueInfo*, OrtExternalInitializerInfo** info) noexcept -> OrtStatus* {
+    // The ORT API only publishes metadata after a successful lookup.
+    EXPECT_EQ(*info, nullptr);
+    return Ort::Status("external metadata lookup failed", ORT_FAIL).release();
+  };
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+  std::vector<uint8_t> bytes{0xAB};
+  const auto status = wrapper->UnpackInitializerData(
+      reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel), bytes);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_EQ(status.GetErrorCode(), ORT_FAIL);
+  EXPECT_EQ(std::string(status.GetErrorMessage()), "external metadata lookup failed");
+  EXPECT_EQ(bytes, (std::vector<uint8_t>{0xAB}));
+  EXPECT_EQ(g_external_initializer_file_queries, 0u);
+  EXPECT_EQ(g_external_initializer_releases, 0u);
 }
 
 // UnpackZeroPoints: null input pointer → RETURN_IF fires → error.

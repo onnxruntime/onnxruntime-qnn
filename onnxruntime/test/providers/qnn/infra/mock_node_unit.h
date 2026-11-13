@@ -102,8 +102,8 @@ struct MockNodeUnitImpl {
   std::deque<FakeOpAttr> attrs;
   OrtApi ctor_api{};
   std::unique_ptr<OrtNodeUnit> unit;
-  // Constructed last, destroyed first: routes global Ort::GetApi() to ctor_api
-  // so OrtNodeUnit accessors decode the fake node.
+  // Declared last, destroyed first: routes global Ort::GetApi() to ctor_api
+  // during construction and while OrtNodeUnit accessors decode the fake node.
   std::unique_ptr<OrtGlobalApiOverride> global_guard;
 };
 
@@ -194,8 +194,8 @@ inline MockNodeUnit MakeMockNodeUnit(
   impl->nodes.push_back(std::move(node));
 
   const OrtNode* node_ptr = impl->nodes.back().AsNode();
-  impl->unit = std::make_unique<OrtNodeUnit>(node_ptr, impl->ctor_api);
   impl->global_guard = std::make_unique<OrtGlobalApiOverride>(&impl->ctor_api);
+  impl->unit = std::make_unique<OrtNodeUnit>(node_ptr, impl->ctor_api);
 
   return MockNodeUnit(std::move(impl));
 }
@@ -316,9 +316,11 @@ inline MockNodeUnit MakeMockQDQNodeUnit(
   node_group.redundant_clip_node = nullptr;
 
   // graph arg is unused by the ctor; pass nullptr.
+  // The QDQ constructor reads axis/block_size through OrtNodeAttrHelper, which
+  // uses the global API. Install the fake API before constructing the unit.
+  impl->global_guard = std::make_unique<OrtGlobalApiOverride>(&impl->ctor_api);
   impl->unit = std::make_unique<OrtNodeUnit>(static_cast<const OrtGraph*>(nullptr),
                                              node_group, impl->ctor_api);
-  impl->global_guard = std::make_unique<OrtGlobalApiOverride>(&impl->ctor_api);
 
   return MockNodeUnit(std::move(impl));
 }

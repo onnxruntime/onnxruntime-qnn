@@ -107,7 +107,8 @@ Ort::Status RangeOpBuilder::ComputeRangeValues(QnnModelWrapper& qnn_model_wrappe
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[i], infos[i]));
     RETURN_IF_NOT(infos[i].is_initializer,
                   "Range: all inputs (start, limit, delta) must be constant initializers.");
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(infos[i].initializer_tensor, bytes[i]));
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
+        infos[i].initializer_tensor, bytes[i], true, utils::GetElementSizeByType(infos[i].qnn_data_type)));
   }
 
   const Qnn_DataType_t dtype = infos[0].qnn_data_type;

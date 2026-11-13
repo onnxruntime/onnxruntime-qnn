@@ -4,6 +4,7 @@
 #pragma once
 
 #include <map>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -387,9 +388,13 @@ class QnnModelWrapper {
                                   std::vector<uint8_t> bias_data,
                                   std::vector<std::string>& input_names);
 
+  // Validates packed data against the initializer's shape and element type before
+  // expanding sub-byte elements. expected_byte_size, when provided, constrains
+  // the returned buffer (after any sub-byte expansion), e.g. to one scalar.
   Ort::Status UnpackInitializerData(const OrtValueInfo* initializer,
                                     std::vector<uint8_t>& unpacked_tensor,
-                                    const bool unpack_sub_byte_to_8_bit = true) const;
+                                    const bool unpack_sub_byte_to_8_bit = true,
+                                    std::optional<size_t> expected_byte_size = std::nullopt) const;
 
   QnnBackendType GetQnnBackendType() const;
 
