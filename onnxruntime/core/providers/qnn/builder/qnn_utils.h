@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <numeric>
 #include <optional>
@@ -803,13 +804,20 @@ Ort::Status TwoDimensionTranspose(size_t rows,
                                   gsl::span<const uint8_t> input_buffer,
                                   gsl::span<uint8_t> output_buffer);
 
+Ort::Status ValidateTwoDimensionTransposeInput(gsl::span<const uint32_t> data_shape,
+                                               size_t data_size);
+
 template <typename T>
 Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
                                   const std::vector<uint32_t>& data_shape,
                                   /* out */ std::vector<T>& transposed_data,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false) {
-  transposed_data.resize(data.size(), 0);
+  RETURN_IF_ERROR(ValidateTwoDimensionTransposeInput(data_shape, data.size()));
+  const size_t rows = data_shape[0];
+  const size_t cols = data_shape[1];
+  const size_t element_count = rows * cols;
+  transposed_data.resize(element_count, 0);
 
   if (skip_output_data_copy) {
     ORT_CXX_LOG(logger,
@@ -818,16 +826,10 @@ Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
     return Ort::Status();
   }
 
-  const size_t rows = data_shape[0];
-  const size_t cols = data_shape[1];
-
   for (size_t row = 0; row < rows; row++) {
     for (size_t col = 0; col < cols; col++) {
       const size_t src_index = (row * cols + col);
       const size_t dst_index = (col * rows + row);
-      assert(src_index < data.size());
-      assert(dst_index < transposed_data.size());
-
       transposed_data[dst_index] = data[src_index];
     }
   }
