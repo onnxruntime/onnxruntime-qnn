@@ -33,10 +33,11 @@
 #include <type_traits>
 #include <unordered_map>
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/ort_api.h"
-
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
 namespace onnxruntime {
@@ -448,14 +449,21 @@ class QnnUnit_BackendManagerHtpTest : public ::testing::Test {
   }
 
  private:
-  // Probe once: create an HTP manager and run SetupBackend. Cached for the process.
+  // Probe once with SetupBackend on platforms where repeated initialization is safe.
   static bool HtpAvailable() {
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    // The V68 ARM64 validation run crashes after this probe has initialized HTP
+    // and the first test initializes it again. The first test below is the real
+    // SetupBackend validation, so do not consume that initialization here.
+    return true;
+#else
     static const bool available = [] {
       StubApiEnv env;
       auto manager = MakeHTPManager(env.api_ptrs, env.logger);
       return manager != nullptr && SetupBackendHtp(*manager).IsOK();
     }();
     return available;
+#endif
   }
 };
 
@@ -636,18 +644,19 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithSocModel_Succeeds) {
   EXPECT_EQ(manager->GetQnnBackendType(), qnn::QnnBackendType::HTP);
 }
 
-// HTP emulator accepts arbitrary arch values.
-//
-// Also covers the x86 half of GetPlatformInfo(): with no real device to query, its
-// #else branch copies the configured htp_arch into htp_arch_internal_, the holder
-// GetHtpArch() reads. (The __aarch64__ / _M_ARM64 branch queries the hardware
-// instead and is not reachable from x86 tests.)
-TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithHtpArch_ReportsConfiguredArch) {
+// The x86 HTP emulator accepts arbitrary arch values, so GetPlatformInfo() copies
+// the configured value. ARM64 instead queries the physical HTP architecture.
+TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithHtpArch_ReportsPlatformArch) {
   StubApiEnv env;
+#if QNN_ARCH_ARM64
+  constexpr auto configured_htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
+#else
+  constexpr auto configured_htp_arch = QNN_HTP_DEVICE_ARCH_V73;
+#endif
   auto manager = MakeHTPManager(env.api_ptrs, env.logger,
                                 qnn::ContextPriority::NORMAL, 0,
                                 qnn::ProfilingLevel::OFF, qnn::ProfilingLevel::OFF,
-                                QNN_HTP_DEVICE_ARCH_V73);
+                                configured_htp_arch);
   ASSERT_NE(manager, nullptr);
   // A configured htp_arch reaches htp_arch_ only; the internal holder stays NONE
   // until setup runs.
@@ -656,7 +665,11 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithHtpArch_ReportsConfig
   auto status = SetupBackendHtp(*manager);
   ASSERT_TRUE(status.IsOK()) << "SetupBackend failed: " << status.GetErrorMessage();
   EXPECT_EQ(manager->GetQnnBackendType(), qnn::QnnBackendType::HTP);
+#if QNN_ARCH_ARM64
+  EXPECT_NE(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+#else
   EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_V73);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -761,7 +774,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, LoadCachedQnnContextFromBuffer_HTP_Invalid
   ASSERT_NE(manager, nullptr);
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-  qnn::EpContextIoDispatch dummy_io_dispatch(nullptr);
+  qnn::EpContextIoDispatch dummy_io_dispatch;
   auto setup_status = manager->SetupBackend(true, true, false, -1, false, nullptr, dummy_map);
   ASSERT_TRUE(setup_status.IsOK()) << "SetupBackend with QnnSystem failed: " << setup_status.GetErrorMessage();
 
@@ -891,7 +904,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingEnabled
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
   auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map,
-                                      qnn::EpContextIoDispatch(nullptr),
+                                      qnn::EpContextIoDispatch(),
                                       false /*extended_udma*/, false /*prepare_only*/,
                                       true /*enable_htp_graph_splitting*/);
   // Success or a structured QNN error are both acceptable on headless hosts;
@@ -906,7 +919,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingAndThre
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
   auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map,
-                                      qnn::EpContextIoDispatch(nullptr),
+                                      qnn::EpContextIoDispatch(),
                                       false /*extended_udma*/, false /*prepare_only*/,
                                       true /*enable_htp_graph_splitting*/,
                                       4 /*htp_graph_splitting_num_prepare_threads*/);

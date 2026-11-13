@@ -14,8 +14,8 @@ test/providers/qnn/
 │                       #   — legacy integration tier; being migrated into the tiers below
 ├── infra/              # Cross-tier test infrastructure (mocks, stub backends, golden utils,
 │                       #   shared op specs). Never depends on any tier directory.
-├── component/          # Function/component-level white-box tests — coverage build only;
-│                       #   some tests use libQnnHtp.so for op validation (no session)
+├── component/          # Function/component-level white-box tests — require a QNN EP
+│                       #   internal-symbol test build; some use libQnnHtp.so for op validation (no session)
 ├── snapshot/           # Op-builder snapshot tests — diff the QNN JSON graph produced by
 │                       #   the op builder against a stored golden (real backend, no finalize)
 ├── session_snapshot/   # Session-level snapshot tests — diff the QNN JSON graph after the

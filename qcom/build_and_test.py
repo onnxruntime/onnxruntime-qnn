@@ -5,6 +5,7 @@
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -51,6 +52,7 @@ from ep_build.tasks.python import (
     OrtWheelSmokeTestTask,
     RunLinterTask,
 )
+from ep_build.tools import get_uv_cache_dir
 from ep_build.typing import BuildConfigT, TargetPyVersionT
 from ep_build.util import (
     DEFAULT_PYTHON,
@@ -97,6 +99,10 @@ Environment variables
 
   ORT_BUILD_TOOLS_PATH
     If specified, use this directory for build-managed tools instead of build/tools.
+
+  ORT_BUILD_UV_CACHE_PATH
+    If specified, use this directory for the uv package cache instead of ~/.ort-uv-cache.
+    UV_CACHE_DIR takes precedence over ORT_BUILD_UV_CACHE_PATH if both are set.
 
   ORT_NIGHTLY_BUILD
     If set to 1, instruct the ORT build to use a more verbose version string.
@@ -273,6 +279,40 @@ class TaskLibrary:
                 extra_args=extra_args,
                 env=env,
                 build_archive=self.__build_archive,
+            )
+        )
+
+    @implementation_detail
+    @depends(["create_venv"])
+    def _build_ort_linux_aarch64_manylinux_2_34_internal_symbols(self, plan: Plan) -> str:
+        """In-container internal-symbol build steps for aarch64-manylinux_2_34."""
+        extra_args = [
+            "--qnn-arch-abi=aarch64-oe-linux-gcc11.2",
+        ]
+
+        env = os.environ.copy()
+        if self.__docker_ccache_root is not None:
+            ccache_dir = self.__docker_ccache_root / "linux-aarch64-manylinux_2_34"
+            env["CCACHE_DIR"] = str(ccache_dir)
+        else:
+            extra_args.append("--no-use-cache")
+
+        return plan.add_step(
+            BuildEpLinuxTask(
+                None,
+                self.__venv_path,
+                "linux",
+                "aarch64_manylinux_2_34",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "build",
+                extra_args=extra_args,
+                env=env,
+                build_archive=self.__build_archive,
+                qnn_internal_test_symbols=True,
+                build_dir_suffix="internal-symbols",
             )
         )
 
@@ -574,6 +614,23 @@ class TaskLibrary:
             ),
         )
 
+    @public_task("Build ONNX Runtime for Linux ARM64 with QNN EP internal unit-test symbols")
+    @depends(["docker_build_manylinux_2_34_aarch64"])
+    def build_ort_linux_aarch64_manylinux_2_34_internal_symbols(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpDockerTask(
+                "Building ONNX Runtime for Linux on AArch64 manylinux_2_34 with QNN EP internal unit-test symbols",
+                "aarch64_manylinux_2_34",
+                self.__config,
+                self.__target_py_version,
+                self.__qairt_sdk_root,
+                self.__docker_ccache_root,
+                self.__build_archive,
+                inner_task="_build_ort_linux_aarch64_manylinux_2_34_internal_symbols",
+                build_dir_suffix="internal-symbols",
+            ),
+        )
+
     if (is_host_linux() and is_host_x86_64()) or is_host_mac():
 
         @task
@@ -626,6 +683,25 @@ class TaskLibrary:
                 )
             )
 
+        @public_task("Build ONNX Runtime for x86_64 with QNN EP internal test symbols")
+        @depends(["create_venv"])
+        def build_ort_linux_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Building ONNX Runtime for Linux on x86_64 with QNN EP internal test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "build",
+                    qnn_internal_test_symbols=True,
+                    build_dir_suffix="internal-symbols",
+                )
+            )
+
     @task
     @depends(["docker_build_ubuntu_22_04_x86_64"])
     def build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
@@ -649,10 +725,9 @@ class TaskLibrary:
         @public_task("Coverage-instrumented build only, no report (Linux x86_64, RelWithDebInfo)")
         @depends(["create_venv"])
         def coverage_build_linux_x86_64(self, plan: Plan) -> str:
-            # The coverage binary is required for consumers that run the snapshot/
-            # accuracy tiers directly (e.g. publish_goldens.sh regenerates goldens
-            # and verifies accuracy in one pass). They only need the instrumented
-            # binary, not the HTML report, so this omits GenerateCoverageTask.
+            # Coverage reports require instrumentation and the internal-symbol test
+            # tier. Golden producers use build_ort_linux_x86_64_internal_symbols
+            # instead, avoiding instrumentation when no report is needed.
             return plan.add_step(
                 BuildEpLinuxTask(
                     "Building ONNX Runtime for Linux (RelWithDebInfo + coverage)",
@@ -665,6 +740,7 @@ class TaskLibrary:
                     self.__qairt_sdk_root,
                     "build",
                     extra_args=["--enable-coverage"],
+                    qnn_internal_test_symbols=True,
                 )
             )
 
@@ -687,6 +763,7 @@ class TaskLibrary:
                             self.__qairt_sdk_root,
                             "build",
                             extra_args=["--enable-coverage"],
+                            qnn_internal_test_symbols=True,
                         ),
                         GenerateCoverageTask(
                             "Generating HTML coverage report",
@@ -727,6 +804,25 @@ class TaskLibrary:
                     False,
                     self.__build_nuget,
                     self.__build_archive,
+                )
+            )
+
+        @public_task("Build ONNX Runtime for ARM64 Windows with QNN EP internal test symbols")
+        @depends(["create_venv"])
+        def build_ort_windows_arm64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Building ONNX Runtime for Windows on ARM64 with QNN EP internal test symbols",
+                    self.__venv_path,
+                    "arm64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "build",
+                    build_nuget=False,
+                    build_archive=False,
+                    qnn_internal_test_symbols=True,
                 )
             )
 
@@ -819,12 +915,12 @@ class TaskLibrary:
                 )
             )
 
-        @public_task("Build ONNX Runtime for x86_64 with QNN EP internal unit-test symbols")
+        @public_task("Build ONNX Runtime for x86_64 with QNN EP internal test symbols")
         @depends(["create_venv"])
         def build_ort_windows_x86_64_internal_symbols(self, plan: Plan) -> str:
             return plan.add_step(
                 BuildEpWindowsTask(
-                    "Building ONNX Runtime for Windows on x86_64 with QNN EP internal unit-test symbols",
+                    "Building ONNX Runtime for Windows on x86_64 with QNN EP internal test symbols",
                     self.__venv_path,
                     "x86_64",
                     self.__config,
@@ -834,7 +930,7 @@ class TaskLibrary:
                     "build",
                     build_nuget=False,
                     build_archive=False,
-                    qnn_internal_ut_symbols=True,
+                    qnn_internal_test_symbols=True,
                 )
             )
 
@@ -996,13 +1092,14 @@ class TaskLibrary:
 
     @task
     def extract_ort_windows_arm64(self, plan: Plan) -> str:
+        config_prefix = "" if self.__config == "Release" else f"{self.__config}-"
         return plan.add_step(
             CompositeTask(
                 None,
                 [
                     ExtractArchiveTask(
                         "Extracting per-arch ONNX Runtime archive",
-                        REPO_ROOT / "build" / "onnxruntime-tests-windows-arm64.zip",
+                        REPO_ROOT / "build" / f"onnxruntime-tests-{config_prefix}windows-arm64.zip",
                         REPO_ROOT,
                     ),
                     RunExecutablesTask(
@@ -1013,6 +1110,8 @@ class TaskLibrary:
                                 str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
                                 "--target-platform",
                                 "windows-arm64",
+                                "--build-config",
+                                self.__config,
                                 "--archive",
                                 str(REPO_ROOT / "build" / "onnxruntime-testdata.zip"),
                             ]
@@ -1146,6 +1245,25 @@ class TaskLibrary:
                 )
             )
 
+        @task
+        @depends(["build_ort_linux_aarch64_manylinux_2_34_internal_symbols"])
+        def test_ort_linux_aarch64_manylinux_2_34_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Testing ONNX Runtime for ARM64 Linux with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "aarch64_manylinux_2_34",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_test_symbols=True,
+                    build_dir_suffix="internal-symbols",
+                )
+            )
+
     if is_host_linux() and is_host_x86_64():
 
         @task
@@ -1162,6 +1280,25 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
+                )
+            )
+
+        @task
+        @depends(["build_ort_linux_x86_64_internal_symbols"])
+        def test_ort_linux_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Testing ONNX Runtime for Linux on x86_64 with QNN EP internal unit-test symbols",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_test_symbols=True,
+                    build_dir_suffix="internal-symbols",
                 )
             )
 
@@ -1297,10 +1434,16 @@ class TaskLibrary:
                 )
             )
 
-    if is_host_windows():
+    if is_host_windows() or is_host_linux():
 
         @task
-        @depends(["archive_ort_windows_arm64"])
+        @depends(
+            [
+                "create_qdc_venv",
+                (is_host_windows(), "archive_ort_windows_arm64"),
+                (is_host_windows(), "archive_testdata"),
+            ]
+        )
         def test_ort_qdc_windows_arm64(self, plan: Plan) -> str:
             return plan.add_step(
                 QdcTestsTask(
@@ -1308,7 +1451,14 @@ class TaskLibrary:
                     self.__venv_path,
                     ["windows"],
                     extra_args=[
-                        "--append-windows-package=onnx_models:model_tests/onnx_models",
+                        f"--config={self.__config}",
+                        f"--windows-test-mode={os.environ.get('QDC_WINDOWS_TEST_MODE', 'full')}",
+                        # Full Windows execution runs CTest plus four model suites. Keep the
+                        # device-job allowance separate from the QDC queue admission timeout.
+                        "--job-timeout-minutes=180",
+                        # A preceding full Windows run can occupy the single QDC target for
+                        # around 2 hours. Allow one normal run plus setup time to clear.
+                        "--queue-timeout-minutes=150",
                     ],
                 )
             )
@@ -1472,6 +1622,23 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
+                )
+            )
+
+        @task
+        @depends(["build_ort_windows_x86_64_internal_symbols"])
+        def test_ort_windows_x86_64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Testing ONNX Runtime for Windows on x86_64 with QNN EP internal test symbols",
+                    self.__venv_path,
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_test_symbols=True,
                 )
             )
 
@@ -1648,6 +1815,8 @@ def build_and_test():
     qairt_sdk_root = get_qairt_sdk_root(args.qairt_sdk)
     docker_ccache_root = get_docker_ccache_root(args.docker_ccache_root)
 
+    os.environ.setdefault("UV_CACHE_DIR", str(get_uv_cache_dir()))
+
     plan = Plan()
 
     if len(args.task) > 0:
@@ -1688,6 +1857,9 @@ def build_and_test():
         print()
         plan.print_report()
         print()
+        uv_bin = args.venv_path / ("Scripts/uv.exe" if is_host_windows() else "bin/uv")
+        if uv_bin.exists():
+            subprocess.run([str(uv_bin), "cache", "prune", "--ci"], check=False)
         if caught:
             raise caught
 

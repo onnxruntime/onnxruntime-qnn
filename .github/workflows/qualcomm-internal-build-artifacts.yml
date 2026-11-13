@@ -164,7 +164,10 @@ jobs:
       target_py_vsn: ${{ matrix.target_py_vsn }}
       build_runner_arch: "${{ matrix.target_arch == 'arm64' && 'ARM64' || 'X64' }}"
       test_runner_arch: ARM64
-      run_tests: false
+      # Validate the shared ARM64 test archive once: native HTP v73 and QDC HTP v81
+      # consume the archive uploaded by the first Python-version build.
+      run_tests: ${{ matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_test_same_runner: false
       test_wheel: false
       # For each arch, upload the test archive with the first Python version we encounter
       upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}

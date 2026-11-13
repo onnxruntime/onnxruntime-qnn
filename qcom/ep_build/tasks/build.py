@@ -43,8 +43,12 @@ class BuildEpDockerTask(CompositeTask):
         inner_task: str = "_build_ort_linux_aarch64_manylinux_2_34",
         docker_tag: str = MANYLINUX_2_34_AARCH64_TAG,
         platform: str = "linux/aarch64",
+        build_dir_suffix: str | None = None,
     ) -> None:
-        dist_rel_dir = Path("build") / f"linux-{target_arch}" / config / "dist"
+        build_dir_name = f"linux-{target_arch}"
+        if build_dir_suffix is not None:
+            build_dir_name += f"-{build_dir_suffix}"
+        dist_rel_dir = Path("build") / build_dir_name / config / "dist"
 
         super().__init__(
             group_name,
@@ -86,6 +90,8 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         extra_args: Iterable[str] | None = None,
         env: Mapping[str, str] | None = None,
         build_archive: bool = False,
+        qnn_internal_test_symbols: bool = False,
+        build_dir_suffix: str | None = None,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "linux" / "build.sh"),
@@ -107,6 +113,12 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         if build_archive:
             cmd.append("--build-archive")
 
+        if qnn_internal_test_symbols:
+            cmd.append("--enable-qnn-internal-test-symbols")
+
+        if build_dir_suffix is not None:
+            cmd.append(f"--build-dir-suffix={build_dir_suffix}")
+
         if extra_args is not None:
             cmd.extend(extra_args)
 
@@ -127,7 +139,7 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         build_as_x: bool = False,
         build_nuget: bool = False,
         build_archive: bool = False,
-        qnn_internal_ut_symbols: bool = False,
+        qnn_internal_test_symbols: bool = False,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "windows" / "build.ps1"),
@@ -158,8 +170,8 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         if build_archive:
             cmd.extend(["-BuildArchive", "1"])
 
-        if qnn_internal_ut_symbols:
-            cmd.extend(["-QnnInternalUtSymbols", "1"])
+        if qnn_internal_test_symbols:
+            cmd.extend(["-QnnInternalTestSymbols", "1"])
 
         super().__init__(group_name, [cmd], env=ort_build_env_vars())
 

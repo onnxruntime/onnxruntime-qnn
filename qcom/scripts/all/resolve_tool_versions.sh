@@ -27,9 +27,9 @@
 # (1 and 99 are deliberately avoided so callers can distinguish "undeterminable"
 #  from a generic die/setup failure.)
 #
-# Both resolvers key off <bin_dir>, the build output directory containing
-# CMakeCache.txt (the same directory callers already locate to find
-# onnxruntime_provider_test / accuracy_results.json). This -- not an env var --
+# Both resolvers key off <bin_dir>, the directory containing
+# onnxruntime_provider_test / accuracy_results.json. CMakeCache.txt may be
+# there (Linux) or at its build-root parent (Windows). This -- not an env var --
 # is the source of truth: no current CI workflow ever exports
 # QAIRT_SDK_ROOT/QNN_SDK_ROOT/SNPE_ROOT/ORT_PREBUILT_ROOT, so build_and_test.py
 # always lets the underlying build auto-fetch QAIRT + ORT. CMake records
@@ -57,9 +57,9 @@
 # onnxruntime-qnn PLUGIN/wheel version (get_ort_version(), build.py:27-28, used
 # only to name the wheel), NOT the ORT RUNTIME version.
 
-_RTV_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=common.sh
-source "${_RTV_SCRIPT_DIR}/common.sh"
+_rtv_log_err() {
+    printf 'ERROR: %s\n' "$*" >&2
+}
 
 # ---------------------------------------------------------------------------
 # _rtv_trim <string>
@@ -110,14 +110,31 @@ _rtv_read_cmake_cache_var() {
     return 0
 }
 
+# Return the cache nearest to a test binary. Single-config Linux builds place
+# it alongside the binary, while Windows multi-config builds place it at the
+# build root above one or more configuration directories.
+_rtv_find_cmake_cache() {
+    local dir="$1" candidate
+    for candidate in "${dir}/CMakeCache.txt" \
+                     "$(dirname "${dir}")/CMakeCache.txt" \
+                     "$(dirname "$(dirname "${dir}")")/CMakeCache.txt"; do
+        if [ -f "${candidate}" ]; then
+            printf '%s' "${candidate}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # resolve_qairt_version <bin_dir>
 #   Echo the resolved QAIRT version + return 0, or return 1 with no output.
 # ---------------------------------------------------------------------------
 resolve_qairt_version() {
     local bin_dir="$1"
-    local qnn_home
-    qnn_home="$(_rtv_read_cmake_cache_var "${bin_dir}/CMakeCache.txt" "onnxruntime_QNN_HOME")" || return 1
+    local cache qnn_home
+    cache="$(_rtv_find_cmake_cache "${bin_dir}")" || return 1
+    qnn_home="$(_rtv_read_cmake_cache_var "${cache}" "onnxruntime_QNN_HOME")" || return 1
     _rtv_parse_sdk_yaml_version "${qnn_home}/sdk.yaml"
 }
 
@@ -127,8 +144,10 @@ resolve_qairt_version() {
 # ---------------------------------------------------------------------------
 resolve_ort_version() {
     local bin_dir="$1"
-    local ort_home v f
-    if ort_home="$(_rtv_read_cmake_cache_var "${bin_dir}/CMakeCache.txt" "onnxruntime_ORT_HOME")"; then
+    local cache cache_dir ort_home v f
+    cache="$(_rtv_find_cmake_cache "${bin_dir}")" || return 1
+    cache_dir="$(dirname "${cache}")"
+    if ort_home="$(_rtv_read_cmake_cache_var "${cache}" "onnxruntime_ORT_HOME")"; then
         for f in "${ort_home}/VERSION_NUMBER" "${ort_home}/VERSION"; do
             [ -f "${f}" ] || continue
             v="$(_rtv_trim "$(head -n1 "${f}" 2>/dev/null || true)")"
@@ -139,7 +158,7 @@ resolve_ort_version() {
         done
     fi
     # No prebuilt given -> CMake FetchContent-ed ORT's own source tree.
-    local fc="${bin_dir}/_deps/ort_core-src/VERSION_NUMBER"
+    local fc="${cache_dir}/_deps/ort_core-src/VERSION_NUMBER"
     if [ -f "${fc}" ]; then
         v="$(_rtv_trim "$(head -n1 "${fc}" 2>/dev/null || true)")"
         if [ -n "${v}" ]; then
@@ -166,7 +185,7 @@ EOF
 }
 
 main() {
-    set_strict_mode
+    set -euo pipefail
     local bin_dir="" what="both"
     for arg in "$@"; do
         case "${arg}" in
@@ -181,14 +200,14 @@ main() {
                 return 0
                 ;;
             *)
-                log_err "Unknown argument: ${arg}"
+                _rtv_log_err "Unknown argument: ${arg}"
                 _rtv_usage
                 return 2
                 ;;
         esac
     done
     if [ -z "${bin_dir}" ]; then
-        log_err "--bin-dir=<path> is required."
+        _rtv_log_err "--bin-dir=<path> is required."
         _rtv_usage
         return 2
     fi
@@ -200,7 +219,7 @@ main() {
                 printf '%s\n' "${v}"
                 return 0
             fi
-            log_err "QAIRT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_QNN_HOME) and its sdk.yaml."
+            _rtv_log_err "QAIRT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_QNN_HOME) and its sdk.yaml."
             return 3
             ;;
         ort)
@@ -209,18 +228,18 @@ main() {
                 printf '%s\n' "${v}"
                 return 0
             fi
-            log_err "ORT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_ORT_HOME) and ${bin_dir}/_deps/ort_core-src/VERSION_NUMBER."
+            _rtv_log_err "ORT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_ORT_HOME) and ${bin_dir}/_deps/ort_core-src/VERSION_NUMBER."
             return 3
             ;;
         both)
             local qv ov rc=0
             if ! qv="$(resolve_qairt_version "${bin_dir}")"; then
                 rc=3
-                log_err "QAIRT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_QNN_HOME) and its sdk.yaml."
+                _rtv_log_err "QAIRT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_QNN_HOME) and its sdk.yaml."
             fi
             if ! ov="$(resolve_ort_version "${bin_dir}")"; then
                 rc=3
-                log_err "ORT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_ORT_HOME) and ${bin_dir}/_deps/ort_core-src/VERSION_NUMBER."
+                _rtv_log_err "ORT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_ORT_HOME) and ${bin_dir}/_deps/ort_core-src/VERSION_NUMBER."
             fi
             if [ "${rc}" -ne 0 ]; then
                 return 3

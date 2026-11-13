@@ -143,7 +143,7 @@ TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0_Sorted) {
                             /*verify_outputs*/ false);  // Disable verify output. Unsorted doesn't guarantee output sequence
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -302,23 +302,22 @@ TEST_F(QnnHTPBackendTests, TopK_QDQ_U8_FoldsQDQIntoQuantizedTopK) {
                        BuildQDQTopKTestCase<uint8_t>(input_def, k_def, {}),
                        provider_options,
                        /*opset_version=*/19,
-                       ExpectedEPNodeAssignment::All);
-
-  // TestQDQModelAccuracy issues GTEST_SKIP() internally on HTP arch <= 68 (see
-  // CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64 in qnn_test_utils.h). GTEST_SKIP in a
-  // helper returns from the helper only, not from this TEST_F body, so without
-  // this guard the JSON asserts below would run on an empty dump dir and fail
-  // spuriously (same pattern as conv/matmul/resize/softmax graph tests).
-  if (::testing::Test::IsSkipped()) {
-    return;
-  }
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "",
+                       {},
+                       std::nullopt,
+                       nullptr,
+                       nullptr,
+                       /*skip_v68_qdq=*/false);
 
   // `qdq_in_dq` is the DequantizeLinear feeding TopK; folding it in is what keeps TopK quantized.
   AssertOpInQnnGraph(json_qnn_graph_dir, "TopK", 1);
   AssertNodeNotInQnnGraph(json_qnn_graph_dir, "qdq_in_dq");
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 #endif  // !defined(ORT_MINIMAL_BUILD)

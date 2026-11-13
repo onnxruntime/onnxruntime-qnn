@@ -16,6 +16,7 @@
 #include "test/providers/qnn/infra/backend_contexts.h"
 #include "test/providers/qnn/infra/mock_init_registry.h"
 #include "test/providers/qnn/infra/mock_node_unit.h"
+#include "test/providers/qnn/infra/qnn_module_state_test_utils.h"
 #include "test/providers/qnn/infra/qnn_test_logger.h"
 #include "test/providers/qnn/infra/stub_backend_manager.h"
 

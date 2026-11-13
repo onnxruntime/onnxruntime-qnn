@@ -36,11 +36,7 @@
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
-
-#ifdef _WIN32
-extern "C" const OrtApi* ORT_API_CALL QnnUnit_SetOrtApiForTesting(const OrtApi* api) noexcept;
-extern "C" void ORT_API_CALL QnnUnit_RestoreOrtApiForTesting(const OrtApi* previous) noexcept;
-#endif
+#include "test/providers/qnn/infra/qnn_module_state_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -146,8 +142,7 @@ static_assert(offsetof(FakeOrtValue, shape) == offsetof(FakeValueInfo, shape),
 // Acts as OrtOpAttr* in tests that exercise Node_GetAttributeByName /
 // OpAttr_GetType / ReadOpAttr stubs (e.g., OrtNodeAttrHelper::Get(...)).
 //
-// Holds a name + type + value. Currently supports ORT_OP_ATTR_STRING and
-// ORT_OP_ATTR_INT. Add more value fields if other attribute types are needed.
+// Holds a name + type + value. Supports string, int, and int-array attributes.
 // ---------------------------------------------------------------------------
 struct FakeOpAttr {
   // For debugging only. Node_GetAttributeByName looks up attrs by the map key in
@@ -156,6 +151,7 @@ struct FakeOpAttr {
   OrtOpAttrType type = OrtOpAttrType::ORT_OP_ATTR_STRING;
   std::string string_value;
   int64_t int64_value = 0;
+  std::vector<int64_t> int64_values;
 
   const OrtOpAttr* AsOpAttr() const { return reinterpret_cast<const OrtOpAttr*>(this); }
 
@@ -171,6 +167,13 @@ struct FakeOpAttr {
     a.name = std::move(name);
     a.type = OrtOpAttrType::ORT_OP_ATTR_INT;
     a.int64_value = val;
+    return a;
+  }
+  static FakeOpAttr MakeInt64s(std::string name, std::vector<int64_t> val) {
+    FakeOpAttr a;
+    a.name = std::move(name);
+    a.type = OrtOpAttrType::ORT_OP_ATTR_INTS;
+    a.int64_values = std::move(val);
     return a;
   }
 };
@@ -238,7 +241,7 @@ struct FakeGraph {
 //   - Node_GetNum{Inputs,Outputs,ImplicitInputs,Attributes,Subgraphs}
 //   - Node_Get{Inputs,Outputs,ImplicitInputs,Attributes,Subgraphs}
 //   - Node_GetAttributeByName (looks up FakeOpAttr in FakeNode::attrs)
-//   - OpAttr_GetType, ReadOpAttr (ORT_OP_ATTR_STRING and ORT_OP_ATTR_INT)
+//   - OpAttr_GetType, ReadOpAttr (string, int, and int-array attributes)
 //
 // Anything not in this list is left untouched and the caller can replace it
 // with a more specific test stub.
@@ -460,7 +463,7 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
         reinterpret_cast<const OrtTensorTypeAndShapeInfo*>(v));
     return nullptr;
   };
-  // GetTensorMutableData: production code (qnn_ep_utils.cc) calls the mutable variant via api_ptrs_.
+  // GetTensorMutableData: production code (qdq_node_group_selector.cc) calls the mutable variant via api_ptrs_.
   api.GetTensorMutableData = [](OrtValue* v, void** out) noexcept -> OrtStatus* {
     auto* fov = reinterpret_cast<FakeOrtValue*>(v);
     *out = (fov->elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
@@ -507,7 +510,7 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
   //   First call: buf=nullptr, buf_size=0 → write required size into *out_size.
   //   Second call: buf!=nullptr → copy at most buf_size bytes into buf, write
   //   actual size into *out_size.
-  // Handles ORT_OP_ATTR_STRING (string_value) and ORT_OP_ATTR_INT (int64_value).
+  // Handles string, scalar int, and int-array payloads.
   api.ReadOpAttr = [](const OrtOpAttr* attr, OrtOpAttrType expected_type,
                       void* buf, size_t buf_size, size_t* out_size) noexcept -> OrtStatus* {
     auto* fa = reinterpret_cast<const FakeOpAttr*>(attr);
@@ -535,6 +538,11 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
       if (buf != nullptr && buf_size >= sizeof(int64_t)) {
         std::memcpy(buf, &fa->int64_value, sizeof(int64_t));
       }
+    } else if (expected_type == OrtOpAttrType::ORT_OP_ATTR_INTS) {
+      *out_size = fa->int64_values.size() * sizeof(int64_t);
+      if (buf != nullptr && *out_size > 0 && buf_size >= *out_size) {
+        std::memcpy(buf, fa->int64_values.data(), *out_size);
+      }
     } else {
       *out_size = 0;
     }
@@ -558,10 +566,10 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
 // so this is safe, but do not use two overrides simultaneously in the same
 // thread.
 //
-// Lives here (alongside the fake-graph stubs it enables) so that mock_node_unit.h
-// can build a NodeUnit holder that keeps the global routed to fake-graph stubs
-// for the lifetime of OrtNodeUnit accessor calls (OpType/Name/Index deref
-// target_node_ via the global Ort::GetApi()).
+// The implementation lives in qnn_module_state_test_utils.h so all module-local
+// test state uses the same Windows bridge. This header includes it so
+// mock_node_unit.h can keep the global routed to fake-graph stubs for the
+// lifetime of OrtNodeUnit accessor calls.
 //
 // Implementation note: uses Ort::detail::Global::Api(), which is declared in
 // the public onnxruntime_cxx_api.h header (not a private "core/" include).
@@ -570,31 +578,6 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
 // unit-test builds so all TUs agree on static initialisation. This helper
 // is test-only (gated by QNN_EP_INTERNAL_SYMBOL_ACCESS) and must be
 // re-verified if ORT uplevels and changes the detail::Global layout.
-class OrtGlobalApiOverride {
- public:
-  explicit OrtGlobalApiOverride(const OrtApi* new_api) {
-    original_ = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-    Ort::detail::Global::Api(new_api);
-#ifdef _WIN32
-    provider_original_ = QnnUnit_SetOrtApiForTesting(new_api);
-#endif
-  }
-  ~OrtGlobalApiOverride() {
-#ifdef _WIN32
-    QnnUnit_RestoreOrtApiForTesting(provider_original_);
-#endif
-    Ort::detail::Global::Api(original_);
-  }
-
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OrtGlobalApiOverride);
-
- private:
-  const OrtApi* original_ = nullptr;
-#ifdef _WIN32
-  const OrtApi* provider_original_ = nullptr;
-#endif
-};
-
 }  // namespace test
 }  // namespace onnxruntime
 

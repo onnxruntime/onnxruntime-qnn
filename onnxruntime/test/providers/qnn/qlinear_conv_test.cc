@@ -214,7 +214,7 @@ static void RunQLinearConvTest(const std::vector<int64_t>& x_shape,
 // HTP backend accuracy tests
 // ---------------------------------------------------------------------------
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, QLinearConvOp_DynamicScale_Unsupported) {
   // x_scale is a graph input (not initializer) — must not be assigned to QNN EP.
@@ -330,7 +330,7 @@ TEST_F(QnnHTPBackendTests, QLinearConvOp_HTP_Mixed_u8s8u8) {
   RunQLinearConvTest<uint8_t, int8_t, uint8_t>({1, 3, 8, 8}, {4, 3, 3, 3}, attrs, "htp");
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

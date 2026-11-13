@@ -21,11 +21,7 @@ permissions:
 on:
   issue_comment:
     types: [created]
-  workflow_run:
-    workflows: ["Qualcomm Internal PR Workflow"]
-    types: [completed]
-  # Fallback for approved commits that rename the dispatched workflow and
-  # therefore cannot match the workflow_run name filter above.
+  # Clean up temporary branches left behind by interrupted or failed reporting.
   schedule:
     - cron: "23 */6 * * *"
 
@@ -96,6 +92,7 @@ jobs:
             }
 
             let dispatchRef;
+            let dispatchInputs = {};
             let message;
             let temporaryBranch;
             if (command === '/ci') {
@@ -159,6 +156,11 @@ jobs:
                 sha: approvedSha,
               });
               dispatchRef = temporaryBranch;
+              dispatchInputs = {
+                approved_pr_number: String(pr.data.number),
+                approved_sha: approvedSha,
+                approval_branch: temporaryBranch,
+              };
               message = `✅ Maintainer-approved full CI triggered for PR #${pr.data.number} at \`${approvedSha}\` using \`${temporaryBranch}\`. Approval covers the commit's source, workflows, actions, and scripts`;
             }
 
@@ -170,6 +172,7 @@ jobs:
                 repo: context.repo.repo,
                 workflow_id: 'qualcomm-internal-ci.yml',
                 ref: dispatchRef,
+                inputs: dispatchInputs,
               });
             } catch (error) {
               // A definite API rejection leaves no run to perform cleanup.
@@ -195,45 +198,6 @@ jobs:
               body: `${message} by @${commenter}. Check the [Actions tab](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions) for progress.`,
             });
 
-  cleanup-approved-ci-branch:
-    name: Clean up completed approved-CI branch
-    if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'workflow_dispatch' &&
-      startsWith(github.event.workflow_run.head_branch, 'ci/approve-ci/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      # This handler runs from the default branch and never checks out PR code.
-      - uses: actions/github-script@v8
-        with:
-          script: |
-            const run = context.payload.workflow_run;
-            const branch = run.head_branch;
-            const match = /^ci\/approve-ci\/\d+\/([0-9a-f]{40})\/\d+-\d+$/.exec(branch);
-            if (!match || match[1] !== run.head_sha ||
-                run.head_repository?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
-                run.path !== '.github/workflows/qualcomm-internal-ci.yml') {
-              core.info('Not a matching temporary approved-CI branch; no cleanup needed.');
-              return;
-            }
-            try {
-              const { data: ref } = await github.rest.git.getRef({
-                ...context.repo, ref: `heads/${branch}`,
-              });
-              if (ref.object.sha !== run.head_sha) {
-                core.warning(`Branch ${branch} has moved; leaving it untouched.`);
-                return;
-              }
-              await github.rest.git.deleteRef({
-                ...context.repo, ref: `heads/${branch}`,
-              });
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              core.info('Temporary branch was already removed.');
-            }
-
   cleanup-stale-approved-ci-branches:
     name: Clean up stale approved-CI branches
     if: github.event_name == 'schedule'
@@ -242,9 +206,7 @@ jobs:
       contents: write
       actions: read
     steps:
-      # This scheduled fallback runs only from the default branch. It handles
-      # temporary branches whose reviewed workflow changed its display name,
-      # preventing the workflow_run fast path above from matching.
+      # This scheduled fallback runs only from the default branch.
       - uses: actions/github-script@v8
         with:
           script: |

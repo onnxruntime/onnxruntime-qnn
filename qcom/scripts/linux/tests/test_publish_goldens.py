@@ -7,14 +7,16 @@ import json
 import os
 import stat
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "publish_goldens.sh"
 QAIRT_VERSION = "2.50.40"
-ORT_VERSION = "1.29.0"
+ORT_VERSION = "1.30.0"
 REPO = "test-repo"
 SUBPATH = "ci/snapshot-goldens-pr923-test"
+GOLDEN_PROFILE = "linux-x86_64-htp-simulator"
 
 
 def write_executable(path: Path, content: str) -> None:
@@ -79,6 +81,7 @@ def test_publish_sidecars_match_zip_manifest_and_upload_in_order(tmp_path: Path)
         'mkdir -p "$(dirname "${destination}")"\n'
         'cp "$4" "${destination}"\n',
     )
+    write_executable(fake_bin / "zip", "#!/usr/bin/env bash\nexit 99\n")
 
     env = os.environ.copy()
     env.update(
@@ -101,6 +104,7 @@ def test_publish_sidecars_match_zip_manifest_and_upload_in_order(tmp_path: Path)
             f"--build-dir={build_dir}",
             f"--golden-dir={golden_dir}",
             f"--repo-subpath={SUBPATH}",
+            f"--golden-profile={GOLDEN_PROFILE}",
             "--skip-regen",
             "--publish",
         ],
@@ -117,16 +121,74 @@ def test_publish_sidecars_match_zip_manifest_and_upload_in_order(tmp_path: Path)
     assert uploads == [
         f"{archive_dir}/manifest.json",
         f"{archive_dir}/goldens.zip",
-        f"{REPO}/{SUBPATH}/latest/manifest.json",
-        f"{REPO}/{SUBPATH}/latest/goldens.zip",
+        f"{REPO}/{SUBPATH}/{GOLDEN_PROFILE}/latest/manifest.json",
+        f"{REPO}/{SUBPATH}/{GOLDEN_PROFILE}/latest/goldens.zip",
     ]
 
     archive_manifest = fake_store / f"{archive_dir}/manifest.json"
     archive_zip = fake_store / f"{archive_dir}/goldens.zip"
-    latest_manifest = fake_store / f"{REPO}/{SUBPATH}/latest/manifest.json"
-    latest_zip = fake_store / f"{REPO}/{SUBPATH}/latest/goldens.zip"
+    latest_manifest = fake_store / f"{REPO}/{SUBPATH}/{GOLDEN_PROFILE}/latest/manifest.json"
+    latest_zip = fake_store / f"{REPO}/{SUBPATH}/{GOLDEN_PROFILE}/latest/goldens.zip"
     assert archive_manifest.read_bytes() == latest_manifest.read_bytes()
     assert archive_zip.read_bytes() == latest_zip.read_bytes()
 
     with zipfile.ZipFile(latest_zip) as archive:
         assert archive.read("manifest.json") == latest_manifest.read_bytes()
+    assert json.loads(latest_manifest.read_text())["golden_profile"] == GOLDEN_PROFILE
+
+
+def test_publish_supports_windows_binary_and_build_root_cache(tmp_path: Path) -> None:
+    qairt_root = tmp_path / "qairt"
+    qairt_root.mkdir()
+    (qairt_root / "sdk.yaml").write_text(f"version: {QAIRT_VERSION}\n")
+
+    build_dir = tmp_path / "windows-x86_64-internal-symbols"
+    bin_dir = build_dir / "Release"
+    bin_dir.mkdir(parents=True)
+    provider_test = bin_dir / "onnxruntime_provider_test.exe"
+    provider_test.touch()
+    provider_test.chmod(provider_test.stat().st_mode | stat.S_IXUSR)
+    (build_dir / "CMakeCache.txt").write_text(f"onnxruntime_QNN_HOME:PATH={qairt_root}\n")
+    ort_source = build_dir / "_deps" / "ort_core-src"
+    ort_source.mkdir(parents=True)
+    (ort_source / "VERSION_NUMBER").write_text(f"{ORT_VERSION}\n")
+
+    results_dir = bin_dir / "snapshot_accuracy_results"
+    results_dir.mkdir()
+    (results_dir / "accuracy_results.json").write_text(
+        json.dumps(
+            {
+                "testsuites": [
+                    {
+                        "name": "QnnAcc_Clip_AccuracyTest",
+                        "testsuite": [{"result": "COMPLETED", "status": "RUN", "failures": []}],
+                    }
+                ]
+            }
+        )
+    )
+    golden_dir = tmp_path / "goldens"
+    golden_file = golden_dir / "snapshot/builder/opbuilder/clip/Case.json"
+    golden_file.parent.mkdir(parents=True)
+    golden_file.write_text("{}")
+
+    env = os.environ.copy()
+    env["PYTHON_BIN"] = sys.executable
+    result = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            f"--build-dir={build_dir}",
+            f"--golden-dir={golden_dir}",
+            "--golden-profile=windows-x86_64-htp-simulator",
+            "--skip-regen",
+            "--dry-run",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"profile=windows-x86_64-htp-simulator qairt={QAIRT_VERSION} ort={ORT_VERSION}" in result.stderr

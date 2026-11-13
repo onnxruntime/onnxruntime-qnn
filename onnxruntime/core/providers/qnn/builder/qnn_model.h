@@ -8,6 +8,7 @@
 
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing_types.h"
@@ -51,7 +52,8 @@ class QnnModel {
   QnnModel(QnnBackendManager* qnn_backend_manager,
            const ApiPtrs& api_ptrs)
       : qnn_backend_manager_(qnn_backend_manager),
-        api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}) {
+        qnn_graph_emitter_(std::make_unique<QnnGraphEmitter>(qnn_backend_manager->GetQnnInterface())),
+        api_ptrs_(api_ptrs) {
     qnn_backend_type_ = qnn_backend_manager_->GetQnnBackendType();
   }
 
@@ -176,6 +178,10 @@ class QnnModel {
                                  const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map) const;
   bool GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::Logger& logger);
 
+  // Replace the emitter and metadata handle pairs together after successful retrieval.
+  // Used by both cached-context loading and SSR recovery.
+  Ort::Status RetrieveGraph(GraphInfo& graph_info, Qnn_ContextHandle_t context);
+
   // Bind ORT tensors to QNN tensors and execute the graph once.
   // Returns QNN_COMMON_ERROR_SYSTEM_COMMUNICATION if an NPU crash is detected,
   // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.
@@ -183,6 +189,13 @@ class QnnModel {
                                   const Ort::Logger& logger,
                                   Qnn_ErrorHandle_t& execute_status,
                                   QnnEpProfiler* ort_profiler);
+
+  Ort::Status BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& logger,
+                                                  const OrtMemoryInfo* ort_value_memory_info,
+                                                  void* ort_value_data,
+                                                  uint32_t ort_value_data_size,
+                                                  Qnn_ContextHandle_t qnn_context,
+                                                  Qnn_Tensor_t& qnn_tensor);
 
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
                            bool is_input = true);
@@ -205,6 +218,7 @@ class QnnModel {
  private:
   std::unique_ptr<GraphInfo> graph_info_;
   QnnBackendManager* qnn_backend_manager_ = nullptr;
+  std::unique_ptr<QnnGraphEmitter> qnn_graph_emitter_;
   GraphInputOutputInfo graph_inputs_;
   GraphInputOutputInfo graph_outputs_;
   std::vector<QnnTensorInfo> qnn_input_infos_;
@@ -223,6 +237,10 @@ class QnnModel {
   // Runtime graph configs recorded by ApplyRuntimeGraphConfigs for re-application after an SSR
   // re-retrieves the graph handle. See the single-call contract in the .cc.
   HtpGraphConfigs_t runtime_graph_configs_;
+
+  // BindAndExecuteGraph is serialized by graph_exec_mutex_, so one boolean is
+  // sufficient to emit a single fallback warning for this model/session.
+  bool zero_copy_fallback_warned_ = false;
 };
 
 }  // namespace qnn

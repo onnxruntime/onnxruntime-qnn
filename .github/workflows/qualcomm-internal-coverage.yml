@@ -35,6 +35,7 @@ jobs:
     env:
       COVERAGE_DIR: build/linux-x86_64/RelWithDebInfo/coverage
       SNAPSHOT_GOLDEN_DIR: build/linux-x86_64/snapshot-goldens
+      SNAPSHOT_GOLDEN_PROFILE: linux-x86_64-htp-simulator
       # Consumed by upload-qa-artifact's publish_qa.py (reads os.environ["BUILD_ARTIFACTORY_REPO"]).
       BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
     steps:
@@ -108,7 +109,8 @@ jobs:
           rm -rf "${SNAPSHOT_GOLDEN_DIR}"
           bash qcom/scripts/linux/prepare_snapshot_goldens.sh \
             --build-dir=build/linux-x86_64/RelWithDebInfo \
-            --golden-dir="${SNAPSHOT_GOLDEN_DIR}"
+            --golden-dir="${SNAPSHOT_GOLDEN_DIR}" \
+            --golden-profile="${SNAPSHOT_GOLDEN_PROFILE}"
 
       - name: Run Coverage and Diff Coverage (Linux x86_64, always RelWithDebInfo)
         if: steps.gate.outputs.run == 'true' && github.event_name == 'pull_request'
