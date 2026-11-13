@@ -27,7 +27,7 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
-#if (!defined(__aarch64__) && !defined(_M_ARM64)) || defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
+#if (!defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)) || defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
 
 namespace {
 
@@ -263,7 +263,7 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArch_68_73_81_NotAllArchSupporte
   }
 }
 
-#endif  // !defined(__aarch64__) && !defined(_M_ARM64)
+#endif  // !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
 
 }  // namespace test
 }  // namespace onnxruntime

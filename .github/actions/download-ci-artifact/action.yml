@@ -8,7 +8,6 @@ inputs:
   name:
     description: Name of the artifact to download
     required: true
-    type: string
 
 runs:
   using: "composite"

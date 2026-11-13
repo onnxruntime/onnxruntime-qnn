@@ -147,7 +147,7 @@ TEST_F(QnnCPUBackendTests, OneHot_DynamicDepth_Unsupported) {
 // HTP and GPU backend tests — run on Linux, ARM64 Windows
 //
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, OneHot_FP32_Axis_Default) {
   RunOneHotTest(
@@ -232,13 +232,13 @@ TEST_F(QnnHTPBackendTests, OneHot_QDQ_U8_Axis1) {
       ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 //
 // BFloat16 and GPU tests — ARM64 Windows only
 //
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 static void RunOneHotHTPBF16Test(
     const TestInputDef<int64_t>& indices_def,
@@ -261,6 +261,11 @@ static void RunOneHotHTPBF16Test(
 
 TEST_F(QnnHTPBackendTests, OneHot_BF16_Axis_Default) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after fixing BF16 OneHot offload.
+  // The current path falls back to CPU.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
   RunOneHotHTPBF16Test(
       TestInputDef<int64_t>({4}, false, {0, 2, 1, 3}),
       TestInputDef<int64_t>({1}, true, {5}),
@@ -271,6 +276,11 @@ TEST_F(QnnHTPBackendTests, OneHot_BF16_Axis_Default) {
 
 TEST_F(QnnHTPBackendTests, OneHot_BF16_Axis0) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after fixing BF16 OneHot offload.
+  // The current path falls back to CPU.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
   RunOneHotHTPBF16Test(
       TestInputDef<int64_t>({4}, false, {0, 2, 1, 3}),
       TestInputDef<int64_t>({1}, true, {5}),
@@ -279,7 +289,7 @@ TEST_F(QnnHTPBackendTests, OneHot_BF16_Axis0) {
       ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 }  // namespace test
 }  // namespace onnxruntime

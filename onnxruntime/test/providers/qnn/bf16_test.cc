@@ -72,7 +72,7 @@ namespace test {
                   EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 //
 // HTP BF16 tests:
@@ -396,7 +396,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_BF16_Split) {
       shape);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 }  // namespace test
 }  // namespace onnxruntime

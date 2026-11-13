@@ -9,7 +9,7 @@
 
 namespace onnxruntime {
 namespace test {
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // ai.onnx.ml domain string and opset version used in opset_import.
 static constexpr const char* kAiOnnxMlDomain = "ai.onnx.ml";
@@ -52,7 +52,7 @@ static void RunQnnOnlyModelTest(
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
   TryEnableQNNSaver(provider_options);
@@ -208,7 +208,7 @@ TEST_F(QnnHTPBackendTests, ArrayFeatureExtractor_Float32_ScalarIndex) {
       ExpectedEPNodeAssignment::None);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 

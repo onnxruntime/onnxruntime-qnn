@@ -659,7 +659,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   OnRunStart = OnRunStartImpl;
   OnRunEnd = OnRunEndImpl;
   CreateAllocator = CreateAllocatorImpl;
-  GetDefaultMemoryDevice = GetDefaultMemoryDeviceImpl;
   SetDynamicOptions = SetDynamicOptionsImpl;
   GetCompiledModelCompatibilityInfo = GetCompiledModelCompatibilityInfoImpl;
 #if QNN_ORT_EP_PROFILING_API_ENABLED
@@ -3303,6 +3302,13 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (ep->prepare_only_) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                 "prepare_only mode: context saved. Releasing QNN device resources.");
+#if defined(_WIN32)
+    if (ep->callback_ETWSink_provider_) {
+      // Unregistration waits for active callbacks before releasing the backend they use.
+      qnn::QnnTelemetry::Instance().UnregisterInternalCallback(ep->callback_ETWSink_provider_);
+      ep->callback_ETWSink_provider_ = nullptr;
+    }
+#endif
     ep->qnn_models_.clear();
     ep->qnn_backend_manager_.reset();
   }
@@ -3656,15 +3662,6 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
     // default memory device or QNN memhandle binding policy.
     return qnn::HtpSharedMemoryAllocator::Create(ep->ort_api, memory_info, allocator);
   }
-  return nullptr;
-}
-
-OrtStatus* ORT_API_CALL QnnEp::GetDefaultMemoryDeviceImpl(
-    _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept {
-  const auto* ep = static_cast<const QnnEp*>(this_ptr);
-  *device = qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)
-                ? ep->ep_api.MemoryInfo_GetMemoryDevice(ep->factory_.GetHostAccessibleMemoryInfo())
-                : nullptr;
   return nullptr;
 }
 

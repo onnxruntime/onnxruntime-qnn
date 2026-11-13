@@ -227,7 +227,7 @@ static GetTestQDQModelFn<InputQType> BuildQDQLSTMTestCase(const TestInputDef<flo
   };
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 // Runs an LSTM model on the QNN HTP backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
@@ -1896,7 +1896,7 @@ TEST_F(QnnCPUBackendTests, LSTM_FP32_layout1_forward) {
       std::exception);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 }  // namespace test
 }  // namespace onnxruntime

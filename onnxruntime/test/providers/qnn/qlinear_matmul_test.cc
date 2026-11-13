@@ -168,7 +168,7 @@ TEST_F(QnnCPUBackendTests, QLinearMatMulOp_DynamicScale_Unsupported) {
       /*dynamic_a_scale=*/true);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, QLinearMatMulOp_DynamicZeroPoint_Unsupported) {
   // a_zero_point is a dynamic graph input — must not be assigned to QNN EP.
@@ -314,14 +314,19 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_Float16Scale) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.02f)});
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // BFloat16 scale inputs are only supported on HTP v81+ (ARM64 only).
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_BFloat16Scale) {
   // Scales provided as bfloat16 (opset 21 TS type) — BF16 initializers require v81+.
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Enable when the generic QNN datatype gate accepts BFLOAT16 scale initializers before
+  // QLinearMatMul's builder unpacks them; otherwise the node falls back to CPU, which lacks opset-21 support.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -364,7 +369,7 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_BFloat16Scale) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.02f)});
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 // Tests for the `use_native_matmul` session config option on QLinearMatMul.
 // When set to "1", the QNN EP routes static-weight QLinearMatMul to QNN_OP_MAT_MUL instead

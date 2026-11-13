@@ -77,7 +77,7 @@ ProviderOptions GetProviderOptions() {
 
 }  // namespace
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, ReshapeEinsumReshape_DerivesAllFixedIndexShapes) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
@@ -122,7 +122,7 @@ TEST_F(QnnHTPBackendTests, ReshapeEinsumReshape_RejectsNonRank6Input) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "DepthToSpace", 0);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime
