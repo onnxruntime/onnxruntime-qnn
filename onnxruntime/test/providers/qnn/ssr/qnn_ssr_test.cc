@@ -892,6 +892,13 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteDoubleCrashReturnsUnrecoverableErr
 TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContext_Fp16ClampOverflow_ReappliedAfterRecovery) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after resolving the error.
+  // Error: QNN_GRAPH_ERROR_INVALID_NAME: Invalid or duplicate graph name, Code: 6003
+  // C++ exception with description "Failed to initialize qnn_model_wrapper." thrown in the test body.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
+
   const std::string context_model_file = "./ssr_fp16_clamp_overflow_ctx.onnx";
   std::remove(context_model_file.c_str());
 
