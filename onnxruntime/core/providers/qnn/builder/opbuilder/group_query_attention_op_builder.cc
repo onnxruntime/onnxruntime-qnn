@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 #include <cmath>
+#include <iterator>
 #include <numeric>
+#include <optional>
+#include <vector>
 
 #include "QnnOpDef.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -13,8 +16,30 @@
 namespace onnxruntime {
 namespace qnn {
 
-// GQA not available until opset version 2.12.0 (QAIRT 2.48)
-#if !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
+#ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+static Ort::Status GetGqaCacheCapacity(QnnModelWrapper& qnn_model_wrapper,
+                                       const OrtNodeUnit& node_unit,
+                                       uint32_t& cache_capacity) {
+  const auto& outputs = node_unit.Outputs();
+  RETURN_IF_NOT(outputs.size() > 1 && outputs[1].Exists(), "Required output tensor present_key not provided");
+  TensorInfo present_key_tensor_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[1], present_key_tensor_info));
+  RETURN_IF_NOT(present_key_tensor_info.shape.size() == 4, "Unexpected rank for present_key");
+  cache_capacity = present_key_tensor_info.shape[2];
+  return Ort::Status();
+}
+
+// A window covering the entire cache adds no attention restriction when eviction is disabled.
+static int32_t NormalizeLocalWindowSize(int32_t local_window_size,
+                                        int32_t sliding_window_cache,
+                                        uint32_t cache_capacity) {
+  if (sliding_window_cache == 0 && local_window_size >= 0 &&
+      static_cast<uint32_t>(local_window_size) >= cache_capacity) {
+    return -1;
+  }
+  return local_window_size;
+}
+
 class GroupQueryAttentionOpBuilder : public BaseOpBuilder {
  public:
   GroupQueryAttentionOpBuilder() : BaseOpBuilder("GroupQueryAttentionOpBuilder") {}
@@ -41,8 +66,6 @@ class GroupQueryAttentionOpBuilder : public BaseOpBuilder {
 Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                                         const OrtNodeUnit& node_unit,
                                                         const Ort::Logger& logger) const {
-  ORT_UNUSED_PARAMETER(logger);
-
   auto backend_type = qnn_model_wrapper.GetQnnBackendType();
 
   RETURN_IF_NOT(IsGpuBackend(backend_type) || backend_type == QnnBackendType::HTP,
@@ -54,21 +77,24 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   const size_t num_outputs = node_unit.Outputs().size();
   const auto& outputs = node_unit.Outputs();
 
-  TensorInfo present_key_tensor_info = {};
-  RETURN_IF_NOT(num_outputs > 1 && outputs[1].Exists(), "Required output tensor present_key not provided");
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[1], present_key_tensor_info));
-  RETURN_IF_NOT(present_key_tensor_info.shape.size() == 4, "Unexpected rank for present_key");
-  const auto max_sequence_length = present_key_tensor_info.shape[2];
+  uint32_t cache_capacity = 0;
+  RETURN_IF_ERROR(GetGqaCacheCapacity(qnn_model_wrapper, node_unit, cache_capacity));
 
-  // At time of writing, the com.microsoft.GroupQueryAttention op def has 14 inputs and 4 outputs.
-  const size_t max_num_inputs = 14;
   const size_t max_num_outputs = 4;
 
-  for (size_t i = 10; i < std::min(num_inputs, max_num_inputs); i++) {
-    RETURN_IF(inputs[i].Exists(), "attention_bias, head_sink, k_scale, and v_scale inputs are not supported");
+  const bool has_attention_bias = num_inputs > 10 && inputs[10].Exists();
+#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+  RETURN_IF(has_attention_bias && backend_type != QnnBackendType::HTP,
+            "attention_bias is only supported by QNN GroupQueryAttention on HTP");
+#else
+  RETURN_IF(has_attention_bias, "attention_bias requires the extended QNN GroupQueryAttention op spec");
+#endif  // QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+
+  // Reject unsupported inputs when present, allowing empty trailing optional slots as the schema evolves.
+  for (size_t i = 11; i < num_inputs; ++i) {
+    RETURN_IF(inputs[i].Exists(),
+              ("Unsupported optional GroupQueryAttention input: " + inputs[i].name).c_str());
   }
-  RETURN_IF(num_inputs > max_num_inputs,
-            ("More than " + std::to_string(max_num_inputs) + " inputs provided, which is unsupported").c_str());
 
   RETURN_IF(num_outputs > 3 && outputs[3].Exists(), "output_qk output is not supported");
   RETURN_IF(num_outputs > max_num_outputs,
@@ -86,10 +112,28 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   RETURN_IF(node_helper.HasAttr("kv_cache_bit_width"),
             "kv_cache_bit_width attribute not supported");
 
+  int32_t causal = node_helper.Get("causal", 1);
+  RETURN_IF(causal != 1, "causal != 1 not supported");
+
+  int32_t sliding_window_cache = node_helper.Get("sliding_window_cache", 0);
+  RETURN_IF(sliding_window_cache != 0 && sliding_window_cache != 1,
+            "sliding_window_cache must be 0 or 1");
+
   int32_t local_window_size = node_helper.Get("local_window_size", -1);
-  RETURN_IF(local_window_size < -1, ("unsupported value for local_window_size: " + std::to_string(local_window_size)).c_str());
-  RETURN_IF(local_window_size != -1 && SafeInt<uint32_t>(local_window_size) < max_sequence_length,
-            "Local attention through local_window_size not supported");
+  RETURN_IF(local_window_size < -1 || local_window_size == 0,
+            ("unsupported value for local_window_size: " + std::to_string(local_window_size)).c_str());
+  RETURN_IF(sliding_window_cache == 1 && local_window_size <= 0,
+            "sliding_window_cache requires local_window_size > 0");
+  const int32_t qnn_local_window_size =
+      NormalizeLocalWindowSize(local_window_size, sliding_window_cache, cache_capacity);
+  const bool uses_window_features = sliding_window_cache != 0 || qnn_local_window_size != -1;
+#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+  RETURN_IF(uses_window_features && backend_type != QnnBackendType::HTP,
+            "Truncating local windows and sliding_window_cache are only supported by QNN GroupQueryAttention on HTP");
+#else
+  RETURN_IF(uses_window_features,
+            "Local attention and sliding_window_cache require the extended QNN GroupQueryAttention op spec");
+#endif  // QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
 
   int32_t qk_output = node_helper.Get("qk_output", 0);
   RETURN_IF(qk_output != 0, "qk_output != 0 not supported");
@@ -106,11 +150,7 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   float softcap = node_helper.Get("softcap", 0.0f);
   RETURN_IF(softcap != 0.0f, "softcap != 0 not supported");
 
-  // Validate OpConfig with backend
-  std::vector<std::string> input_names;
-  RETURN_IF_ERROR(ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, true));
-  RETURN_IF_ERROR(ProcessAttributesAndOutputs(qnn_model_wrapper, node_unit, std::move(input_names), logger, true));
-  return Ort::Status();
+  return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, /*do_op_validation=*/true);
 }
 
 Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
@@ -121,7 +161,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
   ORT_UNUSED_PARAMETER(do_op_validation);
   const auto& onnx_inputs = node_unit.Inputs();
 
-  constexpr auto qnn_idx_to_onnx = std::array{
+  constexpr std::optional<size_t> qnn_idx_to_onnx[]{
       0u,  // query
       5u,  // seqlens_K
       6u,  // total_sequence_length
@@ -131,20 +171,32 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
       4u,  // past_value
       7u,  // cos_cache
       8u,  // sin_cache
-      9u   // position_ids
+      9u,  // position_ids (cast to INT32 by the base pipeline)
+#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+      // The extended HTP GQA op definition has 14 positional inputs. Include trailing optional
+      // inputs and represent absent ones with null tensors to satisfy its exact input count.
+      10u,           // QNN attention_bias <- ONNX attention_bias
+      std::nullopt,  // QNN head_sink: unsupported
+      std::nullopt,  // QNN q_norm_weight: unsupported
+      std::nullopt   // QNN k_norm_weight: unsupported
+#endif
   };
-  constexpr size_t kQnnTotalSeqLenIdx = 2;  // index of total_sequence_length in qnn_idx_to_onnx
 
-  for (size_t qnn_idx = 0; qnn_idx < qnn_idx_to_onnx.size(); ++qnn_idx) {
+  constexpr size_t kQnnTotalSeqLenIdx = 2;  // index of total_sequence_length in qnn_idx_to_onnx
+  const size_t qnn_input_count =
+      qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP ? std::size(qnn_idx_to_onnx) : 10u;
+
+  for (size_t qnn_idx = 0; qnn_idx < qnn_input_count; ++qnn_idx) {
     const auto onnx_idx = qnn_idx_to_onnx[qnn_idx];
-    if (onnx_inputs.size() > onnx_idx && onnx_inputs[onnx_idx].Exists()) {
+    if (onnx_idx.has_value() && onnx_inputs.size() > *onnx_idx && onnx_inputs[*onnx_idx].Exists()) {
+      const auto& onnx_input = onnx_inputs[*onnx_idx];
       // QNN requires total_sequence_length as a 0D scalar, but ONNX provides it as shape [1].
       // Build the tensor wrapper directly with an empty shape to avoid a Reshape.
       if (qnn_idx == kQnnTotalSeqLenIdx) {
-        const std::string& input_name = onnx_inputs[onnx_idx].name;
+        const std::string& input_name = onnx_input.name;
         if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
           TensorInfo tensor_info = {};
-          RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_inputs[onnx_idx], tensor_info));
+          RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_input, tensor_info));
           tensor_info.shape = {};  // override to 0D scalar
           QnnTensorWrapper tensor_wrapper;
           RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(tensor_info, input_name, tensor_wrapper));
@@ -152,7 +204,7 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
         }
         input_names.push_back(input_name);
       } else {
-        RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_inputs[onnx_idx], logger, input_names));
+        RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_input, logger, input_names));
       }
     } else {
       std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
@@ -235,6 +287,34 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
                                QNN_OP_GROUP_QUERY_ATTENTION_PARAM_SCALE,
                                param_names));
 
+#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+  // Explicit defaults match the extended op spec. Legacy builds and GPU retain full attention
+  // without these parameters; backend validation determines support for the extended HTP config.
+  if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP) {
+    uint32_t cache_capacity = 0;
+    RETURN_IF_ERROR(GetGqaCacheCapacity(qnn_model_wrapper, node_unit, cache_capacity));
+    const int32_t sliding_window_cache = node_helper.Get("sliding_window_cache", 0);
+    // This path is shared by backend validation and graph construction, so both use full attention
+    // for non-evicting windows that cover the entire cache.
+    const int32_t local_window_size = NormalizeLocalWindowSize(node_helper.Get("local_window_size", -1),
+                                                               sliding_window_cache,
+                                                               cache_capacity);
+    RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
+                                 node_unit.Index(),
+                                 node_unit.Name(),
+                                 local_window_size,
+                                 QNN_OP_GROUP_QUERY_ATTENTION_PARAM_LOCAL_WINDOW_SIZE,
+                                 param_names));
+    const uint32_t sliding_window_cache_u32 = SafeInt<uint32_t>(sliding_window_cache);
+    RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper,
+                                 node_unit.Index(),
+                                 node_unit.Name(),
+                                 sliding_window_cache_u32,
+                                 QNN_OP_GROUP_QUERY_ATTENTION_PARAM_SLIDING_WINDOW_CACHE,
+                                 param_names));
+  }
+#endif
+
   std::vector<std::string> output_names;
   for (size_t output_idx = 0; output_idx < num_outputs; ++output_idx) {
     if (outputs[output_idx].Exists()) {
@@ -316,7 +396,7 @@ void CreateGroupQueryAttentionOpBuilder(const std::string& op_type, OpBuilderReg
   ORT_UNUSED_PARAMETER(op_type);
   ORT_UNUSED_PARAMETER(op_registrations);
 }
-#endif  // !(QNN_OPSET_VERSION_MAJOR < 2 || (QNN_OPSET_VERSION_MAJOR == 2 && QNN_OPSET_VERSION_MINOR <= 11))
+#endif  // QNN_GROUP_QUERY_ATTENTION_AVAILABLE
 
 }  // namespace qnn
 }  // namespace onnxruntime

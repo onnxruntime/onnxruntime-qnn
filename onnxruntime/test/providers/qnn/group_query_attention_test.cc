@@ -3,12 +3,16 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -22,6 +26,7 @@
 
 // QNN_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.37 (QAIRT 2.48).
 // QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.38 (QAIRT 2.49).
+// QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.42 (QAIRT 2.53).
 // Defined here (duplicated from core/providers/qnn/builder/qnn_def.h) so this test file does not
 // need to include that EP-private header.
 #if QNN_API_VERSION_MAJOR > 2 || \
@@ -32,6 +37,11 @@
 #if QNN_API_VERSION_MAJOR > 2 || \
     (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 38)
 #define QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif
+
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 42)
+#define QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
 #endif
 
 namespace onnxruntime {
@@ -76,6 +86,7 @@ struct GqaTestConfig {
   std::optional<int32_t> qk_output;
   std::optional<int32_t> rotary_interleaved;
   std::optional<float> scale;
+  std::optional<int32_t> sliding_window_cache;
   std::optional<int32_t> smooth_softmax;
   std::optional<std::string> v_quant_type;
 
@@ -86,6 +97,7 @@ struct GqaTestConfig {
   TensorVerifier tensor_verifier{ElementwiseAbsoluteVerifier{1e-5f}};
   bool use_shared_memory_allocator{false};
   std::optional<std::string> op_affinity_path;
+  int32_t decode_steps{1};
 };
 
 template <typename T, typename M>
@@ -149,6 +161,9 @@ static GetTestModelFn BuildGQATestCase(const GqaTestConfig<T, M>& config) {
       attrs.push_back(builder.MakeScalarAttribute("rotary_interleaved", static_cast<int64_t>(config.rotary_interleaved.value())));
     if (config.scale.has_value())
       attrs.push_back(builder.MakeScalarAttribute("scale", config.scale.value()));
+    if (config.sliding_window_cache.has_value())
+      attrs.push_back(builder.MakeScalarAttribute("sliding_window_cache",
+                                                  static_cast<int64_t>(config.sliding_window_cache.value())));
     if (config.smooth_softmax.has_value())
       attrs.push_back(builder.MakeScalarAttribute("smooth_softmax", static_cast<int64_t>(config.smooth_softmax.value())));
     if (config.qk_output.has_value())
@@ -267,13 +282,14 @@ static void AliasPresentToPastAndRun(Ort::Session& qnn_session,
   }
 }
 
-// Runs the model on the CPU EP and compares each QNN output against it. Verbatim
-// extraction of RunGQATest's final compare block.
+// Runs the model on the CPU EP and compares each QNN output against it. Optionally returns
+// the CPU outputs so consecutive decode runs can carry the CPU's own cache forward.
 static void CompareQnnVsCpuOutputs(Ort::Session& cpu_session,
                                    const std::unordered_map<std::string, Ort::Value>& cpu_feeds,
                                    const std::vector<std::string>& output_names,
                                    const std::vector<const Ort::Value*>& qnn_outputs,
-                                   const TensorVerifier& tensor_verifier) {
+                                   const TensorVerifier& tensor_verifier,
+                                   std::vector<Ort::Value>* cpu_outputs_for_next_step = nullptr) {
   Ort::RunOptions cpu_run_options;
   std::vector<Ort::Value> cpu_outputs;
   // The CPU EP can do GQA without buffer sharing, so we can just use RunWithEP
@@ -285,12 +301,30 @@ static void CompareQnnVsCpuOutputs(Ort::Session& cpu_session,
   for (size_t i = 0; i < output_names.size(); i++) {
     VerifyOutput(output_names[i], cpu_outputs[i], *qnn_outputs[i], tensor_verifier);
   }
+  if (cpu_outputs_for_next_step != nullptr) {
+    *cpu_outputs_for_next_step = std::move(cpu_outputs);
+  }
 }
 
 // Runs a model with a GQA operator through QNN EP. Checks the graph node assignment
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename T, typename M>
 static void RunGQATest(const GqaTestConfig<T, M>& config) {
+  ASSERT_GT(config.decode_steps, 0);
+  if (config.decode_steps > 1) {
+    // Only packed, single-token, batch=1 decoding without per-step rotary/bias inputs is supported.
+    ASSERT_EQ(config.query_def.GetShape()[0], 1);
+    ASSERT_EQ(config.query_def.GetShape()[1], 1);
+    ASSERT_FALSE(config.query_def.IsInitializer());
+    ASSERT_FALSE(config.key_def.has_value());
+    ASSERT_FALSE(config.value_def.has_value());
+    ASSERT_FALSE(config.seqlens_k_def.IsInitializer());
+    ASSERT_FALSE(config.total_sequence_length_def.IsInitializer());
+    ASSERT_EQ(config.sliding_window_cache, 1);
+    ASSERT_EQ(config.do_rotary.value_or(0), 0);
+    ASSERT_FALSE(config.position_ids_def.has_value());
+    ASSERT_FALSE(config.attention_bias_def.has_value());
+  }
   const GetTestModelFn build_test_case = BuildGQATestCase(config);
   // The GPU backend only supports GQA with past/present buffer sharing on gpu-accessible shared memory. So, the GQA UTs do not
   // use RunQnnModelTest and instead manually create/run the QNN inference session with the buffer sharing.
@@ -379,14 +413,43 @@ static void RunGQATest(const GqaTestConfig<T, M>& config) {
   ASSERT_NO_FATAL_FAILURE(MakeSharedMemoryFeeds(input_names, helper.feeds_, allocator, memory_info,
                                                 qnn_feeds, input_name_to_index));
 
-  std::vector<Ort::Value> owned_qnn_outputs;
-  std::vector<const Ort::Value*> qnn_outputs;
-  ASSERT_NO_FATAL_FAILURE(AliasPresentToPastAndRun(qnn_session, output_names, input_names_cstr,
-                                                   output_names_cstr, qnn_feeds, input_name_to_index,
-                                                   owned_qnn_outputs, qnn_outputs));
-
-  ASSERT_NO_FATAL_FAILURE(CompareQnnVsCpuOutputs(cpu_session, helper.feeds_, output_names,
-                                                 qnn_outputs, config.tensor_verifier));
+  for (int32_t step = 0; step < config.decode_steps; ++step) {
+    SCOPED_TRACE("Decode step " + std::to_string(step));
+    std::vector<Ort::Value> owned_qnn_outputs;
+    std::vector<const Ort::Value*> qnn_outputs;
+    ASSERT_NO_FATAL_FAILURE(AliasPresentToPastAndRun(qnn_session, output_names, input_names_cstr,
+                                                     output_names_cstr, qnn_feeds, input_name_to_index,
+                                                     owned_qnn_outputs, qnn_outputs));
+    std::vector<Ort::Value> cpu_outputs;
+    ASSERT_NO_FATAL_FAILURE(CompareQnnVsCpuOutputs(cpu_session, helper.feeds_, output_names,
+                                                   qnn_outputs, config.tensor_verifier, &cpu_outputs));
+    if (step + 1 == config.decode_steps) {
+      break;
+    }
+    // Carry CPU and HTP caches independently. Seeding HTP from CPU would hide accumulated cache errors.
+    for (size_t i = 0; i < output_names.size(); ++i) {
+      if (output_names[i] == "present_key" || output_names[i] == "present_value") {
+        auto& past = helper.feeds_.at(output_names[i] == "present_key" ? "past_key" : "past_value");
+        ASSERT_EQ(past.GetTensorSizeInBytes(), cpu_outputs[i].GetTensorSizeInBytes());
+        memcpy(past.GetTensorMutableRawData(), cpu_outputs[i].GetTensorRawData(), past.GetTensorSizeInBytes());
+      }
+    }
+    for (const char* name : {"seqlens_k", "total_sequence_length"}) {
+      auto& feed = helper.feeds_.at(name);
+      ++feed.template GetTensorMutableData<M>()[0];
+      auto& qnn_feed = qnn_feeds[input_name_to_index.at(name)].value;
+      memcpy(qnn_feed.GetTensorMutableRawData(), feed.GetTensorRawData(), feed.GetTensorSizeInBytes());
+    }
+    auto& query = helper.feeds_.at("query");
+    auto* query_data = query.template GetTensorMutableData<T>();
+    for (size_t i = 0; i < query.GetTensorTypeAndShapeInfo().GetElementCount(); ++i) {
+      // Distinct Q/K/V at each step make stale writes and cache ordering errors observable.
+      query_data[i] = static_cast<T>(std::sin(static_cast<float>(i + 1) * 0.17f +
+                                              static_cast<float>(step + 1) * 0.73f));
+    }
+    memcpy(qnn_feeds[input_name_to_index.at("query")].value.GetTensorMutableRawData(),
+           query.GetTensorRawData(), query.GetTensorSizeInBytes());
+  }
 }
 
 #endif  // defined(BUILD_HTP_GQA_TESTS) || defined(BUILD_GPU_GQA_TESTS)
@@ -443,7 +506,10 @@ static void RunHTPPackedGQATest(int32_t num_heads,
                                 float scale,
                                 int32_t do_rotary,
                                 float fp32_abs_err = 1e-2f,
-                                int32_t max_seq_len = 0) {
+                                int32_t max_seq_len = 0,
+                                int32_t local_window_size = -1,
+                                int32_t sliding_window_cache = 0,
+                                int32_t decode_steps = 1) {
   // GQA op validation fails on HTP (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE) on V68 and below.
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
@@ -454,8 +520,8 @@ static void RunHTPPackedGQATest(int32_t num_heads,
   }
   GqaTestConfig<T, int32_t> config{
       TestInputDef<T>({batch_size, sequence_length, packed_qkv_d}, false, static_cast<T>(-1.0f), static_cast<T>(1.0f)),
-      TestInputDef<int32_t>({batch_size}, true, std::vector<int32_t>(batch_size, total_seq_len - 1)),
-      TestInputDef<int32_t>({}, true, std::vector<int32_t>{total_seq_len})};
+      TestInputDef<int32_t>({batch_size}, decode_steps == 1, std::vector<int32_t>(batch_size, total_seq_len - 1)),
+      TestInputDef<int32_t>({}, decode_steps == 1, std::vector<int32_t>{total_seq_len})};
 
   // Past KV buffer has capacity max_seq_len, filled with random data (so when max_seq_len >
   // total_seq_len the padding region naturally holds noise values).
@@ -477,8 +543,15 @@ static void RunHTPPackedGQATest(int32_t num_heads,
   config.kv_num_heads = kv_num_heads;
   config.num_heads = num_heads;
   config.scale = scale;
+  if (local_window_size != -1) {
+    config.local_window_size = local_window_size;
+  }
+  if (sliding_window_cache != 0) {
+    config.sliding_window_cache = sliding_window_cache;
+  }
   config.expected_ep_assignment = ExpectedEPNodeAssignment::All;
   config.backend_name = "htp";
+  config.decode_steps = decode_steps;
   config.tensor_verifier = ElementwiseAbsoluteVerifier{fp32_abs_err};
 #if !defined(__linux__)
   config.use_shared_memory_allocator = true;
@@ -572,6 +645,309 @@ TEST_F(QnnHTPBackendTests, GroupQueryAttention_Llama3_AR1_FP32) {
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_Rotary_FP32) {
   RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 1);
 }
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_FullCacheWindow_Batch2_FP32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  for (const int32_t window_size : {-1, 4, 8}) {
+    SCOPED_TRACE("local_window_size=" + std::to_string(window_size));
+    GqaTestConfig<float, int32_t> config{
+        TestInputDef<float>({2, 1, 512}, false, -1.0f, 1.0f),
+        TestInputDef<int32_t>({2}, true, std::vector<int32_t>{3, 3}),
+        TestInputDef<int32_t>({}, true, std::vector<int32_t>{4})};
+    config.past_key_def.emplace(std::vector<int64_t>{2, 4, 4, 32}, false, -1.0f, 1.0f);
+    config.past_value_def.emplace(std::vector<int64_t>{2, 4, 4, 32}, false, -1.0f, 1.0f);
+    config.num_heads = 8;
+    config.kv_num_heads = 4;
+    config.do_rotary = 0;
+    config.local_window_size = window_size;
+    config.sliding_window_cache = 0;
+    config.backend_name = "htp";
+    config.op_affinity_path = affinity_config.path().string();
+    config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
+#if !defined(__linux__)
+    config.use_shared_memory_allocator = true;
+#endif
+    RunGQATest(config);
+  }
+}
+
+// Keep support checks on the same valid baseline so an unrelated backend restriction cannot
+// make a negative test pass. Feature tests below add one unsupported input or attribute at a time.
+static GqaTestConfig<float, int32_t> MakeGqaSupportTestConfig() {
+  GqaTestConfig<float, int32_t> config{
+      TestInputDef<float>({1, 1, 128}, false, -1.0f, 1.0f),
+      TestInputDef<int32_t>({1}, true, std::vector<int32_t>{3}),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{4})};
+  config.past_key_def.emplace(std::vector<int64_t>{1, 1, 4, 32}, false, -1.0f, 1.0f);
+  config.past_value_def.emplace(std::vector<int64_t>{1, 1, 4, 32}, false, -1.0f, 1.0f);
+  config.num_heads = 2;
+  config.kv_num_heads = 1;
+  config.do_rotary = 0;
+  config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
+  return config;
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_HeadSink_NotAssigned) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  const ProviderOptions provider_options{{"backend_type", "htp"}, {"op_affinity", affinity_config.path().string()}};
+  const auto baseline = MakeGqaSupportTestConfig();
+  ASSERT_NO_FATAL_FAILURE(RunQnnModelTest(BuildGQATestCase(baseline), provider_options, baseline.opset,
+                                          EPVerificationParams{ExpectedEPNodeAssignment::All, baseline.tensor_verifier}));
+
+  auto config = baseline;
+  config.head_sink_def.emplace(std::vector<int64_t>{config.num_heads}, false,
+                               std::vector<float>{0.5f, -0.25f});
+  RunQnnModelTest(BuildGQATestCase(config), provider_options,
+                  config.opset, EPVerificationParams{ExpectedEPNodeAssignment::None, config.tensor_verifier});
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_UnsupportedWindowCacheConfig_Rejected) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  const ProviderOptions provider_options{{"backend_type", "htp"}, {"op_affinity", affinity_config.path().string()}};
+  const auto baseline = MakeGqaSupportTestConfig();
+  ASSERT_NO_FATAL_FAILURE(RunQnnModelTest(BuildGQATestCase(baseline), provider_options, baseline.opset,
+                                          EPVerificationParams{ExpectedEPNodeAssignment::All, baseline.tensor_verifier}));
+
+  struct WindowCacheCase {
+    int32_t window;
+    int32_t sliding_cache;
+  };
+  // Zero windows are intentionally not offloaded; other cases violate the window/cache contract.
+  for (const auto& test_case : {WindowCacheCase{0, 0}, {-2, 0}, {-1, 1}, {2, 2}}) {
+    SCOPED_TRACE("window=" + std::to_string(test_case.window) +
+                 ", sliding_cache=" + std::to_string(test_case.sliding_cache));
+    auto config = baseline;
+    config.local_window_size = test_case.window;
+    config.sliding_window_cache = test_case.sliding_cache;
+    std::unique_ptr<ModelAndBuilder> model;
+    CreateModelInMemory(model, BuildGQATestCase(config), config.opset);
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    Ort::SessionOptions session_options;
+    // Do not execute invalid or unverified windows through the CPU reference.
+    session_options.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");
+    RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, provider_options);
+    try {
+      ScopedOrtSession session(std::move(registered_ep_device),
+                               Ort::Session(*GetOrtEnv(), model->model_data.data(), model->model_data.size(), session_options));
+      FAIL() << "Unsupported window/cache configuration was accepted";
+    } catch (const Ort::Exception& error) {
+      EXPECT_EQ(error.GetOrtErrorCode(), ORT_FAIL);
+      EXPECT_NE(std::string(error.what()).find("fallback to CPU EP has been explicitly disabled"), std::string::npos)
+          << error.what();
+    }
+  }
+}
+
+#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_PositionIdsInt64_FP32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  // The explicit position selects a quarter-turn rotation; the default decode position selects identity.
+  // Existing keys stay unrotated, so ignoring position_ids changes both attention output and the new key.
+  constexpr int32_t num_heads = 2;
+  constexpr int32_t head_size = 32;
+  constexpr int32_t cache_length = 16;
+  constexpr int64_t position_id = 3;
+  std::vector<float> query((num_heads + 2) * head_size, 0.0f);
+  for (int32_t head = 0; head <= num_heads; ++head) {
+    std::fill_n(query.begin() + head * head_size, head_size / 2, 1.0f);
+  }
+  std::fill_n(query.begin() + (num_heads + 1) * head_size, head_size, 1.0f);
+  GqaTestConfig<float, int32_t> config{
+      TestInputDef<float>({1, 1, (num_heads + 2) * head_size}, false, std::move(query)),
+      TestInputDef<int32_t>({1}, true, std::vector<int32_t>{cache_length - 1}),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{cache_length})};
+  std::vector<float> past_key(cache_length * head_size, 0.0f);
+  for (int32_t row = 0; row < cache_length; ++row) {
+    std::fill_n(past_key.begin() + row * head_size, head_size / 2, 1.0f);
+  }
+  config.past_key_def.emplace(std::vector<int64_t>{1, 1, cache_length, head_size}, false, std::move(past_key));
+  config.past_value_def.emplace(std::vector<int64_t>{1, 1, cache_length, head_size}, false,
+                                std::vector<float>(cache_length * head_size, 0.0f));
+  std::vector<float> cos_cache(cache_length * head_size / 2, 1.0f);
+  std::vector<float> sin_cache(cos_cache.size(), 0.0f);
+  std::fill_n(cos_cache.begin() + position_id * head_size / 2, head_size / 2, 0.0f);
+  std::fill_n(sin_cache.begin() + position_id * head_size / 2, head_size / 2, 1.0f);
+  config.cos_cache_def.emplace(std::vector<int64_t>{cache_length, head_size / 2}, true, std::move(cos_cache));
+  config.sin_cache_def.emplace(std::vector<int64_t>{cache_length, head_size / 2}, true, std::move(sin_cache));
+  config.position_ids_def.emplace(std::vector<int64_t>{1, 1}, false, std::vector<int64_t>{position_id});
+  config.num_heads = num_heads;
+  config.kv_num_heads = 1;
+  config.do_rotary = 1;
+  config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  config.backend_name = "htp";
+  config.op_affinity_path = affinity_config.path().string();
+#if !defined(__linux__)
+  config.use_shared_memory_allocator = true;
+#endif
+  RunGQATest(config);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_LocalWindow_FP32) {
+  RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0,
+                             /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 0,
+                             /*local_window_size*/ 128);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_LocalWindow_Prefill_FP32) {
+  RunHTPPackedGQATest<float>(8, 4, 32, /*sequence_length*/ 4, /*total_seq_len*/ 128,
+                             /*scale*/ 0.0f, /*do_rotary*/ 0, /*fp32_abs_err*/ 1e-2f,
+                             /*max_seq_len*/ 128, /*local_window_size*/ 64);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_SlidingWindowCache_FP32) {
+  RunHTPPackedGQATest<float>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0,
+                             /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 128,
+                             /*local_window_size*/ 128, /*sliding_window_cache*/ 1);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_SlidingWindowCache_ConsecutiveDecode_FP32) {
+  // Start before the cache fills, then cross eviction with both equal and smaller windows.
+  for (const int32_t window_size : {128, 64}) {
+    SCOPED_TRACE("local_window_size=" + std::to_string(window_size));
+    RunHTPPackedGQATest<float>(8, 4, 32, 1, 127, /*scale*/ 0.0f, /*do_rotary*/ 0,
+                               /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 128,
+                               window_size, /*sliding_window_cache*/ 1, /*decode_steps*/ 4);
+  }
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_SlidingWindowCache_ConsecutiveDecode_FP16) {
+  RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 127, /*scale*/ 0.0f, /*do_rotary*/ 0,
+                                      /*fp32_abs_err*/ 1e-2f, /*max_seq_len*/ 128,
+                                      /*local_window_size*/ 64, /*sliding_window_cache*/ 1, /*decode_steps*/ 4);
+}
+
+// Zero Q/K scores make attention uniform without bias. Each head's bias selects either the newest
+// value (+1) or the oldest retained value (-1), so ignored or misaligned bias changes the output.
+template <typename T>
+static GqaTestConfig<T, int32_t> MakeAttentionBiasGqaConfig(int32_t cache_length, int32_t total_seq_len) {
+  constexpr int32_t num_heads = 8;
+  constexpr int32_t kv_num_heads = 4;
+  constexpr int32_t head_size = 32;
+  std::vector<T> query((num_heads + 2 * kv_num_heads) * head_size, static_cast<T>(0.0f));
+  std::fill(query.begin() + (num_heads + kv_num_heads) * head_size, query.end(), static_cast<T>(1.0f));
+  GqaTestConfig<T, int32_t> config{
+      TestInputDef<T>({1, 1, (num_heads + 2 * kv_num_heads) * head_size}, false, std::move(query)),
+      TestInputDef<int32_t>({1}, true, std::vector<int32_t>{total_seq_len - 1}),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{total_seq_len})};
+  config.past_key_def.emplace(std::vector<int64_t>{1, kv_num_heads, cache_length, head_size}, false,
+                              std::vector<T>(kv_num_heads * cache_length * head_size, static_cast<T>(0.0f)));
+  std::vector<T> past_value(kv_num_heads * cache_length * head_size, static_cast<T>(0.0f));
+  const int32_t selected_past_row = total_seq_len > cache_length ? 1 : 0;
+  for (int32_t head = 0; head < kv_num_heads; ++head) {
+    std::fill_n(past_value.begin() + (head * cache_length + selected_past_row) * head_size, head_size, static_cast<T>(-1.0f));
+  }
+  config.past_value_def.emplace(std::vector<int64_t>{1, kv_num_heads, cache_length, head_size}, false,
+                                std::move(past_value));
+  std::vector<T> attention_bias(num_heads * total_seq_len, static_cast<T>(0.0f));
+  for (int32_t head = 0; head < num_heads; ++head) {
+    const int32_t selected_key = head % 2 == 0 ? total_seq_len - 1 : total_seq_len - cache_length;
+    attention_bias[head * total_seq_len + selected_key] = static_cast<T>(16.0f);
+  }
+  config.attention_bias_def.emplace(std::vector<int64_t>{1, num_heads, 1, total_seq_len}, false,
+                                    std::move(attention_bias));
+  config.num_heads = num_heads;
+  config.kv_num_heads = kv_num_heads;
+  config.do_rotary = 0;
+  config.scale = 0.0f;
+  config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
+  return config;
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_FP32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto config = MakeAttentionBiasGqaConfig<float>(/*cache_length*/ 1024, /*total_seq_len*/ 1024);
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  config.backend_name = "htp";
+  config.op_affinity_path = affinity_config.path().string();
+#if !defined(__linux__)
+  config.use_shared_memory_allocator = true;
+#endif
+  RunGQATest(config);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_FP16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto config = MakeAttentionBiasGqaConfig<Ort::Float16_t>(/*cache_length*/ 1024, /*total_seq_len*/ 1024);
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  config.backend_name = "htp";
+  config.op_affinity_path = affinity_config.path().string();
+#if !defined(__linux__)
+  config.use_shared_memory_allocator = true;
+#endif  // !defined(__linux__)
+  RunGQATest(config);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_Broadcast_Prefill_FP32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  // Initial prefill permits batch=2. Bias broadcasts over batch and heads, with query-dependent rows.
+  GqaTestConfig<float, int32_t> config{
+      TestInputDef<float>({2, 4, 512}, false, -1.0f, 1.0f),
+      TestInputDef<int32_t>({2}, true, std::vector<int32_t>{3, 3}),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{4})};
+  config.past_key_def.emplace(std::vector<int64_t>{2, 4, 4, 32}, false, -1.0f, 1.0f);
+  config.past_value_def.emplace(std::vector<int64_t>{2, 4, 4, 32}, false, -1.0f, 1.0f);
+  // Moderate signed bias interacts with nonzero QK scores without saturating the softmax.
+  config.attention_bias_def.emplace(std::vector<int64_t>{1, 1, 4, 4}, false,
+                                    std::vector<float>{0.75f, -0.5f, 0.25f, -0.75f,
+                                                       -0.75f, 1.0f, -0.25f, 0.5f,
+                                                       0.5f, -1.0f, 0.75f, -0.25f,
+                                                       -0.5f, 0.25f, -0.75f, 1.0f});
+  config.num_heads = 8;
+  config.kv_num_heads = 4;
+  config.do_rotary = 0;
+  config.backend_name = "htp";
+  config.tensor_verifier = ElementwiseAbsoluteVerifier{1e-2f};
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  config.op_affinity_path = affinity_config.path().string();
+#if !defined(__linux__)
+  config.use_shared_memory_allocator = true;
+#endif  // !defined(__linux__)
+  RunGQATest(config);
+}
+
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_AttentionBias_SlidingWindowCache_FP32) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  constexpr int32_t cache_length = 128;
+  // One decode evicts the oldest cached row; bias must still match the retained token positions.
+  auto config = MakeAttentionBiasGqaConfig<float>(cache_length, /*total_seq_len*/ cache_length + 1);
+  config.local_window_size = cache_length;
+  config.sliding_window_cache = 1;
+  config.backend_name = "htp";
+  config.op_affinity_path = affinity_config.path().string();
+#if !defined(__linux__)
+  config.use_shared_memory_allocator = true;
+#endif  // !defined(__linux__)
+  RunGQATest(config);
+}
+#else   // !QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+TEST_F(QnnHTPBackendTests, GroupQueryAttention_ExtendedFeatures_OlderHeaders_NotAssigned) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  // Pin GQA to HTP so the test exercises the op builder's spec check rather than the default CPU affinity.
+  const ScopedGqaOpAffinityConfig affinity_config(R"({ "op_type": { "GroupQueryAttention": "HTP" } })");
+  const ProviderOptions provider_options{{"backend_type", "htp"}, {"op_affinity", affinity_config.path().string()}};
+  const auto baseline = MakeGqaSupportTestConfig();
+  ASSERT_NO_FATAL_FAILURE(RunQnnModelTest(BuildGQATestCase(baseline), provider_options, baseline.opset,
+                                          EPVerificationParams{ExpectedEPNodeAssignment::All, baseline.tensor_verifier}));
+
+  auto bias_config = baseline;
+  bias_config.attention_bias_def.emplace(std::vector<int64_t>{1, 2, 1, 4}, false, -0.5f, 0.5f);
+  RunQnnModelTest(BuildGQATestCase(bias_config), provider_options, bias_config.opset,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None, bias_config.tensor_verifier});
+  for (const int32_t sliding_window_cache : {0, 1}) {
+    SCOPED_TRACE("sliding_window_cache=" + std::to_string(sliding_window_cache));
+    auto config = baseline;
+    config.local_window_size = 2;
+    config.sliding_window_cache = sliding_window_cache;
+    RunQnnModelTest(BuildGQATestCase(config), provider_options, config.opset,
+                    EPVerificationParams{ExpectedEPNodeAssignment::None, config.tensor_verifier});
+  }
+}
+#endif  // QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
 
 TEST_F(QnnHTPBackendTests, GroupQueryAttention_Basic_FP16) {
   RunHTPPackedGQATest<Ort::Float16_t>(8, 4, 32, 1, 1024, /*scale*/ 0.0f, /*do_rotary*/ 0);
@@ -732,6 +1108,9 @@ struct GpuPackedGqaCase {
   float scale;
   bool use_2d_seqlens{false};
   bool use_shared_memory_allocator{false};
+  int32_t local_window_size{-1};
+  int32_t sliding_window_cache{0};
+  ExpectedEPNodeAssignment expected_ep_assignment{ExpectedEPNodeAssignment::All};
 };
 
 template <typename T>
@@ -762,16 +1141,47 @@ static void RunGpuPackedGQATest(const GpuPackedGqaCase& test_case) {
   config.kv_num_heads = test_case.kv_num_heads;
   config.num_heads = test_case.num_heads;
   config.scale = test_case.scale;
-  config.expected_ep_assignment = ExpectedEPNodeAssignment::All;
+  config.local_window_size = test_case.local_window_size;
+  config.sliding_window_cache = test_case.sliding_window_cache;
+  config.expected_ep_assignment = test_case.expected_ep_assignment;
   config.backend_name = "gpu";
   config.opset = 13;
   config.tensor_verifier = CosineSimilarityVerifier{0.99f};
   config.use_shared_memory_allocator = test_case.use_shared_memory_allocator;
+  if (config.expected_ep_assignment == ExpectedEPNodeAssignment::None) {
+    // CPU fallback does not require the GPU's shared past/present buffers.
+    RunQnnModelTest(BuildGQATestCase(config), ProviderOptions{{"backend_type", "gpu"}}, config.opset,
+                    EPVerificationParams{ExpectedEPNodeAssignment::None, config.tensor_verifier});
+    return;
+  }
   RunGQATest(config);
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_FP32) {
   RunGpuPackedGQATest<float>({8, 4, 32, 1, 1024, 10.0f});
+}
+
+TEST_F(QnnGPUBackendTests, GroupQueryAttention_FullCacheWindow_FP32) {
+  for (const int32_t window_size : {1024, 2048}) {
+    GpuPackedGqaCase test_case{8, 4, 32, 1, 1024, 10.0f};
+    test_case.local_window_size = window_size;
+    RunGpuPackedGQATest<float>(test_case);
+  }
+}
+
+TEST_F(QnnGPUBackendTests, GroupQueryAttention_TruncatingWindow_NotAssigned) {
+  GpuPackedGqaCase test_case{8, 4, 32, 1, 1024, 10.0f};
+  test_case.local_window_size = 128;
+  test_case.expected_ep_assignment = ExpectedEPNodeAssignment::None;
+  RunGpuPackedGQATest<float>(test_case);
+}
+
+TEST_F(QnnGPUBackendTests, GroupQueryAttention_SlidingWindowCache_NotAssigned) {
+  GpuPackedGqaCase test_case{8, 4, 32, 1, 1024, 10.0f};
+  test_case.local_window_size = 1024;
+  test_case.sliding_window_cache = 1;
+  test_case.expected_ep_assignment = ExpectedEPNodeAssignment::None;
+  RunGpuPackedGQATest<float>(test_case);
 }
 
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Basic_FP16) {

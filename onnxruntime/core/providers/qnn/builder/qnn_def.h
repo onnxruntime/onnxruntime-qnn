@@ -65,6 +65,13 @@ namespace qnn {
 #define QNN_GROUP_QUERY_ATTENTION_AVAILABLE
 #endif
 
+// The extended GroupQueryAttention op spec supports 14 inputs from QNN API 2.42
+// (QAIRT 2.53). Backend validation determines support for the resulting configuration.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 42)
+#define QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif
+
 // QNN_HTP_GROUP_QUERY_ATTENTION_AVAILABLE is available from QNN API 2.38
 // (QAIRT 2.49).
 #if QNN_API_VERSION_MAJOR > 2 || \
