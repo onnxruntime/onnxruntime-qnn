@@ -712,6 +712,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:ReduceMin||
 |ai.onnx:ReduceProd||
 |ai.onnx:ReduceSum||
+|ai.onnx:ReduceSumSquare|Static axes only; per-channel quantization is not supported.|
 |ai.onnx:Relu||
 |ai.onnx:RMSNormalization||
 |ai.onnx:Reshape||

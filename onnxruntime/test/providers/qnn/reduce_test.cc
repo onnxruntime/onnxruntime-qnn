@@ -32,9 +32,9 @@ template <typename DataType>
 static GetTestModelFn BuildReduceOpTestCase(const std::string& reduce_op_type,
                                             const TestInputDef<DataType>& input_def,
                                             bool axes_as_input, std::vector<int64_t> axes, bool keepdims,
-                                            bool noop_with_empty_axes) {
+                                            bool noop_with_empty_axes, bool omit_axes_input = false) {
   return [reduce_op_type, input_def, axes_as_input, axes, keepdims,
-          noop_with_empty_axes](ModelTestBuilder& builder) {
+          noop_with_empty_axes, omit_axes_input](ModelTestBuilder& builder) {
     // Inputs
     MakeTestInput<DataType>(builder, "input", input_def);
 
@@ -42,7 +42,7 @@ static GetTestModelFn BuildReduceOpTestCase(const std::string& reduce_op_type,
     input_names.push_back("input");
 
     // Axes input (initializer) for newer opsets.
-    if (axes_as_input) {
+    if (axes_as_input && !omit_axes_input) {
       const std::string axes_name = "axes";
       builder.MakeInitializer<int64_t>(axes_name, {static_cast<int64_t>(axes.size())}, axes);
       input_names.push_back(axes_name);
@@ -171,6 +171,103 @@ TEST_F(QnnCPUBackendTests, ReduceSumOpset11_Float) {
                        true,  // keepdims
                        11,
                        ExpectedEPNodeAssignment::All);
+}
+
+// ReduceSumSquare shares ReduceL2's square-and-sum decomposition, without the square root.
+// Binary-exact data makes the float tests sensitive to wrong axes, output shape, or an extra Sqrt.
+static void RunReduceSumSquareFloatTests(bool enable_fp16) {
+  for (int opset : {13, 18}) {
+    for (bool keepdims : {false, true}) {
+      SCOPED_TRACE(testing::Message() << "opset=" << opset << ", keepdims=" << keepdims);
+      RunReduceTest<float>("ReduceSumSquare",
+                           TestInputDef<float>({2, 2}, false, {-1.0f, 0.5f, 0.0f, 2.0f}),
+                           {0, 1}, keepdims, opset, ExpectedEPNodeAssignment::All, 1e-5f, enable_fp16);
+      RunReduceTest<float>("ReduceSumSquare",
+                           TestInputDef<float>({2, 3, 2}, false,
+                                               {-1.0f, 0.5f, 0.0f, 2.0f, -0.5f, 1.0f,
+                                                0.5f, -2.0f, 1.0f, 0.0f, 2.0f, -1.0f}),
+                           {1, -1}, keepdims, opset, ExpectedEPNodeAssignment::All, 1e-5f, enable_fp16);
+    }
+  }
+}
+
+TEST_F(QnnCPUBackendTests, ReduceSumSquare_Float_AxesAndKeepDims) {
+  RunReduceSumSquareFloatTests(false);
+}
+
+TEST_F(QnnCPUBackendTests, ReduceSumSquare_Int32) {
+  RunReduceTest<int32_t>("ReduceSumSquare", TestInputDef<int32_t>({2, 2}, false, {-2, -1, 0, 3}),
+                         {0, 1}, true, 13, ExpectedEPNodeAssignment::All);
+  RunReduceTest<int32_t>("ReduceSumSquare", TestInputDef<int32_t>({2, 3}, false, {-3, -2, -1, 0, 1, 2}),
+                         {-1}, false, 18, ExpectedEPNodeAssignment::All);
+}
+
+static void RunReduceSumSquareEmptyAxesTests(bool enable_fp16) {
+  ProviderOptions options{{"backend_type", enable_fp16 ? "htp" : "cpu"},
+                          {"offload_graph_io_quantization", "0"}};
+  if (enable_fp16) {
+    options["enable_htp_fp16_precision"] = "1";
+  }
+
+  for (bool omit_axes : {false, true}) {
+    for (bool noop : {false, true}) {
+      SCOPED_TRACE(testing::Message() << "omit_axes=" << omit_axes << ", noop=" << noop);
+      RunQnnModelTest(BuildReduceOpTestCase<float>("ReduceSumSquare",
+                                                   TestInputDef<float>({2, 2}, false, {-1.0f, 0.5f, 0.0f, 2.0f}),
+                                                   true, {}, true, noop, omit_axes),
+                      options, 18,
+                      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
+    }
+  }
+}
+
+TEST_F(QnnCPUBackendTests, ReduceSumSquare_EmptyAndOmittedAxes) {
+  RunReduceSumSquareEmptyAxesTests(false);
+}
+
+TEST_F(QnnCPUBackendTests, ReduceSumSquare_DynamicAxesRejected) {
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("input", {2, 2}, {-1.0f, 0.5f, 0.0f, 2.0f});
+    builder.MakeInput<int64_t>("axes", {1}, {1});
+    builder.MakeOutput("output");
+    builder.AddNode("reduce", "ReduceSumSquare", {"input", "axes"}, {"output"});
+  };
+  RunQnnModelTest(build_model, {{"backend_type", "cpu"}}, 18,
+                  EPVerificationParams{ExpectedEPNodeAssignment::None, ElementwiseAbsoluteVerifier(1e-5f)});
+}
+
+// Verifies that the reduction and a downstream node are both assigned to QNN.
+// Disable CPU fallback on HTP; the QNN CPU backend rejects that session option.
+static void RunReduceSumSquareChainTest(bool enable_fp16) {
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("input", {2, 3}, {-3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f});
+    builder.MakeInitializer<int64_t>("axes", {1}, {-1});
+    builder.AddNode("reduce", "ReduceSumSquare", {"input", "axes"}, {"sum_square"}, "",
+                    {test::MakeAttribute("keepdims", int64_t{0})});
+    builder.AddNode("relu", "Relu", {"sum_square"}, {"output"});
+    builder.MakeOutput("output");
+  };
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, build_model, 18);
+  Ort::SessionOptions so;
+  if (enable_fp16) {
+    so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");
+  }
+  so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  ProviderOptions options{{"backend_type", enable_fp16 ? "htp" : "cpu"},
+                          {"offload_graph_io_quantization", "0"}};
+  if (enable_fp16) {
+    options["enable_htp_fp16_precision"] = "1";
+  }
+  RegisteredEpDeviceUniquePtr ep;
+  RegisterQnnEpLibrary(ep, so, kQnnExecutionProvider, options);
+  RunAndVerifyOutputsWithEP(AsByteSpan(model->model_data.data(), model->model_data.size()), so,
+                            kQnnExecutionProvider, "ReduceSumSquareChain", model->builder.feeds_,
+                            EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-5f)});
+}
+
+TEST_F(QnnCPUBackendTests, ReduceSumSquare_DownstreamChain) {
+  RunReduceSumSquareChainTest(false);
 }
 
 //
@@ -815,6 +912,52 @@ TEST_F(QnnHTPBackendTests, ReduceMeanS8Opset18) {
                              true,          // keepdims
                              18,            // opset
                              ExpectedEPNodeAssignment::All);
+}
+
+//
+// ReduceSumSquare on HTP
+//
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_FP32_as_FP16_AxesAndKeepDims) {
+  RunReduceSumSquareFloatTests(true);
+}
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_FP32_as_FP16_EmptyAndOmittedAxes) {
+  RunReduceSumSquareEmptyAxesTests(true);
+}
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_NoCpuFallback) {
+  RunReduceSumSquareChainTest(true);
+}
+
+template <typename QuantType>
+static void RunReduceSumSquareQDQTests(bool use_ms_domain_qdq) {
+  for (int opset : {13, 18}) {
+    SCOPED_TRACE(testing::Message() << "opset=" << opset);
+    RunReduceOpQDQTest<QuantType>("ReduceSumSquare",
+                                  TestInputDef<float>({2, 2}, false, {-1.0f, 0.5f, 0.0f, 2.0f}),
+                                  {0, 1}, true, opset, ExpectedEPNodeAssignment::All, use_ms_domain_qdq);
+    RunReduceOpQDQTest<QuantType>("ReduceSumSquare",
+                                  TestInputDef<float>({2, 3, 2}, false,
+                                                      {-1.0f, 0.5f, 0.0f, 2.0f, -0.5f, 1.0f,
+                                                       0.5f, -2.0f, 1.0f, 0.0f, 2.0f, -1.0f}),
+                                  {1, -1}, false, opset, ExpectedEPNodeAssignment::All, use_ms_domain_qdq);
+  }
+  // noop_with_empty_axes still squares before requantizing to the output scale.
+  const TestInputDef<float> input({2, 2}, false, {-1.0f, 0.5f, 0.0f, 2.0f});
+  TestQDQModelAccuracy(BuildReduceOpTestCase<float>("ReduceSumSquare", input, true, {}, true, true),
+                       BuildQDQReduceOpTestCase<QuantType>("ReduceSumSquare", input, true, {}, true, true,
+                                                           use_ms_domain_qdq),
+                       {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}},
+                       18, ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_QDQ_U8) {
+  RunReduceSumSquareQDQTests<uint8_t>(false);
+}
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_QDQ_U16) {
+  RunReduceSumSquareQDQTests<uint16_t>(true);
 }
 
 //
