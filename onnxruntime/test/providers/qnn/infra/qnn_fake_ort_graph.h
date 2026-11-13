@@ -142,8 +142,7 @@ static_assert(offsetof(FakeOrtValue, shape) == offsetof(FakeValueInfo, shape),
 // Acts as OrtOpAttr* in tests that exercise Node_GetAttributeByName /
 // OpAttr_GetType / ReadOpAttr stubs (e.g., OrtNodeAttrHelper::Get(...)).
 //
-// Holds a name + type + value. Currently supports ORT_OP_ATTR_STRING and
-// ORT_OP_ATTR_INT. Add more value fields if other attribute types are needed.
+// Holds a name + type + value. Supports string, int, and int-array attributes.
 // ---------------------------------------------------------------------------
 struct FakeOpAttr {
   // For debugging only. Node_GetAttributeByName looks up attrs by the map key in
@@ -152,6 +151,7 @@ struct FakeOpAttr {
   OrtOpAttrType type = OrtOpAttrType::ORT_OP_ATTR_STRING;
   std::string string_value;
   int64_t int64_value = 0;
+  std::vector<int64_t> int64_values;
 
   const OrtOpAttr* AsOpAttr() const { return reinterpret_cast<const OrtOpAttr*>(this); }
 
@@ -167,6 +167,13 @@ struct FakeOpAttr {
     a.name = std::move(name);
     a.type = OrtOpAttrType::ORT_OP_ATTR_INT;
     a.int64_value = val;
+    return a;
+  }
+  static FakeOpAttr MakeInt64s(std::string name, std::vector<int64_t> val) {
+    FakeOpAttr a;
+    a.name = std::move(name);
+    a.type = OrtOpAttrType::ORT_OP_ATTR_INTS;
+    a.int64_values = std::move(val);
     return a;
   }
 };
@@ -234,7 +241,7 @@ struct FakeGraph {
 //   - Node_GetNum{Inputs,Outputs,ImplicitInputs,Attributes,Subgraphs}
 //   - Node_Get{Inputs,Outputs,ImplicitInputs,Attributes,Subgraphs}
 //   - Node_GetAttributeByName (looks up FakeOpAttr in FakeNode::attrs)
-//   - OpAttr_GetType, ReadOpAttr (ORT_OP_ATTR_STRING and ORT_OP_ATTR_INT)
+//   - OpAttr_GetType, ReadOpAttr (string, int, and int-array attributes)
 //
 // Anything not in this list is left untouched and the caller can replace it
 // with a more specific test stub.
@@ -503,7 +510,7 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
   //   First call: buf=nullptr, buf_size=0 → write required size into *out_size.
   //   Second call: buf!=nullptr → copy at most buf_size bytes into buf, write
   //   actual size into *out_size.
-  // Handles ORT_OP_ATTR_STRING (string_value) and ORT_OP_ATTR_INT (int64_value).
+  // Handles string, scalar int, and int-array payloads.
   api.ReadOpAttr = [](const OrtOpAttr* attr, OrtOpAttrType expected_type,
                       void* buf, size_t buf_size, size_t* out_size) noexcept -> OrtStatus* {
     auto* fa = reinterpret_cast<const FakeOpAttr*>(attr);
@@ -530,6 +537,11 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
       *out_size = sizeof(int64_t);
       if (buf != nullptr && buf_size >= sizeof(int64_t)) {
         std::memcpy(buf, &fa->int64_value, sizeof(int64_t));
+      }
+    } else if (expected_type == OrtOpAttrType::ORT_OP_ATTR_INTS) {
+      *out_size = fa->int64_values.size() * sizeof(int64_t);
+      if (buf != nullptr && *out_size > 0 && buf_size >= *out_size) {
+        std::memcpy(buf, fa->int64_values.data(), *out_size);
       }
     } else {
       *out_size = 0;
