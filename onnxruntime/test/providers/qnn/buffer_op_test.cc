@@ -142,7 +142,7 @@ static GetTestQDQModelFn<InputQType> BuildQDQBufferTestCase(const TestInputDef<f
   };
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Builds the model from a GetTestModelFn and verifies QNN EP node assignment (no inference run).
 // Buffer is a qti_aisw custom op with no CPU kernel; RunQnnModelTest's mandatory CPU baseline is
@@ -451,7 +451,7 @@ TEST_F(QnnHTPBackendTests, Buffer_Fp16_omitted_reset_retains_state) {
       "Buffer_OmittedResetBehavior", provider_options, 21, nullptr);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // IR validates QNN op configurations on the host. This confirms non-HTP FP32 Buffer lowering
 // keeps the native FP32 path instead of applying the HTP-only FP32-to-FP16 casts.

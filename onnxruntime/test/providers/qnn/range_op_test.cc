@@ -109,7 +109,7 @@ TEST_F(QnnCPUBackendTests, Range_delta_zero_rejected) {
 // HTP backend tests — only register on ARM64 or Linux (matches the repo
 // convention used by cumsum_test.cc, etc.; HTP runtime requires those hosts).
 // ---------------------------------------------------------------------------
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, Range_float32_ascending) {
   RunRangeOpTest<float>(0.0f, 5.0f, 1.0f, 11, ExpectedEPNodeAssignment::All, "htp");
@@ -166,7 +166,7 @@ TEST_F(QnnHTPBackendTests, Range_delta_zero_rejected) {
 #endif
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

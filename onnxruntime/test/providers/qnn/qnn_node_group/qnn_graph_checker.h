@@ -6,7 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace onnxruntime {
@@ -28,6 +30,18 @@ void AssertOpWithNameInQnnGraph(const std::filesystem::path& dump_dir,
 void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
                                  uint32_t expected_data_type);
 
+// Checks the output tensor of a single node of type `op`, including per-tensor
+// scale/offset when supplied. QNN's offset is the negative ONNX zero point.
+// Supply an output name to select a node when multiple nodes have the same type.
+void AssertOpOutputInQnnGraph(const std::filesystem::path& dump_dir,
+                              const std::string& op,
+                              uint32_t expected_data_type,
+                              std::optional<std::pair<float, int32_t>> expected_scale_offset = std::nullopt,
+                              const std::string& expected_output_name = "");
+
+// Count APP_WRITE tensors to detect parameters left outside a QDQ group.
+void AssertQnnGraphInputCount(const std::filesystem::path& dump_dir, size_t expected_count);
+
 // Asserts that a node with the exact `node_name` does not appear in
 // the compiled QNN graph JSON (root["graph"]["nodes"]).
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
@@ -40,6 +54,13 @@ void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
 void AssertTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
                                  const std::string& tensor_name,
                                  const std::vector<uint32_t>& expected_dims);
+
+// Asserts that the tensor at `input_index` of every node of type `op` has the expected
+// QNN quantization encoding.
+void AssertOpInputQuantizationEncodingInQnnGraph(const std::filesystem::path& dump_dir,
+                                                 const std::string& op,
+                                                 size_t input_index,
+                                                 uint32_t expected_encoding);
 
 // Asserts that no two nodes of type `op` in the compiled QNN graph read the same tensor at
 // `input_index`. Use this where the EP derives a static input per consuming node: each consumer must

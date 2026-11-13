@@ -691,10 +691,8 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextGenerationWithoutRpcmem_Preser
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_INFO,
                "the HTP shared memory allocator will be disabled as no allocations are expected to be made");
 
-  const OrtMemoryDevice* default_device = reinterpret_cast<const OrtMemoryDevice*>(kFakeToken);
   auto* ep_ptr = static_cast<OrtEp*>(ep.get());
-  EXPECT_EQ(ep_ptr->GetDefaultMemoryDevice(ep_ptr, &default_device), nullptr);
-  EXPECT_EQ(default_device, nullptr);
+  EXPECT_EQ(ep_ptr->GetDefaultMemoryDevice, nullptr);
 }
 #endif
 

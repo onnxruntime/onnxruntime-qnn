@@ -31,7 +31,7 @@
 #include "QnnLog.h"
 #include "QnnTypes.h"
 
-#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && !BUILD_QNN_EP_STATIC_LIB
 #include <d3d12.h>
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
@@ -1208,8 +1208,11 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                                  std::function<void(const Ort::Session&)>* qnn_ep_graph_checker = nullptr,
-                                 Ort::CustomOpDomain* custom_op_domain = nullptr) {
-  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
+                                 Ort::CustomOpDomain* custom_op_domain = nullptr,
+                                 bool skip_v68_qdq = true) {
+  if (skip_v68_qdq) {
+    CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
+  }
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -1309,7 +1312,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   TryEnableQNNSaver(qnn_options);
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   qnn_options["num_graph_prepare_threads"] = "1";
@@ -1561,7 +1564,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   qnn_options["num_graph_prepare_threads"] = "1";
@@ -2176,11 +2179,11 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   } while (0)
 #endif
 
-// Skips the test on every platform EXCEPT native ARM64 Windows.
+// Skips the test on every platform EXCEPT ARM64/ARM64EC Windows.
 // The Genie execution pathway in the QNN EP is only available on ARM64 Windows
-// (_WIN32 + _M_ARM64 or __aarch64__). All other platforms must skip.
+// (_WIN32 + _M_ARM64, _M_ARM64EC, or __aarch64__). All other platforms must skip.
 // Uses AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after the skip.
-#if !defined(_WIN32) || (!defined(__aarch64__) && !defined(_M_ARM64))
+#if !defined(_WIN32) || (!defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC))
 #define QNN_SKIP_TEST_ON_NON_ARM64_WINDOWS(reason) \
   if (::testing::internal::AlwaysTrue()) {         \
     GTEST_SKIP() << (reason);                      \
@@ -2200,7 +2203,7 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
       static_assert(true, "");                                                                         \
   }
 
-#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && !BUILD_QNN_EP_STATIC_LIB
 
 inline HRESULT CreateD3D12Buffer(
     ID3D12Device* device,
@@ -2237,11 +2240,11 @@ inline HRESULT CreateD3D12Buffer(
 #endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
 
 // Cross device prepare is available on WoS starting from QAIRT 2.51 (QNN API 2.40).
-#if defined(_WIN32) && defined(_M_ARM64)
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 #if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
 #define QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
 #endif  // QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)
-#endif  // defined(_WIN32) && defined(_M_ARM64)
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 }  // namespace test
 }  // namespace onnxruntime

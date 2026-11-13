@@ -1193,7 +1193,7 @@ TEST_F(QnnCPUBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
                 ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // The bug is from a QDQ model, and Conv node gets processed before it's producer Mul node
 // A Transpose node gets inserted between Mul and the dynamic weight tensor shape on Conv
@@ -1726,6 +1726,78 @@ TEST_F(QnnHTPBackendTests, Conv2D_U16Weight_U8Out_Rejected) {
       BuildQDQConvMixedDtypeTestCase<uint8_t, uint16_t, uint8_t>(
           "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
       provider_options, 21, ExpectedEPNodeAssignment::None);
+}
+
+// V68 HTP only supports a16w8 among the 16-bit-activation combos, not a16w16 (unlike later HTP
+// archs). A u16 activation with a u16 weight must be rejected on V68 (see conv_op_builder.cc).
+TEST_F(QnnHTPBackendTests, Conv2D_U16Act_U16Weight_RejectedOnV68) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8350);
+#else
+  if (!HasPlatformAttributes() || GetPlatformAttributes().htp_arch != QNN_HTP_DEVICE_ARCH_V68) {
+    GTEST_SKIP() << "Test requires V68 HTP.";
+  }
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint16_t, uint16_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::None);
+}
+
+// Regression guard: a16w8 (16-bit activation, 8-bit weight) must still be accepted on V68 -- only
+// the a16w16 combo is rejected there.
+TEST_F(QnnHTPBackendTests, Conv2D_U16Act_U8Weight_AcceptedOnV68) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8350);
+#else
+  if (!HasPlatformAttributes() || GetPlatformAttributes().htp_arch != QNN_HTP_DEVICE_ARCH_V68) {
+    GTEST_SKIP() << "Test requires V68 HTP.";
+  }
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint16_t, uint8_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Regression guard: a16w16 must still be accepted on non-V68 arches (here V73/SM8550), since the
+// new V68-specific rejection must not over-reject on other HTP archs.
+TEST_F(QnnHTPBackendTests, Conv2D_U16Act_U16Weight_AcceptedOnV73) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+
+  TestInputDef<float> input_def({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32));
+  TestInputDef<float> weight_def({3, 2, 2, 2}, true, GetFloatDataInRange(-1.0f, 5.0f, 24));
+  TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint16_t, uint16_t, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
 }
 
 // Tests QDQ Conv where activation and weight are per-tensor quantized but bias is a plain float
@@ -4189,9 +4261,9 @@ TEST_F(QnnHTPBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
                                      ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 //
 // GPU tests:
 //
@@ -4532,7 +4604,7 @@ TEST_F(QnnGPUBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
                 "gpu");
 }
 
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime
