@@ -456,6 +456,7 @@ Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, cons
       params_.quantizationEncoding = params.quantizationEncoding;
       params_.bwFloatBlockEncoding.bitwidth = params.bwFloatBlockEncoding.bitwidth;
 
+      num_blocks_ = static_cast<uint32_t>(num_scaleoffsets);
       block_encoding_tensor_rank_ = static_cast<uint32_t>(tensor_rank);
       block_encoding_axis_data_ = std::make_unique<uint32_t[]>(block_encoding_tensor_rank_);
       std::memcpy(block_encoding_axis_data_.get(),

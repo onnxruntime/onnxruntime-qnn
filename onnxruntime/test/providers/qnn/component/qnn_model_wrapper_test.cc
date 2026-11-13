@@ -5,7 +5,16 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <memory>
 #include <stdexcept>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include <gsl/gsl>
 
 #include "QnnBackend.h"
 #include "QnnInterface.h"
@@ -74,7 +83,7 @@ struct QnnModelWrapperTestContext : public OrtApiStubContext {
       qnn::QnnBackendType backend_type = qnn::QnnBackendType::HTP) {
     backend_manager.BackendType() = backend_type;
     ApiPtrs api_ptrs = MakeApiPtrs();
-    const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
+    const OrtGraph* fake_graph = reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
     return std::make_unique<qnn::QnnModelWrapper>(
         fake_graph,
         api_ptrs,
@@ -94,7 +103,7 @@ std::unique_ptr<qnn::QnnModelWrapper> MakeWrapperWithOverrides(
     const qnn::ModelSettings& settings,
     std::unordered_map<std::string, std::string>* overrides) {
   ApiPtrs api_ptrs = ctx.MakeApiPtrs();
-  const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&ctx.fake_graph_sentinel_);
+  const OrtGraph* fake_graph = reinterpret_cast<const OrtGraph*>(&ctx.fake_graph_sentinel_);
   ctx.backend_manager.BackendType() = qnn::QnnBackendType::HTP;
   return std::make_unique<qnn::QnnModelWrapper>(
       fake_graph,
@@ -2824,6 +2833,626 @@ TEST(QnnUnit_ModelWrapperTest, FusionValidationGuard_NestedGuard_RejectedWithout
     ASSERT_TRUE(wrapper->AddTensorWrapper(MakeFusionGuardTensor("candidate", {4})));
   }
   EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("candidate"));
+}
+
+// ── MoveInternalWrappers / QnnModelWrapper(QnnGraphWrapper) ───────────────
+//
+// Multi-SoC weight sharing translates each ONNX graph once (caching), exports the
+// wrappers into a QnnGraphWrapper via MoveInternalWrappers, and later re-composes
+// that cached graph once per SoC through the cloning constructor.
+
+namespace {
+uint32_t g_next_tensor_id = 0;
+
+Qnn_ErrorHandle_t StubTensorCreateAssignId(Qnn_GraphHandle_t, Qnn_Tensor_t* tensor) {
+  qnn::SetQnnTensorID(*tensor, ++g_next_tensor_id);
+  return QNN_TENSOR_NO_ERROR;
+}
+
+// Populates `wrapper` with in0 (APP_WRITE) -> Cast(+ tensor param) -> out0 (APP_READ)
+// plus a static weight, without creating anything in a QNN graph.
+void AddCachedGraph(qnn::QnnModelWrapper& wrapper) {
+  ASSERT_TRUE(wrapper.AddTensorWrapper(qnn::QnnTensorWrapper("in0", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                                                             qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4})));
+  ASSERT_TRUE(wrapper.AddTensorWrapper(qnn::QnnTensorWrapper("out0", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                                                             qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4})));
+  std::vector<uint8_t> weight(4 * sizeof(float), 0x3F);
+  ASSERT_TRUE(wrapper.AddTensorWrapper(qnn::QnnTensorWrapper("weight", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_32,
+                                                             qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4},
+                                                             std::move(weight))));
+  qnn::QnnParamWrapper perm(0, "n0", "perm", std::vector<uint32_t>{1}, std::vector<uint32_t>{0});
+  std::string perm_name = perm.GetParamTensorName();
+  ASSERT_TRUE(wrapper.AddParamWrapper(std::move(perm)));
+  ASSERT_TRUE(wrapper.CreateQnnNode("n0", QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+                                    {"in0"}, {"out0"}, {std::move(perm_name)}, /*do_op_validation=*/false));
+}
+
+using SharedTranslationLogRecords = std::vector<std::pair<OrtLoggingLevel, std::string>>;
+
+SharedTranslationLogRecords CaptureSharedTranslationWarnings(const std::vector<qnn::QnnGraphContext>& contexts) {
+  OrtApiStubContext ctx;
+  SharedTranslationLogRecords records;
+  // Ort::Status destruction calls ReleaseStatus even for a successful null status.
+  ctx.stub_ort_api.ReleaseStatus = [](OrtStatus*) noexcept {};
+  ctx.stub_ort_api.Logger_GetLoggingSeverityLevel =
+      [](const OrtLogger*, OrtLoggingLevel* severity) noexcept -> OrtStatus* {
+    *severity = ORT_LOGGING_LEVEL_VERBOSE;
+    return nullptr;
+  };
+  ctx.stub_ort_api.Logger_LogMessage =
+      [](const OrtLogger* logger, OrtLoggingLevel severity, const char* message,
+         const ORTCHAR_T*, int, const char*) noexcept -> OrtStatus* {
+    auto* captured = reinterpret_cast<SharedTranslationLogRecords*>(const_cast<OrtLogger*>(logger));
+    captured->emplace_back(severity, message);
+    return nullptr;
+  };
+  OrtGlobalApiOverride global_override(&ctx.stub_ort_api);
+  Ort::Logger logger(reinterpret_cast<const OrtLogger*>(&records));
+  qnn::utils::WarnHtpArchDependentSharedTranslations(contexts, logger);
+  return records;
+}
+}  // namespace
+
+TEST(QnnUnit_ModelWrapperTest, MoveInternalWrappers_Cache_MovesAllWrappers) {
+  QnnModelWrapperTestContext ctx;
+  ctx.input_info.names.push_back("in0");
+  ctx.input_info.indices["in0"] = 0;
+  ctx.input_info.tensors.emplace("in0", qnn::OnnxTensorInfo(0, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                                                            std::vector<int64_t>{4}));
+  ctx.output_info.names.push_back("out0");
+  ctx.output_info.indices["out0"] = 0;
+  ctx.output_info.tensors.emplace("out0", qnn::OnnxTensorInfo(0, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                                                              std::vector<int64_t>{4}));
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+  AddCachedGraph(*wrapper);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  graph_wrapper.graph_name = "caller_owned_name";
+  auto status = wrapper->MoveInternalWrappers(graph_wrapper);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+
+  ASSERT_EQ(graph_wrapper.ops.size(), 1u);
+  EXPECT_EQ(graph_wrapper.ops[0].GetNodeName(), "n0");
+  EXPECT_EQ(graph_wrapper.tensors_map.size(), 3u);
+  EXPECT_EQ(graph_wrapper.params_map.size(), 1u);
+  EXPECT_EQ(graph_wrapper.graph_inputs.names, (std::vector<std::string>{"in0"}));
+  EXPECT_EQ(graph_wrapper.graph_outputs.names, (std::vector<std::string>{"out0"}));
+  EXPECT_EQ(graph_wrapper.graph_inputs.indices, ctx.input_info.indices);
+  EXPECT_EQ(graph_wrapper.graph_outputs.indices, ctx.output_info.indices);
+  ASSERT_EQ(graph_wrapper.graph_inputs.tensors.size(), 1u);
+  ASSERT_EQ(graph_wrapper.graph_outputs.tensors.size(), 1u);
+  EXPECT_NE(graph_wrapper.graph_inputs.tensors.at("in0").shape_.data(), ctx.input_info.tensors.at("in0").shape_.data());
+  EXPECT_NE(graph_wrapper.graph_outputs.tensors.at("out0").shape_.data(), ctx.output_info.tensors.at("out0").shape_.data());
+  EXPECT_EQ(graph_wrapper.htp_arch_translation_info.source_arch, QNN_HTP_DEVICE_ARCH_NONE);
+  EXPECT_TRUE(graph_wrapper.htp_arch_translation_info.dependencies.empty());
+  // graph_name is owned by the caller (QnnModel::ComposeGraph), not filled here.
+  EXPECT_EQ(graph_wrapper.graph_name, "caller_owned_name");
+
+  // The wrappers were moved out, so the source wrapper is now empty.
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("in0"));
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("weight"));
+
+  // A second export must fail without overwriting the first cached graph.
+  EXPECT_FALSE(wrapper->MoveInternalWrappers(graph_wrapper).IsOK());
+  EXPECT_EQ(graph_wrapper.ops.size(), 1u);
+  EXPECT_EQ(graph_wrapper.tensors_map.size(), 3u);
+  EXPECT_EQ(graph_wrapper.params_map.size(), 1u);
+
+  wrapper.reset();
+  ctx.input_info.Clear();
+  ctx.output_info.Clear();
+  EXPECT_EQ(graph_wrapper.graph_inputs.names, (std::vector<std::string>{"in0"}));
+  EXPECT_EQ(graph_wrapper.graph_outputs.names, (std::vector<std::string>{"out0"}));
+  EXPECT_EQ(graph_wrapper.graph_inputs.indices.at("in0"), 0u);
+  EXPECT_EQ(graph_wrapper.graph_outputs.indices.at("out0"), 0u);
+  const auto& input = graph_wrapper.graph_inputs.tensors.at("in0");
+  EXPECT_EQ(input.index_, 0u);
+  EXPECT_EQ(input.data_type_, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
+  EXPECT_EQ(input.shape_, (std::vector<int64_t>{4}));
+  const auto& output = graph_wrapper.graph_outputs.tensors.at("out0");
+  EXPECT_EQ(output.index_, 0u);
+  EXPECT_EQ(output.data_type_, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
+  EXPECT_EQ(output.shape_, (std::vector<int64_t>{4}));
+
+  qnn::QnnModelWrapper cloned(ctx.MakeApiPtrs(), ctx.null_logger_, *ctx.backend_manager.Get(), graph_wrapper,
+                              settings);
+  EXPECT_TRUE(cloned.IsGraphInput("in0"));
+  EXPECT_TRUE(cloned.IsGraphOutput("out0"));
+  auto inputs = cloned.GetGraphInputTensorWrappers();
+  auto outputs = cloned.GetGraphOutputTensorWrappers();
+  ASSERT_EQ(inputs.size(), 1u);
+  ASSERT_EQ(outputs.size(), 1u);
+  EXPECT_EQ(inputs[0].GetName(), "in0");
+  EXPECT_EQ(outputs[0].GetName(), "out0");
+}
+
+TEST(QnnUnit_ModelWrapperTest, MoveInternalWrappers_OffloadIOQuant_BakesOverrideIntoTensors) {
+  QnnModelWrapperTestContext ctx;
+  ctx.input_info.names.push_back("in0");
+  ctx.input_info.indices["in0"] = 0;
+  qnn::ModelSettings settings{};
+  settings.offload_graph_io_quantization = true;
+  std::unordered_map<std::string, std::string> overrides{{"in0", "onnx_in0"}};
+  auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
+  AddCachedGraph(*wrapper);
+  wrapper->ResolveTensorNameOverride();
+  wrapper->ResolveTensorNameOverride();
+  EXPECT_EQ(wrapper->GetQnnTensorWrapper("in0").GetResolvedTensorName(), "onnx_in0");
+  EXPECT_STREQ(qnn::GetQnnTensorName(wrapper->GetQnnTensorWrapper("in0").GetQnnTensor()), "onnx_in0");
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(wrapper->MoveInternalWrappers(graph_wrapper).IsOK());
+
+  // Overridden tensor carries its ONNX name; others keep their internal name.
+  EXPECT_EQ(graph_wrapper.tensors_map.at("in0").GetResolvedTensorName(), "onnx_in0");
+  EXPECT_EQ(graph_wrapper.tensors_map.at("out0").GetResolvedTensorName(), "out0");
+
+  // Exported names must remain usable after the translation wrapper and override table are gone.
+  wrapper.reset();
+  overrides.clear();
+  qnn::QnnModelWrapper cloned(ctx.MakeApiPtrs(), ctx.null_logger_, *ctx.backend_manager.Get(), graph_wrapper,
+                              settings);
+  cloned.ResolveTensorNameOverride();
+  auto inputs = cloned.GetGraphInputTensorWrappers();
+  ASSERT_EQ(inputs.size(), 1u);
+  EXPECT_EQ(inputs[0].GetResolvedTensorName(), "onnx_in0");
+  EXPECT_STREQ(qnn::GetQnnTensorName(inputs[0].GetQnnTensor()), "onnx_in0");
+  inputs[0].SetResolvedTensorName("another_context_input");
+  EXPECT_EQ(graph_wrapper.tensors_map.at("in0").GetResolvedTensorName(), "onnx_in0");
+}
+
+TEST(QnnUnit_ModelWrapperTest, MoveInternalWrappers_OverridesIgnoredWithoutOffloadIOQuant) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  settings.offload_graph_io_quantization = false;
+  std::unordered_map<std::string, std::string> overrides{{"in0", "onnx_in0"}};
+  auto wrapper = MakeWrapperWithOverrides(ctx, settings, &overrides);
+  AddCachedGraph(*wrapper);
+  wrapper->ResolveTensorNameOverride();
+  EXPECT_EQ(wrapper->GetQnnTensorWrapper("in0").GetResolvedTensorName(), "in0");
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(wrapper->MoveInternalWrappers(graph_wrapper).IsOK());
+  EXPECT_EQ(graph_wrapper.tensors_map.at("in0").GetResolvedTensorName(), "in0");
+}
+
+TEST(QnnUnit_ModelWrapperTest, MoveInternalWrappers_EmptyModel_ReturnsError) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  auto status = wrapper->MoveInternalWrappers(graph_wrapper);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("Model is not constructed"), std::string::npos);
+}
+
+TEST(QnnUnit_ModelWrapperTest, MoveInternalWrappers_TensorsOnlyNoOps_ReturnsError) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+  ASSERT_TRUE(wrapper->AddTensorWrapper(qnn::QnnTensorWrapper("t0", QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_32,
+                                                              qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4})));
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  EXPECT_FALSE(wrapper->MoveInternalWrappers(graph_wrapper).IsOK());
+}
+
+TEST(QnnUnit_ModelWrapperTest, MoveInternalWrappers_AfterComposeQnnGraph_ReturnsError) {
+  QnnModelWrapperTestContext ctx;
+  ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateSuccess;
+  ctx.qnn_interface.graphAddNode = StubGraphAddNode;
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+  AddCachedGraph(*wrapper);
+  ASSERT_TRUE(wrapper->ComposeQnnGraph());
+
+  // Tensors now exist in a QNN graph, so the wrappers hold per-graph state.
+  qnn::QnnGraphWrapper graph_wrapper;
+  auto status = wrapper->MoveInternalWrappers(graph_wrapper);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("already created in a QNN graph"), std::string::npos);
+}
+
+TEST(QnnUnit_ModelWrapperTest, GraphWrapperCtor_ClonesWithoutConsumingCache) {
+  QnnModelWrapperTestContext ctx;
+  ctx.input_info.names.push_back("in0");
+  ctx.input_info.indices["in0"] = 0;
+  ctx.output_info.names.push_back("out0");
+  ctx.output_info.indices["out0"] = 0;
+  qnn::ModelSettings settings{};
+  auto source = ctx.CreateWrapper(settings);
+  AddCachedGraph(*source);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(source->MoveInternalWrappers(graph_wrapper).IsOK());
+  graph_wrapper.graph_name = "cached_graph";
+
+  // Model settings are supplied by the caller, not carried in the graph wrapper.
+  qnn::ModelSettings clone_settings{};
+  clone_settings.htp_shared_memory = true;
+  qnn::QnnModelWrapper cloned(ctx.MakeApiPtrs(), ctx.null_logger_, *ctx.backend_manager.Get(), graph_wrapper,
+                              clone_settings);
+  EXPECT_TRUE(cloned.GetModelSettings().htp_shared_memory);
+
+  EXPECT_TRUE(cloned.IsQnnTensorWrapperExist("in0"));
+  EXPECT_TRUE(cloned.IsQnnTensorWrapperExist("out0"));
+  EXPECT_TRUE(cloned.IsQnnTensorWrapperExist("weight"));
+  EXPECT_TRUE(cloned.IsGraphInput("in0"));
+  EXPECT_TRUE(cloned.IsGraphOutput("out0"));
+
+  // The cache is cloned, not consumed.
+  EXPECT_EQ(graph_wrapper.ops.size(), 1u);
+  EXPECT_EQ(graph_wrapper.tensors_map.size(), 3u);
+  EXPECT_EQ(graph_wrapper.params_map.size(), 1u);
+
+  // Static data is shared between the cache and the clone.
+  const void* cached_data = qnn::GetQnnTensorClientBuf(graph_wrapper.tensors_map.at("weight").GetQnnTensor()).data;
+  const void* cloned_data = qnn::GetQnnTensorClientBuf(cloned.GetQnnTensorWrapper("weight").GetQnnTensor()).data;
+  EXPECT_EQ(cloned_data, cached_data);
+}
+
+TEST(QnnUnit_ModelWrapperTest, GraphWrapperCtor_ComposeTwice_EachCloneGetsFreshTensorIds) {
+  QnnModelWrapperTestContext ctx;
+  ctx.input_info.names.push_back("in0");
+  ctx.input_info.indices["in0"] = 0;
+  ctx.output_info.names.push_back("out0");
+  ctx.output_info.indices["out0"] = 0;
+  ctx.qnn_interface.tensorCreateGraphTensor = StubTensorCreateAssignId;
+  static std::vector<uint32_t> param_ids;
+  static std::vector<const void*> param_buffers;
+  param_ids.clear();
+  param_buffers.clear();
+  ctx.qnn_interface.graphAddNode = [](Qnn_GraphHandle_t, Qnn_OpConfig_t op_config) -> Qnn_ErrorHandle_t {
+    if (op_config.version == QNN_OPCONFIG_VERSION_1 && op_config.v1.numOfParams == 1 &&
+        op_config.v1.params != nullptr && op_config.v1.params[0].paramType == QNN_PARAMTYPE_TENSOR) {
+      const auto& tensor = op_config.v1.params[0].tensorParam;
+      param_ids.push_back(qnn::GetQnnTensorID(tensor));
+      param_buffers.push_back(qnn::GetQnnTensorClientBuf(tensor).data);
+    }
+    return QNN_GRAPH_NO_ERROR;
+  };
+  qnn::ModelSettings settings{};
+  auto source = ctx.CreateWrapper(settings);
+  AddCachedGraph(*source);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(source->MoveInternalWrappers(graph_wrapper).IsOK());
+
+  g_next_tensor_id = 0;
+  std::vector<uint32_t> input_ids;
+  std::vector<uint32_t> output_ids;
+  // Mimic one composition per SoC of a multi-SoC context binary.
+  for (int soc = 0; soc < 2; ++soc) {
+    qnn::QnnModelWrapper cloned(ctx.MakeApiPtrs(), ctx.null_logger_, *ctx.backend_manager.Get(), graph_wrapper,
+                                settings);
+    // Every clone starts unassigned, regardless of what previous compositions did.
+    EXPECT_EQ(qnn::GetQnnTensorID(cloned.GetQnnTensorWrapper("in0").GetQnnTensor()), 0u);
+    ASSERT_TRUE(cloned.ComposeQnnGraph()) << "composition " << soc;
+    input_ids.push_back(qnn::GetQnnTensorID(cloned.GetQnnTensorWrapper("in0").GetQnnTensor()));
+    output_ids.push_back(qnn::GetQnnTensorID(cloned.GetQnnTensorWrapper("out0").GetQnnTensor()));
+    EXPECT_NE(input_ids.back(), 0u);
+    EXPECT_NE(output_ids.back(), 0u);
+  }
+  EXPECT_NE(input_ids[0], input_ids[1]);
+  EXPECT_NE(output_ids[0], output_ids[1]);
+  ASSERT_EQ(param_ids.size(), 2u);
+  EXPECT_NE(param_ids[0], 0u);
+  EXPECT_NE(param_ids[1], 0u);
+  EXPECT_NE(param_ids[0], param_ids[1]);
+  const auto& cached_param = graph_wrapper.params_map.at("n0_0_perm").GetQnnParam().tensorParam;
+  const void* cached_param_data = qnn::GetQnnTensorClientBuf(cached_param).data;
+  ASSERT_NE(cached_param_data, nullptr);
+  ASSERT_EQ(param_buffers.size(), 2u);
+  EXPECT_EQ(param_buffers[0], cached_param_data);
+  EXPECT_EQ(param_buffers[1], cached_param_data);
+  EXPECT_EQ(qnn::GetQnnTensorID(cached_param), 0u);
+
+  // Compositions never write QNN tensor IDs back into the cache.
+  for (const auto& [name, tensor] : graph_wrapper.tensors_map) {
+    EXPECT_EQ(qnn::GetQnnTensorID(tensor.GetQnnTensor()), 0u) << name;
+  }
+}
+
+TEST(QnnUnit_ModelWrapperTest, GraphWrapperCtor_MoveInternalWrappersOnClone_ReturnsError) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto source = ctx.CreateWrapper(settings);
+  AddCachedGraph(*source);
+
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(source->MoveInternalWrappers(graph_wrapper).IsOK());
+
+  qnn::QnnModelWrapper cloned(ctx.MakeApiPtrs(), ctx.null_logger_, *ctx.backend_manager.Get(), graph_wrapper,
+                              settings);
+  qnn::QnnGraphWrapper re_exported;
+  auto status = cloned.MoveInternalWrappers(re_exported);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("cloned from a QnnGraphWrapper"), std::string::npos);
+  // The cache is left intact.
+  EXPECT_EQ(graph_wrapper.tensors_map.size(), 3u);
+}
+
+// QnnGraphWrapper must be move-only (see the comment on its copy deletion) so that
+// std::vector<QnnGraphWrapper> reallocation takes the move path.
+static_assert(!std::is_copy_constructible_v<qnn::QnnGraphWrapper>);
+static_assert(!std::is_copy_assignable_v<qnn::QnnGraphWrapper>);
+static_assert(std::is_move_constructible_v<qnn::QnnGraphWrapper>);
+static_assert(std::is_move_assignable_v<qnn::QnnGraphWrapper>);
+static_assert(!std::is_copy_constructible_v<qnn::QnnGraphContext>);
+static_assert(!std::is_copy_assignable_v<qnn::QnnGraphContext>);
+static_assert(std::is_move_constructible_v<qnn::QnnGraphContext>);
+static_assert(std::is_move_assignable_v<qnn::QnnGraphContext>);
+
+TEST(QnnUnit_ModelWrapperTest, QnnGraphWrapper_VectorGrowth_KeepsWrappers) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+
+  std::vector<qnn::QnnGraphWrapper> wrappers;
+  for (int i = 0; i < 4; ++i) {
+    auto source = ctx.CreateWrapper(settings);
+    AddCachedGraph(*source);
+    qnn::QnnGraphWrapper graph_wrapper;
+    ASSERT_TRUE(source->MoveInternalWrappers(graph_wrapper).IsOK());
+    graph_wrapper.graph_name = "g" + std::to_string(i);
+    wrappers.push_back(std::move(graph_wrapper));
+  }
+
+  ASSERT_EQ(wrappers.size(), 4u);
+  for (size_t i = 0; i < wrappers.size(); ++i) {
+    EXPECT_EQ(wrappers[i].graph_name, "g" + std::to_string(i));
+    EXPECT_EQ(wrappers[i].tensors_map.size(), 3u);
+    // Moved tensor wrappers must still point at their own (relocated) name storage.
+    const auto& in0 = wrappers[i].tensors_map.at("in0");
+    EXPECT_STREQ(qnn::GetQnnTensorName(in0.GetQnnTensor()), "in0");
+  }
+}
+
+TEST(QnnUnit_ModelWrapperTest, GraphWrapperCtor_ClonesQuantizationAndDimensionsIndependently) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  auto source = ctx.CreateWrapper(settings);
+  AddCachedGraph(*source);
+  const std::vector<float> scales{0.25f, 0.5f};
+  const std::vector<int32_t> offsets{-1, -2};
+  ASSERT_TRUE(source->AddTensorWrapper(qnn::QnnTensorWrapper(
+      "quant_weight", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_UFIXED_POINT_8,
+      qnn::QnnQuantParamsWrapper::PerChannel(gsl::make_span(scales), gsl::make_span(offsets), /*axis=*/0),
+      std::vector<uint32_t>{2}, std::vector<uint8_t>{1, 2})));
+  qnn::QnnGraphWrapper graph_wrapper;
+  ASSERT_TRUE(source->MoveInternalWrappers(graph_wrapper).IsOK());
+  source.reset();
+
+  qnn::QnnModelWrapper first(ctx.MakeApiPtrs(), ctx.null_logger_, *ctx.backend_manager.Get(), graph_wrapper, settings);
+  qnn::QnnModelWrapper second(ctx.MakeApiPtrs(), ctx.null_logger_, *ctx.backend_manager.Get(), graph_wrapper, settings);
+  const auto& cached = graph_wrapper.tensors_map.at("quant_weight").GetQnnTensor();
+  const auto& first_tensor = first.GetQnnTensorWrapper("quant_weight").GetQnnTensor();
+  const auto& second_tensor = second.GetQnnTensorWrapper("quant_weight").GetQnnTensor();
+  const auto& first_qp = qnn::GetQnnTensorQParams(first_tensor);
+  const auto& second_qp = qnn::GetQnnTensorQParams(second_tensor);
+  const auto& cached_qp = qnn::GetQnnTensorQParams(cached);
+  ASSERT_EQ(first_qp.quantizationEncoding, QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET);
+  ASSERT_EQ(second_qp.quantizationEncoding, QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET);
+  ASSERT_EQ(cached_qp.quantizationEncoding, QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET);
+  ASSERT_NE(first_qp.axisScaleOffsetEncoding.scaleOffset, nullptr);
+  ASSERT_NE(second_qp.axisScaleOffsetEncoding.scaleOffset, nullptr);
+  ASSERT_NE(cached_qp.axisScaleOffsetEncoding.scaleOffset, nullptr);
+  ASSERT_EQ(first_qp.axisScaleOffsetEncoding.numScaleOffsets, scales.size());
+  ASSERT_EQ(second_qp.axisScaleOffsetEncoding.numScaleOffsets, scales.size());
+  ASSERT_EQ(cached_qp.axisScaleOffsetEncoding.numScaleOffsets, scales.size());
+  ASSERT_NE(qnn::GetQnnTensorDims(first_tensor), nullptr);
+  ASSERT_NE(qnn::GetQnnTensorDims(second_tensor), nullptr);
+  ASSERT_NE(qnn::GetQnnTensorDims(cached), nullptr);
+  EXPECT_NE(first_qp.axisScaleOffsetEncoding.scaleOffset, cached_qp.axisScaleOffsetEncoding.scaleOffset);
+  EXPECT_NE(first_qp.axisScaleOffsetEncoding.scaleOffset, second_qp.axisScaleOffsetEncoding.scaleOffset);
+  EXPECT_NE(qnn::GetQnnTensorDims(first_tensor), qnn::GetQnnTensorDims(cached));
+  EXPECT_NE(qnn::GetQnnTensorDims(first_tensor), qnn::GetQnnTensorDims(second_tensor));
+
+  first_qp.axisScaleOffsetEncoding.scaleOffset[0].scale = 9.0f;
+  first_qp.axisScaleOffsetEncoding.scaleOffset[0].offset = -99;
+  qnn::GetQnnTensorDims(first_tensor)[0] = 7u;
+  EXPECT_FLOAT_EQ(cached_qp.axisScaleOffsetEncoding.scaleOffset[0].scale, scales[0]);
+  EXPECT_EQ(cached_qp.axisScaleOffsetEncoding.scaleOffset[0].offset, offsets[0]);
+  EXPECT_FLOAT_EQ(second_qp.axisScaleOffsetEncoding.scaleOffset[0].scale, scales[0]);
+  EXPECT_EQ(second_qp.axisScaleOffsetEncoding.scaleOffset[0].offset, offsets[0]);
+  EXPECT_EQ(qnn::GetQnnTensorDims(cached)[0], 2u);
+  EXPECT_EQ(qnn::GetQnnTensorDims(second_tensor)[0], 2u);
+  EXPECT_EQ(qnn::GetQnnTensorClientBuf(first_tensor).data, qnn::GetQnnTensorClientBuf(cached).data);
+  EXPECT_EQ(qnn::GetQnnTensorClientBuf(second_tensor).data, qnn::GetQnnTensorClientBuf(cached).data);
+}
+
+TEST(QnnUnit_ModelWrapperTest, RecordHtpArchTranslationDependency_FirstDecisionPinsSourceAndExportsAllFields) {
+  for (const auto source_arch : {QNN_HTP_DEVICE_ARCH_NONE, QNN_HTP_DEVICE_ARCH_V79}) {
+    SCOPED_TRACE(std::to_string(source_arch));
+    QnnModelWrapperTestContext ctx;
+    qnn::ModelSettings settings{};
+    auto wrapper = ctx.CreateWrapper(settings);
+    AddCachedGraph(*wrapper);
+    ctx.backend_manager.HtpArch() = source_arch;
+    wrapper->RecordHtpArchTranslationDependency({"matmul", "MatMulNBits", "native BQ", QNN_HTP_DEVICE_ARCH_V81});
+    ctx.backend_manager.HtpArch() = QNN_HTP_DEVICE_ARCH_V81;
+    wrapper->RecordHtpArchTranslationDependency({"conv", "Conv", "native BQ", QNN_HTP_DEVICE_ARCH_V81});
+
+    qnn::QnnGraphWrapper graph_wrapper;
+    ASSERT_TRUE(wrapper->MoveInternalWrappers(graph_wrapper).IsOK());
+    wrapper.reset();
+    const auto& info = graph_wrapper.htp_arch_translation_info;
+    EXPECT_EQ(info.source_arch, source_arch);
+    ASSERT_EQ(info.dependencies.size(), 2u);
+    EXPECT_EQ(info.dependencies[0].node_name, "matmul");
+    EXPECT_EQ(info.dependencies[0].op_type, "MatMulNBits");
+    EXPECT_EQ(info.dependencies[0].feature, "native BQ");
+    EXPECT_EQ(info.dependencies[0].switch_arch, QNN_HTP_DEVICE_ARCH_V81);
+    EXPECT_EQ(info.dependencies[1].node_name, "conv");
+    EXPECT_EQ(info.dependencies[1].op_type, "Conv");
+    EXPECT_EQ(info.dependencies[1].feature, "native BQ");
+    EXPECT_EQ(info.dependencies[1].switch_arch, QNN_HTP_DEVICE_ARCH_V81);
+  }
+}
+
+TEST(QnnUnit_ModelWrapperTest, WarnHtpArchDependentSharedTranslations_MissingDependenciesOrTargets_NoWarnings) {
+  EXPECT_TRUE(CaptureSharedTranslationWarnings({}).empty());
+  std::vector<qnn::QnnGraphContext> contexts(1);
+  contexts[0].soc_targets.emplace_back();  // Unknown target alone must not produce a diagnostic.
+  contexts[0].qnn_graph_wrappers.emplace_back();
+  EXPECT_TRUE(CaptureSharedTranslationWarnings(contexts).empty());
+  contexts[0].soc_targets.clear();
+  contexts[0].qnn_graph_wrappers[0].htp_arch_translation_info.dependencies.push_back(
+      {"matmul", "MatMulNBits", "native BQ", QNN_HTP_DEVICE_ARCH_V81});
+  EXPECT_TRUE(CaptureSharedTranslationWarnings(contexts).empty());
+}
+
+TEST(QnnUnit_ModelWrapperTest, WarnHtpArchDependentSharedTranslations_ArchBoundaryAndUnknowns) {
+  const std::vector<std::tuple<QnnHtpDevice_Arch_t, QnnHtpDevice_Arch_t, QnnHtpDevice_Arch_t, bool>> cases = {
+      {QNN_HTP_DEVICE_ARCH_V79, QNN_HTP_DEVICE_ARCH_V75, QNN_HTP_DEVICE_ARCH_V81, false},
+      {QNN_HTP_DEVICE_ARCH_V81, QNN_HTP_DEVICE_ARCH_V81, QNN_HTP_DEVICE_ARCH_V81, false},
+      {QNN_HTP_DEVICE_ARCH_V79, QNN_HTP_DEVICE_ARCH_V81, QNN_HTP_DEVICE_ARCH_V81, true},
+      {QNN_HTP_DEVICE_ARCH_V81, QNN_HTP_DEVICE_ARCH_V79, QNN_HTP_DEVICE_ARCH_V81, true},
+      {QNN_HTP_DEVICE_ARCH_NONE, QNN_HTP_DEVICE_ARCH_V81, QNN_HTP_DEVICE_ARCH_V81, true},
+      {QNN_HTP_DEVICE_ARCH_V79, QNN_HTP_DEVICE_ARCH_NONE, QNN_HTP_DEVICE_ARCH_V81, true},
+      {QNN_HTP_DEVICE_ARCH_NONE, QNN_HTP_DEVICE_ARCH_NONE, QNN_HTP_DEVICE_ARCH_V81, true},
+      {QNN_HTP_DEVICE_ARCH_V79, QNN_HTP_DEVICE_ARCH_V75, QNN_HTP_DEVICE_ARCH_V79, true},
+      {QNN_HTP_DEVICE_ARCH_V81, QNN_HTP_DEVICE_ARCH_V79, QNN_HTP_DEVICE_ARCH_V79, false}};
+  for (const auto& [source_arch, target_arch, switch_arch, expect_warning] : cases) {
+    SCOPED_TRACE(std::to_string(source_arch) + " -> " + std::to_string(target_arch) +
+                 "; switch arch " + std::to_string(switch_arch));
+    std::vector<qnn::QnnGraphContext> contexts(1);
+    qnn::SocTarget_t target;
+    target.htp_arch = target_arch;
+    contexts[0].soc_targets.push_back(target);
+    auto& info = contexts[0].qnn_graph_wrappers.emplace_back().htp_arch_translation_info;
+    info.source_arch = source_arch;
+    info.dependencies.push_back({"matmul", "MatMulNBits", "native BQ", switch_arch});
+
+    const auto records = CaptureSharedTranslationWarnings(contexts);
+    if (!expect_warning) {
+      EXPECT_TRUE(records.empty());
+      continue;
+    }
+    ASSERT_EQ(records.size(), 1u);
+    EXPECT_EQ(records[0].first, ORT_LOGGING_LEVEL_WARNING);
+    EXPECT_NE(records[0].second.find("model 1 of 1"), std::string::npos);
+    EXPECT_NE(records[0].second.find("MatMulNBits node 'matmul' (native BQ"), std::string::npos);
+    EXPECT_NE(records[0].second.find("translation arch " + std::to_string(source_arch)), std::string::npos);
+    EXPECT_NE(records[0].second.find("affected target archs [" + std::to_string(target_arch) + "]"), std::string::npos);
+  }
+}
+
+TEST(QnnUnit_ModelWrapperTest, WarnHtpArchDependentSharedTranslations_DeduplicatesWithinEachAffectedSession) {
+  std::vector<qnn::QnnGraphContext> contexts(3);
+  qnn::SocTarget_t target;
+  target.htp_arch = QNN_HTP_DEVICE_ARCH_V79;
+  contexts[0].soc_targets.push_back(target);
+  auto& unaffected = contexts[0].qnn_graph_wrappers.emplace_back().htp_arch_translation_info;
+  unaffected.source_arch = QNN_HTP_DEVICE_ARCH_V75;
+  unaffected.dependencies.push_back({"matmul", "MatMulNBits", "native BQ", QNN_HTP_DEVICE_ARCH_V81});
+
+  for (const auto arch : {QNN_HTP_DEVICE_ARCH_V81, QNN_HTP_DEVICE_ARCH_V79,
+                          QNN_HTP_DEVICE_ARCH_V81, QNN_HTP_DEVICE_ARCH_NONE}) {
+    target.htp_arch = arch;
+    contexts[1].soc_targets.push_back(target);
+  }
+  for (int graph = 0; graph < 2; ++graph) {
+    auto& info = contexts[1].qnn_graph_wrappers.emplace_back().htp_arch_translation_info;
+    info.source_arch = QNN_HTP_DEVICE_ARCH_V79;
+    info.dependencies = {{"matmul", "MatMulNBits", "native BQ", QNN_HTP_DEVICE_ARCH_V81},
+                         {"conv", "Conv", "native BQ", QNN_HTP_DEVICE_ARCH_V81}};
+  }
+  target.htp_arch = QNN_HTP_DEVICE_ARCH_V79;
+  contexts[2].soc_targets.push_back(target);
+  auto& last = contexts[2].qnn_graph_wrappers.emplace_back().htp_arch_translation_info;
+  last.source_arch = QNN_HTP_DEVICE_ARCH_V81;
+  last.dependencies.push_back({"matmul", "MatMulNBits", "native BQ", QNN_HTP_DEVICE_ARCH_V81});
+
+  const auto records = CaptureSharedTranslationWarnings(contexts);
+  ASSERT_EQ(records.size(), 2u);
+  EXPECT_EQ(records[0].first, ORT_LOGGING_LEVEL_WARNING);
+  EXPECT_EQ(records[1].first, ORT_LOGGING_LEVEL_WARNING);
+  EXPECT_NE(records[0].second.find("model 2 of 3"), std::string::npos);
+  EXPECT_NE(records[1].second.find("model 3 of 3"), std::string::npos);
+  const std::string targets = "affected target archs [" + std::to_string(QNN_HTP_DEVICE_ARCH_NONE) + ", " +
+                              std::to_string(QNN_HTP_DEVICE_ARCH_V81) + "]";
+  EXPECT_NE(records[0].second.find(targets), std::string::npos);
+  for (const std::string choice : {"MatMulNBits node 'matmul'", "Conv node 'conv'"}) {
+    const auto position = records[0].second.find(choice);
+    ASSERT_NE(position, std::string::npos);
+    EXPECT_EQ(records[0].second.find(choice, position + choice.size()), std::string::npos);
+  }
+  EXPECT_NE(records[1].second.find("MatMulNBits node 'matmul'"), std::string::npos);
+}
+
+TEST(QnnUnit_ModelWrapperTest, QnnGraphContext_VectorGrowth_PreservesTargetsGraphsAndSettings) {
+  QnnModelWrapperTestContext ctx;
+  qnn::ModelSettings settings{};
+  std::vector<qnn::QnnGraphContext> contexts;
+  contexts.reserve(1);
+  for (uint32_t i = 0; i < 4; ++i) {
+    auto source = ctx.CreateWrapper(settings);
+    AddCachedGraph(*source);
+    qnn::QnnGraphContext context;
+    qnn::SocTarget_t target;
+    target.soc_model = i + 1;
+    target.htp_arch = QNN_HTP_DEVICE_ARCH_V73;
+    target.htp_graph_cfg.vtcm_size_in_mb = static_cast<int32_t>(i + 4);
+    target.htp_graph_cfg.htp_graph_finalization_opt_mode = qnn::HtpGraphFinalizationOptimizationMode::kMode3;
+    target.htp_graph_cfg.enable_htp_fp16_precision = true;
+    target.htp_graph_cfg.enable_htp_monolithic_lstm = true;
+    target.htp_graph_cfg.enable_htp_fp16_clamp_overflow = true;
+    target.htp_graph_cfg.enable_htp_matmul_lut = !ORT_QNN_HTP_MATMUL_LUT_SUPPORTED;
+    target.htp_graph_cfg.htp_num_cores = i + 2;
+    context.soc_targets.push_back(target);
+    target.htp_arch = QNN_HTP_DEVICE_ARCH_V81;
+    target.soc_model = i + 10;
+    target.htp_graph_cfg.vtcm_size_in_mb = static_cast<int32_t>(i + 8);
+    context.soc_targets.push_back(target);
+    context.model_settings.offload_graph_io_quantization = true;
+    context.model_settings.htp_shared_memory = true;
+    context.model_settings.htp_bf16_enable = true;
+    context.model_settings.enable_block_quant_weight_optimization = true;
+    context.model_settings.use_native_matmul = true;
+    context.model_settings.enable_htp_monolithic_lstm = true;
+    context.model_settings.op_affinity.SeedDefaultIfAbsent("MatMul", qnn::QnnBackendType::CPU);
+    context.qnn_graph_wrappers.emplace_back().graph_name = "g" + std::to_string(i);
+    ASSERT_TRUE(source->MoveInternalWrappers(context.qnn_graph_wrappers.back()).IsOK());
+    contexts.push_back(std::move(context));
+  }
+
+  ASSERT_EQ(contexts.size(), 4u);
+  for (size_t i = 0; i < contexts.size(); ++i) {
+    const auto& context = contexts[i];
+    ASSERT_EQ(context.soc_targets.size(), 2u);
+    EXPECT_EQ(context.soc_targets[0].soc_model, i + 1);
+    EXPECT_EQ(context.soc_targets[0].htp_arch, QNN_HTP_DEVICE_ARCH_V73);
+    EXPECT_EQ(context.soc_targets[0].htp_graph_cfg.vtcm_size_in_mb, i + 4);
+    EXPECT_EQ(context.soc_targets[1].soc_model, i + 10);
+    EXPECT_EQ(context.soc_targets[1].htp_arch, QNN_HTP_DEVICE_ARCH_V81);
+    EXPECT_EQ(context.soc_targets[1].htp_graph_cfg.vtcm_size_in_mb, i + 8);
+    for (const auto& target : context.soc_targets) {
+      EXPECT_EQ(target.htp_graph_cfg.htp_graph_finalization_opt_mode, qnn::HtpGraphFinalizationOptimizationMode::kMode3);
+      EXPECT_TRUE(target.htp_graph_cfg.enable_htp_fp16_precision);
+      EXPECT_TRUE(target.htp_graph_cfg.enable_htp_monolithic_lstm);
+      EXPECT_TRUE(target.htp_graph_cfg.enable_htp_fp16_clamp_overflow);
+      EXPECT_EQ(target.htp_graph_cfg.enable_htp_matmul_lut, !ORT_QNN_HTP_MATMUL_LUT_SUPPORTED);
+      EXPECT_EQ(target.htp_graph_cfg.htp_num_cores, i + 2);
+    }
+    EXPECT_TRUE(context.model_settings.offload_graph_io_quantization);
+    EXPECT_TRUE(context.model_settings.htp_shared_memory);
+    EXPECT_TRUE(context.model_settings.htp_bf16_enable);
+    EXPECT_TRUE(context.model_settings.enable_block_quant_weight_optimization);
+    EXPECT_TRUE(context.model_settings.use_native_matmul);
+    EXPECT_TRUE(context.model_settings.enable_htp_monolithic_lstm);
+    EXPECT_FALSE(context.model_settings.op_affinity.Evaluate("MatMul", qnn::QnnBackendType::HTP).IsOK());
+    ASSERT_EQ(context.qnn_graph_wrappers.size(), 1u);
+    const auto& graph = context.qnn_graph_wrappers[0];
+    EXPECT_EQ(graph.graph_name, "g" + std::to_string(i));
+    EXPECT_EQ(graph.ops.size(), 1u);
+    EXPECT_EQ(graph.tensors_map.size(), 3u);
+    EXPECT_EQ(graph.params_map.size(), 1u);
+    const auto& tensor = graph.tensors_map.at("in0");
+    EXPECT_EQ(qnn::GetQnnTensorName(tensor.GetQnnTensor()), tensor.GetName().c_str());
+    EXPECT_STREQ(qnn::GetQnnTensorName(tensor.GetQnnTensor()), "in0");
+  }
 }
 
 }  // namespace test

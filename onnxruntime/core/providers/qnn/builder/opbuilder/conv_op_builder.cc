@@ -469,12 +469,14 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     // Restricted to the bias-less case (num_inputs < 3): with a bias present the BW_FLOAT_BLOCK path also
     // dequantizes the INT32 bias to FP16 (see ProcessConv2D3DBias), which the native kernel does not expect.
     const bool is_supported_native_bq = num_inputs < 3 &&
-                                        bq::IsHTPSupportedNativeBQ(qnn_model_wrapper.GetHtpArch(),
+                                        bq::IsHTPSupportedNativeBQ(qnn_model_wrapper,
+                                                                   node_unit,
                                                                    act_dtype,
                                                                    bitwidth,
                                                                    static_cast<uint32_t>(block_size),
                                                                    static_cast<uint32_t>(OC),
-                                                                   gsl::span<const float>(offsets_qnn));
+                                                                   gsl::span<const float>(offsets_qnn),
+                                                                   !do_op_validation);
 
     QnnQuantParamsWrapper bq_quant_params;
     if (is_supported_native_bq) {

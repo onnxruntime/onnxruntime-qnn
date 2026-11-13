@@ -47,12 +47,72 @@ struct ModelSettings {
   OpAffinityMap op_affinity;  // default-constructed = unconfigured; always safe to query.
 };
 
+// Describes a translation decision whose condition is arch >= switch_arch.
+// switch_arch is a decision boundary, not the graph's minimum supported arch.
+struct HtpArchTranslationDependency {
+  std::string node_name;
+  std::string op_type;
+  std::string feature;
+  QnnHtpDevice_Arch_t switch_arch;
+};
+
+// Records every translation decision throughout a QnnModelWrapper instance lifetime.
+// source_arch is the HTP arch used during translations.
+struct HtpArchTranslationInfo {
+  QnnHtpDevice_Arch_t source_arch = QNN_HTP_DEVICE_ARCH_NONE;
+  std::vector<HtpArchTranslationDependency> dependencies;
+};
+
+// A simple struct recording the translation results of each partitioned OrtGraph.
+// Expected to only be used in multi-SoC + weight sharing usage.
+struct QnnGraphWrapper {
+  std::string graph_name;
+  // QNN API related.
+  std::vector<QnnOpProperty> ops;
+  std::unordered_map<std::string, QnnTensorWrapper> tensors_map;
+  std::unordered_map<std::string, QnnParamWrapper> params_map;
+  // Graph related.
+  GraphInputOutputInfo graph_inputs;
+  GraphInputOutputInfo graph_outputs;
+  // Translation related.
+  HtpArchTranslationInfo htp_arch_translation_info;
+
+  QnnGraphWrapper() = default;
+
+  // Move-only, with the copy deleted explicitly rather than left to the members. The members are
+  // already move-only in practice (QnnOpProperty, QnnTensorWrapper and QnnParamWrapper all delete
+  // their copies), but std::vector and std::unordered_map declare copy constructors unconditionally,
+  // so is_copy_constructible_v<QnnGraphWrapper> answers true while an actual copy is ill-formed.
+  // std::vector's reallocation trusts that trait -- is_nothrow_move_constructible_v is false here,
+  // since unordered_map's move is potentially-throwing -- and would pick the copy path, failing to
+  // instantiate. Deleting the copy keeps the trait honest; re-composition clones via QnnModelWrapper.
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnGraphWrapper);
+  QnnGraphWrapper(QnnGraphWrapper&&) = default;
+  QnnGraphWrapper& operator=(QnnGraphWrapper&&) = default;
+};
+
+// A simple struct carrying necessary info of each session model to defer QNN composition/finalization to later session.
+// Expected to only be used in multi-SoC + weight sharing usage.
+struct QnnGraphContext {
+  std::vector<SocTarget_t> soc_targets;
+  std::vector<qnn::QnnGraphWrapper> qnn_graph_wrappers;
+  ModelSettings model_settings;
+
+  QnnGraphContext() = default;
+
+  // Explicitly disable copying so vector reallocation moves the context even when
+  // ModelSettings has a potentially-throwing move constructor.
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnGraphContext);
+  QnnGraphContext(QnnGraphContext&&) = default;
+  QnnGraphContext& operator=(QnnGraphContext&&) = default;
+};
+
 class QnnModelWrapper {
   // Allow BF16ConversionGuard to access private RestoreFP32AfterValidation method
   friend class BF16ConversionGuard;
 
  public:
-  QnnModelWrapper(const OrtGraph& ort_graph,
+  QnnModelWrapper(const OrtGraph* ort_graph,
                   const ApiPtrs& api_ptrs,
                   const Ort::Logger& logger,
                   const QnnBackendManager& qnn_backend_manager,
@@ -62,6 +122,16 @@ class QnnModelWrapper {
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
                   OpTraceCollector* op_trace_collector = nullptr,
                   bool is_post_layout_transform = false);
+
+  // Re-compose a graph that was already translated from ONNX into `qnn_graph_wrapper`. The graph
+  // wrapper is cloned, not consumed, so it can be composed again onto another QNN context (one per
+  // SoC of a multi-SoC context binary); it must outlive this QnnModelWrapper.
+  QnnModelWrapper(const ApiPtrs& api_ptrs,
+                  const Ort::Logger& logger,
+                  const QnnBackendManager& qnn_backend_manager,
+                  const QnnGraphWrapper& qnn_graph_wrapper,
+                  const ModelSettings& model_settings);
+
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
   ~QnnModelWrapper() = default;
@@ -146,7 +216,7 @@ class QnnModelWrapper {
   }
 
   Ort::Status GetInitializerTensors(gsl::span<const OrtValueInfo*> initializers) const {
-    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetInitializers(&ort_graph_,
+    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetInitializers(ort_graph_,
                                                                        initializers.data(),
                                                                        initializers.size()));
     return Ort::Status();
@@ -162,7 +232,7 @@ class QnnModelWrapper {
         return Ort::Status();
       }
     }
-    return FindInitializerInGraph(&ort_graph_, tensor_name, found_value_info);
+    return FindInitializerInGraph(ort_graph_, tensor_name, found_value_info);
   }
 
   // Push the given branch graph onto the scope stack. While pushed, FindInitializer (and
@@ -395,7 +465,7 @@ class QnnModelWrapper {
 
   bool IsPostLayoutTransform() const { return is_post_layout_transform_; }
 
-  const OrtGraph& GetOrtGraph() const { return ort_graph_; }
+  const OrtGraph& GetOrtGraph() const { return *ort_graph_; }
 
   const Ort::Logger& GetLogger() const { return logger_; }
 
@@ -496,6 +566,20 @@ class QnnModelWrapper {
     return false;
   }
 
+  // Provide explicit function to set resolved tensor name, especially for the call flow in QnnGraphWrapper usage.
+  void ResolveTensorNameOverride();
+
+  // Moves everything this wrapper composed into `qnn_graph_wrapper` so the graph can later be
+  // re-composed onto one or more QNN contexts. Resolves the tensor name overrides into the exported
+  // tensors, then populates every field the QnnGraphWrapper ctor reads back except `graph_name` and
+  // `htp_graph_configs`, which the caller owns.
+  // Expected to be used only for caching wrappers for multi-SoC + weight sharing usage.
+  Ort::Status MoveInternalWrappers(QnnGraphWrapper& qnn_graph_wrapper);
+
+  // Record HTP arch dependent op translation for later query.
+  // Expect called during actual compose graph, not support validation.
+  void RecordHtpArchTranslationDependency(HtpArchTranslationDependency dependency);
+
  private:
   // Searches a single OrtGraph's initializer table for an entry with `tensor_name`.
   // Returns OK on hit (with `found_value_info` populated) and an EP_FAIL on miss.
@@ -585,7 +669,7 @@ class QnnModelWrapper {
 
   const std::string* GetTensorNameOverride(const std::string& internal) const;
 
-  const OrtGraph& ort_graph_;
+  const OrtGraph* ort_graph_;
   const Ort::Logger& logger_;
   const QnnBackendManager& qnn_backend_manager_;
   Qnn_GraphHandle_t graph_ = nullptr;
@@ -628,6 +712,14 @@ class QnnModelWrapper {
 
   // Non-owning. Non-null only while a fusion candidate is being evaluated.
   FusionValidationGuard* active_fusion_validation_guard_ = nullptr;
+
+  // Info recorded during op translation, used to track HTP arch dependent translation.
+  HtpArchTranslationInfo htp_arch_translation_info_;
+
+  // True when the wrappers below were cloned from a cached QnnGraphWrapper rather than translated
+  // from ONNX. Such clones accumulate per-graph state (QNN-assigned tensor IDs, data type
+  // conversions), so they must never be exported back via MoveInternalWrappers.
+  bool cloned_from_graph_wrapper_ = false;
 };  // QnnModelWrapper
 
 template <typename T>
@@ -730,6 +822,13 @@ inline void AddHardSwishNeuronParams(QnnModelWrapper& qnn_model_wrapper,
   param_tensor_names.push_back(operation_param.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
 }
+
+namespace utils {
+
+void WarnHtpArchDependentSharedTranslations(const std::vector<qnn::QnnGraphContext>& qnn_graph_contexts,
+                                            const Ort::Logger& logger);
+
+}  // namespace utils
 
 }  // namespace qnn
 }  // namespace onnxruntime

@@ -668,6 +668,74 @@ TEST(QnnUnit_QuantParamsWrapperTest,
   EXPECT_FLOAT_EQ(dst.Get().bwFloatBlockEncoding.floatScaleOffset[1].offset, 0.1f);
 }
 
+TEST(QnnUnit_QuantParamsWrapperTest, InitFromRaw_BwFloatBlockEncoding_RepeatedCopiesPreserveAllEntries) {
+  constexpr size_t kNumScaleOffsets = 64;
+  std::vector<uint32_t> block_sizes{16, 1};
+  std::vector<Qnn_FloatScaleOffset_t> expected(kNumScaleOffsets);
+  for (size_t i = 0; i < expected.size(); ++i) {
+    expected[i].scale = static_cast<float>(i + 1) * 0.125f;
+    expected[i].offset = -static_cast<float>(i) * 0.25f;
+  }
+
+  QnnQuantParamsWrapper copied_twice;
+  QnnQuantParamsWrapper assigned_twice;
+  {
+    std::vector<Qnn_FloatScaleOffset_t> source_data = expected;
+    Qnn_QuantizeParams_t raw = QNN_QUANTIZE_PARAMS_INIT;
+    raw.encodingDefinition = QNN_DEFINITION_DEFINED;
+    raw.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK;
+    raw.bwFloatBlockEncoding.bitwidth = 4u;
+    raw.bwFloatBlockEncoding.blockSize = block_sizes.data();
+    raw.bwFloatBlockEncoding.floatScaleOffset = source_data.data();
+
+    QnnQuantParamsWrapper initialized;
+    ASSERT_TRUE(initialized.Init(raw, source_data.size(), block_sizes.size()).IsOK());
+
+    // Tensor construction copies the initialized params; graph cloning copies them again.
+    // Init must retain the entry count so the second copy allocates all 64 entries.
+    QnnQuantParamsWrapper first_copy(initialized);
+    copied_twice = first_copy.Copy();
+
+    QnnQuantParamsWrapper first_assigned;
+    first_assigned = initialized;
+    assigned_twice = first_assigned;
+
+    const auto& initialized_encoding = initialized.Get().bwFloatBlockEncoding;
+    const auto& first_copy_encoding = first_copy.Get().bwFloatBlockEncoding;
+    const auto& first_assigned_encoding = first_assigned.Get().bwFloatBlockEncoding;
+    const auto& copied_encoding = copied_twice.Get().bwFloatBlockEncoding;
+    const auto& assigned_encoding = assigned_twice.Get().bwFloatBlockEncoding;
+    EXPECT_NE(initialized_encoding.floatScaleOffset, source_data.data());
+    EXPECT_NE(initialized_encoding.blockSize, block_sizes.data());
+    EXPECT_NE(first_copy_encoding.floatScaleOffset, initialized_encoding.floatScaleOffset);
+    EXPECT_NE(first_copy_encoding.blockSize, initialized_encoding.blockSize);
+    EXPECT_NE(copied_encoding.floatScaleOffset, first_copy_encoding.floatScaleOffset);
+    EXPECT_NE(copied_encoding.blockSize, first_copy_encoding.blockSize);
+    EXPECT_NE(first_assigned_encoding.floatScaleOffset, initialized_encoding.floatScaleOffset);
+    EXPECT_NE(first_assigned_encoding.blockSize, initialized_encoding.blockSize);
+    EXPECT_NE(assigned_encoding.floatScaleOffset, first_assigned_encoding.floatScaleOffset);
+    EXPECT_NE(assigned_encoding.blockSize, first_assigned_encoding.blockSize);
+  }
+
+  // Both final copies must own their data after the source wrappers are destroyed.
+  for (const QnnQuantParamsWrapper* wrapper : {&copied_twice, &assigned_twice}) {
+    SCOPED_TRACE(wrapper == &copied_twice ? "copy constructor" : "copy assignment");
+    EXPECT_EQ(wrapper->Get().encodingDefinition, QNN_DEFINITION_DEFINED);
+    EXPECT_EQ(wrapper->Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK);
+    const auto& encoding = wrapper->Get().bwFloatBlockEncoding;
+    EXPECT_EQ(encoding.bitwidth, 4u);
+    ASSERT_NE(encoding.blockSize, nullptr);
+    ASSERT_NE(encoding.floatScaleOffset, nullptr);
+    for (size_t i = 0; i < block_sizes.size(); ++i) {
+      EXPECT_EQ(encoding.blockSize[i], block_sizes[i]) << "dimension " << i;
+    }
+    for (size_t i = 0; i < expected.size(); ++i) {
+      EXPECT_FLOAT_EQ(encoding.floatScaleOffset[i].scale, expected[i].scale) << "block " << i;
+      EXPECT_FLOAT_EQ(encoding.floatScaleOffset[i].offset, expected[i].offset) << "block " << i;
+    }
+  }
+}
+
 TEST(QnnUnit_QuantParamsWrapperTest, InitFromRaw_UnsupportedEncoding_ReturnsError) {
   Qnn_QuantizeParams_t raw = QNN_QUANTIZE_PARAMS_INIT;
   raw.encodingDefinition = QNN_DEFINITION_DEFINED;
@@ -716,7 +784,7 @@ struct PerTensorIODefFixture {
     g_mock_init_reg.clear();
     SetupMockInitRegistryStubs(ctx);
     ApiPtrs api_ptrs = ctx.MakeApiPtrs();
-    const OrtGraph& fake_graph = *reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
+    const OrtGraph* fake_graph = reinterpret_cast<const OrtGraph*>(&fake_graph_sentinel_);
     backend_manager.BackendType() = qnn::QnnBackendType::HTP;
     wrapper = std::make_unique<qnn::QnnModelWrapper>(
         fake_graph, api_ptrs, null_logger_,
