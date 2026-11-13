@@ -196,7 +196,7 @@ static void RunCastLikeOpTest(const std::vector<int64_t>& shape,
                   EPVerificationParams{expected_ep_assignment});
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
                                ONNX_NAMESPACE::TensorProto_DataType dst_type,
                                ExpectedEPNodeAssignment expected_ep_assignment) {
@@ -227,7 +227,7 @@ static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
 
   RunQnnModelTest(testcase, provider_options, /* opset */ 13, EPVerificationParams{expected_ep_assignment});
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 //
 // CPU tests:
@@ -263,7 +263,7 @@ TEST_F(QnnCPUBackendTests, TestCastLikeFloatToInt32) {
   RunCastLikeOpTest<float, int32_t>({2, 3}, ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -274,10 +274,10 @@ TEST_F(QnnHTPBackendTests, TestCastInt32ToFloatHTP) {
                          "htp", false);
 }
 
-// Cast uint8_t to float on HTP
-// Fails with QNN SDK 2.35.0:
-// value pair (13, 1.00000012) at index #0 don't match, which is -12 from 13
-TEST_F(QnnHTPBackendTests, DISABLED_TestCastUInt8ToFloatHTP) {
+// Cast uint8_t to float on HTP.
+// Fixed by decomposing into Cast(uint8->int32) -> Cast(int32->float): HTP treats UINT_8 as
+// boolean when the output is a float type, but Cast(uint8->int32) produces correct integers.
+TEST_F(QnnHTPBackendTests, TestCastUInt8ToFloatHTP) {
   RunCastOpTest<uint8_t>({3, 3}, ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT, ExpectedEPNodeAssignment::All,
                          "htp", false);
 }
@@ -387,9 +387,9 @@ TEST_F(QnnHTPBackendTests, TestCastLikeInt64ToInt32HTP) {
 TEST_F(QnnHTPBackendTests, TestCastLikeFloatToBoolHTP) {
   RunCastLikeOpTest<float, bool>({3, 3}, ExpectedEPNodeAssignment::All, "htp");
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 //
 // GPU tests:
 //
@@ -426,7 +426,7 @@ TEST_F(QnnGPUBackendTests, DISABLED_TestCastInt32ToInt64) {
                          ExpectedEPNodeAssignment::All, "gpu");
 }
 
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime

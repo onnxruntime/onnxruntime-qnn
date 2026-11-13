@@ -25,6 +25,7 @@ class BF16ConversionGuard;
 class OpTraceCollector;
 // Prevent QnnBackendManager change triggering op builder rebuild on incremental build.
 class QnnBackendManager;
+class QnnGraphEmitter;
 
 // Stores information about an ONNX input or output tensor.
 // Filled out by QnnModelWrapper::GetTensorInfo()
@@ -69,7 +70,8 @@ class QnnModelWrapper {
 
   QnnHtpDevice_Arch_t GetHtpArch() const;
 
-  bool CreateQnnGraph(const Qnn_ContextHandle_t& context,
+  bool CreateQnnGraph(QnnGraphEmitter& graph_emitter,
+                      const Qnn_ContextHandle_t& context,
                       const std::string& graph_name,
                       const QnnGraph_Config_t** graph_configs = nullptr);
 
@@ -81,6 +83,25 @@ class QnnModelWrapper {
 
   // Sets the QNN tensor memory type based on model settings and whether the tensor is a graph input/output.
   void SetTensorMemTypeFromSettings(QnnTensorWrapper& tensor_wrapper, const std::string& tensor_name);
+
+  // Rolls back tensor and parameter registrations from a rejected fusion
+  // validation attempt. Does not restore changes to existing wrappers.
+  class FusionValidationGuard {
+   public:
+    explicit FusionValidationGuard(QnnModelWrapper& wrapper);
+    ~FusionValidationGuard() noexcept;
+    ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(FusionValidationGuard);
+
+    void Commit() noexcept { committed_ = true; }
+
+   private:
+    friend class QnnModelWrapper;
+
+    QnnModelWrapper& wrapper_;
+    std::vector<std::string> tensor_names_;
+    std::vector<std::string> param_names_;
+    bool committed_ = false;
+  };
 
   // Add to internal tensor wrapper table
   bool AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper);
@@ -604,6 +625,9 @@ class QnnModelWrapper {
 
   // A flag for model wrapper users (e.g., op builders, node group fusions) to know whether pre- or post-layout transform.
   bool is_post_layout_transform_ = false;
+
+  // Non-owning. Non-null only while a fusion candidate is being evaluated.
+  FusionValidationGuard* active_fusion_validation_guard_ = nullptr;
 };  // QnnModelWrapper
 
 template <typename T>

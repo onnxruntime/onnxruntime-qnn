@@ -2297,6 +2297,38 @@ static Ort::Status RequantizeBiasIfNeeded(QnnModelWrapper& qnn_model_wrapper,
       weights_scales, activation_scale, bias_info.qnn_data_type,
       new_bias_data, new_scales, new_offsets, axis_opt));
 
+  // Widening activation can saturate bias. Channel slicing requires an outermost channel axis.
+  if (!axis_opt.has_value() || axis_opt.value() == 0) {
+    const size_t num_elems = ShapeSizeCalc(bias_info.shape, 0, bias_info.shape.size());
+    if (num_elems > 0) {
+      std::vector<float> original_float(num_elems);
+      RETURN_IF_ERROR(DequantizePerChannel(original_bias_data, bias_info.shape, current_scales,
+                                           current_offsets, original_float, bias_info.qnn_data_type,
+                                           axis_opt));
+      std::vector<float> requantized_float(num_elems);
+      RETURN_IF_ERROR(DequantizePerChannel(new_bias_data, bias_info.shape, new_scales, new_offsets,
+                                           requantized_float, bias_info.qnn_data_type, axis_opt));
+
+      const size_t new_num_channels = new_scales.size();
+      const size_t channel_size = new_num_channels > 0 ? num_elems / new_num_channels : num_elems;
+      size_t clipped = 0;
+      for (size_t i = 0; i < num_elems; ++i) {
+        const size_t channel = (new_num_channels <= 1 || channel_size == 0) ? 0 : i / channel_size;
+        const float scale = new_scales[std::min(channel, new_num_channels - 1)];
+        if (std::abs(requantized_float[i] - original_float[i]) > 0.5f * scale) {
+          ++clipped;
+        }
+      }
+      if (clipped > 0) {
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+                    ("Requantized bias " + bias_def.name + " clipped " + std::to_string(clipped) +
+                     " of " + std::to_string(num_elems) +
+                     " elements: the target scale cannot represent the bias range.")
+                        .c_str());
+      }
+    }
+  }
+
   QnnQuantParamsWrapper new_quant_params = (new_scales.size() == 1)
                                                ? QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0])
                                                : QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, bias_quant_axis);

@@ -55,6 +55,17 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     std::string padding_mode = node_helper.Get("padding_mode", "zeros");
     RETURN_IF_NOT(utils::ArrayHasString(gridsample_supported_padding_modes, padding_mode),
                   ("GridSample does not support padding_mode " + padding_mode).c_str());
+
+    // QNN HTP supports rank <= 5 for 8/16-bit fixed-point GridSample, rank <= 4 for float.
+    TensorInfo input_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+    const bool is_fixed_point = utils::IsQuant8bit(input_info.qnn_data_type) ||
+                                utils::IsQuant16bit(input_info.qnn_data_type);
+    const size_t max_rank = is_fixed_point ? 5 : 4;
+    RETURN_IF(input_info.shape.size() > max_rank,
+              ("QNN EP does not support GridSample with input rank > " + std::to_string(max_rank) +
+               (is_fixed_point ? " (fixed-point)." : " (floating-point)."))
+                  .c_str());
   }
 
   const auto qnn_backend_type = qnn_model_wrapper.GetQnnBackendType();
@@ -471,6 +482,61 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
       }
     }
 #endif
+  }
+
+  // Work around slow HTP GELU on channels-first rank-3 tensors after layout propagation.
+  // TODO: Revisit/remove this workaround when HTP rank-3 GELU layout performance is fixed.
+  // Match only the observed post-layout GELU -> Transpose pattern. Move that transpose before
+  // a rank-2 view that preserves the channel width; the added inverse transpose can cancel with
+  // the original consumer during QNN optimization.
+  if (op_type == "Gelu" && qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
+      qnn_model_wrapper.IsPostLayoutTransform() && node_unit.UnitType() == OrtNodeUnit::Type::SingleNode) {
+    TensorInfo input_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+    if (input_info.shape.size() == 3 &&
+        (input_info.qnn_data_type == QNN_DATATYPE_FLOAT_32 || input_info.qnn_data_type == QNN_DATATYPE_FLOAT_16)) {
+      const auto& shape = input_info.shape;
+      const auto outputs = Ort::ConstNode(&node_unit.GetNode()).GetOutputs();
+      const auto consumers = outputs[0].GetConsumers();
+      if (consumers.size() == 1 && consumers[0].node != nullptr &&
+          Ort::ConstNode(consumers[0].node).GetOperatorType() == "Transpose") {
+        const auto perm = OrtNodeAttrHelper(*consumers[0].node).Get("perm", std::vector<int64_t>{});
+        const std::string& output_name = node_unit.Outputs()[0].name;
+        if (perm == std::vector<int64_t>{0, 2, 1} && !qnn_model_wrapper.IsGraphOutput(output_name)) {
+          const std::vector<uint32_t> view_shape{shape[0], shape[2], shape[1]};
+          const uint64_t rows = static_cast<uint64_t>(view_shape[0]) * view_shape[1];
+          if (rows > 0 && rows <= std::numeric_limits<uint32_t>::max() && view_shape[2] > 0) {
+            const std::vector<uint32_t> flat_shape{static_cast<uint32_t>(rows), view_shape[2]};
+            auto& names = utils::UniqueNameGenerator();
+            const std::string view_input = names.New(node_unit.Name() + "_gelu_channels_last");
+            const std::string flat_input = names.New(node_unit.Name() + "_gelu_flat_input");
+            const std::string flat_output = names.New(node_unit.Name() + "_gelu_flat_output");
+            const std::string view_output = names.New(node_unit.Name() + "_gelu_channels_last_output");
+            RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), input_names[0], view_input,
+                                                               shape, {0, 2, 1}, view_shape, input_info.qnn_data_type,
+                                                               input_info.quant_param, do_op_validation));
+            RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(view_input, flat_input, view_shape, flat_shape,
+                                                             input_info.qnn_data_type, input_info.quant_param,
+                                                             do_op_validation));
+            QnnTensorWrapper flat_output_tensor(flat_output, QNN_TENSOR_TYPE_NATIVE, input_info.qnn_data_type,
+                                                input_info.quant_param.Copy(), std::vector<uint32_t>(flat_shape));
+            RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(flat_output_tensor)),
+                          "Failed to add rank-2 GELU output tensor.");
+            RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(names.New(node_unit), QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                          QNN_OP_GELU, {flat_input}, {flat_output}, {}, do_op_validation),
+                          "Failed to add rank-2 GELU node.");
+            RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(flat_output, view_output, flat_shape, view_shape,
+                                                             input_info.qnn_data_type, input_info.quant_param,
+                                                             do_op_validation, false, false));
+            RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), view_output, output_name,
+                                                               view_shape, {0, 2, 1}, shape, input_info.qnn_data_type,
+                                                               input_info.quant_param, do_op_validation, false,
+                                                               false));
+            return Ort::Status();
+          }
+        }
+      }
+    }
   }
 
   std::vector<std::string> param_tensor_names;

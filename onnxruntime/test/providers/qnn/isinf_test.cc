@@ -91,7 +91,7 @@ TEST_F(QnnCPUBackendTests, IsInfDetectNegativeOnly) {
                       0.0f);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // IsInf is intentionally declined on the HTP backend: the only registered HTP IsInf kernel
 // is fp16 crouton-tiled with no TCM/flat fallback, so QnnHtp graphFinalize fails with error
@@ -113,7 +113,7 @@ TEST_F(QnnHTPBackendTests, IsInfMix2D) {
                       true);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

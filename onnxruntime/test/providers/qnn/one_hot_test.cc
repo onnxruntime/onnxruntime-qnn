@@ -147,7 +147,7 @@ TEST_F(QnnCPUBackendTests, OneHot_DynamicDepth_Unsupported) {
 // HTP and GPU backend tests — run on Linux, ARM64 Windows
 //
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, OneHot_FP32_Axis_Default) {
   RunOneHotTest(
@@ -232,13 +232,13 @@ TEST_F(QnnHTPBackendTests, OneHot_QDQ_U8_Axis1) {
       ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 //
 // BFloat16 and GPU tests — ARM64 Windows only
 //
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 static void RunOneHotHTPBF16Test(
     const TestInputDef<int64_t>& indices_def,
@@ -279,7 +279,7 @@ TEST_F(QnnHTPBackendTests, OneHot_BF16_Axis0) {
       ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 }  // namespace test
 }  // namespace onnxruntime

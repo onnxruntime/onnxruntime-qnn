@@ -154,7 +154,7 @@ TEST_F(QnnCPUBackendTests, AveragePoolRank3AutopadSameLower) {
                        ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -331,9 +331,9 @@ TEST_F(QnnHTPBackendTests, AveragePoolRank3AutoPadSameLowerU8) {
                                    ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 //
 // GPU tests:
 //
@@ -384,7 +384,7 @@ TEST_F(QnnGPUBackendTests, AveragePool_AutopadSameLower) {
                        ExpectedEPNodeAssignment::All, "gpu");
 }
 
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime

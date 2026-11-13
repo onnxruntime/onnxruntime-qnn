@@ -402,7 +402,7 @@ TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset18_Rank1) {
                        ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Test creates a graph with a ReduceSum node, and checks that all nodes are supported by the QNN EP
 // HTP backend with FP16 precision, and that the inference results match the CPU EP results.
@@ -911,7 +911,7 @@ TEST_F(QnnHTPBackendTests, ReduceLogSumExpOpset18_FP16_LargeInput) {
                        true);  // enable_fp16
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 static void RunReduceLogSumExpHTPBF16Test(const TestInputDef<float>& input_def,
                                           const std::vector<int64_t>& axes,
@@ -945,9 +945,9 @@ TEST_F(QnnHTPBackendTests, ReduceLogSumExp_HTP_BF16_KeepDims) {
                                 ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 
