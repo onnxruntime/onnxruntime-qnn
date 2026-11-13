@@ -229,13 +229,9 @@ QnnProfilingScope QnnBackendProfilingManager::AcquireProfilingScope(
       // ORT operation.
       return QnnProfilingScope{};
     }
-    if (!has_active_ort_consumer) {
-      // Provider-only collection has no ORT event ownership to isolate. It may use the shared
-      // handle without the profiler-owned lock because no ORT JSON event can be mixed with it.
-      return QnnProfilingScope(profile_handle_);
-    }
   }
 
+  // QNN operations reset the shared handle's events; hold the lock through extraction.
   std::unique_lock<std::recursive_mutex> lock(profile_handle_mutex_);
   return QnnProfilingScope(std::move(lock), profile_handle_);
 }
@@ -313,19 +309,9 @@ Ort::Status QnnBackendProfilingManager::CreateGraphProfilingScope(
     return Ort::Status();
   }
 
-  const bool has_active_ort_consumer = HasActiveOrtProfilingConsumer();
-  if (!has_active_ort_consumer) {
-    // Provider-only execution has no ORT event ownership to isolate, so it uses the profile handle
-    // directly and records only the metadata needed by provider-output extraction.
-    profiling_scope = QnnProfilingScope(profile_handle_);
-  } else {
-    // Work without a current ORT scope is excluded from ORT JSON. It remains eligible for a
-    // configured provider sink, in which case scope acquisition serializes shared-handle access.
-    QnnProfilingScope background_profiling_scope = AcquireProfilingScope(false, true);
-    if (!background_profiling_scope.Active()) {
-      return Ort::Status();
-    }
-    profiling_scope = std::move(background_profiling_scope);
+  profiling_scope = AcquireProfilingScope(false);
+  if (!profiling_scope.Active()) {
+    return Ort::Status();
   }
   InitializeProfilingInfo(profiling_info, graph_name, ort_profiling_operation, method_type,
                           ort_profiler, profiling_scope.Active());
@@ -354,10 +340,7 @@ Ort::Status QnnBackendProfilingManager::SetProfilingLevelETW(ProfilingLevel prof
 
 Ort::Status QnnBackendProfilingManager::ExtractBackendProfilingInfo(profile::ProfilingInfo& profiling_info,
                                                                     const Ort::Logger& logger) {
-  std::unique_lock<std::recursive_mutex> lock(profile_handle_mutex_, std::defer_lock);
-  if (profiling_info.ort_profiler != nullptr || HasActiveOrtProfilingConsumer()) {
-    lock.lock();
-  }
+  std::lock_guard<std::recursive_mutex> lock(profile_handle_mutex_);
   if (merged_profiling_level_ == ProfilingLevel::OFF ||
       merged_profiling_level_ == ProfilingLevel::INVALID) {
     return Ort::Status();

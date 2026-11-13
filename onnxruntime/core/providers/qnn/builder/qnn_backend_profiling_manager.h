@@ -22,12 +22,10 @@ namespace qnn {
 
 class QnnSerializerConfig;
 
-// Holds the manager-global QAIRT profiling lock across an ORT-attributed operation.
+// Holds the manager-global QAIRT profiling lock across an operation and its extraction.
 class QnnProfilingScope {
  public:
   QnnProfilingScope() = default;
-  explicit QnnProfilingScope(Qnn_ProfileHandle_t profile_handle)
-      : profile_handle_(profile_handle) {}
   QnnProfilingScope(std::unique_lock<std::recursive_mutex>&& lock,
                     Qnn_ProfileHandle_t profile_handle)
       : lock_(std::move(lock)),
