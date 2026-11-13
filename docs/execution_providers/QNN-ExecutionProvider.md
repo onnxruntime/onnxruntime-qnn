@@ -752,7 +752,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
 |com.microsoft:GatherBlockQuantized|GPU backend only; weights/scales must have rank > 1; indices may be scalar or have rank < 4; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis must resolve to the trailing axis (`-1` is supported); symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
-|com.microsoft:GroupQueryAttention|GPU and HTP backends (float precision); GPU support requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP support requires QAIRT SDK ≥ 2.49. On HTP, GQA may run slower than on CPU and may exhibit accuracy deviations on certain models.|
+|com.microsoft:GroupQueryAttention|GPU and HTP backends (FP16/FP32); GPU support requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP support requires QAIRT SDK ≥ 2.49. See [GroupQueryAttention](#groupqueryattention) for HTP extensions and constraints. On HTP, GQA may run slower than on CPU and may exhibit accuracy deviations on certain models.|
 |com.microsoft:MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:RMSNormalization||
@@ -763,6 +763,15 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |qti_aisw:StatefulLstm|QTI AISW block op. See [QTI AISW block operators](#qti-aisw-block-operators).|
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
+
+### GroupQueryAttention
+
+Enable HTP GQA with an explicit HTP pin using [Op Affinity](#op-affinity).
+
+- HTP attention bias and sliding-window attention require QAIRT SDK ≥ 2.53 with QNN API ≥ 2.42. Backend validation determines support for the model configuration.
+- `local_window_size` must be `-1` (unlimited) or positive. With `sliding_window_cache=0`, a window covering the whole cache is treated as full attention, including on older SDKs.
+- Truncating local windows and sliding caches require batch size 1 and both past K/V inputs. `sliding_window_cache=1` also requires a positive window and both present K/V outputs. These features are supported on HTP only.
+- ONNX INT64 `position_ids` are cast to INT32 for HTP. Other extended optional inputs and `output_qk` remain unsupported.
 
 ### QTI AISW block operators
 
