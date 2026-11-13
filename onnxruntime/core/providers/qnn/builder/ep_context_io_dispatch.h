@@ -29,9 +29,9 @@ class EpContextBuffer {
   // Replaces the previous allocation only after the new allocation succeeds.
   Ort::Status Allocate(size_t size) {
     OrtAllocator* allocator = nullptr;
-    RETURN_IF_ERROR(Ort::Status(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator)));
+    ORT_CXX_RETURN_ON_API_FAIL(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator));
     void* data = nullptr;
-    RETURN_IF_ERROR(Ort::Status(Ort::GetApi().AllocatorAlloc(allocator, size, &data)));
+    ORT_CXX_RETURN_ON_API_FAIL(Ort::GetApi().AllocatorAlloc(allocator, size, &data));
     RETURN_IF(size != 0 && data == nullptr, "Failed to allocate context binary buffer.");
     Adopt(data, size, allocator);
     return Ort::Status();

@@ -67,9 +67,7 @@ class StubBackendManager {
   qnn::QnnBackendType& BackendType();
   QnnHtpDevice_Arch_t& HtpArch();
   bool& BackendSetupCompleted();
-  int& HtpShareResourceOptimization();
   bool& FileMappingEnabled();
-  std::shared_ptr<qnn::RpcMemLibrary>& RpcMemLibrary();
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   std::unique_ptr<qnn::FileMappingInterface>& FileMapper();
 #endif

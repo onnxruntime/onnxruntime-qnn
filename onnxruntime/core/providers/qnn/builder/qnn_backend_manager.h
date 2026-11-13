@@ -240,7 +240,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Shared dispatch helper used by ReloadContextForSSR and LoadCachedQnnContextFromBuffer.
   // use_dma_loading requires a mapped binary and an attached FastRPC library.
   // Attempts contextCreateFromBinaryWithCallback when use_dma_loading is true; falls back to
-  // contextCreateFromBinary with the same acquired buffer on failure or when DMA is disabled.
+  // contextCreateFromBinary on failure or when DMA is disabled.
   // bin_buffer: pre-acquired mapped or pre-read buffer; pass nullptr to read from context_bin_filepath.
   // Does NOT call AddQnnContextHandle — callers are responsible for registering the handle.
   Ort::Status CreateContextHandleFromBinary(void* bin_buffer,
@@ -407,29 +407,29 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Note that whether in host mode is meaningless if not on device.
   bool IsBackendHostMode() const { return configure_host_mode_; }
 
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  Qnn_ErrorHandle_t MapDmaData(Qnn_ContextBinaryDataRequest_t request,
+                               Qnn_ContextBinaryDmaDataResponse_t* response,
+                               void* const mapped_base_ptr,
+                               const size_t file_size);
+
+  Qnn_ErrorHandle_t ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem, void* mapped_base_ptr);
+#endif
+
   // Releases all QNN resources. Called in the destructor.
   // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
   void ReleaseResources();
 
-  struct DmaCallbackInfo {
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  typedef struct FileMappingCallbackInfo {
     void* const mapped_file_ptr;
     const size_t file_size;
     QnnBackendManager* const backend_manager;
-    // A successful CONTEXT_INIT notification sets this handle so list-load rollback
-    // can retain registrations belonging to a context that was already created.
-    Qnn_ContextHandle_t context = nullptr;
 
-    DmaCallbackInfo(void* ptr, size_t size, QnnBackendManager* manager)
+    FileMappingCallbackInfo(void* ptr, size_t size, QnnBackendManager* manager)
         : mapped_file_ptr(ptr), file_size(size), backend_manager(manager) {}
-  };
 
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  Qnn_ErrorHandle_t MapDmaData(Qnn_ContextBinaryDataRequest_t request,
-                               Qnn_ContextBinaryDmaDataResponse_t* response,
-                               const DmaCallbackInfo& callback_info);
-
-  Qnn_ErrorHandle_t ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem,
-                                   const DmaCallbackInfo& callback_info);
+  } FileMappingCallbackInfo_t;
 #endif
 
   void ResetLogger(const Ort::Logger& logger) {
@@ -701,17 +701,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void InitializeProfilingManager(const QnnBackendManagerConfig& config);
 
-  struct MappedDmaBuffer {
-    void* data;
-    uint64_t size;
-    // Identifies the binary load whose dataRelease callback owns this request.
-    const DmaCallbackInfo* dma_load;
-  };
   std::shared_ptr<RpcMemLibrary> GetRpcMemLibrary();
-
-  // Called with mapped_fastrpc_buffers_mutex_ held.
-  bool DeregisterMappedDmaBuffer(const MappedDmaBuffer& buffer, const RpcMemApi& api);
-  void DeallocateMappedDmaBuffers(const DmaCallbackInfo* dma_load = nullptr);
+  void DeallocateMappedDmaBuffers();
 
   // Checks if act_ver is >= min_ver. An act_ver of 0.0.0 is considered invalid.
   static bool MinVersionMet(const Qnn_Version_t& act_ver, const Qnn_Version_t& min_ver) {
@@ -788,10 +779,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   std::unique_ptr<FileMappingInterface> file_mapper_ = nullptr;
-  // Notify params for DMA callbacks must persist throughout lifetime of
+  // Notify params for file mapping must persist throughout lifetime of
   // QnnBackendManager for release of DMA data callback on destruction
-  // Callbacks access stable pointees; entries are added before SDK calls.
-  std::vector<std::unique_ptr<DmaCallbackInfo>> dma_callback_infos_;
+  std::vector<std::unique_ptr<FileMappingCallbackInfo_t>> file_mapping_notify_params_;
 #endif
 
   // NPU backend requires quantized model
@@ -828,11 +818,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   QnnHtpDevice_Arch_t htp_arch_internal_ = QNN_HTP_DEVICE_ARCH_NONE;
   uint32_t vtcm_size_internal_ = 0;
 
-  std::mutex rpcmem_library_mutex_;
+  // The existing registration mutex also protects RPCMem attachment.
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
-
   std::mutex mapped_fastrpc_buffers_mutex_;
-  std::vector<MappedDmaBuffer> mapped_fastrpc_buffers_;
+  std::vector<std::pair<void*, uint64_t>> mapped_fastrpc_buffers_;
 
   // Backend plugin for system DLC APIs.
   bool system_dlc_created_ = false;

@@ -68,7 +68,7 @@ Ort::Status EpContextIoDispatch::Read(const std::string& file_name, EpContextBuf
 
   const auto& ort_api = Ort::GetApi();
   OrtAllocator* allocator = nullptr;
-  RETURN_IF_ERROR(Ort::Status(ort_api.GetAllocatorWithDefaultOptions(&allocator)));
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetAllocatorWithDefaultOptions(&allocator));
   void* data = nullptr;
   size_t data_size = 0;
   OrtStatus* s = read_fn_(read_state_, file_name.c_str(), allocator, &data, &data_size);

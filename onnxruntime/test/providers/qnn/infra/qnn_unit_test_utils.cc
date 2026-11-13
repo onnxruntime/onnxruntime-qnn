@@ -66,9 +66,7 @@ QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnValidatorBackendHandleTag, Qnn_Backe
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnBackendTypeTag, qnn::QnnBackendType, qnn_backend_type_);
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnHtpArchTag, QnnHtpDevice_Arch_t, htp_arch_internal_);
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(BackendSetupTag, bool, backend_setup_completed_);
-QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(HtpShareResourceOptimizationTag, int, htp_share_resource_optimization_);
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(FileMappingEnabledTag, bool, file_mapped_weights_enabled_);
-QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(RpcMemLibraryTag, std::shared_ptr<qnn::RpcMemLibrary>, rpcmem_library_);
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(FileMapperTag, std::unique_ptr<qnn::FileMappingInterface>, file_mapper_);
 #endif
@@ -123,16 +121,8 @@ bool& StubBackendManager::BackendSetupCompleted() {
   return (*manager_).*GetPrivateMemberPtr(BackendSetupTag{});
 }
 
-int& StubBackendManager::HtpShareResourceOptimization() {
-  return (*manager_).*GetPrivateMemberPtr(HtpShareResourceOptimizationTag{});
-}
-
 bool& StubBackendManager::FileMappingEnabled() {
   return (*manager_).*GetPrivateMemberPtr(FileMappingEnabledTag{});
-}
-
-std::shared_ptr<qnn::RpcMemLibrary>& StubBackendManager::RpcMemLibrary() {
-  return (*manager_).*GetPrivateMemberPtr(RpcMemLibraryTag{});
 }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
