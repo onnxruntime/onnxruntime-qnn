@@ -161,6 +161,21 @@ class QnnUnit_GpuBackendConfigTest : public ::testing::Test {
   GpuConfigCapture capture;
 };
 
+TEST_F(QnnUnit_GpuBackendConfigTest, VirtualGpuCallsGlobalConfigOnlyOncePerBackendLibraryLifetime) {
+  capture.virtual_value = "1";
+  {
+    auto first_manager = MakeGpuManager({OrtHardwareDeviceType_GPU});
+    auto second_manager = MakeGpuManager({OrtHardwareDeviceType_GPU});
+    ASSERT_TRUE(((*first_manager).*GetBackendSetupMember(GlobalConfigTag{}))().IsOK());
+    ASSERT_TRUE(((*second_manager).*GetBackendSetupMember(GlobalConfigTag{}))().IsOK());
+    EXPECT_EQ(capture.global_calls, 1);
+  }
+
+  auto next_manager = MakeGpuManager({OrtHardwareDeviceType_GPU});
+  ASSERT_TRUE(((*next_manager).*GetBackendSetupMember(GlobalConfigTag{}))().IsOK());
+  EXPECT_EQ(capture.global_calls, 2);
+}
+
 TEST_F(QnnUnit_GpuBackendConfigTest, VirtualGpuSetsSocModelForEitherDeviceOrder) {
   for (const auto& types : {std::vector<OrtHardwareDeviceType>{OrtHardwareDeviceType_NPU, OrtHardwareDeviceType_GPU},
                             std::vector<OrtHardwareDeviceType>{OrtHardwareDeviceType_GPU, OrtHardwareDeviceType_NPU}}) {
@@ -240,28 +255,28 @@ TEST_F(QnnUnit_GpuBackendConfigTest, WeightSharingConfigIsOptionalAndBackendInit
 
 #ifdef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
 
-struct HtpGlobalConfigCapture {
+struct GlobalConfigCapture {
   int calls = 0;
 };
 
-thread_local HtpGlobalConfigCapture* htp_global_config_capture = nullptr;
+thread_local GlobalConfigCapture* global_config_capture = nullptr;
 
-Qnn_ErrorHandle_t CountHtpGlobalConfigSet(const QnnGlobalConfig_t**) {
-  ++htp_global_config_capture->calls;
+Qnn_ErrorHandle_t CountGlobalConfigSet(const QnnGlobalConfig_t**) {
+  ++global_config_capture->calls;
   return QNN_SUCCESS;
 }
 
-TEST(QnnUnit_BackendManagerTest, HtpGlobalConfigStateExpiresWithLastLibraryLifetime) {
+TEST(QnnUnit_BackendManagerTest, GlobalConfigStateExpiresWithLastLibraryLifetime) {
   StubApiEnv env;
-  HtpGlobalConfigCapture capture;
-  htp_global_config_capture = &capture;
+  GlobalConfigCapture capture;
+  global_config_capture = &capture;
 
   auto make_manager = [&]() {
     qnn::QnnBackendManagerConfig config{};
     config.configure_host_mode = true;
     auto manager = qnn::QnnBackendManager::Create(config, env.api_ptrs, env.logger);
     manager->SetQnnBackendType(QNN_BACKEND_ID_HTP);
-    const_cast<QNN_INTERFACE_VER_TYPE&>(manager->GetQnnInterface()).globalConfigSet = CountHtpGlobalConfigSet;
+    const_cast<QNN_INTERFACE_VER_TYPE&>(manager->GetQnnInterface()).globalConfigSet = CountGlobalConfigSet;
     return manager;
   };
 
@@ -281,7 +296,7 @@ TEST(QnnUnit_BackendManagerTest, HtpGlobalConfigStateExpiresWithLastLibraryLifet
   EXPECT_TRUE(((*third_manager).*GetBackendSetupMember(GlobalConfigTag{}))().IsOK());
   EXPECT_EQ(capture.calls, 2);
 
-  htp_global_config_capture = nullptr;
+  global_config_capture = nullptr;
 }
 
 #endif  // QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE

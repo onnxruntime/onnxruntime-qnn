@@ -121,7 +121,7 @@ class QnnSerializerConfig {
   std::string graph_name_{"graph"};
 };
 
-class HtpGlobalConfigState;
+class GlobalConfigState;
 
 class BackendLibraryLifetime {
  public:
@@ -131,12 +131,12 @@ class BackendLibraryLifetime {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(BackendLibraryLifetime);
 
   void AddLibrary(UniqueDynamicLibraryHandle library_handle);
-  std::shared_ptr<HtpGlobalConfigState> GetHtpGlobalConfigState() const;
-  void SetHtpGlobalConfigState(std::shared_ptr<HtpGlobalConfigState> state);
+  std::shared_ptr<GlobalConfigState> GetGlobalConfigState() const;
+  void SetGlobalConfigState(std::shared_ptr<GlobalConfigState> state);
 
  private:
   std::vector<UniqueDynamicLibraryHandle> library_handles_;
-  std::shared_ptr<HtpGlobalConfigState> htp_global_config_state_;
+  std::shared_ptr<GlobalConfigState> global_config_state_;
 };
 
 // configuration values for QnnBackendManager creation
@@ -733,7 +733,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const OrtHardwareDevice* GetActiveOrtDevice() const;
 
-  void AttachHtpGlobalConfigState();
+  void AttachGlobalConfigState();
 
   // Declared first so library handles and their global-config state outlive all other members during standalone manager teardown.
   const std::shared_ptr<BackendLibraryLifetime> backend_libraries_ =

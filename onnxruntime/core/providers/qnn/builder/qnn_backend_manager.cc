@@ -53,7 +53,7 @@ static_assert(QNN_API_VERSION_MAJOR > 2 ||
 namespace onnxruntime {
 namespace qnn {
 
-class HtpGlobalConfigState {
+class GlobalConfigState {
  public:
   std::mutex mutex;
   bool configured = false;
@@ -61,17 +61,17 @@ class HtpGlobalConfigState {
 
 namespace {
 
-std::mutex htp_global_config_states_mutex;
-std::unordered_map<QnnGlobalConfig_SetFn_t, std::weak_ptr<HtpGlobalConfigState>> htp_global_config_states;
+std::mutex global_config_states_mutex;
+std::unordered_map<QnnGlobalConfig_SetFn_t, std::weak_ptr<GlobalConfigState>> global_config_states;
 
-std::shared_ptr<HtpGlobalConfigState> GetHtpGlobalConfigState(QnnGlobalConfig_SetFn_t global_config_set) {
-  std::lock_guard<std::mutex> lock(htp_global_config_states_mutex);
-  auto& state = htp_global_config_states[global_config_set];
+std::shared_ptr<GlobalConfigState> GetGlobalConfigState(QnnGlobalConfig_SetFn_t global_config_set) {
+  std::lock_guard<std::mutex> lock(global_config_states_mutex);
+  auto& state = global_config_states[global_config_set];
   if (auto existing_state = state.lock()) {
     return existing_state;
   }
 
-  auto new_state = std::make_shared<HtpGlobalConfigState>();
+  auto new_state = std::make_shared<GlobalConfigState>();
   state = new_state;
   return new_state;
 }
@@ -80,19 +80,19 @@ std::shared_ptr<HtpGlobalConfigState> GetHtpGlobalConfigState(QnnGlobalConfig_Se
 
 BackendLibraryLifetime::~BackendLibraryLifetime() {
   library_handles_.clear();
-  htp_global_config_state_.reset();
+  global_config_state_.reset();
 }
 
 void BackendLibraryLifetime::AddLibrary(UniqueDynamicLibraryHandle library_handle) {
   library_handles_.push_back(std::move(library_handle));
 }
 
-std::shared_ptr<HtpGlobalConfigState> BackendLibraryLifetime::GetHtpGlobalConfigState() const {
-  return htp_global_config_state_;
+std::shared_ptr<GlobalConfigState> BackendLibraryLifetime::GetGlobalConfigState() const {
+  return global_config_state_;
 }
 
-void BackendLibraryLifetime::SetHtpGlobalConfigState(std::shared_ptr<HtpGlobalConfigState> state) {
-  htp_global_config_state_ = std::move(state);
+void BackendLibraryLifetime::SetGlobalConfigState(std::shared_ptr<GlobalConfigState> state) {
+  global_config_state_ = std::move(state);
 }
 
 void QnnBackendManager::InitializeProfilingManager(const QnnBackendManagerConfig& config) {
@@ -413,7 +413,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
   SetQnnBackendType(backend_id_);
 
-  AttachHtpGlobalConfigState();
+  AttachGlobalConfigState();
 
   Qnn_Version_t backend_interface_version = GetQnnInterfaceApiVersion(backend_interface_provider);
   std::ostringstream oss;
@@ -479,7 +479,7 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
       &serializer_interface_provider)));
   qnn_interface_ = serializer_interface_provider->QNN_INTERFACE_VER_NAME;  // NOTE: QnnSaver/Ir will provide the interfaces
 
-  AttachHtpGlobalConfigState();
+  AttachGlobalConfigState();
 
   htp_power_config_manager_.Init(qnn_interface_);
 
@@ -569,25 +569,15 @@ Ort::Status QnnBackendManager::SetGlobalConfig() {
 
     configs.push_back(nullptr);
 
-    if (!IsNpuBackend(GetQnnBackendType())) {
+    AttachGlobalConfigState();
+    const auto global_config_state = backend_libraries_->GetGlobalConfigState();
+    RETURN_IF(global_config_state == nullptr, "Failed to track global-config state.");
+
+    std::lock_guard<std::mutex> lock(global_config_state->mutex);
+    if (!global_config_state->configured) {
       Qnn_ErrorHandle_t result = qnn_interface_.globalConfigSet(configs.data());
       RETURN_IF(result != QNN_SUCCESS, ("Failed to set global config. Error: " + QnnErrorHandleToString(result)).c_str());
-      return Ort::Status();
-    }
-
-    // The HTP backend requires that QnnGlobalConfig_t options be set through QnnGlobalConfig_set only once
-    // while its library is loaded. Track the successful call in state shared by every live library lifetime
-    // so reloading the backend starts a fresh generation.
-
-    AttachHtpGlobalConfigState();
-    const auto htp_global_config_state = backend_libraries_->GetHtpGlobalConfigState();
-    RETURN_IF(htp_global_config_state == nullptr, "Failed to track HTP global-config state.");
-
-    std::lock_guard<std::mutex> lock(htp_global_config_state->mutex);
-    if (!htp_global_config_state->configured) {
-      Qnn_ErrorHandle_t result = qnn_interface_.globalConfigSet(configs.data());
-      RETURN_IF(result != QNN_SUCCESS, ("Failed to set global config. Error: " + QnnErrorHandleToString(result)).c_str());
-      htp_global_config_state->configured = true;
+      global_config_state->configured = true;
     }
   }
 
@@ -3438,12 +3428,12 @@ void QnnBackendManager::DeallocateMappedDmaBuffers() {
   mapped_fastrpc_buffers_ = std::move(failed_deregisters);
 }
 
-void QnnBackendManager::AttachHtpGlobalConfigState() {
-  if (!IsNpuBackend(GetQnnBackendType()) || qnn_interface_.globalConfigSet == nullptr) {
+void QnnBackendManager::AttachGlobalConfigState() {
+  if (qnn_interface_.globalConfigSet == nullptr) {
     return;
   }
 
-  backend_libraries_->SetHtpGlobalConfigState(GetHtpGlobalConfigState(qnn_interface_.globalConfigSet));
+  backend_libraries_->SetGlobalConfigState(GetGlobalConfigState(qnn_interface_.globalConfigSet));
 }
 
 const OrtHardwareDevice* QnnBackendManager::GetActiveOrtDevice() const {
