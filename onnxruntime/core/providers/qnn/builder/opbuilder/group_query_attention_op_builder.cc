@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <cmath>
+#include <iterator>
 #include <numeric>
 #include <optional>
 #include <vector>
@@ -53,8 +54,6 @@ class GroupQueryAttentionOpBuilder : public BaseOpBuilder {
 Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                                         const OrtNodeUnit& node_unit,
                                                         const Ort::Logger& logger) const {
-  ORT_UNUSED_PARAMETER(logger);
-
   auto backend_type = qnn_model_wrapper.GetQnnBackendType();
 
   RETURN_IF_NOT(IsGpuBackend(backend_type) || backend_type == QnnBackendType::HTP,
@@ -140,11 +139,7 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   float softcap = node_helper.Get("softcap", 0.0f);
   RETURN_IF(softcap != 0.0f, "softcap != 0 not supported");
 
-  // Validate OpConfig with backend
-  std::vector<std::string> input_names;
-  RETURN_IF_ERROR(ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, true));
-  RETURN_IF_ERROR(ProcessAttributesAndOutputs(qnn_model_wrapper, node_unit, std::move(input_names), logger, true));
-  return Ort::Status();
+  return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, /*do_op_validation=*/true);
 }
 
 Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
@@ -152,9 +147,10 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
                                                         const Ort::Logger& logger,
                                                         std::vector<std::string>& input_names,
                                                         bool do_op_validation) const {
+  ORT_UNUSED_PARAMETER(do_op_validation);
   const auto& onnx_inputs = node_unit.Inputs();
 
-  std::vector<std::optional<size_t>> qnn_idx_to_onnx{
+  constexpr std::optional<size_t> qnn_idx_to_onnx[]{
       0u,  // query
       5u,  // seqlens_K
       6u,  // total_sequence_length
@@ -164,25 +160,22 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
       4u,  // past_value
       7u,  // cos_cache
       8u,  // sin_cache
-      9u   // position_ids
+      9u,  // position_ids (cast to INT32 by the base pipeline)
+#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+      // The extended HTP GQA op definition has 14 positional inputs. Include trailing optional
+      // inputs and represent absent ones with null tensors to satisfy its exact input count.
+      10u,           // QNN attention_bias <- ONNX attention_bias
+      std::nullopt,  // QNN head_sink: unsupported
+      std::nullopt,  // QNN q_norm_weight: unsupported
+      std::nullopt   // QNN k_norm_weight: unsupported
+#endif
   };
 
-#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
-  // The extended HTP GQA op definition has 14 positional inputs. HTP validates the exact input
-  // count, so include all trailing optional inputs and represent absent ones with null tensors.
-  if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP) {
-    qnn_idx_to_onnx.push_back(10u);           // QNN attention_bias <- ONNX attention_bias
-    qnn_idx_to_onnx.push_back(std::nullopt);  // QNN head_sink: unsupported
-    qnn_idx_to_onnx.push_back(std::nullopt);  // QNN q_norm_weight: unsupported
-    qnn_idx_to_onnx.push_back(std::nullopt);  // QNN k_norm_weight: unsupported
-  }
-#endif
-
   constexpr size_t kQnnTotalSeqLenIdx = 2;  // index of total_sequence_length in qnn_idx_to_onnx
-  constexpr size_t kOnnxPositionIdsIdx = 9;
-  const bool is_htp_backend = qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP;
+  const size_t qnn_input_count =
+      qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP ? std::size(qnn_idx_to_onnx) : 10u;
 
-  for (size_t qnn_idx = 0; qnn_idx < qnn_idx_to_onnx.size(); ++qnn_idx) {
+  for (size_t qnn_idx = 0; qnn_idx < qnn_input_count; ++qnn_idx) {
     const auto onnx_idx = qnn_idx_to_onnx[qnn_idx];
     if (onnx_idx.has_value() && onnx_inputs.size() > *onnx_idx && onnx_inputs[*onnx_idx].Exists()) {
       const auto& onnx_input = onnx_inputs[*onnx_idx];
@@ -201,35 +194,6 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
         input_names.push_back(input_name);
       } else {
         RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_input, logger, input_names));
-
-        // ONNX GroupQueryAttention uses INT64 position_ids, while the QNN HTP op requires INT32.
-        // Preserve the ONNX graph input type and insert a runtime cast only for the HTP backend.
-        if (is_htp_backend && *onnx_idx == kOnnxPositionIdsIdx) {
-          const std::string& position_ids_name = onnx_input.name;
-          auto& position_ids_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(position_ids_name);
-          const Qnn_DataType_t position_ids_type = position_ids_wrapper.GetTensorDataType();
-          RETURN_IF(position_ids_type != QNN_DATATYPE_INT_32 && position_ids_type != QNN_DATATYPE_INT_64,
-                    "HTP GroupQueryAttention position_ids must be INT32 or INT64");
-
-          if (position_ids_type == QNN_DATATYPE_INT_64) {
-            std::vector<uint32_t> position_ids_shape;
-            RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(onnx_input.shape, position_ids_shape),
-                          "Cannot get GroupQueryAttention position_ids shape");
-
-            const std::string cast_output_name =
-                utils::UniqueNameGenerator().New(position_ids_name, "_cast_int32");
-            RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(
-                utils::UniqueNameGenerator().New(position_ids_name, QNN_OP_CAST),
-                position_ids_name,
-                cast_output_name,
-                QNN_TENSOR_TYPE_NATIVE,
-                QNN_DATATYPE_INT_32,
-                QnnQuantParamsWrapper(),
-                std::move(position_ids_shape),
-                do_op_validation));
-            input_names.back() = cast_output_name;
-          }
-        }
       }
     } else {
       std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
