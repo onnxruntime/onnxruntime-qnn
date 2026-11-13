@@ -173,9 +173,9 @@ TEST(QnnUnit_EpContextIoDispatchTest, AdoptsCallbackAllocationAndPreservesOutput
 
 TEST(QnnUnit_EpContextIoDispatchTest, AllocationReplacesPreviousBufferAndPreservesItOnFailure) {
   qnn::EpContextBuffer bytes;
-  bytes.Allocate(32);
+  ASSERT_TRUE(bytes.Allocate(32).IsOK());
   auto* previous = bytes.data();
-  bytes.Allocate(64);
+  ASSERT_TRUE(bytes.Allocate(64).IsOK());
   EXPECT_NE(bytes.data(), previous);
   EXPECT_EQ(bytes.size(), 64u);
   bytes.data()[0] = 42;
@@ -186,7 +186,10 @@ TEST(QnnUnit_EpContextIoDispatchTest, AllocationReplacesPreviousBufferAndPreserv
   };
   {
     OrtGlobalApiOverride override(&failing_api);
-    EXPECT_THROW(bytes.Allocate(128), Ort::Exception);
+    auto status = bytes.Allocate(128);
+    EXPECT_FALSE(status.IsOK());
+    EXPECT_EQ(status.GetErrorCode(), ORT_FAIL);
+    EXPECT_EQ(status.GetErrorMessage(), "stub allocation failure");
   }
   EXPECT_EQ(bytes.data(), retained);
   EXPECT_EQ(bytes.size(), 64u);
@@ -195,7 +198,7 @@ TEST(QnnUnit_EpContextIoDispatchTest, AllocationReplacesPreviousBufferAndPreserv
 
 TEST(QnnUnit_EpContextIoDispatchTest, MovedBufferRetainsDataAndEmptiesSource) {
   qnn::EpContextBuffer source;
-  source.Allocate(32);
+  ASSERT_TRUE(source.Allocate(32).IsOK());
   source.data()[0] = 42;
   auto* original = source.data();
   auto destination = std::move(source);
@@ -220,7 +223,7 @@ TEST(QnnUnit_EpContextIoDispatchTest, MovedBufferOutlivesDefaultAllocatorWrapper
     ASSERT_NE(data, nullptr);
     data[0] = 42;
     qnn::EpContextBuffer bytes;
-    bytes.Adopt(data, 32);
+    bytes.Adopt(data, 32, allocator);
     retained = std::move(bytes);
     original = data;
     EXPECT_EQ(retained.data(), data);

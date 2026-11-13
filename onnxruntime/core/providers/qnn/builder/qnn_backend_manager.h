@@ -220,8 +220,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Reloads a QNN context from its binary file after an SSR event. Handles both file-mapped
   // and direct-read paths. CPU mapping without FastRPC is currently limited to initial
   // single-context loading; recovery keeps its existing buffered-read fallback.
-  // Always starts a new spill-fill
-  // group (firstGroupHandle = 0x0) since SSR invalidates all prior context handles.
+  // Always starts a new spill-fill group (firstGroupHandle = 0x0) since SSR
+  // invalidates all prior context handles.
   // The new context handle is registered via AddQnnContextHandle on success.
   Ort::Status ReloadContextForSSR(const std::string& context_bin_filepath,
                                   int64_t max_spill_fill_size,
@@ -704,7 +704,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   struct MappedDmaBuffer {
     void* data;
     uint64_t size;
-    int fd;
     // Identifies the binary load whose dataRelease callback owns this request.
     const DmaCallbackInfo* dma_load;
   };
@@ -829,9 +828,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   QnnHtpDevice_Arch_t htp_arch_internal_ = QNN_HTP_DEVICE_ARCH_NONE;
   uint32_t vtcm_size_internal_ = 0;
 
-  // Protects both FastRPC attachment and DMA registrations, including SDK callback access.
-  std::mutex mapped_fastrpc_buffers_mutex_;
+  std::mutex rpcmem_library_mutex_;
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
+
+  std::mutex mapped_fastrpc_buffers_mutex_;
   std::vector<MappedDmaBuffer> mapped_fastrpc_buffers_;
 
   // Backend plugin for system DLC APIs.

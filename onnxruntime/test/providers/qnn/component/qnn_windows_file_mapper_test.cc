@@ -18,7 +18,7 @@
 namespace onnxruntime::test {
 namespace {
 
-class QnnWindowsFileMapperTest : public ::testing::Test {
+class QnnUnit_WindowsFileMapperTest : public ::testing::Test {
  protected:
   void SetUp() override {
     wchar_t folder[MAX_PATH], filename[MAX_PATH];
@@ -39,7 +39,7 @@ class QnnWindowsFileMapperTest : public ::testing::Test {
   std::filesystem::path path_;
 };
 
-TEST_F(QnnWindowsFileMapperTest, EmptyFileFailsAtCreateFileMappingAndPreservesOutput) {
+TEST_F(QnnUnit_WindowsFileMapperTest, EmptyFileFailsAtCreateFileMappingAndPreservesOutput) {
   auto logger = MakeNullLogger();
   qnn::WindowsFileMapper mapper(logger);
   qnn::FileMappingInterface::MappedMemoryPtr owner(new char[1], [](void* ptr) { delete[] static_cast<char*>(ptr); });
@@ -50,7 +50,7 @@ TEST_F(QnnWindowsFileMapperTest, EmptyFileFailsAtCreateFileMappingAndPreservesOu
   EXPECT_EQ(owner.get(), original);
 }
 
-TEST_F(QnnWindowsFileMapperTest, ContextOwnedViewsSurviveMapperAndReleaseIndependently) {
+TEST_F(QnnUnit_WindowsFileMapperTest, ContextOwnedViewsSurviveMapperAndReleaseIndependently) {
   Fill();
   auto logger = MakeNullLogger();
   qnn::FileMappingInterface::MappedMemoryPtr first, second;
@@ -70,7 +70,7 @@ TEST_F(QnnWindowsFileMapperTest, ContextOwnedViewsSurviveMapperAndReleaseIndepen
   EXPECT_EQ(second.get()[0], 'c');
 }
 
-TEST_F(QnnWindowsFileMapperTest, LegacyCachedViewRemainsAvailableUntilMapperDestruction) {
+TEST_F(QnnUnit_WindowsFileMapperTest, LegacyCachedViewRemainsAvailableUntilMapperDestruction) {
   Fill();
   auto logger = MakeNullLogger();
   void* first = nullptr;

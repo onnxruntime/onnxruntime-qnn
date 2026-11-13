@@ -1134,8 +1134,8 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
+  const auto rpcmem_library = GetRpcMemLibrary();
   std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
-  const auto& rpcmem_library = rpcmem_library_;
   if (!rpcmem_library) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Cannot import DMA data: FastRPC library is unavailable.");
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
@@ -1153,19 +1153,15 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
                                        return buffer.data == unaligned_data_ptr && buffer.size == size;
                                      });
   // Import an exact range once; retain one record per outstanding SDK request.
-  int fd;
-  if (existing != mapped_fastrpc_buffers_.end()) {
-    fd = existing->fd;
-  } else {
+  if (existing == mapped_fastrpc_buffers_.end()) {
     rpcmem_library->Api().register_buf(unaligned_data_ptr, size, 0,
                                        rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
-    // register_buf has no status; to_fd confirms that this new range was imported.
-    fd = rpcmem_library->Api().to_fd(unaligned_data_ptr);
-    if (fd == -1) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR,
-                      "FastRPC to_fd returned -1 after importing the DMA range.");
-      return QNN_CONTEXT_ERROR_MEM_ALLOC;
-    }
+  }
+  const int fd = rpcmem_library->Api().to_fd(unaligned_data_ptr);
+  if (fd == -1) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR,
+                    "FastRPC to_fd returned -1 for the DMA range.");
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
 
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, ("Created DMA data mapping with address: " + utils::PtrToString(unaligned_data_ptr)).c_str());
@@ -1175,7 +1171,7 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
   response->dataStartOffset = 0;
   response->alignedSize = size;
 
-  mapped_fastrpc_buffers_.push_back({unaligned_data_ptr, size, fd, &callback_info});
+  mapped_fastrpc_buffers_.push_back({unaligned_data_ptr, size, &callback_info});
 
   return QNN_SUCCESS;
 }
@@ -1215,8 +1211,8 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
   ORT_CXX_LOG_PTR(logger, ORT_LOGGING_LEVEL_INFO,
                   ("Releasing DMA mapping: " + utils::PtrToString(data_mem.dmaBuffer.data)).c_str());
 
+  const auto rpcmem_library = GetRpcMemLibrary();
   std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
-  const auto& rpcmem_library = rpcmem_library_;
   const auto mapping = std::find_if(mapped_fastrpc_buffers_.begin(), mapped_fastrpc_buffers_.end(),
                                     [&callback_info, &data_mem](const auto& buffer) {
                                       return buffer.dma_load == &callback_info &&
@@ -1345,7 +1341,7 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
   size_t buffer_size;
   RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_size));
 
-  buffer.Allocate(buffer_size);
+  RETURN_IF_ERROR(buffer.Allocate(buffer_size));
 
   std::ifstream cache_file(context_bin_filepath.c_str(), std::ifstream::binary);
   RETURN_IF(!cache_file || !cache_file.good(), ("Failed to read context binary from: " + context_bin_filepath).c_str());
@@ -2189,7 +2185,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     // A previous callback-only session may have initialized this shared manager without FastRPC.
     // Attach it when a later native session needs to load a new context with DMA.
     {
-      std::lock_guard<std::mutex> dma_lock(mapped_fastrpc_buffers_mutex_);
+      std::lock_guard<std::mutex> rpcmem_lock(rpcmem_library_mutex_);
       if (file_mapped_weights_enabled_ && !rpcmem_library_ && rpcmem_library) {
         rpcmem_library_ = std::move(rpcmem_library);
       }
@@ -2243,7 +2239,7 @@ Ort::Status QnnBackendManager::SetupBackend(
   if (enable_file_mapped_weights && !file_mapper_ && GetQnnBackendType() == QnnBackendType::HTP) {
     // FastRPC is needed for DMA import, not for a CPU mapping used by ordinary loading.
     {
-      std::lock_guard<std::mutex> dma_lock(mapped_fastrpc_buffers_mutex_);
+      std::lock_guard<std::mutex> rpcmem_lock(rpcmem_library_mutex_);
       rpcmem_library_ = std::move(rpcmem_library);
     }
     file_mapped_weights_enabled_ = true;
@@ -3374,7 +3370,7 @@ Ort::Status QnnBackendManager::AddContextToDlc() {
 }
 
 std::shared_ptr<RpcMemLibrary> QnnBackendManager::GetRpcMemLibrary() {
-  std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
+  std::lock_guard<std::mutex> rpcmem_lock(rpcmem_library_mutex_);
   return rpcmem_library_;
 }
 
@@ -3402,25 +3398,27 @@ bool QnnBackendManager::DeregisterMappedDmaBuffer(const MappedDmaBuffer& buffer,
 }
 
 void QnnBackendManager::DeallocateMappedDmaBuffers(const DmaCallbackInfo* dma_load) {
+  const auto rpcmem_library = GetRpcMemLibrary();
   std::lock_guard<std::mutex> lock(mapped_fastrpc_buffers_mutex_);
-  const auto& rpcmem_library = rpcmem_library_;
   if (mapped_fastrpc_buffers_.empty() || !rpcmem_library ||
       !rpcmem_library->Api().register_buf || !rpcmem_library->Api().to_fd) {
     return;
   }
 
+  std::vector<MappedDmaBuffer> failed_deregisters;
   for (auto it = mapped_fastrpc_buffers_.begin(); it != mapped_fastrpc_buffers_.end();) {
     if (dma_load && it->dma_load != dma_load) {
       ++it;
       continue;
     }
     if (!DeregisterMappedDmaBuffer(*it, rpcmem_library->Api())) {
-      // Keep failed deregistrations for destruction-time retry.
-      ++it;
-      continue;
+      failed_deregisters.push_back(*it);
     }
+    // Consume this request before checking whether the next one is the last user.
     it = mapped_fastrpc_buffers_.erase(it);
   }
+  mapped_fastrpc_buffers_.insert(mapped_fastrpc_buffers_.end(),
+                                 failed_deregisters.begin(), failed_deregisters.end());
 }
 
 }  // namespace qnn

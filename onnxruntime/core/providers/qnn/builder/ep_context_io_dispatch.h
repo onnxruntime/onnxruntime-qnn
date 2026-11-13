@@ -21,24 +21,20 @@ class EpContextBuffer {
 
   size_t size() const noexcept { return data_ ? size_ : 0; }
 
-  void Adopt(void* data, size_t size) {
-    OrtAllocator* allocator = nullptr;
-    Ort::ThrowOnError(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator));
+  void Adopt(void* data, size_t size, OrtAllocator* allocator) noexcept {
     data_ = OwnedBufferPtr(data, Ort::detail::AllocatedFree(allocator));
     size_ = size;
   }
 
   // Replaces the previous allocation only after the new allocation succeeds.
-  void Allocate(size_t size) {
+  Ort::Status Allocate(size_t size) {
     OrtAllocator* allocator = nullptr;
-    Ort::ThrowOnError(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator));
+    RETURN_IF_ERROR(Ort::Status(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator)));
     void* data = nullptr;
-    Ort::ThrowOnError(Ort::GetApi().AllocatorAlloc(allocator, size, &data));
-    if (size != 0 && data == nullptr) {
-      ORT_CXX_API_THROW("Failed to allocate context binary buffer.", ORT_FAIL);
-    }
-    data_ = OwnedBufferPtr(data, Ort::detail::AllocatedFree(allocator));
-    size_ = size;
+    RETURN_IF_ERROR(Ort::Status(Ort::GetApi().AllocatorAlloc(allocator, size, &data)));
+    RETURN_IF(size != 0 && data == nullptr, "Failed to allocate context binary buffer.");
+    Adopt(data, size, allocator);
+    return Ort::Status();
   }
 
  private:

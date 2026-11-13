@@ -68,7 +68,7 @@ Ort::Status EpContextIoDispatch::Read(const std::string& file_name, EpContextBuf
 
   const auto& ort_api = Ort::GetApi();
   OrtAllocator* allocator = nullptr;
-  Ort::ThrowOnError(ort_api.GetAllocatorWithDefaultOptions(&allocator));
+  RETURN_IF_ERROR(Ort::Status(ort_api.GetAllocatorWithDefaultOptions(&allocator)));
   void* data = nullptr;
   size_t data_size = 0;
   OrtStatus* s = read_fn_(read_state_, file_name.c_str(), allocator, &data, &data_size);
@@ -82,7 +82,7 @@ Ort::Status EpContextIoDispatch::Read(const std::string& file_name, EpContextBuf
     return Ort::Status(
         ("OrtReadNamedBufferFunc returned invalid buffer for " + file_name).c_str(), ORT_FAIL);
   }
-  out.Adopt(data, data_size);
+  out.Adopt(data, data_size, allocator);
   return Ort::Status();
 }
 
