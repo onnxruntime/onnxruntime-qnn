@@ -1089,6 +1089,18 @@ bool OrtVariadicNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
     return false;
   }
 
+  // Beyond data type, each DQ input must also share the Q output's scale/zero-point.
+  // Without this check, QNN's fused Concat/Max/Min simply concatenates raw quantized
+  // codes; if an input's encoding differs from the output's, those codes are silently
+  // misinterpreted under the output's encoding, producing a wrong result with no error.
+  // Split's selector (below) already performs the equivalent check via IsQDQPairSupported;
+  // this mirrors that for the variadic (multi-input) case.
+  for (const OrtNode* dq_node : dq_nodes) {
+    if (!IsQDQPairSupported(graph, ort_api, q_nodes[0], dq_node)) {
+      return false;
+    }
+  }
+
   return true;
 }
 
