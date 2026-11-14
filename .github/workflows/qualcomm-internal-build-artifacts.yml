@@ -182,7 +182,10 @@ jobs:
       use_ort_home: ${{ matrix.use_ort_home }}
       build_runner_arch: "${{ matrix.target_arch == 'arm64' && 'ARM64' || 'X64' }}"
       test_runner_arch: ARM64
-      run_tests: ${{ matrix.use_ort_home }}
+      run_tests: ${{ matrix.use_ort_home || (matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0]) }}
+      # Prebuilt validation runs locally; shipping ARM64 builds share their archive
+      # with native HTP v73 and QDC HTP v81 test jobs.
+      build_test_same_runner: ${{ matrix.use_ort_home }}
       upload_wheel: ${{ !matrix.use_ort_home }}
       test_wheel: false
       # For each arch, upload the test archive with the first Python version we encounter

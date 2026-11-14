@@ -1,6 +1,8 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
+import importlib
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -123,3 +125,43 @@ def test_extract_uses_release_release_for_multiconfig_windows(tmp_path):
     assert not (repo_root / "build/windows-arm64/Release/testdata").exists()
     # node is repo-root-relative; unaffected by multi-config detection
     assert (repo_root / "cmake/external/onnx/onnx/backend/test/data/node/d.pb").read_text() == "D"
+
+
+@pytest.mark.parametrize("config", ("Release", "Debug", "RelWithDebInfo"))
+@pytest.mark.parametrize("multi_config", (False, True))
+def test_windows_arm64_extraction_task_consumes_selected_build(tmp_path, monkeypatch, config, multi_config):
+    """Run the actual archive/testdata handoff, including its subprocess CLI and ordering."""
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
+    build_and_test = importlib.import_module("build_and_test")
+
+    monkeypatch.setattr(build_and_test, "REPO_ROOT", tmp_path)
+    script = tmp_path / "qcom/scripts/all/extract_testdata.py"
+    script.parent.mkdir(parents=True)
+    shutil.copyfile(Path(__file__).parent.parent / "extract_testdata.py", script)
+    build = tmp_path / "build"
+    build.mkdir()
+    prefix = "" if config == "Release" else f"{config}-"
+    binary_dir = f"{config}/{config}" if multi_config else config
+    _make_archive(
+        build / f"onnxruntime-tests-{prefix}windows-arm64.zip",
+        {f"build/windows-arm64/{binary_dir}/onnxruntime_provider_test.exe": config},
+    )
+    _make_archive(
+        build / "onnxruntime-testdata.zip",
+        {f"{handle}/sentinel": handle for handle in MAPPING},
+    )
+    library = build_and_test.TaskLibrary(
+        Path(sys.executable), tmp_path / "venv", config, None, False, None, None, None, False, False, False
+    )
+    plan = build_and_test.Plan()
+    library.extract_ort_windows_arm64(plan)
+    plan.for_each(lambda _name, task: task.run_task())
+
+    binaries = build / "windows-arm64" / binary_dir
+    assert (binaries / "onnxruntime_provider_test.exe").read_text() == config
+    for handle, mapping in MAPPING.items():
+        assert (tmp_path / mapping.format(plat="windows-arm64", config=binary_dir) / "sentinel").read_text() == handle
+    if multi_config:
+        assert not (build / "windows-arm64" / config / "testdata").exists()
+    if config != "Release":
+        assert not (build / "windows-arm64/Release").exists()

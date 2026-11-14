@@ -45,8 +45,12 @@ class BuildEpDockerTask(CompositeTask):
         platform: str = "linux/aarch64",
         use_ort_prebuilt: bool = False,
         ort_prebuilt_root: Path | None = None,
+        build_dir_suffix: str | None = None,
     ) -> None:
-        dist_rel_dir = Path("build") / f"linux-{target_arch}" / config / "dist"
+        build_dir_name = f"linux-{target_arch}"
+        if build_dir_suffix is not None:
+            build_dir_name += f"-{build_dir_suffix}"
+        dist_rel_dir = Path("build") / build_dir_name / config / "dist"
 
         super().__init__(
             group_name,

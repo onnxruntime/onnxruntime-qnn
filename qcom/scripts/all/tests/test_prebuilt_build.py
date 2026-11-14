@@ -16,7 +16,14 @@ from ep_build.plan import Plan
 from ep_build.tasks import docker
 
 
-@pytest.mark.parametrize("task_name", ["build_ort_linux_aarch64_manylinux_2_34", "build_ort_linux_x86_64_ubuntu_22_04"])
+@pytest.mark.parametrize(
+    "task_name",
+    [
+        "build_ort_linux_aarch64_manylinux_2_34",
+        "build_ort_linux_aarch64_manylinux_2_34_internal_symbols",
+        "build_ort_linux_x86_64_ubuntu_22_04",
+    ],
+)
 @pytest.mark.parametrize("mode", ["source", "download", "explicit"])
 def test_linux_ci_build_preserves_ort_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, task_name: str, mode: str
