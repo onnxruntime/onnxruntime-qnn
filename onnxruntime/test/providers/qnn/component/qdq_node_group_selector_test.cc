@@ -397,22 +397,113 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, RegisterSelector_IncreasesSize) {
 // main_node.inputs.size() must equal dq_nodes.size().
 // =============================================================================
 
+// Beyond matching data type, OrtVariadicNodeGroupSelector::Check also requires every DQ
+// input to be QDQ-pair-compatible (matching scale, via IsQDQPairSupported) with the Q
+// output -- otherwise QNN's fused Concat/Max/Min kernel would silently misinterpret a
+// mismatched-encoding input's raw quantized codes under the output's encoding. The
+// fixtures below wire up real scale initializers (shared or distinctly-named, same or
+// different values) via FakeGraph so IsQDQPairSupported has something to compare.
+//
+// Note: IsQDQPairSupported only compares scale, not zero-point (see its implementation);
+// these tests cover the scale-mismatch case this check protects against.
+
 TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_Accepts2DqSameType) {
   QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo scale_vi{"scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeOrtValue scale_val = FakeOrtValue::MakeFloat(0.5f);
+  scale_vi.initializer_value = &scale_val;
+
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
-  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in}, {}};
-  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in}, {}};
+  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in, &scale_vi}, {}};
+  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in, &scale_vi}, {}};
 
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
   // inputs.size() == dq_nodes.size() == 2 for CheckQDQNodes
   FakeNode main_node{"concat", "Concat", "", 13, {&dummy, &dummy}, {&main_out}};
 
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
-  FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {&main_out, &scale_vi}, {&q_out}};
+
+  FakeGraph graph{{}, {}, {}, {&scale_vi}};
 
   OrtVariadicNodeGroupSelector sel;
-  EXPECT_TRUE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+  EXPECT_TRUE(sel.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
+                        {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+}
+
+// Direct regression test for the scale/zero-point check added to
+// OrtVariadicNodeGroupSelector::Check: one DQ input's scale differs in value from the Q
+// output's scale (both distinctly-named initializers) -- the group must be rejected so
+// QNN does not fuse a Concat whose raw quantized codes would be misinterpreted.
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_RejectsMismatchedScale) {
+  QdqNodeGroupSelectorTestContext ctx;
+  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+
+  FakeValueInfo q_scale_vi{"q_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeOrtValue q_scale_val = FakeOrtValue::MakeFloat(0.5f);
+  q_scale_vi.initializer_value = &q_scale_val;
+
+  FakeValueInfo dq1_scale_vi{"dq1_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeOrtValue dq1_scale_val = FakeOrtValue::MakeFloat(0.5f);  // matches Q output
+  dq1_scale_vi.initializer_value = &dq1_scale_val;
+
+  FakeValueInfo dq2_scale_vi{"dq2_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeOrtValue dq2_scale_val = FakeOrtValue::MakeFloat(1.0f);  // mismatched
+  dq2_scale_vi.initializer_value = &dq2_scale_val;
+
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in, &dq1_scale_vi}, {}};
+  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in, &dq2_scale_vi}, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeNode main_node{"concat", "Concat", "", 13, {&dummy, &dummy}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {&main_out, &q_scale_vi}, {&q_out}};
+
+  FakeGraph graph{{}, {}, {}, {&q_scale_vi, &dq1_scale_vi, &dq2_scale_vi}};
+
+  OrtVariadicNodeGroupSelector sel;
+  EXPECT_FALSE(sel.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
+                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+}
+
+// Confirms the scale check compares encoding *values*, not initializer identity: two
+// DQ inputs and the Q output all use distinctly-named scale initializers that happen to
+// hold the same float value -- the group must still be accepted. This matches real-model
+// Concat patterns where every genuinely-matching input/output pair uses separate
+// initializer tensors that coincidentally hold equal values.
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_AcceptsDifferentScaleInitializerNamesSameValue) {
+  QdqNodeGroupSelectorTestContext ctx;
+  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+
+  FakeValueInfo q_scale_vi{"q_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeOrtValue q_scale_val = FakeOrtValue::MakeFloat(0.25f);
+  q_scale_vi.initializer_value = &q_scale_val;
+
+  FakeValueInfo dq1_scale_vi{"dq1_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeOrtValue dq1_scale_val = FakeOrtValue::MakeFloat(0.25f);  // same value, different name
+  dq1_scale_vi.initializer_value = &dq1_scale_val;
+
+  FakeValueInfo dq2_scale_vi{"dq2_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeOrtValue dq2_scale_val = FakeOrtValue::MakeFloat(0.25f);  // same value, different name
+  dq2_scale_vi.initializer_value = &dq2_scale_val;
+
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in, &dq1_scale_vi}, {}};
+  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in, &dq2_scale_vi}, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeNode main_node{"concat", "Concat", "", 13, {&dummy, &dummy}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {&main_out, &q_scale_vi}, {&q_out}};
+
+  FakeGraph graph{{}, {}, {}, {&q_scale_vi, &dq1_scale_vi, &dq2_scale_vi}};
+
+  OrtVariadicNodeGroupSelector sel;
+  EXPECT_TRUE(sel.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
 }
 
