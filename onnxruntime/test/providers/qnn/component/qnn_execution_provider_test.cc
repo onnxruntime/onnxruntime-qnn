@@ -31,6 +31,8 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -307,6 +309,19 @@ void GetPerThreadHtpPowerConfigsForTest(
     const OrtRunOptions* run_options) {
   (ep.*GetQnnEpPrivateMember(GetPerThreadHtpPowerConfigsTag{}))(configs, run_options);
 }
+
+#if defined(_WIN32) && QNN_ARCH_ARM64
+struct GraphPrepareThreadsTag {
+  using type = uint8_t QnnEp::*;
+  friend type GetQnnEpPrivateMember(GraphPrepareThreadsTag);
+};
+
+template struct QnnEpPrivateMember<GraphPrepareThreadsTag, &QnnEp::num_graph_prepare_threads_>;
+
+uint8_t GetGraphPrepareThreadsForTest(const QnnEp& ep) {
+  return ep.*GetQnnEpPrivateMember(GraphPrepareThreadsTag{});
+}
+#endif
 
 }  // namespace
 
@@ -663,6 +678,97 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_RpcControlLatencyNonZero_Succeeds) {
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
+
+#if defined(_WIN32) && QNN_ARCH_ARM64
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphPrepareThreadsRejectsNonNumericValues) {
+  EpStubContext default_ctx;
+  auto default_factory = MakeFactory(default_ctx);
+  auto default_ep = MakeEp(*default_factory, default_ctx);
+  const auto default_threads = GetGraphPrepareThreadsForTest(*default_ep);
+  constexpr std::array<const char*, 5> invalid_values = {"abc", "12abc", " 4", "+4", "-4"};
+
+  for (const char* invalid_value : invalid_values) {
+    SCOPED_TRACE(invalid_value);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("num_graph_prepare_threads")] = invalid_value;
+    auto factory = MakeFactory(ctx);
+    std::unique_ptr<QnnEp> ep;
+
+    ASSERT_NO_THROW(ep = MakeEp(*factory, ctx));
+    ASSERT_NE(ep, nullptr);
+    EXPECT_EQ(GetGraphPrepareThreadsForTest(*ep), default_threads);
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+                 "num_graph_prepare_threads must be a positive number");
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 "Using default number threads for graph prepare: " + std::to_string(default_threads));
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphPrepareThreadsRejectsZeroAndLeadingZeroValues) {
+  EpStubContext default_ctx;
+  auto default_factory = MakeFactory(default_ctx);
+  auto default_ep = MakeEp(*default_factory, default_ctx);
+  const auto default_threads = GetGraphPrepareThreadsForTest(*default_ep);
+
+  for (const char* invalid_value : {"0", "04"}) {
+    SCOPED_TRACE(invalid_value);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("num_graph_prepare_threads")] = invalid_value;
+    auto factory = MakeFactory(ctx);
+    std::unique_ptr<QnnEp> ep;
+
+    ASSERT_NO_THROW(ep = MakeEp(*factory, ctx));
+    ASSERT_NE(ep, nullptr);
+    EXPECT_EQ(GetGraphPrepareThreadsForTest(*ep), default_threads);
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+                 "num_graph_prepare_threads cannot be 0 or start with 0");
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphPrepareThreadsRejectsOverflowAndOutOfRangeValues) {
+  EpStubContext default_ctx;
+  auto default_factory = MakeFactory(default_ctx);
+  auto default_ep = MakeEp(*default_factory, default_ctx);
+  const auto default_threads = GetGraphPrepareThreadsForTest(*default_ep);
+  constexpr std::array<const char*, 3> invalid_values = {"256", "2147483648", "9223372036854775808"};
+
+  for (const char* invalid_value : invalid_values) {
+    SCOPED_TRACE(invalid_value);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("num_graph_prepare_threads")] = invalid_value;
+    auto factory = MakeFactory(ctx);
+    std::unique_ptr<QnnEp> ep;
+
+    ASSERT_NO_THROW(ep = MakeEp(*factory, ctx));
+    ASSERT_NE(ep, nullptr);
+    EXPECT_EQ(GetGraphPrepareThreadsForTest(*ep), default_threads);
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "is outside of the allowable range");
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_GraphPrepareThreadsAcceptsValidValues) {
+  for (const char* valid_value : {"1", "4"}) {
+    SCOPED_TRACE(valid_value);
+    if (std::string_view(valid_value) == "4" &&
+        std::thread::hardware_concurrency() != 0 && std::thread::hardware_concurrency() < 4) {
+      continue;  // Four threads exceed the supported range on this device.
+    }
+
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("num_graph_prepare_threads")] = valid_value;
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+
+    EXPECT_EQ(GetGraphPrepareThreadsForTest(*ep), valid_value[0] - '0');
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 std::string("User specified num_graph_prepare_threads: ") + valid_value);
+  }
+}
+#endif  // defined(_WIN32) && QNN_ARCH_ARM64
 
 #if defined(__linux__) && !defined(__aarch64__)
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_InferenceWithoutRpcmem_ThrowsWhenHtpSharedMemoryEnabled) {
