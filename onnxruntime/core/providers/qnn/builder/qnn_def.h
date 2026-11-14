@@ -248,10 +248,12 @@ constexpr const uint64_t kDefaultTimerTimeoutUs = 300000;
 
 struct OnnxTensorInfo {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OnnxTensorInfo);
-  OnnxTensorInfo(size_t index, int32_t data_type, std::vector<int64_t>&& shape) : index_(index), data_type_(data_type), shape_(std::move(shape)) {}
+  OnnxTensorInfo(size_t index, int32_t data_type, std::vector<int64_t>&& shape, bool dynamic_batch = false)
+      : index_(index), data_type_(data_type), shape_(std::move(shape)), dynamic_batch_(dynamic_batch) {}
   size_t index_;
   const int32_t data_type_;  // Uses TensorProto::DataType
   const std::vector<int64_t> shape_;
+  const bool dynamic_batch_;
 };
 
 // Book-keeping for graph input or output tensors.

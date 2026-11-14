@@ -3,9 +3,11 @@
 
 #include "core/providers/qnn/builder/qnn_model.h"
 
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <gsl/gsl>
+#include <limits>
 #include <thread>
 
 #include "HTP/QnnHtpGraph.h"
@@ -88,6 +90,37 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
   graph_inputs_.Clear();
   graph_outputs_.Clear();
 
+  auto resolve_shape = [&](const std::string& name, std::vector<int64_t>& shape,
+                           bool is_input) -> Ort::Status {
+    for (size_t axis = 0; axis < shape.size(); ++axis) {
+      if (shape[axis] >= 0) continue;
+      RETURN_IF(axis != 0 || !graph_info_,
+                ("Dynamic shape is not supported yet, for " +
+                 std::string(is_input ? "input: " : "output: ") + name)
+                    .c_str());
+
+      std::string qnn_name = name;
+      if (context.tensor_name_overrides) {
+        auto it = context.tensor_name_overrides->find(name);
+        if (it != context.tensor_name_overrides->end()) qnn_name = it->second;
+      }
+      const auto& tensors = is_input ? graph_info_->InputTensors() : graph_info_->OutputTensors();
+      auto tensor = std::find_if(tensors.begin(), tensors.end(), [&](const auto& candidate) {
+        return candidate.GetName() == qnn_name;
+      });
+      RETURN_IF(tensor == tensors.end(),
+                ("Dynamic batch requires a matching AOT context tensor: " + name).c_str());
+      const auto& base_shape = tensor->GetTensorDims();
+      RETURN_IF(base_shape.size() != shape.size() || base_shape.empty() || base_shape[0] == 0,
+                ("Invalid AOT context base shape for tensor: " + name).c_str());
+
+      // shortcut: axis 0 is the batch axis in this AOT experiment; general support needs explicit axis mapping.
+      // Keep ORT's declaration dynamic and resolve only the EP-owned base shape.
+      shape[axis] = base_shape[axis];
+    }
+    return Ort::Status();
+  };
+
   Ort::ConstNode fused_node{&context.fused_node};
   std::vector<Ort::ConstValueInfo> input_defs = fused_node.GetInputs();
 
@@ -130,13 +163,12 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
     ONNXTensorElementDataType elem_type = shape_info.GetElementType();
     std::vector<int64_t> shape = shape_info.GetShape();
 
-    for (const auto& s : shape) {
-      RETURN_IF(s < 0, ("Dynamic shape is not supported yet, for input: " + name).c_str());
-    }
+    const bool dynamic_batch = !shape.empty() && shape[0] < 0;
+    RETURN_IF_ERROR(resolve_shape(name, shape, true));
 
     graph_inputs_.tensors.emplace(std::piecewise_construct,
                                   std::forward_as_tuple(name),
-                                  std::forward_as_tuple(i, static_cast<int32_t>(elem_type), std::move(shape)));
+                                  std::forward_as_tuple(i, static_cast<int32_t>(elem_type), std::move(shape), dynamic_batch));
   }
 
   std::vector<Ort::ConstValueInfo> output_defs = fused_node.GetOutputs();
@@ -169,13 +201,12 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
     ONNXTensorElementDataType elem_type = shape_info.GetElementType();
     std::vector<int64_t> shape = shape_info.GetShape();
 
-    for (const auto& s : shape) {
-      RETURN_IF(s < 0, ("Dynamic shape is not supported yet, for output: " + name).c_str());
-    }
+    const bool dynamic_batch = !shape.empty() && shape[0] < 0;
+    RETURN_IF_ERROR(resolve_shape(name, shape, false));
 
     graph_outputs_.tensors.emplace(std::piecewise_construct,
                                    std::forward_as_tuple(name),
-                                   std::forward_as_tuple(i, static_cast<int32_t>(elem_type), std::move(shape)));
+                                   std::forward_as_tuple(i, static_cast<int32_t>(elem_type), std::move(shape), dynamic_batch));
   }
 
   // QNN tensors deserialized from the context binary may carry overridden names (produced by
@@ -198,7 +229,7 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
         io_info.tensors.emplace(std::piecewise_construct,
                                 std::forward_as_tuple(qnn_name),
                                 std::forward_as_tuple(info.index_, info.data_type_,
-                                                      std::vector<int64_t>(info.shape_)));
+                                                      std::vector<int64_t>(info.shape_), info.dynamic_batch_));
       }
     };
 
@@ -595,33 +626,68 @@ Ort::Status QnnModel::RecoverFromSSR(const Ort::Logger& logger, const qnn::EpCon
   return ApplyRuntimeGraphConfigs(runtime_graph_configs_, logger);
 }
 
+Ort::Status QnnModel::PrepareRuntimeTensor(const QnnTensorInfo& qnn_info,
+                                           const OnnxTensorInfo& ort_info,
+                                           const OrtValue* ort_tensor,
+                                           uint32_t& batch_multiplier,
+                                           Qnn_Tensor_t& qnn_tensor,
+                                           std::vector<uint32_t>& dimensions,
+                                           uint32_t& tensor_byte_size) const {
+  RETURN_IF(ort_tensor == nullptr, "Missing ORT input/output tensor.");
+  OrtTensorTypeAndShapeInfo* raw_shape_info = nullptr;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorTypeAndShape(ort_tensor, &raw_shape_info));
+  Ort::TensorTypeAndShapeInfo shape_info{raw_shape_info};
+  const auto shape = shape_info.GetShape();
+  const auto& name = qnn_info.tensor_wrapper->GetName();
+  RETURN_IF(shape.size() != ort_info.shape_.size(), ("Invalid runtime tensor rank: " + name).c_str());
+  RETURN_IF(static_cast<int32_t>(shape_info.GetElementType()) != ort_info.data_type_,
+            ("Invalid runtime tensor element type: " + name).c_str());
+
+  uint32_t tensor_multiplier = 1;
+  for (size_t axis = 0; axis < shape.size(); ++axis) {
+    if (axis == 0 && ort_info.dynamic_batch_) {
+      const int64_t base_batch = ort_info.shape_[0];
+      RETURN_IF(base_batch <= 0 || shape[0] <= 0 || shape[0] % base_batch != 0,
+                ("Runtime batch must be a positive integer multiple of the compiled base batch: " + name).c_str());
+      const int64_t multiplier = shape[0] / base_batch;
+      RETURN_IF(multiplier > std::numeric_limits<uint32_t>::max(), "Batch multiplier exceeds the QNN range.");
+      tensor_multiplier = SafeInt<uint32_t>(multiplier);
+      RETURN_IF(batch_multiplier != 0 && batch_multiplier != tensor_multiplier,
+                "Batch multiplier must be consistent across dynamic inputs and outputs.");
+    } else {
+      RETURN_IF(shape[axis] != ort_info.shape_[axis],
+                ("Invalid fixed runtime tensor dimension: " + name).c_str());
+    }
+  }
+
+  RETURN_IF(qnn_info.tensor_byte_size > std::numeric_limits<uint32_t>::max() / tensor_multiplier,
+            "Runtime tensor byte size exceeds the QNN range.");
+  tensor_byte_size = SafeInt<uint32_t>(qnn_info.tensor_byte_size) * tensor_multiplier;
+  const size_t ort_size = SafeInt<size_t>(utils::GetElementSizeByType(shape_info.GetElementType())) *
+                          shape_info.GetElementCount();
+  RETURN_IF(tensor_byte_size != ort_size, "ORT Tensor data size does not match QNN tensor data size.");
+
+  qnn_tensor = qnn_info.tensor_wrapper->GetQnnTensor();
+  if (tensor_multiplier > 1) {
+    dimensions = qnn_info.tensor_wrapper->GetTensorDims();
+    RETURN_IF(dimensions.empty() || dimensions[0] > std::numeric_limits<uint32_t>::max() / tensor_multiplier,
+              "Runtime batch dimension exceeds the QNN range.");
+    // QNN dimensions are pointers: keep each Run's layout-preserving copy alive until graphExecute returns.
+    dimensions[0] = SafeInt<uint32_t>(dimensions[0]) * tensor_multiplier;
+    SetQnnTensorDim(qnn_tensor, dimensions);
+  }
+  if (ort_info.dynamic_batch_) batch_multiplier = tensor_multiplier;
+  return Ort::Status();
+}
+
 Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
                                           const Ort::Logger& logger,
                                           Qnn_ErrorHandle_t& execute_status,
                                           QnnEpProfiler* ort_profiler) {
   using namespace qnn::utils;
-  auto TensorDataSize = [&ort_api = api_ptrs_.ort_api](auto ort_tensor) -> size_t {
-    OrtTensorTypeAndShapeInfo* tensor_type_and_shape = nullptr;
-    OrtStatusPtr tensor_status = ort_api.GetTensorTypeAndShape(ort_tensor, &tensor_type_and_shape);
-    if (tensor_status != nullptr) {
-      return 0;
-    }
-    size_t length;
-    tensor_status = ort_api.GetTensorShapeElementCount(tensor_type_and_shape, &length);
-    if (tensor_status != nullptr) {
-      ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
-      return 0;
-    }
-    ONNXTensorElementDataType element_type;
-    tensor_status = ort_api.GetTensorElementType(tensor_type_and_shape, &element_type);
-    if (tensor_status != nullptr) {
-      ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
-      return 0;
-    }
-    size_t element_size = GetElementSizeByType(element_type);
-    ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
-    return element_size * length;
-  };
+  uint32_t batch_multiplier = 0;
+  InlinedVector<std::vector<uint32_t>> input_dimensions(qnn_input_infos_.size());
+  InlinedVector<std::vector<uint32_t>> output_dimensions(qnn_output_infos_.size());
 
   std::vector<Qnn_Tensor_t> qnn_inputs;
   qnn_inputs.reserve(qnn_input_infos_.size());
@@ -634,16 +700,12 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
                     .c_str());
     const OrtValue* ort_input_tensor = nullptr;
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetInput(context, qnn_input_info.ort_index, &ort_input_tensor));
-    auto ort_tensor_size = TensorDataSize(ort_input_tensor);
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Qnn tensor size: " + std::to_string(qnn_input_info.tensor_byte_size) +
-                 " Ort tensor size: " + std::to_string(ort_tensor_size))
-                    .c_str());
-    RETURN_IF_NOT(qnn_input_info.tensor_byte_size == ort_tensor_size,
-                  "ORT Tensor data size does not match QNN tensor data size.");
-
     qnn_inputs.push_back(qnn_input_info.tensor_wrapper->GetQnnTensor());
+    uint32_t tensor_byte_size = 0;
+    RETURN_IF_ERROR(PrepareRuntimeTensor(qnn_input_info,
+                                         graph_inputs_.tensors.at(qnn_input_info.tensor_wrapper->GetName()),
+                                         ort_input_tensor, batch_multiplier, qnn_inputs.back(),
+                                         input_dimensions[qnn_inputs.size() - 1], tensor_byte_size));
 
     const OrtMemoryInfo* input_tensor_mem_info = nullptr;
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorMemoryInfo(ort_input_tensor, &input_tensor_mem_info));
@@ -654,9 +716,17 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
     RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
         logger,
         static_cast<const OrtMemoryInfo*>(input_tensor_mem_info),
-        const_cast<void*>(raw_data), qnn_input_info.tensor_byte_size,
+        const_cast<void*>(raw_data), tensor_byte_size,
         graph_info_->GraphContext(),
         qnn_inputs.back()));
+  }
+
+  if (batch_multiplier == 0) batch_multiplier = 1;
+  if (batch_multiplier > 1) {
+    const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
+    RETURN_IF(!qnn_interface.propertyHasCapability ||
+                  qnn_interface.propertyHasCapability(QNN_PROPERTY_GRAPH_SUPPORT_BATCH_MULTIPLE) != QNN_PROPERTY_SUPPORTED,
+              "QNN backend does not support batch multiplier execution.");
   }
 
   std::vector<Qnn_Tensor_t> qnn_outputs;
@@ -670,7 +740,17 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
                  " index = " + std::to_string(qnn_output_info.ort_index))
                     .c_str());
     const auto& ort_output_info = GetOutputInfo(model_output_name);
-    const std::vector<int64_t>& output_shape = ort_output_info->shape_;
+    RETURN_IF(ort_output_info == nullptr, "Missing ORT output metadata.");
+    std::vector<int64_t> output_shape = ort_output_info->shape_;
+    const uint32_t output_multiplier = ort_output_info->dynamic_batch_ ? batch_multiplier : 1;
+    RETURN_IF(qnn_output_info.tensor_byte_size > std::numeric_limits<uint32_t>::max() / output_multiplier,
+              "Runtime output byte size exceeds the QNN range.");
+    if (ort_output_info->dynamic_batch_) {
+      RETURN_IF(output_shape.empty() || output_shape[0] <= 0 ||
+                    output_shape[0] > std::numeric_limits<uint32_t>::max() / output_multiplier,
+                "Runtime output batch dimension exceeds the QNN range.");
+      output_shape[0] = SafeInt<int64_t>(output_shape[0]) * output_multiplier;
+    }
     OrtValue* ort_output_tensor = nullptr;
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetOutput(context,
                                                                          qnn_output_info.ort_index,
@@ -678,16 +758,11 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
                                                                          output_shape.size(),
                                                                          &ort_output_tensor));
 
-    auto ort_tensor_size = TensorDataSize(ort_output_tensor);
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Qnn tensor size: " + std::to_string(qnn_output_info.tensor_byte_size) +
-                 " Ort tensor size: " + std::to_string(ort_tensor_size))
-                    .c_str());
-    RETURN_IF_NOT(qnn_output_info.tensor_byte_size == ort_tensor_size,
-                  "ORT Tensor data size does not match QNN tensor data size");
-
     qnn_outputs.push_back(qnn_output_info.tensor_wrapper->GetQnnTensor());
+    uint32_t tensor_byte_size = 0;
+    RETURN_IF_ERROR(PrepareRuntimeTensor(qnn_output_info, *ort_output_info,
+                                         ort_output_tensor, batch_multiplier, qnn_outputs.back(),
+                                         output_dimensions[qnn_outputs.size() - 1], tensor_byte_size));
 
     const OrtMemoryInfo* output_tensor_mem_info = nullptr;
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorMemoryInfo(ort_output_tensor, &output_tensor_mem_info));
@@ -698,7 +773,7 @@ Ort::Status QnnModel::BindAndExecuteGraph(OrtKernelContext* context,
     RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
         logger,
         static_cast<const OrtMemoryInfo*>(output_tensor_mem_info),
-        mutable_data, qnn_output_info.tensor_byte_size,
+        mutable_data, tensor_byte_size,
         graph_info_->GraphContext(),
         qnn_outputs.back()));
   }
@@ -907,7 +982,7 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
 
     QnnTensorInfo& qnn_tensor_info = qnn_tensor_infos[qnn_index];
     qnn_tensor_info.tensor_wrapper = &tensor_wrapper;
-    qnn_tensor_info.tensor_byte_size = static_cast<uint32_t>(length);
+    qnn_tensor_info.tensor_byte_size = SafeInt<uint32_t>(length);
     qnn_tensor_info.ort_index = ort_index;
   }
   // The number of graph inputs/outputs and the number of tensor wrappers may not match.

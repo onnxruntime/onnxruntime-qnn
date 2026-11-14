@@ -6,6 +6,7 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -43,6 +44,23 @@ struct SetupTensorsTag {
 };
 
 template struct QnnModelPrivateMember<SetupTensorsTag, &qnn::QnnModel::SetupTensors>;
+
+struct GraphInfoTag {
+  using type = std::unique_ptr<qnn::GraphInfo> qnn::QnnModel::*;
+  friend type GetQnnModelPrivateMember(GraphInfoTag);
+};
+
+template struct QnnModelPrivateMember<GraphInfoTag, &qnn::QnnModel::graph_info_>;
+
+struct PrepareRuntimeTensorTag {
+  using type = Ort::Status (qnn::QnnModel::*)(const qnn::QnnTensorInfo&,
+                                              const qnn::OnnxTensorInfo&,
+                                              const OrtValue*, uint32_t&, Qnn_Tensor_t&,
+                                              std::vector<uint32_t>&, uint32_t&) const;
+  friend type GetQnnModelPrivateMember(PrepareRuntimeTensorTag);
+};
+
+template struct QnnModelPrivateMember<PrepareRuntimeTensorTag, &qnn::QnnModel::PrepareRuntimeTensor>;
 
 struct BindQnnTensorMemoryTag {
   using type = Ort::Status (qnn::QnnModel::*)(const Ort::Logger&,
@@ -443,6 +461,82 @@ TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_Basic_PopulatesInputsOutputs) {
   EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
 }
 
+TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_AotDynamicBatch_PreservesOrtDeclarations) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+  FakeValueInfo input{"input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {-1, 3, 8, 8}};
+  FakeValueInfo output{"output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {-1, 2, 6, 6}};
+  FakeGraph graph{{}, {&input}, {&output}, {}};
+  FakeNode fused{"fused", "EPContext", "com.microsoft", 1, {&input}, {&output}};
+  std::unordered_map<std::string, std::string> overrides{{"input", "context_input"}};
+  qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger};
+  mc.tensor_name_overrides = &overrides;
+
+  std::vector<qnn::QnnTensorWrapper> inputs;
+  inputs.emplace_back("context_input", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                      qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{2, 8, 8, 3});
+  std::vector<qnn::QnnTensorWrapper> outputs;
+  outputs.emplace_back("output", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                       qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4, 6, 6, 2});
+  ((*ctx.model).*GetQnnModelPrivateMember(GraphInfoTag{})) = std::make_unique<qnn::GraphInfo>(
+      nullptr, "context_graph", nullptr, std::move(inputs), std::move(outputs));
+
+  const auto status = ctx.model->SetGraphInputOutputInfo(mc);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(ctx.model->GetInputsInfo().at("input").shape_, (std::vector<int64_t>{2, 3, 8, 8}));
+  EXPECT_EQ(ctx.model->GetOutputsInfo().at("output").shape_, (std::vector<int64_t>{4, 2, 6, 6}));
+  EXPECT_TRUE(ctx.model->GetInputsInfo().at("context_input").dynamic_batch_);
+  EXPECT_TRUE(ctx.model->GetOutputsInfo().at("output").dynamic_batch_);
+  EXPECT_EQ(input.shape, (std::vector<int64_t>{-1, 3, 8, 8}));
+  EXPECT_EQ(output.shape, (std::vector<int64_t>{-1, 2, 6, 6}));
+}
+
+TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_AotDynamicBatch_RejectsUnsupportedShapes) {
+  struct Case {
+    const char* name;
+    std::vector<int64_t> input_shape;
+    std::vector<int64_t> output_shape;
+    bool has_context;
+    const char* context_input_name;
+    std::vector<uint32_t> base_input_shape;
+  };
+  const std::vector<Case> cases{
+      {"JIT input", {-1, 3, 8, 8}, {2, 2, 6, 6}, false, "input", {2, 8, 8, 3}},
+      {"JIT output", {2, 3, 8, 8}, {-1, 2, 6, 6}, false, "input", {2, 8, 8, 3}},
+      {"non-batch input", {-1, -1, 8, 8}, {2, 2, 6, 6}, true, "input", {2, 8, 8, 3}},
+      {"non-batch output", {2, 3, 8, 8}, {2, -1, 6, 6}, true, "input", {2, 8, 8, 3}},
+      {"missing tensor", {-1, 3, 8, 8}, {2, 2, 6, 6}, true, "other", {2, 8, 8, 3}},
+      {"rank mismatch", {-1, 3, 8, 8}, {2, 2, 6, 6}, true, "input", {2, 8, 3}},
+      {"zero base batch", {-1, 3, 8, 8}, {2, 2, 6, 6}, true, "input", {0, 8, 8, 3}},
+  };
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(test_case.name);
+    QnnModelMinimalTestContext ctx;
+    ASSERT_TRUE(ctx.IsValid());
+    InstallFakeGraphApiStubs(ctx.stub_ort_api);
+    OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
+
+    FakeValueInfo input{"input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, test_case.input_shape};
+    FakeValueInfo output{"output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, test_case.output_shape};
+    FakeGraph graph{{}, {&input}, {&output}, {}};
+    FakeNode fused{"fused", "EPContext", "com.microsoft", 1, {&input}, {&output}};
+    qnn::QnnModelContext mc{*graph.AsGraph(), *fused.AsNode(), ctx.logger};
+    if (test_case.has_context) {
+      std::vector<qnn::QnnTensorWrapper> inputs;
+      inputs.emplace_back(test_case.context_input_name, QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                          qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>(test_case.base_input_shape));
+      ((*ctx.model).*GetQnnModelPrivateMember(GraphInfoTag{})) = std::make_unique<qnn::GraphInfo>(
+          nullptr, "context_graph", nullptr, std::move(inputs), std::vector<qnn::QnnTensorWrapper>{});
+    }
+    EXPECT_FALSE(ctx.model->SetGraphInputOutputInfo(mc).IsOK());
+    EXPECT_EQ(input.shape, test_case.input_shape);
+    EXPECT_EQ(output.shape, test_case.output_shape);
+  }
+}
+
 TEST(QnnUnit_ModelTest, SetupTensors_SparseOutputIndex_ReturnsCompactedTensorInfo) {
   QnnModelMinimalTestContext ctx;
   ASSERT_TRUE(ctx.IsValid());
@@ -513,6 +607,128 @@ TEST(QnnUnit_ModelTest, BindTensor_UnregisteredGpuDefaultMemory_ReturnsError) {
 
   EXPECT_FALSE(status.IsOK());
   EXPECT_EQ(status.GetErrorMessage(), "GPU DEFAULT memory is not a registered imported memory handle.");
+}
+
+TEST(QnnUnit_ModelTest, PrepareRuntimeTensor_ScalesContextLayoutAndActualBuffers) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  ctx.stub_ort_api.GetTensorTypeAndShape = Ort::GetApi().GetTensorTypeAndShape;
+  const auto prepare = GetQnnModelPrivateMember(PrepareRuntimeTensorTag{});
+  const auto bind = GetQnnModelPrivateMember(BindQnnTensorMemoryTag{});
+  Ort::AllocatorWithDefaultOptions allocator;
+  uint32_t multiplier = 0;
+
+  qnn::QnnTensorWrapper input("input", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                              qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{2, 8, 8, 3});
+  qnn::QnnTensorWrapper output("output", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                               qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{4, 6, 6, 2});
+  qnn::OnnxTensorInfo input_info(0, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {2, 3, 8, 8}, true);
+  qnn::OnnxTensorInfo output_info(0, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {4, 2, 6, 6}, true);
+  const std::vector<int64_t> input_shape{256, 3, 8, 8};
+  const std::vector<int64_t> output_shape{512, 2, 6, 6};
+  auto input_value = Ort::Value::CreateTensor<float>(allocator, input_shape.data(), input_shape.size());
+  auto output_value = Ort::Value::CreateTensor<float>(allocator, output_shape.data(), output_shape.size());
+  qnn::QnnTensorInfo qnn_input{&input, 2 * 3 * 8 * 8 * sizeof(float), 0};
+  qnn::QnnTensorInfo qnn_output{&output, 4 * 2 * 6 * 6 * sizeof(float), 0};
+  Qnn_Tensor_t input_tensor = QNN_TENSOR_INIT;
+  Qnn_Tensor_t output_tensor = QNN_TENSOR_INIT;
+  std::vector<uint32_t> input_dimensions, output_dimensions;
+  uint32_t input_bytes = 0, output_bytes = 0;
+  auto status = ((*ctx.model).*prepare)(qnn_input, input_info, input_value, multiplier,
+                                        input_tensor, input_dimensions, input_bytes);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  status = ((*ctx.model).*prepare)(qnn_output, output_info, output_value, multiplier,
+                                   output_tensor, output_dimensions, output_bytes);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(multiplier, 128u);
+  EXPECT_EQ(input_dimensions, (std::vector<uint32_t>{256, 8, 8, 3}));
+  EXPECT_EQ(output_dimensions, (std::vector<uint32_t>{512, 6, 6, 2}));
+  EXPECT_EQ(qnn::GetQnnTensorDims(input_tensor), input_dimensions.data());
+  EXPECT_EQ(qnn::GetQnnTensorDims(output_tensor), output_dimensions.data());
+  EXPECT_EQ(input.GetTensorDims(), (std::vector<uint32_t>{2, 8, 8, 3}));
+  EXPECT_EQ(output.GetTensorDims(), (std::vector<uint32_t>{4, 6, 6, 2}));
+  EXPECT_EQ(input_bytes, qnn_input.tensor_byte_size * 128u);
+  EXPECT_EQ(output_bytes, qnn_output.tensor_byte_size * 128u);
+  ASSERT_TRUE(((*ctx.model).*bind)(ctx.logger, nullptr, input_value.GetTensorMutableData<float>(),
+                                   input_bytes, nullptr, input_tensor)
+                  .IsOK());
+  ASSERT_TRUE(((*ctx.model).*bind)(ctx.logger, nullptr, output_value.GetTensorMutableData<float>(),
+                                   output_bytes, nullptr, output_tensor)
+                  .IsOK());
+  EXPECT_EQ(qnn::GetQnnTensorClientBuf(input_tensor).dataSize, input_bytes);
+  EXPECT_EQ(qnn::GetQnnTensorClientBuf(output_tensor).dataSize, output_bytes);
+}
+
+TEST(QnnUnit_ModelTest, PrepareRuntimeTensor_VaryingRunsKeepBaseAndEarlierDimensions) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  ctx.stub_ort_api.GetTensorTypeAndShape = Ort::GetApi().GetTensorTypeAndShape;
+  const auto prepare = GetQnnModelPrivateMember(PrepareRuntimeTensorTag{});
+  Ort::AllocatorWithDefaultOptions allocator;
+  qnn::QnnTensorWrapper wrapper("input", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                                qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{2, 3});
+  qnn::OnnxTensorInfo info(0, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {2, 3}, true);
+  qnn::QnnTensorInfo qnn_info{&wrapper, 6 * sizeof(float), 0};
+  std::vector<std::vector<uint32_t>> dimensions(3);
+  std::vector<Qnn_Tensor_t> tensors(3, QNN_TENSOR_INIT);
+  const std::vector<int64_t> batches{4, 256, 2};
+  for (size_t i = 0; i < batches.size(); ++i) {
+    const std::vector<int64_t> shape{batches[i], 3};
+    auto value = Ort::Value::CreateTensor<float>(allocator, shape.data(), shape.size());
+    uint32_t multiplier = 0, bytes = 0;
+    const auto status = ((*ctx.model).*prepare)(qnn_info, info, value, multiplier,
+                                                tensors[i], dimensions[i], bytes);
+    ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+    EXPECT_EQ(qnn::GetQnnTensorDims(tensors[i])[0], batches[i]);
+    EXPECT_EQ(multiplier, batches[i] / 2);
+  }
+  EXPECT_EQ(qnn::GetQnnTensorDims(tensors[0])[0], 4u);
+  EXPECT_EQ(qnn::GetQnnTensorDims(tensors[1])[0], 256u);
+  EXPECT_EQ(wrapper.GetTensorDims(), (std::vector<uint32_t>{2, 3}));
+}
+
+TEST(QnnUnit_ModelTest, PrepareRuntimeTensor_RejectsInvalidShapesTypesAndSizes) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+  ctx.stub_ort_api.GetTensorTypeAndShape = Ort::GetApi().GetTensorTypeAndShape;
+  const auto prepare = GetQnnModelPrivateMember(PrepareRuntimeTensorTag{});
+  Ort::AllocatorWithDefaultOptions allocator;
+  struct Case {
+    const char* name;
+    std::vector<int64_t> shape;
+    bool dynamic_batch = true;
+    uint32_t multiplier = 0;
+    uint32_t base_bytes = 2 * 3 * 8 * 8 * sizeof(float);
+    bool wrong_type = false;
+  };
+  const std::vector<Case> cases{
+      {"nonintegral batch", {3, 3, 8, 8}},
+      {"zero batch", {0, 3, 8, 8}},
+      {"rank", {4, 3, 64}},
+      {"equal byte count, wrong dimensions", {4, 3, 4, 16}},
+      {"static batch", {4, 3, 8, 8}, false},
+      {"inconsistent multiplier", {4, 3, 8, 8}, true, 3},
+      {"base byte count", {4, 3, 8, 8}, true, 0, 1},
+      {"byte overflow", {4, 3, 8, 8}, true, 0, std::numeric_limits<uint32_t>::max()},
+      {"element type", {4, 3, 8, 8}, true, 0, 2 * 3 * 8 * 8 * sizeof(float), true},
+  };
+  qnn::QnnTensorWrapper wrapper("input", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                                qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{2, 8, 8, 3});
+  for (const auto& test : cases) {
+    SCOPED_TRACE(test.name);
+    qnn::OnnxTensorInfo info(0, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {2, 3, 8, 8}, test.dynamic_batch);
+    qnn::QnnTensorInfo qnn_info{&wrapper, test.base_bytes, 0};
+    auto value = test.wrong_type
+                     ? Ort::Value::CreateTensor<int32_t>(allocator, test.shape.data(), test.shape.size())
+                     : Ort::Value::CreateTensor<float>(allocator, test.shape.data(), test.shape.size());
+    uint32_t multiplier = test.multiplier, bytes = 0;
+    Qnn_Tensor_t tensor = QNN_TENSOR_INIT;
+    std::vector<uint32_t> dimensions;
+    EXPECT_FALSE(((*ctx.model).*prepare)(qnn_info, info, value, multiplier,
+                                         tensor, dimensions, bytes)
+                     .IsOK());
+    EXPECT_EQ(wrapper.GetTensorDims(), (std::vector<uint32_t>{2, 8, 8, 3}));
+  }
 }
 
 // ---------------------------------------------------------------------------
