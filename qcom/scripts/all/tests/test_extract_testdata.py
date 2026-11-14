@@ -151,7 +151,7 @@ def test_windows_arm64_extraction_task_consumes_selected_build(tmp_path, monkeyp
         {f"{handle}/sentinel": handle for handle in MAPPING},
     )
     library = build_and_test.TaskLibrary(
-        Path(sys.executable), tmp_path / "venv", config, None, None, None, None, False, False, False
+        Path(sys.executable), tmp_path / "venv", config, None, False, None, None, None, False, False, False
     )
     plan = build_and_test.Plan()
     library.extract_ort_windows_arm64(plan)

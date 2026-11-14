@@ -20,6 +20,10 @@ param (
     [bool]$BuildArchive = $false,
 
     [Parameter(Mandatory = $false,
+               HelpMessage = "If true, download and use ORT prebuilt.")]
+    [bool]$UseOrtPrebuilt = $false,
+
+    [Parameter(Mandatory = $false,
                HelpMessage = "Path to ORT Prebuilt.")]
     [string]$OrtPrebuiltRoot = "",
 
@@ -54,6 +58,10 @@ param (
                HelpMessage = "Python virtual environment to activate.")]
     [string]$PyVEnv
 )
+
+if ($OrtPrebuiltRoot -ne "") {
+    $UseOrtPrebuilt = $true
+}
 
 $RepoRoot = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)\..\..\..").Path
 
@@ -96,6 +104,25 @@ else {
 
 $QairtSdkVersion = Get-QairtSdkVersion -QairtSdkRoot $QairtSdkRoot
 
+if ($UseOrtPrebuilt -and $OrtPrebuiltRoot -eq "") {
+    switch ($Arch) {
+        { $_ -in @("aarch64", "arm64") } {
+            $OrtPrebuiltRoot = (Get-OrtARM64PrebuiltRoot)
+        }
+        "x86_64" {
+            $OrtPrebuiltRoot = (Get-OrtX64PrebuiltRoot)
+        }
+        Default { throw "Unknown arch $Arch for ORT prebuilt" }
+    }
+}
+
+$OrtBuildMode = "source"
+if ($UseOrtPrebuilt) {
+    $OrtPrebuiltRoot = (Resolve-Path -LiteralPath $OrtPrebuiltRoot).Path
+    $OrtBuildMode = "prebuilt=$OrtPrebuiltRoot"
+}
+$OrtBuildModeFilePath = Join-Path $BuildDir "ort-build-mode-$Config.txt"
+
 if ($Mode -eq "generate_sln") {
     $CMakeGenerator = (Get-InstalledVsGenerator).Generator
     $BuildIsDirty = $true
@@ -112,6 +139,11 @@ else {
     } else {
         $BuildIsDirty = $false
     }
+}
+
+if (-not (Test-Path -LiteralPath $OrtBuildModeFilePath) -or
+    (Get-Content -LiteralPath $OrtBuildModeFilePath -Raw).Trim() -ne $OrtBuildMode) {
+    $BuildIsDirty = $true
 }
 
 $BinDir = Join-Path $BuildDir $Config
@@ -151,10 +183,13 @@ if ($Arch -in @("aarch64", "arm64", "arm64ec", "x86_64")) {
 }
 
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
-if ($OrtPrebuiltRoot -ne "") {
+if ($UseOrtPrebuilt) {
     $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
     $QnnArgs += "--ort_home"
     $QnnArgs += "$OrtPrebuiltRoot"
+} else {
+    # Clear a prebuilt path retained by a previous CMake configuration.
+    $QnnArgs += "--cmake_extra_defines", "onnxruntime_ORT_HOME:PATH="
 }
 $GenerateBuild = $false
 $DoBuild = $false
@@ -300,6 +335,9 @@ else {
     }
 
     if ($GenerateBuild -or $DoBuild) {
+        if ($BuildIsDirty -and (Test-Path -LiteralPath $OrtBuildModeFilePath)) {
+            Remove-Item -LiteralPath $OrtBuildModeFilePath
+        }
         try {
             Assert-Success -ErrorMessage "Failed to fetch CMake dependencies" {
                 python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
@@ -344,6 +382,8 @@ else {
                     }
                 }
             }
+            # Persist the mode only after configure/build succeeds.
+            Set-Content -LiteralPath $OrtBuildModeFilePath -Value $OrtBuildMode
         }
         finally {
             # Whatever happens, blow away mirror to avoid it showing up in git; it's okay, it's
@@ -359,7 +399,11 @@ else {
 
         Push-Location (Join-Path $BuildDir $Config)
         $OnnxModelsRoot = (Get-OnnxModelsRoot)
-        & .\run_tests.ps1 -Config $Config -OnnxModelsRoot $OnnxModelsRoot
+        $TestRunnerArgs = @{ Config = $Config; OnnxModelsRoot = $OnnxModelsRoot }
+        if ($UseOrtPrebuilt) {
+            $TestRunnerArgs["SkipModelTests"] = $true
+        }
+        & .\run_tests.ps1 @TestRunnerArgs
 
         if (-not $?) {
             $failed = $true

@@ -91,8 +91,11 @@ jobs:
     if: ${{ toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
     strategy:
+      fail-fast: false
       matrix:
         target_py_vsn: ${{ fromJSON(inputs.linux_target_py_vsns) }}
+        # Reuse release jobs to validate QNN EP against both ORT build modes.
+        use_ort_home: [false, true]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -102,12 +105,17 @@ jobs:
       target_arch: aarch64_manylinux_2_34
       testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: ${{ matrix.target_py_vsn }}
-      run_tests: false
-      # Upload the test archive with the first Python version we encounter
-      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      use_ort_home: ${{ matrix.use_ort_home }}
+      run_tests: ${{ matrix.use_ort_home }}
+      build_test_same_runner: false
+      test_runner_arch: arm64
+      upload_wheel: ${{ !matrix.use_ort_home }}
+      # Prebuilt validation transfers tests for every configured Python version.
+      # Shipping test archives are uploaded for the first Python version only.
+      upload_test_archive: ${{ matrix.use_ort_home || matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
       # Build Tgz with the first Python version we encounter
-      build_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
-      upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      build_archive: ${{ !matrix.use_ort_home && matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      upload_archive: ${{ !matrix.use_ort_home && matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
 
   build-linux-aarch64-oe-gcc11_2:
     if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
@@ -128,8 +136,10 @@ jobs:
     if: ${{ toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
     strategy:
+      fail-fast: false
       matrix:
         target_py_vsn: ${{ fromJSON(inputs.linux_target_py_vsns) }}
+        use_ort_home: [false, true]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -139,20 +149,27 @@ jobs:
       target_arch: x86_64_ubuntu_22_04
       testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: ${{ matrix.target_py_vsn }}
-      run_tests: false
+      use_ort_home: ${{ matrix.use_ort_home }}
+      run_tests: ${{ matrix.use_ort_home }}
       test_wheel: false
-      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
-      upload_wheel: true
-      build_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
-      upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      upload_test_archive: ${{ !matrix.use_ort_home && matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      upload_wheel: ${{ !matrix.use_ort_home }}
+      build_archive: ${{ !matrix.use_ort_home && matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      upload_archive: ${{ !matrix.use_ort_home && matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
 
   build-windows:
     if: ${{ toJSON(fromJSON(inputs.windows_target_archs)) != '[]' && toJSON(fromJSON(inputs.windows_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
     strategy:
+      fail-fast: false
       matrix:
         target_arch: ${{ fromJSON(inputs.windows_target_archs) }}
         target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns) }}
+        use_ort_home: [false, true]
+        exclude:
+          # Prebuilt ORT packages cover native ARM64 and x86_64 only.
+          - target_arch: arm64ec
+            use_ort_home: true
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -162,24 +179,26 @@ jobs:
       target_arch: ${{ matrix.target_arch }}
       testdata_archive_artifact_name: testdata-zip
       target_py_vsn: ${{ matrix.target_py_vsn }}
+      use_ort_home: ${{ matrix.use_ort_home }}
       build_runner_arch: "${{ matrix.target_arch == 'arm64' && 'ARM64' || 'X64' }}"
       test_runner_arch: ARM64
-      # Validate the shared ARM64 test archive once: native HTP v73 and QDC HTP v81
-      # consume the archive uploaded by the first Python-version build.
-      run_tests: ${{ matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      build_test_same_runner: false
+      run_tests: ${{ matrix.use_ort_home || (matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0]) }}
+      # Prebuilt validation runs locally; shipping ARM64 builds share their archive
+      # with native HTP v73 and QDC HTP v81 test jobs.
+      build_test_same_runner: ${{ matrix.use_ort_home }}
+      upload_wheel: ${{ !matrix.use_ort_home }}
       test_wheel: false
       # For each arch, upload the test archive with the first Python version we encounter
-      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      upload_test_archive: ${{ !matrix.use_ort_home && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       # For each arch, build a zip archive with the first Python version we encounter
-      build_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_archive: ${{ !matrix.use_ort_home && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      upload_archive: ${{ !matrix.use_ort_home && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       # For Windows x86_64 only, build and upload a NuGet archive with the first python version we encounter.
-      build_nuget: ${{ matrix.target_arch == 'x86_64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      upload_nuget: ${{ matrix.target_arch == 'x86_64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_nuget: ${{ !matrix.use_ort_home && matrix.target_arch == 'x86_64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      upload_nuget: ${{ !matrix.use_ort_home && matrix.target_arch == 'x86_64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       # For each arch, build and upload a PDB archive with the first python version we encounter
-      build_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      upload_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_pdb_archive: ${{ !matrix.use_ort_home && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      upload_pdb_archive: ${{ !matrix.use_ort_home && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
 
   build-windows-arm64x:
     needs: [archive-testdata]

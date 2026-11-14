@@ -23,7 +23,7 @@ See more information on the QNN execution provider [here](./QNN-ExecutionProvide
   * **Note**: The build will fetch the appropriate QAIRT version automatically. If you have a local copy, specify its location using `--qairt-sdk` argument or `QAIRT_SDK_PATH` environment variable. The SDK must be version 2.17.0 or higher. For older versions, see [Build Instructions for QNN EP v1.x](https://onnxruntime.ai/docs/build/eps.html#qnn) for details.
 
 * **Pre-built ONNX Runtime Release** (Optional): Download from [Microsoft ONNX Runtime Releases](https://github.com/microsoft/onnxruntime/releases)
-  * **Note**: The build will fetch the appropriate ORT version automaticall. If you have a local copy, extract the release package and set the path via `--ort-prebuilt` argument or `ORT_PREBUILT_ROOT` environment variable to specify the root directory of the prebuilt ORT package.
+  * **Note**: The build will fetch the appropriate ORT version automatically. If you want to use prebuilt ORT binaries, pass `--use-ort-prebuilt` to download and use them automatically.
 
 ### Get the Source Code
 
@@ -42,7 +42,16 @@ The build system uses a task-based approach via `python qcom/build_and_test.py`.
 
 * `--config [Release/RelWithDebInfo/Debug]`: Build configuration (default: Release)
 * `--qairt-sdk PATH`: Path to QAIRT SDK (overrides environment variables)
-* `--ort-prebuilt PATH`: Path to pre-built ONNX Runtime SDK (optional)
+* `--use-ort-prebuilt`: Download and use prebuilt ORT binaries instead of building from source (optional)
+* `--ort-prebuilt PATH`: Use prebuilt ORT from this path; implies `--use-ort-prebuilt` and takes precedence over `ORT_PREBUILT_ROOT`
+
+With `--use-ort-prebuilt`, QNN EP and its unit tests are still compiled against
+the prebuilt ORT libraries; ORT itself is not compiled from source. Unit tests
+run in this mode, while ONNX model tests are skipped. Release builds validate
+both modes through the existing build matrix, using the configured Python
+versions on Linux and Windows ARM64 and x86_64. Prebuilt validation does not
+publish wheels or distribution packages; Linux ARM64 transfers its test
+archives to a separate ARM64 test runner.
 * `--target-py-version [3.10/3.11/3.12/3.13/3.14]`: Python version for wheel building (default: 3.12 on Windows, 3.10 on Linux)
 * `--build-nuget`: Enable building NuGet packages for .NET bindings
 * `--build-archive`: Enable building archives
@@ -55,7 +64,7 @@ The build system uses a task-based approach via `python qcom/build_and_test.py`.
 The build system supports the following environment variables:
 
 * `QAIRT_SDK_ROOT` / `QNN_SDK_ROOT` / `SNPE_ROOT`: Path to QAIRT SDK (searched in this order)
-* `ORT_PREBUILT_ROOT`: Path to pre-built ONNX Runtime
+* `ORT_PREBUILT_ROOT`: Path to pre-built ONNX Runtime; enables prebuilt mode unless overridden by `--ort-prebuilt`
 * `ORT_BUILD_DOCKER_CCACHE_ROOT`: Docker ccache root directory
 * `ORT_NIGHTLY_BUILD`: Set to 1 for nightly builds
 * `ANDROID_HOME` / `ANDROID_NDK_HOME`: Android SDK/NDK paths
@@ -84,7 +93,7 @@ python qcom/build_and_test.py list_all
 Automatically detects whether you're on x86-64 or ARM64 and builds accordingly:
 
 ```batch
-python qcom/build_and_test.py [--config <BUILD_CONFIG>] [--qairt-sdk <QNN_SDK_PATH>] [--ort-prebuilt <ORT_SDK_PATH>] [--target-py-version <PY_VERSION>] build
+python qcom/build_and_test.py [--config <BUILD_CONFIG>] [--qairt-sdk <QNN_SDK_PATH>] [--use-ort-prebuilt] [--target-py-version <PY_VERSION>] build
 ```
 
 #### Build for ARM64 Windows
@@ -341,7 +350,7 @@ python qcom/build_and_test.py lint_and_fix
 * **Solution**: Verify `--qairt-sdk` path or set `QAIRT_SDK_ROOT` / `QNN_SDK_ROOT` environment variable
 
 **Issue**: ORT prebuilt not found
-* **Solution**: Either provide `--ort-prebuilt` path or let the build fetch it automatically (omit the argument)
+* **Solution**: Pass `--use-ort-prebuilt` to download prebuilt binaries, or let the build fetch ORT from source (omit the argument)
 
 **Issue**: Python version mismatch
 * **Solution**: Ensure you're using Python 3.10 or higher. Use `--target-py-version` to specify the target Python version for wheel builds

@@ -20,7 +20,10 @@ QCOM_ROOT = Path(__file__).resolve().parents[3]
         ("test_ort_linux_aarch64_manylinux_2_34_internal_symbols", "test"),
     ],
 )
-def test_arm64_internal_symbol_task_passes_required_flags(tmp_path: Path, task_name: str, mode: str) -> None:
+@pytest.mark.parametrize("use_ort_prebuilt", [False, True])
+def test_arm64_internal_symbol_task_passes_required_flags(
+    tmp_path: Path, task_name: str, mode: str, use_ort_prebuilt: bool
+) -> None:
     # Task availability is selected at import time. Use a subprocess so simulating
     # ARM64 does not change the task registry used by the other Linux tests.
     script = """
@@ -38,12 +41,14 @@ util.is_host_mac = lambda: False
 from build_and_test import TaskLibrary
 from ep_build.plan import Plan
 
-task_name, mode, temp_dir = sys.argv[1:]
+task_name, mode, temp_dir, use_ort_prebuilt = sys.argv[1:]
+use_ort_prebuilt = use_ort_prebuilt == "True"
 library = TaskLibrary(
     python_executable=Path(sys.executable),
     venv_path=Path(temp_dir) / "venv",
     config="Release",
     target_py_version=None,
+    use_ort_prebuilt=use_ort_prebuilt,
     ort_prebuilt_root=None,
     qairt_sdk_root=None,
     docker_ccache_root=None,
@@ -61,12 +66,13 @@ assert f"--mode={mode}" in command
 assert "--enable-qnn-internal-test-symbols" in command
 assert "--build-dir-suffix=internal-symbols" in command
 assert "--target-arch=aarch64_manylinux_2_34" in command
+assert ("--use-ort-prebuilt" in command) == use_ort_prebuilt
 if mode == "build":
     assert "--qnn-arch-abi=aarch64-oe-linux-gcc11.2" in command
     assert "--no-use-cache" in command
 """
     result = subprocess.run(
-        [sys.executable, "-c", script, task_name, mode, str(tmp_path)],
+        [sys.executable, "-c", script, task_name, mode, str(tmp_path), str(use_ort_prebuilt)],
         cwd=QCOM_ROOT,
         env=os.environ | {"PYTHONPATH": os.pathsep.join(sys.path)},
         capture_output=True,
