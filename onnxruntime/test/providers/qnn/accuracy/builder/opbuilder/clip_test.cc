@@ -164,10 +164,6 @@ template <typename QType>
 void RunClipQDQFloatHelper(const ClipQDQFloatSpec& spec,
                            const TestInputDef<float>& input_def,
                            const std::vector<TestInputDef<float>>& min_max_defs) {
-#if (defined(_M_ARM64) || defined(_M_ARM64EC))
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#endif
-
   ProviderOptions po = MakeAccuracyProviderOptions(spec.accuracy_backend);
   auto f32_model_builder = BuildOpTestCase<float, float>(
       "Clip_node", "Clip", {input_def}, min_max_defs, /*attrs=*/{});
@@ -175,7 +171,15 @@ void RunClipQDQFloatHelper(const ClipQDQFloatSpec& spec,
       "Clip_node", "Clip", {input_def}, min_max_defs, /*attrs=*/{},
       kOnnxDomain, spec.use_contrib_qdq);
   TestQDQModelAccuracy(f32_model_builder, qdq_model_builder, po,
-                       spec.opset, ExpectedEPNodeAssignment::All);
+                       spec.opset, ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "",
+                       {},
+                       std::nullopt,
+                       nullptr,
+                       nullptr,
+                       /*skip_v68_qdq=*/false);
 }
 
 // Build the float-side input + min/max defs used by both f32 reference and

@@ -35,6 +35,7 @@
 #include <HTP/QnnHtpPerfInfrastructure.h>
 
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
+#include "core/providers/qnn/builder/qnn_htp_power_state_guard.h"
 #include "core/providers/qnn/ort_api.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
@@ -63,6 +64,8 @@ namespace {
 // ---------------------------------------------------------------------------
 struct StubHtpPerfInterface {
   static int set_power_config_calls;
+  static int get_infrastructure_calls;
+  static int fail_get_infrastructure_on_call;
   static QnnHtpDevice_Infrastructure_t infra;
 
   static Qnn_ErrorHandle_t SetPowerConfig(uint32_t /*power_config_id*/,
@@ -81,6 +84,11 @@ struct StubHtpPerfInterface {
 
   static Qnn_ErrorHandle_t GetInfrastructure(const QnnDevice_Infrastructure_t* device_infra) {
     // The manager casts the returned handle to QnnHtpDevice_Infrastructure_t*;
+    ++get_infrastructure_calls;
+    if (get_infrastructure_calls == fail_get_infrastructure_on_call) {
+      return QNN_COMMON_ERROR_GENERAL;
+    }
+
     // hand back the process-static table.
     *const_cast<QnnDevice_Infrastructure_t*>(device_infra) =
         reinterpret_cast<QnnDevice_Infrastructure_t>(&infra);
@@ -103,10 +111,20 @@ struct StubHtpPerfInterface {
 int StubHtpPerfInterface::set_power_config_calls = 0;
 QnnHtpDevice_Infrastructure_t StubHtpPerfInterface::infra{};
 
+int StubHtpPerfInterface::get_infrastructure_calls = 0;
+int StubHtpPerfInterface::fail_get_infrastructure_on_call = -1;
 // Zeroes the observable call counter for a test's duration.
 struct ResetStubCounters {
-  ResetStubCounters() { StubHtpPerfInterface::set_power_config_calls = 0; }
-  ~ResetStubCounters() { StubHtpPerfInterface::set_power_config_calls = 0; }
+  ResetStubCounters() {
+    StubHtpPerfInterface::set_power_config_calls = 0;
+    StubHtpPerfInterface::get_infrastructure_calls = 0;
+    StubHtpPerfInterface::fail_get_infrastructure_on_call = -1;
+  }
+  ~ResetStubCounters() {
+    StubHtpPerfInterface::set_power_config_calls = 0;
+    StubHtpPerfInterface::get_infrastructure_calls = 0;
+    StubHtpPerfInterface::fail_get_infrastructure_on_call = -1;
+  }
 };
 
 // A burst perf config. Burst/sustained is the mode that (a) requires an active
@@ -117,6 +135,13 @@ HtpPerfConfig_t MakeBurstConfig(uint32_t client_id = 1) {
   config.perf_mode = HtpPerformanceMode::kHtpBurst;
   config.rpc_polling_time = 0;
   config.rpc_control_latency = 0;
+  return config;
+}
+
+HtpPerfConfig_t MakeHighPerformanceConfig(uint32_t client_id = 1) {
+  HtpPerfConfig_t config{};
+  config.htp_power_config_client_id = client_id;
+  config.perf_mode = HtpPerformanceMode::kHtpHighPerformance;
   return config;
 }
 
@@ -146,6 +171,16 @@ struct ManagerFixture {
     manager.CreateTimerThread(/*htp_power_config_client_id=*/1);
   }
   ~ManagerFixture() { manager.ReleaseTimerThread(); }
+};
+
+// Guard tests do not need the release timer. Keeping this fixture timer-free
+// also makes the tests independent of global ORT logger initialization order.
+struct GuardFixture {
+  HtpPowerConfigManager manager;
+  Ort::Logger logger = MakeNullLogger();
+  QNN_INTERFACE_VER_TYPE qnn_interface = StubHtpPerfInterface::MakeInterface();
+
+  GuardFixture() { manager.Init(qnn_interface); }
 };
 
 }  // namespace
@@ -229,6 +264,61 @@ TEST(QnnUnit_HtpPowerConfigManagerTest, SetState_ConcurrentRuns_RelaxGatedUntilL
   fx.manager.SetState(GraphState::RUN_DONE, config_b, fx.logger);
   EXPECT_GT(FireTimeoutRelaxCalls(fx.manager, fx.logger), 0)
       << "Once the last concurrent run finishes the TIMEOUT relax must fire.";
+}
+
+TEST(QnnUnit_HtpPowerStateGuardTest, InvalidPowerConfigIsNoOp) {
+  ResetStubCounters reset;
+  GuardFixture fx;
+  HtpPerfConfig_t config = MakeHighPerformanceConfig();
+
+  {
+    qnn::HtpPowerStateGuard guard(&fx.manager, /*valid_power_config_id=*/false,
+                                  GraphState::INIT_START, GraphState::INIT_DONE,
+                                  config, fx.logger);
+    EXPECT_TRUE(guard.SetPreRunHtpPerfStatus().IsOK());
+    EXPECT_TRUE(guard.SetPostRunHtpPerf().IsOK());
+  }
+
+  EXPECT_EQ(StubHtpPerfInterface::get_infrastructure_calls, 0);
+  EXPECT_EQ(StubHtpPerfInterface::set_power_config_calls, 0);
+}
+
+TEST(QnnUnit_HtpPowerStateGuardTest, SuccessfulPostRunPreventsDestructorRetry) {
+  ResetStubCounters reset;
+  GuardFixture fx;
+  HtpPerfConfig_t config = MakeHighPerformanceConfig();
+  int calls_after_post_run = 0;
+
+  {
+    qnn::HtpPowerStateGuard guard(&fx.manager, /*valid_power_config_id=*/true,
+                                  GraphState::INIT_START, GraphState::INIT_DONE,
+                                  config, fx.logger);
+    ASSERT_TRUE(guard.SetPreRunHtpPerfStatus().IsOK());
+    ASSERT_TRUE(guard.SetPostRunHtpPerf().IsOK());
+    calls_after_post_run = StubHtpPerfInterface::get_infrastructure_calls;
+  }
+
+  EXPECT_EQ(calls_after_post_run, 2);
+  EXPECT_EQ(StubHtpPerfInterface::get_infrastructure_calls, calls_after_post_run);
+}
+
+TEST(QnnUnit_HtpPowerStateGuardTest, FailedPostRunIsRetriedByDestructor) {
+  ResetStubCounters reset;
+  GuardFixture fx;
+  HtpPerfConfig_t config = MakeHighPerformanceConfig();
+
+  {
+    qnn::HtpPowerStateGuard guard(&fx.manager, /*valid_power_config_id=*/true,
+                                  GraphState::INIT_START, GraphState::INIT_DONE,
+                                  config, fx.logger);
+    ASSERT_TRUE(guard.SetPreRunHtpPerfStatus().IsOK());
+    StubHtpPerfInterface::fail_get_infrastructure_on_call = 2;
+    EXPECT_FALSE(guard.SetPostRunHtpPerf().IsOK());
+    EXPECT_EQ(StubHtpPerfInterface::get_infrastructure_calls, 2);
+  }
+
+  EXPECT_EQ(StubHtpPerfInterface::get_infrastructure_calls, 3);
+  EXPECT_EQ(StubHtpPerfInterface::set_power_config_calls, 2);
 }
 
 }  // namespace test
