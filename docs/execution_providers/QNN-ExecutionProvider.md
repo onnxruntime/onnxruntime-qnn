@@ -279,6 +279,11 @@ For `onnxruntime_perf_test`, to use HTP shared-memory zero-copy, enable `enable_
 |---|---|
 |Directory path (string)|Directory path for dumping QNN JSON graphs. Only effective when `dump_json_qnn_graph` is enabled.|
 
+|`"dump_qnn_graph_golden_metadata"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|For HTP graph golden producers, write an ORT-owned metadata sidecar containing the target HTP architecture, graph-affecting backend configuration, and static tensor hashes. Requires `dump_json_qnn_graph`. The QNN graph JSON remains compatible with QNN Netron.|
+
 |`"dump_qnn_ep_input_graph"`|Description|
 |---|---|
 |'0'|Default. Disabled.|

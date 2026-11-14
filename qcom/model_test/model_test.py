@@ -45,7 +45,7 @@ class ModelTestDef(NamedTuple):
 
 
 class ModelTestCase:
-    def __init__(self, model_def: ModelTestDef) -> None:
+    def __init__(self, model_def: ModelTestDef, qnn_graph_golden_dir: Path | None = None) -> None:
         self.__model_root = model_def.model_root
         self.__rtol = model_def.rtol
         self.__atol = model_def.atol
@@ -66,6 +66,14 @@ class ModelTestCase:
                 context_model_path.unlink()
             session_options.add_session_config_entry("ep.context_enable", "1")
             session_options.add_session_config_entry("ep.context_file_path", str(context_model_path))
+
+        if qnn_graph_golden_dir is not None:
+            qnn_graph_golden_dir.mkdir(parents=True, exist_ok=True)
+            session_options.add_session_config_entry("ep.qnnexecutionprovider.dump_json_qnn_graph", "1")
+            session_options.add_session_config_entry("ep.qnnexecutionprovider.dump_qnn_graph_golden_metadata", "1")
+            session_options.add_session_config_entry(
+                "ep.qnnexecutionprovider.json_qnn_graph_dir", str(qnn_graph_golden_dir)
+            )
 
         logging.info(f"Preparing {self.__model_root.name}")
         self.__session = onnxruntime.InferenceSession(
