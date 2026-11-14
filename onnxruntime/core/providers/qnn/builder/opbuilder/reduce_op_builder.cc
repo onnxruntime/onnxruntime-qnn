@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <set>
 #include <string>
 #include <vector>
@@ -243,6 +244,38 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   std::set<AxesOnnxIntType> axes_set;
   RETURN_IF_ERROR(GetAxesSet(qnn_model_wrapper, node_unit, axes_set));
   const size_t num_axes = axes_set.size();
+
+  if (node_unit.OpType() == "ReduceSumSquare" &&
+      qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
+      node_unit.Inputs()[0].quant_param.has_value()) {
+    // HTP executes these FLOAT_32 sub-ops at FP16 precision. Bound every possible
+    // square and sum from the input encoding, including the empty-axes Mul-only path,
+    // so overflow cannot saturate Quantize and a narrow range cannot lose all its
+    // squares to underflow before a long reduction makes them observable.
+    constexpr double kHtpFp16Max = 65504.0;
+    constexpr double kHtpFp16MinNormal = 0.00006103515625;
+    TensorInfo input_info;
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+    float scale = 0.0f;
+    int32_t offset = 0;
+    RETURN_IF_ERROR(input_info.quant_param.GetPerTensorScaleOffset(scale, offset));
+    double qmin = 0.0;
+    double qmax = 0.0;
+    RETURN_IF_ERROR(utils::GetQminQmax(input_info.qnn_data_type, qmin, qmax));
+    const double max_abs_input = std::max(std::abs(utils::Dequantize(offset, scale, qmin)),
+                                          std::abs(utils::Dequantize(offset, scale, qmax)));
+    const double max_square = max_abs_input * max_abs_input;
+    RETURN_IF_NOT(max_square >= kHtpFp16MinNormal,
+                  "QNN EP: ReduceSumSquare input encoding may underflow HTP FP16 squares.");
+    double max_sum_square = max_square;
+    for (int64_t axis : axes_set) {
+      RETURN_IF_NOT(axis >= 0 && static_cast<uint64_t>(axis) < input_info.shape.size(),
+                    "QNN EP: ReduceSumSquare axis is out of range.");
+      max_sum_square *= input_info.shape[static_cast<size_t>(axis)];
+    }
+    RETURN_IF_NOT(std::isfinite(max_sum_square) && max_sum_square <= kHtpFp16Max,
+                  "QNN EP: ReduceSumSquare input encoding and reduction size may overflow HTP FP16 intermediates.");
+  }
 
   // Truncate int64 ONNX axes values to QNN's required type (uint32_t).
   // Empty axes are only used by ReduceSumSquare's square-without-reduction path.
