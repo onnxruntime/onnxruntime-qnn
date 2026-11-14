@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 #include <cmath>
