@@ -63,10 +63,12 @@ bool EpContextIoDispatch::HasWriteCallback() const noexcept {
   return write_fn_ != nullptr;
 }
 
-Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<char>& out) const {
+Ort::Status EpContextIoDispatch::Read(const std::string& file_name, EpContextBuffer& out) const {
   RETURN_IF_NOT(HasReadCallback(), "EPContext read callback is unavailable.");
 
-  Ort::AllocatorWithDefaultOptions allocator;
+  const auto& ort_api = Ort::GetApi();
+  OrtAllocator* allocator = nullptr;
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetAllocatorWithDefaultOptions(&allocator));
   void* data = nullptr;
   size_t data_size = 0;
   OrtStatus* s = read_fn_(read_state_, file_name.c_str(), allocator, &data, &data_size);
@@ -75,13 +77,12 @@ Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<
   }
   if (data == nullptr || data_size == 0) {
     if (data != nullptr) {
-      allocator.Free(data);
+      allocator->Free(allocator, data);
     }
     return Ort::Status(
         ("OrtReadNamedBufferFunc returned invalid buffer for " + file_name).c_str(), ORT_FAIL);
   }
-  out.assign(static_cast<char*>(data), static_cast<char*>(data) + data_size);
-  allocator.Free(data);
+  out.Adopt(data, data_size, allocator);
   return Ort::Status();
 }
 
@@ -115,7 +116,7 @@ bool EpContextIoDispatch::HasReadCallback() const noexcept { return false; }
 bool EpContextIoDispatch::HasWriteCallback() const noexcept { return false; }
 
 Ort::Status EpContextIoDispatch::Read(const std::string& /*file_name*/,
-                                      std::vector<char>& /*out*/) const {
+                                      EpContextBuffer& /*out*/) const {
   return MAKE_EP_FAIL("EPContext encryption unavailable in this build.");
 }
 

@@ -3,7 +3,7 @@
 //
 // Component-level unit tests for QnnBackendManager (qnn_backend_manager.cc).
 //
-// Two groups of tests live here, both gated on QNN_EP_INTERNAL_SYMBOL_ACCESS:
+// Three groups of tests live here, gated on QNN_EP_INTERNAL_SYMBOL_ACCESS:
 //
 //   1. Stub-based tests (no real QNN library) — QnnSerializerConfig, SetupBackend
 //      load-failure paths, and before-setup early returns. These always run.
@@ -11,6 +11,7 @@
 //      HTP backend (and QnnIr / QnnSaver) and drive SetupBackend directly, with no
 //      ORT session. The fixture GTEST_SKIP()s when the backend is unavailable,
 //      mirroring the QnnHTPBackendTests::SetUp() convention.
+//   3. Binary-loading tests — use instance-local SDK stubs, with no driver required.
 //
 // Coverage targets:
 //   - QnnSerializerConfig (CreateIr / CreateSaver / GetBackendPath / SetGraphName / Configure)
@@ -25,6 +26,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -39,6 +41,9 @@
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/ort_api.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#include "core/providers/qnn/builder/qnn_windows_file_mapper.h"
+#endif
 
 namespace onnxruntime {
 namespace test {
@@ -925,6 +930,350 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingAndThre
                                       4 /*htp_graph_splitting_num_prepare_threads*/);
   (void)status;
 }
+
+class QnnUnit_ContextBinaryLoadingTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    backend_ = std::make_unique<StubBackendManager>(api_ptrs_, logger_);
+    manager_ = backend_->GetMutable();
+    current_ = this;
+    // Override only this manager's API table; no SDK or process-wide API is modified.
+    auto& interface = backend_->QnnInterface();
+    interface.errorGetMessage = [](Qnn_ErrorHandle_t error, const char** message) -> Qnn_ErrorHandle_t {
+      EXPECT_EQ(error, current_->sdk_result_);
+      *message = "stub context loading failure";
+      return QNN_SUCCESS;
+    };
+    interface.contextCreateFromBinary = [](Qnn_BackendHandle_t, Qnn_DeviceHandle_t,
+                                           const QnnContext_Config_t** configs, const void* binary,
+                                           Qnn_ContextBinarySize_t bytes, Qnn_ContextHandle_t* context,
+                                           Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      ++test.ordinary_calls_;
+      EXPECT_EQ(binary, test.expected_binary_);
+      EXPECT_EQ(bytes, test.expected_size_);
+      if (test.check_configs_) {
+        EXPECT_EQ(configs, test.configs_);
+      }
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+      if (test.track_lifetime_) {
+        EXPECT_TRUE(test.mapping_alive_);
+        EXPECT_FALSE(test.system_freed_);
+        test.events_.push_back("ordinary");
+      }
+#endif
+      if (test.sdk_result_ == QNN_SUCCESS) {
+        *context = const_cast<void*>(binary);
+      }
+      return test.sdk_result_;
+    };
+    interface.contextFree = [](Qnn_ContextHandle_t, Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+      return QNN_SUCCESS;
+    };
+  }
+  void TearDown() override {
+    backend_.reset();
+    manager_ = nullptr;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    if (!path_.empty()) {
+      EXPECT_TRUE(DeleteFileW(path_.c_str()));
+    }
+#endif
+    current_ = nullptr;
+  }
+  Ort::Status Load(Qnn_ContextHandle_t& context) {
+    qnn::EpContextIoDispatch io_dispatch;
+    // A nonexistent filename makes an accidental fallback reread fail.
+    return manager_->CreateContextHandleFromBinary(const_cast<void*>(expected_binary_), expected_size_, false,
+                                                   configs_, "not-a-context-file.bin", io_dispatch,
+                                                   nullptr, context);
+  }
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  class TrackedMapper : public qnn::FileMappingInterface {
+   public:
+    explicit TrackedMapper(QnnUnit_ContextBinaryLoadingTest& test) : test_(test), mapper_(test.logger_) {}
+    Ort::Status GetContextBinMappedMemoryPtr(const std::string& path, void** data) override {
+      auto status = mapper_.GetContextBinMappedMemoryPtr(path, data);
+      if (status.IsOK()) test_.expected_binary_ = *data;
+      return status;
+    }
+    Ort::Status MapContextBinary(const std::string& path, MappedMemoryPtr& data) override {
+      MappedMemoryPtr view;
+      auto status = mapper_.MapContextBinary(path, view);
+      if (!status.IsOK()) return status;
+      test_.expected_binary_ = view.get();
+      test_.mapping_alive_ = true;
+      if (test_.track_lifetime_) test_.events_.push_back("map");
+      auto* pointer = view.get();
+      auto unmap = view.get_deleter();
+      view.release();
+      data = MappedMemoryPtr(pointer, [this, unmap](void* ptr) {
+        EXPECT_TRUE(test_.system_freed_);
+        unmap(ptr);
+        test_.mapping_alive_ = false;
+        if (test_.track_lifetime_) test_.events_.push_back("unmap");
+      });
+      return status;
+    }
+
+   private:
+    QnnUnit_ContextBinaryLoadingTest& test_;
+    qnn::WindowsFileMapper mapper_;
+  };
+
+  void PrepareInitialLoad() {
+    wchar_t folder[MAX_PATH], filename[MAX_PATH];
+    ASSERT_NE(GetTempPathW(MAX_PATH, folder), 0u);
+    ASSERT_NE(GetTempFileNameW(folder, L"qnn", 0, filename), 0u);
+    path_ = filename;
+    std::ofstream file(path_, std::ios::binary);
+    file.write("native_graph", sizeof("native_graph"));
+    ASSERT_TRUE(file.good());
+    file.close();
+    expected_size_ = sizeof("native_graph");
+    check_configs_ = false;
+    backend_->FileMappingEnabled() = true;
+    backend_->FileMapper() = std::make_unique<TrackedMapper>(*this);
+
+    auto& system = backend_->SystemInterface();
+    system.systemContextCreate = [](QnnSystemContext_Handle_t* handle) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      test.system_freed_ = false;
+      if (test.track_lifetime_) {
+        EXPECT_TRUE(test.mapping_alive_);
+        test.events_.push_back("system_create");
+      }
+      *handle = &test;
+      return QNN_SUCCESS;
+    };
+    system.systemContextGetBinaryInfo = [](
+                                            QnnSystemContext_Handle_t, void* binary, uint64_t bytes,
+                                            const QnnSystemContext_BinaryInfo_t** info, Qnn_ContextBinarySize_t* info_size) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      EXPECT_EQ(binary, test.expected_binary_);
+      EXPECT_EQ(bytes, test.expected_size_);
+      if (test.track_lifetime_) {
+        EXPECT_TRUE(test.mapping_alive_);
+        test.events_.push_back("metadata");
+      }
+      if (test.metadata_result_ != QNN_SUCCESS) return test.metadata_result_;
+      test.input_.version = QNN_TENSOR_VERSION_1;
+      test.input_.v1.name = "input";
+      test.input_.v1.type = QNN_TENSOR_TYPE_APP_WRITE;
+      test.input_.v1.dataType = QNN_DATATYPE_FLOAT_32;
+      test.input_.v1.rank = 1;
+      test.input_.v1.dimensions = &test.dimension_;
+      test.output_ = test.input_;
+      test.output_.v1.name = "output";
+      test.output_.v1.type = QNN_TENSOR_TYPE_APP_READ;
+      test.graph_info_.version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1;
+      auto& graph = test.graph_info_.graphInfoV1;
+      graph.graphName = static_cast<const char*>(binary);
+      graph.numGraphInputs = 1;
+      graph.graphInputs = &test.input_;
+      graph.numGraphOutputs = 1;
+      graph.graphOutputs = &test.output_;
+      test.binary_info_.version = QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1;
+      auto& context = test.binary_info_.contextBinaryInfoV1;
+      context.contextBlobVersion = {3, 3, 3};
+      context.numGraphs = 1;
+      context.graphs = &test.graph_info_;
+      *info = &test.binary_info_;
+      *info_size = sizeof(test.binary_info_);
+      return QNN_SUCCESS;
+    };
+    system.systemContextFree = [](QnnSystemContext_Handle_t) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      if (test.track_lifetime_) {
+        EXPECT_TRUE(test.mapping_alive_);
+        test.events_.push_back("system_free");
+      }
+      test.system_freed_ = true;
+      return QNN_SUCCESS;
+    };
+    auto& interface = backend_->QnnInterface();
+    interface.graphRetrieve = [](Qnn_ContextHandle_t context, const char* name,
+                                 Qnn_GraphHandle_t* graph) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      EXPECT_STREQ(name, static_cast<const char*>(test.expected_binary_));
+      EXPECT_FALSE(test.system_freed_);
+      if (test.track_lifetime_) {
+        EXPECT_TRUE(test.mapping_alive_);
+        test.events_.push_back("graph");
+      }
+      *graph = context;
+      return QNN_SUCCESS;
+    };
+  }
+
+  Ort::Status LoadNative(std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& models) {
+    return manager_->LoadCachedQnnContextFromBuffer(nullptr, 0, path_.string(), "native", models,
+                                                    0, qnn::EpContextIoDispatch{});
+  }
+
+#if ORT_API_HAS_EPCONTEXT_ENCRYPTION
+  static OrtStatus* ORT_API_CALL ReadCallback(void* opaque, const char*, OrtAllocator* allocator,
+                                              void** data, size_t* size) {
+    auto& test = *static_cast<QnnUnit_ContextBinaryLoadingTest*>(opaque);
+    ++test.read_calls_;
+    *size = sizeof("callback_graph");
+    auto status = Ort::GetApi().AllocatorAlloc(allocator, *size, data);
+    if (status) return status;
+    std::memcpy(*data, "callback_graph", *size);
+    return nullptr;
+  }
+  void CheckSharingOrder(bool callback_first) {
+    PrepareInitialLoad();
+    ASSERT_FALSE(path_.empty());
+    backend_->BackendSetupCompleted() = true;
+    auto setter = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(&Ort::GetApi());
+    ASSERT_NE(setter, nullptr);
+    Ort::SessionOptions options;
+    Ort::ThrowOnError(setter(options, ReadCallback, this));
+    qnn::EpContextIoDispatch dispatch(*options, OrtApiRuntimeCapabilities{ORT_API_VERSION});
+    ASSERT_TRUE(dispatch.HasReadCallback());
+    std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> models;
+    auto callback_load = [&] {
+      std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
+      ASSERT_TRUE(manager_->SetupBackend(true, true, true, 0, true, nullptr, binaries, dispatch,
+                                         false, false, false, 0)
+                      .IsOK());
+      qnn::EpContextBuffer output;
+      ASSERT_TRUE(manager_->ReadContextBinIfValid("not-a-context-file.bin", output, dispatch).IsOK());
+      expected_binary_ = output.data();
+      expected_size_ = output.size();
+      ASSERT_TRUE(manager_->LoadCachedQnnContextFromBuffer(output.data(), output.size(), "not-a-context-file.bin",
+                                                           "callback", models, 0, dispatch)
+                      .IsOK());
+    };
+    auto native_load = [&] {
+      std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
+      ASSERT_TRUE(manager_->SetupBackend(true, true, true, 0, true, nullptr, binaries, qnn::EpContextIoDispatch{},
+                                         false, false, false, 0)
+                      .IsOK());
+      expected_size_ = sizeof("native_graph");
+      ASSERT_TRUE(LoadNative(models).IsOK());
+    };
+    if (callback_first) {
+      callback_load();
+      native_load();
+    } else {
+      native_load();
+      callback_load();
+    }
+    ASSERT_EQ(models.size(), 2u);
+    EXPECT_EQ(models.at("callback")->Name(), "callback_graph");
+    EXPECT_EQ(models.at("native")->Name(), "native_graph");
+    EXPECT_EQ(read_calls_, 1u);
+    EXPECT_EQ(ordinary_calls_, 2u);
+    EXPECT_TRUE(backend_->FileMappingEnabled());
+  }
+
+#endif
+
+  std::filesystem::path path_;
+  Qnn_ErrorHandle_t metadata_result_ = QNN_SUCCESS;
+  size_t read_calls_ = 0;
+  bool mapping_alive_ = false, system_freed_ = false, track_lifetime_ = false;
+  std::vector<std::string> events_;
+  uint32_t dimension_ = 1;
+  Qnn_Tensor_t input_ = QNN_TENSOR_INIT;
+  Qnn_Tensor_t output_ = QNN_TENSOR_INIT;
+  QnnSystemContext_GraphInfo_t graph_info_ = QNN_SYSTEM_CONTEXT_GRAPH_INFO_INIT;
+  QnnSystemContext_BinaryInfo_t binary_info_{};
+#endif
+
+  static thread_local QnnUnit_ContextBinaryLoadingTest* current_;
+  OrtApi ort_api_{};
+  OrtEpApi ep_api_{};
+  OrtModelEditorApi editor_api_{};
+  ApiPtrs api_ptrs_{ort_api_, ep_api_, editor_api_};
+  Ort::Logger logger_{MakeNullLogger()};
+  std::unique_ptr<StubBackendManager> backend_;
+  qnn::QnnBackendManager* manager_ = nullptr;
+  char binary_[4] = {1, 2, 3, 4};
+  const void* expected_binary_ = binary_;
+  uint64_t expected_size_ = sizeof(binary_);
+  bool check_configs_ = true;
+  const QnnContext_Config_t* configs_[1] = {nullptr};
+  size_t ordinary_calls_ = 0;
+  Qnn_ErrorHandle_t sdk_result_ = QNN_SUCCESS;
+};
+
+thread_local QnnUnit_ContextBinaryLoadingTest* QnnUnit_ContextBinaryLoadingTest::current_ = nullptr;
+
+TEST_F(QnnUnit_ContextBinaryLoadingTest, OrdinaryLoadingUsesSuppliedBufferWithoutReadingFile) {
+  Qnn_ContextHandle_t context = nullptr;
+  ASSERT_TRUE(Load(context).IsOK());
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(context, binary_);
+}
+
+TEST_F(QnnUnit_ContextBinaryLoadingTest, OrdinaryLoadingRejectsMissingSdkApi) {
+  Qnn_ContextHandle_t context = nullptr;
+  backend_->QnnInterface().contextCreateFromBinary = nullptr;
+  auto status = Load(context);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(ordinary_calls_, 0u);
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("Invalid function pointer"), std::string::npos);
+}
+
+TEST_F(QnnUnit_ContextBinaryLoadingTest, OrdinarySdkFailureIsPropagated) {
+  sdk_result_ = QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  Qnn_ContextHandle_t context = nullptr;
+  auto status = Load(context);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(context, nullptr);
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("contextCreateFromBinary failed"), std::string::npos);
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("stub context loading failure"), std::string::npos);
+}
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#if ORT_API_HAS_EPCONTEXT_ENCRYPTION
+TEST_F(QnnUnit_ContextBinaryLoadingTest, CallbackThenNativeKeepsCpuMappingOnSharedManager) {
+  CheckSharingOrder(true);
+}
+TEST_F(QnnUnit_ContextBinaryLoadingTest, NativeThenCallbackKeepsCpuMappingOnSharedManager) {
+  CheckSharingOrder(false);
+}
+#endif
+
+TEST_F(QnnUnit_ContextBinaryLoadingTest, InitialCpuMappingOutlivesSdkMetadataAndSystemContext) {
+  PrepareInitialLoad();
+  track_lifetime_ = true;
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> models;
+  ASSERT_TRUE(LoadNative(models).IsOK());
+  EXPECT_FALSE(mapping_alive_);
+  EXPECT_EQ(models.at("native")->Name(), "native_graph");
+  EXPECT_EQ(events_, (std::vector<std::string>{"map", "system_create", "metadata", "ordinary", "graph", "system_free", "unmap"}));
+}
+
+TEST_F(QnnUnit_ContextBinaryLoadingTest, InitialCpuMappingIsReleasedAfterSdkLoadingFailure) {
+  PrepareInitialLoad();
+  track_lifetime_ = true;
+  sdk_result_ = QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> models;
+  EXPECT_FALSE(LoadNative(models).IsOK());
+  EXPECT_TRUE(models.empty());
+  EXPECT_FALSE(mapping_alive_);
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(events_, (std::vector<std::string>{"map", "system_create", "metadata", "ordinary", "system_free", "unmap"}));
+}
+
+TEST_F(QnnUnit_ContextBinaryLoadingTest, InitialCpuMappingIsReleasedAfterMetadataFailure) {
+  PrepareInitialLoad();
+  track_lifetime_ = true;
+  metadata_result_ = QNN_COMMON_ERROR_GENERAL;
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> models;
+  EXPECT_FALSE(LoadNative(models).IsOK());
+  EXPECT_TRUE(models.empty());
+  EXPECT_FALSE(mapping_alive_);
+  EXPECT_EQ(ordinary_calls_, 0u);
+  EXPECT_EQ(events_, (std::vector<std::string>{"map", "system_create", "metadata", "system_free", "unmap"}));
+}
+#endif
 
 }  // namespace test
 }  // namespace onnxruntime

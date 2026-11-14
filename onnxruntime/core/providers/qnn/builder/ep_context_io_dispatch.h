@@ -4,13 +4,43 @@
 #pragma once
 
 #include <string>
-#include <vector>
+#include <memory>
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/ort_api_runtime_capabilities.h"
 
 namespace onnxruntime {
 namespace qnn {
+
+// Owns default-allocator output without copying; the allocator is owned by ORT.
+class EpContextBuffer {
+  using OwnedBufferPtr = std::unique_ptr<void, Ort::detail::AllocatedFree>;
+
+ public:
+  char* data() const noexcept { return static_cast<char*>(data_.get()); }
+
+  size_t size() const noexcept { return data_ ? size_ : 0; }
+
+  void Adopt(void* data, size_t size, OrtAllocator* allocator) noexcept {
+    data_ = OwnedBufferPtr(data, Ort::detail::AllocatedFree(allocator));
+    size_ = size;
+  }
+
+  // Replaces the previous allocation only after the new allocation succeeds.
+  Ort::Status Allocate(size_t size) {
+    OrtAllocator* allocator = nullptr;
+    ORT_CXX_RETURN_ON_API_FAIL(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator));
+    void* data = nullptr;
+    ORT_CXX_RETURN_ON_API_FAIL(Ort::GetApi().AllocatorAlloc(allocator, size, &data));
+    RETURN_IF(size != 0 && data == nullptr, "Failed to allocate context binary buffer.");
+    Adopt(data, size, allocator);
+    return Ort::Status();
+  }
+
+ private:
+  OwnedBufferPtr data_{nullptr, Ort::detail::AllocatedFree(nullptr)};
+  size_t size_ = 0;
+};
 
 // Owns the App-provided EPContext read/write callbacks resolved from a session options object.
 // Constructed once per session by QnnEp; not thread-safe (callers must serialize concurrent
@@ -51,8 +81,9 @@ class EpContextIoDispatch {
   bool HasReadCallback() const noexcept;
   bool HasWriteCallback() const noexcept;
 
-  // Precondition: HasReadCallback(). Fills `out` with the decrypted bytes.
-  Ort::Status Read(const std::string& file_name, std::vector<char>& out) const;
+  // Precondition: HasReadCallback(). Adopts successful output without copying.
+  // On callback error, application cleanup and `out` remain unchanged.
+  Ort::Status Read(const std::string& file_name, EpContextBuffer& out) const;
 
   // Precondition: HasWriteCallback(). Logs INFO with byte count on success.
   Ort::Status Write(const std::string& name,

@@ -211,13 +211,11 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
 #endif
   std::string context_binary_path_str = context_binary_path.string();
 
-  // Read callback takes priority over file mapping: if it produces data, we return
-  // the decrypted buffer immediately so QNN is never handed the on-disk ciphertext
-  // via the file-mapping path below.
+  // Callback plaintext takes priority over native mapping; retain its owner
+  // through SDK loading and metadata extraction.
   if (io_dispatch.HasReadCallback()) {
-    std::vector<char> decrypted;
+    EpContextBuffer decrypted;
     RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted));
-    // QNN's contextCreateFromBinary copies the buffer internally; `decrypted` is scope-owned.
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(decrypted.data(),
                                                                static_cast<uint64_t>(decrypted.size()),
                                                                context_binary_path_str,

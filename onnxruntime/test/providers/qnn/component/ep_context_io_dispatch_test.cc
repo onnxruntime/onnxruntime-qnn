@@ -21,6 +21,37 @@ namespace onnxruntime {
 namespace test {
 
 namespace {
+#if ORT_API_HAS_EPCONTEXT_ENCRYPTION
+struct ReadBufferState {
+  void* returned = nullptr;
+  std::string name;
+  bool fail_after_free = false;
+  bool return_null = false;
+  bool return_empty = false;
+
+  static OrtStatus* ORT_API_CALL Read(void* opaque, const char* name, OrtAllocator* allocator,
+                                      void** data, size_t* size) {
+    auto& state = *static_cast<ReadBufferState*>(opaque);
+    state.name = name;
+    if (state.return_null) {
+      *data = nullptr;
+      *size = 32;
+      return nullptr;
+    }
+    *data = allocator->Alloc(allocator, 32);
+    *size = state.return_empty ? 0 : 32;
+    state.returned = *data;
+    if (!*data) return Ort::GetApi().CreateStatus(ORT_FAIL, "Allocation failed");
+    if (state.fail_after_free) {
+      allocator->Free(allocator, *data);
+      return Ort::GetApi().CreateStatus(ORT_FAIL, "Callback freed its failed output");
+    }
+    static_cast<char*>(*data)[0] = 42;
+    return nullptr;
+  }
+};
+#endif
+
 // Minimal OrtApi stub: GetExperimentalFunction always reports "unavailable",
 // standing in for a runtime that doesn't have the v28 experimental vtable.
 // If EpContextIoDispatch's effective_api_version guard is skipped and it
@@ -78,11 +109,131 @@ TEST(QnnUnit_EpContextIoDispatchTest, DefaultConstructor_IsDisabled) {
 
 TEST(QnnUnit_EpContextIoDispatchTest, DisabledDispatch_ReadAndWrite_ReturnFailures) {
   qnn::EpContextIoDispatch dispatch;
-  std::vector<char> bytes;
+  qnn::EpContextBuffer bytes;
   Ort::Logger logger;
 
   EXPECT_FALSE(dispatch.Read("context.bin", bytes).IsOK());
   EXPECT_FALSE(dispatch.Write("context.bin", nullptr, 0, logger).IsOK());
+}
+
+#if ORT_API_HAS_EPCONTEXT_ENCRYPTION
+TEST(QnnUnit_EpContextIoDispatchTest, InvalidSuccessfulCallbackPreservesPreviousOutput) {
+  auto setter = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(&Ort::GetApi());
+  if (!setter) {
+    GTEST_SKIP() << "Runtime does not support EPContext read callbacks";
+  }
+  Ort::SessionOptions options;
+  ReadBufferState state;
+  Ort::ThrowOnError(setter(options, ReadBufferState::Read, &state));
+  qnn::EpContextIoDispatch dispatch(*options, OrtApiRuntimeCapabilities{ORT_API_VERSION});
+  qnn::EpContextBuffer bytes;
+  ASSERT_TRUE(dispatch.Read("valid.bin", bytes).IsOK());
+  auto* previous = bytes.data();
+  const auto previous_size = bytes.size();
+  state.return_null = true;
+  EXPECT_FALSE(dispatch.Read("null.bin", bytes).IsOK());
+  EXPECT_EQ(bytes.data(), previous);
+  EXPECT_EQ(bytes.size(), previous_size);
+  state.return_null = false;
+  state.return_empty = true;
+  EXPECT_FALSE(dispatch.Read("empty.bin", bytes).IsOK());
+  EXPECT_EQ(bytes.data(), previous);
+  EXPECT_EQ(bytes.size(), previous_size);
+  EXPECT_EQ(bytes.data()[0], 42);
+}
+
+TEST(QnnUnit_EpContextIoDispatchTest, AdoptsCallbackAllocationAndPreservesOutputOnError) {
+  auto setter = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(&Ort::GetApi());
+  if (!setter) {
+    GTEST_SKIP() << "Runtime does not support EPContext read callbacks";
+  }
+  Ort::SessionOptions options;
+  ReadBufferState state;
+  Ort::ThrowOnError(setter(options, ReadBufferState::Read, &state));
+  qnn::EpContextIoDispatch dispatch(*options, OrtApiRuntimeCapabilities{ORT_API_VERSION});
+  qnn::EpContextBuffer bytes;
+  ASSERT_TRUE(dispatch.Read("requested.bin", bytes).IsOK());
+  EXPECT_EQ(state.name, "requested.bin");
+  EXPECT_EQ(bytes.data(), state.returned);
+  EXPECT_EQ(bytes.size(), 32u);
+  EXPECT_EQ(bytes.data()[0], 42);
+  auto* previous = bytes.data();
+  ASSERT_TRUE(dispatch.Read("replacement.bin", bytes).IsOK());
+  EXPECT_NE(bytes.data(), previous);
+  EXPECT_EQ(bytes.data(), state.returned);
+  auto* original = bytes.data();
+  state.fail_after_free = true;
+  EXPECT_FALSE(dispatch.Read("failed.bin", bytes).IsOK());
+  EXPECT_EQ(bytes.data(), original);
+  EXPECT_EQ(bytes.size(), 32u);
+  EXPECT_EQ(bytes.data()[0], 42);
+  bytes = {};
+}
+#endif
+
+TEST(QnnUnit_EpContextIoDispatchTest, AllocationReplacesPreviousBufferAndPreservesItOnFailure) {
+  qnn::EpContextBuffer bytes;
+  ASSERT_TRUE(bytes.Allocate(32).IsOK());
+  auto* previous = bytes.data();
+  ASSERT_TRUE(bytes.Allocate(64).IsOK());
+  EXPECT_NE(bytes.data(), previous);
+  EXPECT_EQ(bytes.size(), 64u);
+  bytes.data()[0] = 42;
+  auto* retained = bytes.data();
+  OrtApi failing_api = Ort::GetApi();
+  failing_api.AllocatorAlloc = [](OrtAllocator*, size_t, void**) noexcept -> OrtStatus* {
+    return Ort::GetApi().CreateStatus(ORT_FAIL, "stub allocation failure");
+  };
+  {
+    OrtGlobalApiOverride override(&failing_api);
+    auto status = bytes.Allocate(128);
+    EXPECT_FALSE(status.IsOK());
+    EXPECT_EQ(status.GetErrorCode(), ORT_FAIL);
+    EXPECT_EQ(status.GetErrorMessage(), "stub allocation failure");
+  }
+  EXPECT_EQ(bytes.data(), retained);
+  EXPECT_EQ(bytes.size(), 64u);
+  EXPECT_EQ(bytes.data()[0], 42);
+}
+
+TEST(QnnUnit_EpContextIoDispatchTest, MovedBufferRetainsDataAndEmptiesSource) {
+  qnn::EpContextBuffer source;
+  ASSERT_TRUE(source.Allocate(32).IsOK());
+  source.data()[0] = 42;
+  auto* original = source.data();
+  auto destination = std::move(source);
+  EXPECT_EQ(source.data(), nullptr);
+  EXPECT_EQ(source.size(), 0u);
+  EXPECT_EQ(destination.data(), original);
+  EXPECT_EQ(destination.size(), 32u);
+  EXPECT_EQ(destination.data()[0], 42);
+  source = std::move(destination);
+  EXPECT_EQ(source.data(), original);
+  EXPECT_EQ(source.size(), 32u);
+  EXPECT_EQ(destination.data(), nullptr);
+  EXPECT_EQ(destination.size(), 0u);
+}
+
+TEST(QnnUnit_EpContextIoDispatchTest, MovedBufferOutlivesDefaultAllocatorWrapper) {
+  qnn::EpContextBuffer retained;
+  char* original = nullptr;
+  {
+    Ort::AllocatorWithDefaultOptions allocator;
+    auto* data = static_cast<char*>(allocator.Alloc(32));
+    ASSERT_NE(data, nullptr);
+    data[0] = 42;
+    qnn::EpContextBuffer bytes;
+    bytes.Adopt(data, 32, allocator);
+    retained = std::move(bytes);
+    original = data;
+    EXPECT_EQ(retained.data(), data);
+  }
+  EXPECT_EQ(retained.data(), original);
+  EXPECT_EQ(retained.size(), 32u);
+  EXPECT_EQ(retained.data()[0], 42);
+  retained = {};
+  EXPECT_EQ(retained.data(), nullptr);
+  EXPECT_EQ(retained.size(), 0u);
 }
 
 // The named EPContext-encryption capability proceeds to resolve callbacks
