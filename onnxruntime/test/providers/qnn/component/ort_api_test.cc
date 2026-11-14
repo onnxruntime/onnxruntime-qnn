@@ -164,6 +164,20 @@ TEST(QnnUnit_OrtApiTest, ReadFileIntoBuffer_ReadWithOffset_Succeeds) {
   ::unlink(path.c_str());
 }
 
+TEST(QnnUnit_OrtApiTest, ReadFileIntoBuffer_Symlink_Fails) {
+  const std::string target_path = MakeTempFile("external data");
+  ASSERT_FALSE(target_path.empty());
+  const std::string link_path = target_path + "_link";
+  ASSERT_EQ(::symlink(target_path.c_str(), link_path.c_str()), 0);
+
+  std::vector<char> buf(13);
+  auto status = ReadFileIntoBuffer(link_path.c_str(), 0, buf.size(), {buf.data(), buf.size()});
+  EXPECT_FALSE(status.IsOK());
+
+  ::unlink(link_path.c_str());
+  ::unlink(target_path.c_str());
+}
+
 // ============================================================
 // OrtLoadDynamicLibrary / OrtUnloadDynamicLibrary / OrtGetSymbolFromLibrary
 // ============================================================

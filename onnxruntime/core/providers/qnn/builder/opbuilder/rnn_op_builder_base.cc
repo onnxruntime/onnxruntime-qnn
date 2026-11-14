@@ -91,6 +91,7 @@ Ort::Status GruBaseOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape),
                 (std::string("QNN EP: dynamic ") + OpDisplayName() + " input shape is not supported.").c_str());
+  RETURN_IF_NOT(input_shape.size() == 3, "QNN EP: GRU input X must be rank 3.");
 
   RETURN_IF_ERROR(ValidateSequenceLens(qnn_model_wrapper, node_unit, OpDisplayName()));
   RETURN_IF_ERROR(ValidateUnsupportedClip(node_unit, OpDisplayName(), "QNN GRU",

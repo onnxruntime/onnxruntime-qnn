@@ -176,7 +176,7 @@ jobs:
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
-          ${{ inputs.upload_test_archive == true && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
+          ${{ inputs.upload_test_archive && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
 
       # Preserve executable modes and symlinks in the temporary cross-runner
       # hand-off. The existing archive accept-list excludes build intermediates.
@@ -246,7 +246,7 @@ jobs:
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
-          src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.${{ env.TEST_ARCHIVE_EXT }}"
+          src_pattern: "onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}${{inputs.target_os}}-${{ inputs.target_arch }}.${{ env.TEST_ARCHIVE_EXT }}"
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.has_code_changes && inputs.upload_wheel && env.BUILD_ARTIFACTORY_REPO != '' }}
@@ -311,8 +311,8 @@ jobs:
           docker builder prune -f --filter until=72h
 
   test:
-    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
-    # Cross-runner tests also consume shared testdata from Artifactory; skip on fork PRs where secrets are unavailable.
+    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && '-self-hosted' || '' }}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    # Cross-runner test stage requires Artifactory hand-off from build; skip on fork PRs where secrets are unavailable.
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
     needs: [build]
     runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Test"]
@@ -407,6 +407,38 @@ jobs:
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+
+  test-windows-arm64-qdc:
+    if: ${{ inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && !inputs.qnn_internal_test_symbols && github.event.pull_request.head.repo.fork != true }}
+    needs: [build]
+    uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
+    secrets: inherit
+    with:
+      has_code_changes: ${{ inputs.has_code_changes }}
+      target_os: windows
+      target_arch: arm64
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      build_config: ${{ inputs.build_config }}
+      testdata_archive_artifact_name: ${{ inputs.testdata_archive_artifact_name }}
+
+  windows-arm64-validation:
+    # Preserve the existing Windows ARM64 test check name, now covering both devices.
+    name: "test-windows-arm64-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && !inputs.qnn_internal_test_symbols && github.event.pull_request.head.repo.fork != true }}
+    needs: [build, test, test-windows-arm64-qdc]
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    timeout-minutes: 5
+    steps:
+      - name: Require self-hosted and QDC Windows ARM64 tests
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          SELF_HOSTED_RESULT: ${{ needs.test.result }}
+          QDC_RESULT: ${{ needs.test-windows-arm64-qdc.result }}
+        run: |
+          if [ "$BUILD_RESULT" != "success" ] || [ "$SELF_HOSTED_RESULT" != "success" ] || [ "$QDC_RESULT" != "success" ]; then
+            echo "::error::Windows ARM64 validation failed: build=$BUILD_RESULT self-hosted=$SELF_HOSTED_RESULT QDC=$QDC_RESULT"
+            exit 1
+          fi
 
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"

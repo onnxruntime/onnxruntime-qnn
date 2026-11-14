@@ -12,12 +12,16 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <cstring>
+#include <optional>
+#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "QnnTypes.h"
 
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -68,6 +72,131 @@ TEST(QnnUnit_DefTest, Memscpy_ZeroCopySizeReturnsZero) {
   const char src[] = "hello";
   size_t copied = qnn::memscpy(dst, sizeof(dst), src, 0);
   EXPECT_EQ(copied, 0u);
+}
+
+// =============================================================================
+// QnnParamWrapper string ownership
+// =============================================================================
+
+TEST(QnnUnit_DefTest, QnnParamWrapper_OwnsStringScalarAcrossMove) {
+  const std::vector<std::string> values{"", "s", std::string(128, 'v')};
+  for (const auto& expected : values) {
+    SCOPED_TRACE(expected.size());
+    qnn::QnnParamWrapper moved = [&expected] {
+      std::optional<qnn::QnnParamWrapper> wrapper;
+      {
+        std::string value = expected;
+        Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
+        scalar.dataType = QNN_DATATYPE_STRING;
+        scalar.stringValue = value.c_str();
+        wrapper.emplace(0, "node", "attr", scalar);
+        EXPECT_NE(wrapper->GetQnnParam().scalarParam.stringValue, value.c_str());
+        value.assign(value.size(), 'x');
+        EXPECT_STREQ(wrapper->GetQnnParam().scalarParam.stringValue, expected.c_str());
+      }
+      return qnn::QnnParamWrapper(std::move(*wrapper));
+    }();
+
+    // Both the caller's string and the moved-from wrapper have been destroyed.
+    const Qnn_Param_t& param = moved.GetQnnParam();
+    EXPECT_EQ(param.paramType, QNN_PARAMTYPE_SCALAR);
+    ASSERT_NE(param.scalarParam.stringValue, nullptr);
+    EXPECT_STREQ(param.scalarParam.stringValue, expected.c_str());
+  }
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_MovesBwFloatBlockQuantizationStorage) {
+  const std::vector<float> scales{0.5f, 0.25f};
+  const std::vector<float> offsets{0.0f, 0.1f};
+  const std::vector<uint32_t> block_sizes{2, 1};
+  auto quant_params = qnn::QnnQuantParamsWrapper::BwFloatBlock(
+      gsl::make_span(scales), gsl::make_span(offsets), 8u, gsl::make_span(block_sizes));
+  const auto* scale_offsets = quant_params.Get().bwFloatBlockEncoding.floatScaleOffset;
+
+  qnn::QnnTensorWrapper tensor("weight", QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_UFIXED_POINT_8,
+                               std::move(quant_params), std::vector<uint32_t>{4, 1});
+  EXPECT_EQ(tensor.GetQnnQuantParams().Get().bwFloatBlockEncoding.floatScaleOffset, scale_offsets);
+  auto copied = tensor.GetQnnQuantParams().Copy();
+  ASSERT_EQ(copied.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK);
+  ASSERT_NE(copied.Get().bwFloatBlockEncoding.floatScaleOffset, nullptr);
+  EXPECT_FLOAT_EQ(copied.Get().bwFloatBlockEncoding.floatScaleOffset[1].scale, scales[1]);
+  EXPECT_FLOAT_EQ(copied.Get().bwFloatBlockEncoding.floatScaleOffset[1].offset, offsets[1]);
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_DeserializeRejectsUnsupportedTensorTypesBeforeReadingMetadata) {
+  const std::vector<uint32_t> dims{2, 4};
+  for (auto version : {QNN_TENSOR_VERSION_1, QNN_TENSOR_VERSION_2}) {
+    SCOPED_TRACE(static_cast<int>(version));
+    for (auto tensor_type : {QNN_TENSOR_TYPE_NATIVE, QNN_TENSOR_TYPE_STATIC, QNN_TENSOR_TYPE_NULL,
+                             QNN_TENSOR_TYPE_APP_READWRITE, QNN_TENSOR_TYPE_UNDEFINED}) {
+      SCOPED_TRACE(static_cast<int>(tensor_type));
+      qnn::QnnTensorWrapper wrapper("existing_io", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                                    qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>(dims));
+      Qnn_Tensor_t raw{};
+      raw.version = version;
+      qnn::SetQnnTensorType(raw, tensor_type);
+      // Leave the name and shape pointers null: reject the type before consuming any metadata.
+      auto status = wrapper.Init(raw);
+      ASSERT_FALSE(status.IsOK());
+      EXPECT_NE(status.GetErrorMessage().find("only supports APP_READ and APP_WRITE"), std::string::npos);
+      EXPECT_EQ(wrapper.GetName(), "existing_io");
+      EXPECT_EQ(wrapper.GetTensorType(), QNN_TENSOR_TYPE_APP_READ);
+      EXPECT_EQ(wrapper.GetTensorDims(), dims);
+    }
+  }
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_DeserializeRejectsBlockQuantizedGraphIO) {
+  const std::vector<uint32_t> dims{2, 4};
+  for (auto version : {QNN_TENSOR_VERSION_1, QNN_TENSOR_VERSION_2}) {
+    SCOPED_TRACE(static_cast<int>(version));
+    for (auto tensor_type : {QNN_TENSOR_TYPE_APP_WRITE, QNN_TENSOR_TYPE_APP_READ}) {
+      for (auto encoding : {QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION,
+                            QNN_QUANTIZATION_ENCODING_BLOCK,
+                            QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK}) {
+        SCOPED_TRACE(static_cast<int>(tensor_type));
+        SCOPED_TRACE(static_cast<int>(encoding));
+        Qnn_Tensor_t raw{};
+        raw.version = version;
+        qnn::SetQnnTensorType(raw, tensor_type);
+        qnn::SetQnnTensorName(raw, "cached_io");
+        qnn::SetQnnTensorDim(raw, dims);
+        Qnn_QuantizeParams_t params = QNN_QUANTIZE_PARAMS_INIT;
+        params.encodingDefinition = QNN_DEFINITION_DEFINED;
+        params.quantizationEncoding = encoding;
+        qnn::SetQnnTensorQParams(raw, params);
+
+        qnn::QnnTensorWrapper wrapper;
+        auto status = wrapper.Init(raw);
+        ASSERT_FALSE(status.IsOK());
+        EXPECT_NE(status.GetErrorMessage().find("Block-quantized graph inputs and outputs"), std::string::npos);
+      }
+    }
+  }
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_DeserializeAcceptsPerTensorQuantization) {
+  const std::vector<uint32_t> dims{2, 4};
+  for (auto version : {QNN_TENSOR_VERSION_1, QNN_TENSOR_VERSION_2}) {
+    SCOPED_TRACE(static_cast<int>(version));
+    for (auto tensor_type : {QNN_TENSOR_TYPE_APP_WRITE, QNN_TENSOR_TYPE_APP_READ}) {
+      SCOPED_TRACE(static_cast<int>(tensor_type));
+      Qnn_Tensor_t raw{};
+      raw.version = version;
+      qnn::SetQnnTensorType(raw, tensor_type);
+      qnn::SetQnnTensorName(raw, "cached_io");
+      qnn::SetQnnTensorDim(raw, dims);
+      auto params = qnn::QnnQuantParamsWrapper::PerTensor(0.25f, -3);
+      qnn::SetQnnTensorQParams(raw, params.Get());
+
+      qnn::QnnTensorWrapper wrapper;
+      ASSERT_TRUE(wrapper.Init(raw).IsOK());
+      EXPECT_EQ(wrapper.GetTensorDims(), dims);
+      EXPECT_TRUE(wrapper.GetQnnQuantParams().IsPerTensor());
+      EXPECT_FLOAT_EQ(wrapper.GetQnnQuantParams().Get().scaleOffsetEncoding.scale, 0.25f);
+      EXPECT_EQ(wrapper.GetQnnQuantParams().Get().scaleOffsetEncoding.offset, -3);
+    }
+  }
 }
 
 // =============================================================================
@@ -736,6 +865,64 @@ static Qnn_Tensor_t MakeV2Tensor() {
   Qnn_Tensor_t t{};
   t.version = QNN_TENSOR_VERSION_2;
   return t;
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_OwnsDynamicFlagsAcrossMovesAndSourceDestruction) {
+  qnn::QnnTensorWrapper survivor;
+  const std::vector<uint32_t> old_dims{2, 3};
+  std::vector<uint8_t> old_flags{1, 0};
+  auto old_raw = MakeV2Tensor();
+  qnn::SetQnnTensorType(old_raw, QNN_TENSOR_TYPE_APP_READ);
+  qnn::SetQnnTensorName(old_raw, "previous_output");
+  qnn::SetQnnTensorDim(old_raw, old_dims);
+  old_raw.v2.isDynamicDimensions = old_flags.data();
+  ASSERT_TRUE(survivor.Init(old_raw).IsOK());
+  {
+    const std::vector<uint32_t> dims{2, 3, 4};
+    std::vector<uint8_t> flags{0, 1, 0};
+    auto raw = MakeV2Tensor();
+    qnn::SetQnnTensorType(raw, QNN_TENSOR_TYPE_APP_WRITE);
+    qnn::SetQnnTensorName(raw, "cached_input");
+    qnn::SetQnnTensorDim(raw, dims);
+    raw.v2.isDynamicDimensions = flags.data();
+
+    qnn::QnnTensorWrapper wrapper;
+    ASSERT_TRUE(wrapper.Init(raw).IsOK());
+    ASSERT_NE(qnn::GetQnnTensorIsDynamicDimensions(wrapper.GetQnnTensor()), flags.data());
+    flags[1] = 0;
+    EXPECT_TRUE(qnn::utils::QnnTensorHasDynamicShape(wrapper.GetQnnTensor()));
+
+    qnn::QnnTensorWrapper moved(std::move(wrapper));
+    EXPECT_TRUE(qnn::utils::QnnTensorHasDynamicShape(moved.GetQnnTensor()));
+    survivor = std::move(moved);
+  }
+
+  // Parser-equivalent metadata and both moved-from wrappers are now gone.
+  ASSERT_EQ(survivor.GetTensorRank(), 3u);
+  const auto* flags = qnn::GetQnnTensorIsDynamicDimensions(survivor.GetQnnTensor());
+  ASSERT_NE(flags, nullptr);
+  EXPECT_EQ(flags[0], 0u);
+  EXPECT_EQ(flags[1], 1u);
+  EXPECT_EQ(flags[2], 0u);
+  EXPECT_TRUE(qnn::utils::QnnTensorHasDynamicShape(survivor.GetQnnTensor()));
+}
+
+TEST(QnnUnit_DefTest, QnnTensorWrapper_ReinitClearsAbsentDynamicFlags) {
+  const std::vector<uint32_t> dims{2, 3};
+  std::vector<uint8_t> flags{1, 0};
+  auto raw = MakeV2Tensor();
+  qnn::SetQnnTensorType(raw, QNN_TENSOR_TYPE_APP_WRITE);
+  qnn::SetQnnTensorName(raw, "cached_input");
+  qnn::SetQnnTensorDim(raw, dims);
+  raw.v2.isDynamicDimensions = flags.data();
+
+  qnn::QnnTensorWrapper wrapper;
+  ASSERT_TRUE(wrapper.Init(raw).IsOK());
+  EXPECT_TRUE(qnn::utils::QnnTensorHasDynamicShape(wrapper.GetQnnTensor()));
+  raw.v2.isDynamicDimensions = nullptr;
+  ASSERT_TRUE(wrapper.Init(raw).IsOK());
+  EXPECT_EQ(qnn::GetQnnTensorIsDynamicDimensions(wrapper.GetQnnTensor()), nullptr);
+  EXPECT_FALSE(qnn::utils::QnnTensorHasDynamicShape(wrapper.GetQnnTensor()));
 }
 
 TEST(QnnUnit_DefTest, SetGetQnnTensorType_V2) {
