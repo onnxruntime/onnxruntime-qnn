@@ -197,7 +197,7 @@ if platform.system() == "Linux" or platform.system() == "AIX":
 else:
     # QNN-EP is built as shared libs
     libs = [providers_qnn]
-    # QNN V68/V73/V81/V85 dependencies
+    # QNN V68/V73/V81 dependencies
     qnn_deps = [
         "Genie.dll",
         "HtpPrepare.dll",
@@ -206,8 +206,6 @@ else:
         "libQnnHtpV73Skel.so",
         "libqnnhtpv81.cat",
         "libQnnHtpV81Skel.so",
-        "libqnnhtpv85.cat",
-        "libQnnHtpV85Skel.so",
         "QnnGpu.dll",
         "QnnHtp.dll",
         "QnnHtpNetRunExtensions.dll",
@@ -215,7 +213,6 @@ else:
         "QnnHtpV68Stub.dll",
         "QnnHtpV73Stub.dll",
         "QnnHtpV81Stub.dll",
-        "QnnHtpV85Stub.dll",
         "QnnIr.dll",
         "QnnSaver.dll",
         "QnnSystem.dll",
