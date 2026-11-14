@@ -45,6 +45,12 @@ The tests are built as part of the regular ONNX Runtime build. After a successfu
 - onnxruntime_provider_test.exe   (Windows)
 - onnxruntime_provider_test      (Linux/macOS)
 
+When building tests with `--ort-prebuilt`, also pass `--ort-test-assets <PATH>` or set
+`ORT_TEST_ASSETS_ROOT`. The path must be an extracted ORT tree with a `VERSION_NUMBER` matching the
+pre-built SDK and an `onnxruntime/test/testdata` directory. Android test APK builds additionally require
+`java/src/test/android/app/src/androidTest/assets/sigmoid.ort` under the same root. Build-only tasks do not
+require these assets.
+
 ## Running the Tests
 1. QNN supports several backends. You can use the standard Google‑Test syntax for filtering:
     - `onnxruntime_provider_test.exe --gtest_filter=QnnCPUBackendTests.*`

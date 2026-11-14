@@ -25,6 +25,9 @@ function update_needed() {
   elif [ "$(cat "${qnn_build_mode_file_path}")" != "${3}" ]; then
     log_debug "QNN coverage/internal-symbol build mode changed"
     echo "1"
+  elif [ ! -f "${ort_build_identity_file_path}" ] || [ "$(cat "${ort_build_identity_file_path}")" != "${4}" ]; then
+    log_debug "ORT SDK or test-assets configuration changed"
+    echo "1"
   else
     log_debug "No update needed"
   fi
@@ -152,6 +155,10 @@ qairt_sdk_file_path="${build_dir}/qairt-sdk-path-${config}.txt"
 # build.py reruns CMake only when --update is provided. Track the resolved mode
 # so switching coverage/internal-symbol settings cannot reuse a stale CMake cache.
 qnn_build_mode_file_path="${build_dir}/qnn-build-mode-${config}.txt"
+ort_build_identity_file_path="${build_dir}/ort-build-identity-${config}.txt"
+ort_test_assets_root="${ORT_TEST_ASSETS_ROOT:-}"
+ort_build_identity=$(python "${REPO_ROOT}/qcom/scripts/all/ort_build_identity.py" \
+  --sdk="${ort_prebuilt_root}" --assets="${ort_test_assets_root}")
 
 if [ -z "${qairt_sdk_root}" ]; then
     qairt_sdk_root="$(get_qairt_contentdir)"
@@ -170,7 +177,7 @@ PATH="${cmake_bindir}:$(get_ninja_bindir):${llvm_contentdir}/bin:${PATH}"
 mkdir -p "${build_dir}/${config}"
 
 build_is_dirty=
-if [ "$(update_needed "${build_dir}/${config}" "${qairt_sdk_root}" "${qnn_build_mode}")" ]; then
+if [ "$(update_needed "${build_dir}/${config}" "${qairt_sdk_root}" "${qnn_build_mode}" "${ort_build_identity}")" ]; then
   build_is_dirty=1
 fi
 
@@ -179,6 +186,10 @@ common_args=(--cmake_generator "${cmake_generator}" \
              --parallel \
              --build_dir "${build_dir}" \
 )
+# Pass empty values too, to clear inputs cached by a previous configuration.
+common_args+=(--cmake_extra_defines
+              "onnxruntime_ORT_HOME:PATH=${ort_prebuilt_root}"
+              "onnxruntime_ORT_TEST_ASSETS_HOME:PATH=${ort_test_assets_root}")
 
 if [ -n "${qnn_arch_abi}" ]; then
   common_args+=(--cmake_extra_defines "QNN_ARCH_ABI=${qnn_arch_abi}")
@@ -263,6 +274,15 @@ case "${target_platform}" in
         ;;
       test)
         run_tests=1
+        # Source-built binaries may come from a container or extracted archive.
+        # Only prebuilt tests own SDK/assets regeneration in this process.
+        if [ -n "${ort_prebuilt_root}" ]; then
+          if [ -n "${build_is_dirty}" ]; then
+            action_args+=("--update" "--build")
+          elif [ -n "${ort_test_assets_root}" ]; then
+            action_args+=("--build")
+          fi
+        fi
         ;;
       archive)
         make_test_archive=1
@@ -359,7 +379,11 @@ else
 
   if [ "${#action_args[@]}" -gt 0 ]; then
 
-    python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py"
+    fetch_deps_args=()
+    if [ -n "${ort_prebuilt_root}" ]; then
+      fetch_deps_args+=("--ort-home=${ort_prebuilt_root}")
+    fi
+    python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py" "${fetch_deps_args[@]}"
 
     package_args=()
     if [ -n "${build_archive}" ]; then
@@ -387,6 +411,7 @@ else
     # Keep the old mode invalid until the entire build succeeds.
     if [ -n "${build_is_dirty}" ]; then
       rm -f "${qnn_build_mode_file_path}"
+      rm -f "${ort_build_identity_file_path}"
     fi
 
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \
@@ -401,6 +426,7 @@ else
     if [ -n "${build_is_dirty}" ]; then
       save_qairt_sdk_path "${qairt_sdk_root}"
       save_qnn_build_mode "${qnn_build_mode}"
+      printf '%s\n' "${ort_build_identity}" > "${ort_build_identity_file_path}"
     fi
   fi
 

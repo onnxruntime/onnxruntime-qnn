@@ -67,6 +67,7 @@ from ep_build.util import (
 
 DOCKER_CCACHE_ROOT_ENV_VAR = "ORT_BUILD_DOCKER_CCACHE_ROOT"
 ORT_PREBUILT_ROOT_ENV_VAR = "ORT_PREBUILT_ROOT"
+ORT_TEST_ASSETS_ROOT_ENV_VAR = "ORT_TEST_ASSETS_ROOT"
 QAIRT_SDK_ROOT_ENV_VAR = "QAIRT_SDK_ROOT"
 QNN_SDK_ROOT_ENV_VAR = "QNN_SDK_ROOT"
 SNPE_ROOT_ENV_VAR = "SNPE_ROOT"
@@ -109,6 +110,9 @@ Environment variables
 
   ORT_PREBUILT_ROOT
     If specified, this will be used for the path of ORT prebuilt.
+
+  ORT_TEST_ASSETS_ROOT
+    Optional version-matched ORT source/test-assets root for prebuilt test tasks.
 
   QAIRT_SDK_ROOT
   QNN_SDK_ROOT
@@ -156,6 +160,15 @@ Environment variables
         "--ort-prebuilt",
         type=Path,
         help="Path to ORT Prebuilt.",
+    )
+    parser.add_argument(
+        "--ort-test-assets",
+        type=Path,
+        help=(
+            "Path to version-matched ORT test assets. The directory must contain "
+            "VERSION_NUMBER and the upstream onnxruntime/test/testdata tree. "
+            "Prebuilt tests also require the matching plugin model-test runner under the SDK's bin directory."
+        ),
     )
     parser.add_argument(
         "--qairt-sdk",
@@ -1675,6 +1688,86 @@ def get_ort_prebuilt_root(root_from_args: Path | None) -> Path | None:
     return ort_prebuilt
 
 
+def _read_ort_version(root: Path, description: str) -> str:
+    version_file = root / "VERSION_NUMBER"
+    if not version_file.is_file():
+        raise FileNotFoundError(f"{description} version file does not exist: {version_file}")
+
+    version = version_file.read_text(encoding="utf-8").strip()
+    if not version:
+        raise ValueError(f"{description} version file is empty: {version_file}")
+    return version
+
+
+def _tasks_require_ort_test_assets(tasks: list[str], build_aar: bool) -> bool:
+    test_execution_tasks = {
+        "asan_linux_x86_64",
+        "coverage_linux_x86_64",
+        "coverage_report_linux_x86_64",
+        "diff_coverage_linux_x86_64",
+    }
+
+    def task_requires_assets(task: str, visited: set[str]) -> bool:
+        if task == "test" or task.startswith("test_ort_") or task in test_execution_tasks:
+            return True
+        if task in visited:
+            return False
+        visited.add(task)
+        return any(task_requires_assets(dependency, visited) for dependency in TASK_DEPENDENCIES.get(task, []))
+
+    return build_aar or any(task_requires_assets(task, set()) for task in tasks)
+
+
+def get_ort_test_assets_root(
+    root_from_args: Path | None,
+    ort_prebuilt_root: Path | None,
+    tasks: list[str],
+    build_aar: bool,
+) -> Path | None:
+    root = root_from_args
+    if root is None and ORT_TEST_ASSETS_ROOT_ENV_VAR in os.environ:
+        root = Path(os.environ[ORT_TEST_ASSETS_ROOT_ENV_VAR])
+
+    assets_required = ort_prebuilt_root is not None and _tasks_require_ort_test_assets(tasks, build_aar)
+    if root is None:
+        if assets_required:
+            raise ValueError(f"Prebuilt ORT test tasks require --ort-test-assets or {ORT_TEST_ASSETS_ROOT_ENV_VAR}.")
+        return None
+
+    if not root.is_dir():
+        raise FileNotFoundError(f"ORT test-assets root does not exist: {root}")
+
+    provider_testdata = root / "onnxruntime" / "test" / "testdata"
+    if not provider_testdata.is_dir():
+        raise FileNotFoundError(f"ORT provider testdata does not exist: {provider_testdata}")
+
+    if build_aar:
+        sigmoid = root / "java" / "src" / "test" / "android" / "app" / "src" / "androidTest" / "assets" / "sigmoid.ort"
+        if not sigmoid.is_file():
+            raise FileNotFoundError(f"ORT Android test asset does not exist: {sigmoid}")
+
+    if ort_prebuilt_root is not None:
+        prebuilt_version = _read_ort_version(ort_prebuilt_root, "Prebuilt ORT")
+        assets_version = _read_ort_version(root, "ORT test-assets")
+        if assets_version != prebuilt_version:
+            raise ValueError(
+                f"ORT test-assets version {assets_version} does not match prebuilt ORT {prebuilt_version}."
+            )
+
+        if assets_required:
+            windows_target = any("windows" in task for task in tasks) or (
+                is_host_windows() and not any("linux" in task or "android" in task for task in tasks)
+            )
+            runner_name = "onnxruntime_plugin_ep_onnx_test" + (".exe" if windows_target else "")
+            runner = ort_prebuilt_root / "bin" / runner_name
+            if not runner.is_file():
+                raise FileNotFoundError(f"Prebuilt ORT tests require the matching plugin model-test runner: {runner}")
+            if not windows_target and is_host_linux() and not os.access(runner, os.X_OK):
+                raise ValueError(f"Prebuilt ORT plugin model-test runner is not executable: {runner}")
+
+    return root.resolve()
+
+
 def get_qairt_sdk_root(root_from_args: Path | None) -> Path | None:
     qairt_sdk: Path | None = None
     if root_from_args is not None:
@@ -1812,6 +1905,14 @@ def build_and_test():
 
     args = parse_arguments()
     ort_prebuilt_root = get_ort_prebuilt_root(args.ort_prebuilt)
+    ort_test_assets_root = get_ort_test_assets_root(
+        args.ort_test_assets,
+        ort_prebuilt_root,
+        args.task,
+        args.build_aar,
+    )
+    if ort_test_assets_root is not None:
+        os.environ[ORT_TEST_ASSETS_ROOT_ENV_VAR] = str(ort_test_assets_root.resolve())
     qairt_sdk_root = get_qairt_sdk_root(args.qairt_sdk)
     docker_ccache_root = get_docker_ccache_root(args.docker_ccache_root)
 
