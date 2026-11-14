@@ -5,11 +5,9 @@
 # Platform-agnostic two-pass snapshot+accuracy runner for QNN EP unit tests.
 #
 # Pass 1: Run all snapshot tests (QnnSnapshot_<Op>_OpBuilder* + QnnSnapshot_<Op>_Session*).
-#          If all pass -> done (exit 0). Graph structure unchanged, so this
-#          runner can skip the paired accuracy rerun.
-# Pass 2: For any ops whose snapshot tests drifted or could not compare because
-#          goldens are absent, run their QnnAcc_<Op>_Accuracy* tests to verify
-#          numerical correctness.
+# Pass 2: Use accuracy_gate.py to route each unverified snapshot case to its
+#         paired QnnAcc_* case. Generate/force modes intentionally verify every
+#         in-scope op group for golden production and manual diagnosis.
 #
 # Suite naming is tier-first with an explicit delimiter token:
 #   QnnSnapshot_<Op>_OpBuilder[_<Variant>]Test
@@ -31,8 +29,6 @@
 #       [--force-accuracy] \
 #       [--filter=Clip,Conv]
 
-REPO_ROOT=$(git rev-parse --show-toplevel)
-
 set -euo pipefail
 if [ "${BASH_VERSINFO:-0}" -gt 3 ]; then
     shopt -s inherit_errexit
@@ -40,6 +36,9 @@ fi
 if [ -n "${ORT_BUILD_XTRACE:-}" ]; then
     set -x
 fi
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "${script_dir}/../../.." && pwd)"
 
 log_info() {
     printf "%s\n" "$*" >&2
@@ -66,6 +65,8 @@ filter_groups=""
 force_accuracy=false
 generate_goldens=false
 python_bin="${PYTHON_BIN:-python3}"
+gate_script="${repo_root}/qcom/scripts/all/accuracy_gate.py"
+version_resolver="${repo_root}/qcom/scripts/all/resolve_tool_versions.sh"
 
 for arg in "$@"; do
     case "${arg}" in
@@ -174,68 +175,21 @@ fi
 
 extract_snapshot_groups() {
     local snapshot_json="$1"
-    local mode="${2:-all}"
-    "${python_bin}" - "${snapshot_json}" "${mode}" <<'PY'
+    "${python_bin}" - "${snapshot_json}" <<'PY'
 import json
 import re
 import sys
 
 snapshot_json = sys.argv[1]
-mode = sys.argv[2]
 pattern = re.compile(r"^QnnSnapshot_(.+?)_(?:OpBuilder|Session)(?:_\w+)?Test$")
 
 with open(snapshot_json, encoding="utf-8") as f:
     data = json.load(f)
 
-
-def contains_marker(value, marker):
-    if isinstance(value, dict):
-        return any(contains_marker(v, marker) for v in value.values())
-    if isinstance(value, list):
-        return any(contains_marker(v, marker) for v in value)
-    return marker in str(value)
-
-
-def suite_has_drift(suite):
-    return contains_marker(suite, "QNN_SNAPSHOT_DRIFT")
-
-
-def suite_has_absent_golden(suite):
-    return contains_marker(suite, "QNN_GOLDEN_ABSENT")
-
-
-def suite_has_skipped_test(suite):
-    if suite.get("skipped", 0) > 0:
-        return True
-    for testcase in suite.get("testsuite", []):
-        if str(testcase.get("result", "")).upper() == "SKIPPED":
-            return True
-        if str(testcase.get("status", "")).upper() == "SKIPPED":
-            return True
-    return False
-
-
-def suite_is_unverified(suite):
-    if suite_has_drift(suite) or suite_has_absent_golden(suite) or suite_has_skipped_test(suite):
-        return True
-    return suite.get("failures", 0) > 0 or suite.get("errors", 0) > 0
-
-
 ops = set()
 for suite in data.get("testsuites", []):
     match = pattern.match(suite.get("name", ""))
-    if not match:
-        continue
-
-    include = False
-    if mode == "all":
-        include = True
-    elif mode == "needs_accuracy":
-        include = suite_is_unverified(suite)
-    else:
-        raise ValueError(f"unknown mode: {mode}")
-
-    if include:
+    if match:
         ops.add(match.group(1))
 
 print(",".join(sorted(ops)))
@@ -313,7 +267,15 @@ mkdir -p "${results_dir}"
 snapshot_json="${results_dir}/snapshot_results.json"
 accuracy_json="${results_dir}/accuracy_results.json"
 snapshot_list="${results_dir}/snapshot_tests.txt"
-rm -f "${snapshot_json}" "${accuracy_json}" "${snapshot_list}"
+accuracy_list="${results_dir}/accuracy_tests.txt"
+accuracy_filter_file="${results_dir}/accuracy_filter.txt"
+gate_summary="${results_dir}/accuracy_gate_summary.txt"
+rm -f "${snapshot_json}" \
+      "${accuracy_json}" \
+      "${snapshot_list}" \
+      "${accuracy_list}" \
+      "${accuracy_filter_file}" \
+      "${gate_summary}"
 
 # Native Windows binaries do not understand Git Bash paths such as /c/work/....
 snapshot_json_arg="$(to_provider_test_path "${snapshot_json}")"
@@ -333,6 +295,9 @@ snapshot_exit=0
 run_provider_test \
     --gtest_filter="${snapshot_filter}" \
     --gtest_output="json:${snapshot_json_arg}" || snapshot_exit=$?
+if [ "${snapshot_exit}" -ne 0 ]; then
+    log_warn "Snapshot tests exited ${snapshot_exit}; unverified cases will route to accuracy."
+fi
 
 # In update mode, unset so Pass 2 accuracy tests run normally (compare, don't write).
 if [ "${generate_goldens}" = true ]; then
@@ -340,59 +305,96 @@ if [ "${generate_goldens}" = true ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Analyze Pass 1 results
+# Normal validation: shared per-case routing contract
+# ---------------------------------------------------------------------------
+if [ "${generate_goldens}" = false ] && [ "${force_accuracy}" = false ]; then
+    accuracy_list_filter="QnnAcc_*"
+    if [ -n "${filter_groups}" ]; then
+        accuracy_list_filter=""
+        IFS=',' read -ra groups <<< "${filter_groups}"
+        for group in "${groups[@]}"; do
+            if [ -n "${accuracy_list_filter}" ]; then
+                accuracy_list_filter+=":"
+            fi
+            accuracy_list_filter+="QnnAcc_${group}_Accuracy*Test.*"
+        done
+    fi
+
+    if ! run_provider_test --gtest_list_tests --gtest_filter="${accuracy_list_filter}" > "${accuracy_list}"; then
+        die "Failed to list accuracy tests."
+    fi
+
+    if [ -z "${QNN_UT_QAIRT_VERSION:-}" ] || [ -z "${QNN_UT_ORT_VERSION:-}" ]; then
+        resolved_versions=""
+        resolver_exit=0
+        resolved_versions="$("${version_resolver}" --bin-dir="${bin_dir}" both)" || resolver_exit=$?
+        if [ "${resolver_exit}" -eq 0 ]; then
+            while IFS="=" read -r key value; do
+                case "${key}" in
+                    qairt) export QNN_UT_QAIRT_VERSION="${value}" ;;
+                    ort) export QNN_UT_ORT_VERSION="${value}" ;;
+                esac
+            done <<< "${resolved_versions}"
+            if [ -z "${QNN_UT_QAIRT_VERSION:-}" ] || [ -z "${QNN_UT_ORT_VERSION:-}" ]; then
+                die "Tool version resolver returned incomplete QAIRT/ORT versions."
+            fi
+        elif [ "${resolver_exit}" -eq 3 ]; then
+            unset QNN_UT_QAIRT_VERSION QNN_UT_ORT_VERSION
+            log_warn "QAIRT/ORT versions could not be resolved; running full accuracy fallback."
+        else
+            die "Tool version resolver failed (exit ${resolver_exit})."
+        fi
+    fi
+
+    log_info "--- Routing QNN accuracy tests from snapshot results ---"
+    "${python_bin}" "${gate_script}" \
+        --snapshot-json="${snapshot_json}" \
+        --golden-root="${QNN_UT_SNAPSHOT_GOLDEN_DIR:-}" \
+        --accuracy-list-file="${accuracy_list}" \
+        --emit-filter-file="${accuracy_filter_file}" \
+        --emit-summary-file="${gate_summary}"
+
+    accuracy_filter="$(head -1 "${accuracy_filter_file}" 2>/dev/null || true)"
+    [ -n "${accuracy_filter}" ] || die "accuracy_gate.py did not emit an accuracy filter."
+
+    log_info "--- Pass 2: Running routed QNN accuracy tests ---"
+    log_info "Filter: ${accuracy_filter}"
+    accuracy_exit=0
+    run_provider_test \
+        --gtest_filter="${accuracy_filter}" \
+        --gtest_output="json:${accuracy_json_arg}" || accuracy_exit=$?
+
+    if [ "${accuracy_exit}" -ne 0 ]; then
+        log_err "=== FAIL: Routed QNN accuracy tests failed ==="
+        log_err "Results: ${accuracy_json}"
+        exit 1
+    fi
+
+    log_info "=== PASS: Snapshot/accuracy routing completed ==="
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Producer/forced validation: preserve the existing group-level routing
 # ---------------------------------------------------------------------------
 
-# Snapshot routing rule:
-#   - [QNN_SNAPSHOT_DRIFT] means the snapshot test reached golden comparison and
-#     only the QNN graph JSON changed.
-#   - [QNN_GOLDEN_ABSENT] means no golden comparison happened for that case.
-#   - Both markers leave the snapshot result unverified for that op group, so
-#     route only the affected QnnAcc_<Op>_Accuracy* tests.
-#   - Other snapshot failures also leave the snapshot result unverified. Route
-#     the affected op to accuracy instead of blocking on graph-diff enforcement.
-#   - If no snapshot JSON is produced, treat the in-scope snapshot groups as
-#     unverified, same as missing goldens, and verify them through accuracy.
-#   - The setup failure is an unverified snapshot group without a matching
-#     QnnAcc_<Op>_Accuracy* test, because then correctness is not gated.
+# Golden generation and forced validation always run accuracy for every
+# in-scope snapshot group. The publisher uses this complete numerical evidence
+# to decide which regenerated groups are eligible for upload.
 target_ops=""
 
-if [ "${generate_goldens}" = true ] || [ "${force_accuracy}" = true ]; then
-    # In update/force mode: run accuracy for all groups that were in scope.
-    if [ -f "${snapshot_json}" ]; then
-        target_ops=$(extract_snapshot_groups "${snapshot_json}" all 2>/dev/null) || true
-    else
-        # No snapshot result was produced. Treat the in-scope snapshot groups as
-        # unverified, same as missing goldens, and verify them through accuracy.
-        target_ops=$(list_in_scope_snapshot_groups 2>/dev/null) || true
-    fi
-    if [ "${generate_goldens}" = true ]; then
-        log_info "Goldens updated. Verifying accuracy for: ${target_ops}"
-    else
-        log_info "Force-accuracy mode. Running accuracy for: ${target_ops}"
-    fi
+# In update/force mode: run accuracy for all groups that were in scope.
+if [ -f "${snapshot_json}" ]; then
+    target_ops=$(extract_snapshot_groups "${snapshot_json}" 2>/dev/null) || true
 else
-    if [ ! -f "${snapshot_json}" ]; then
-        log_warn "Snapshot JSON output not found at ${snapshot_json}."
-        log_warn "Treating in-scope snapshot groups as unverified and routing them to accuracy."
-        target_ops=$(list_in_scope_snapshot_groups 2>/dev/null) || true
-    else
-        # Normal mode: run accuracy for groups whose snapshot is unverified:
-        #   - [QNN_SNAPSHOT_DRIFT]: builder output changed vs the checked-in golden.
-        #   - [QNN_GOLDEN_ABSENT]: no golden comparison happened.
-        #   - any other snapshot failure/error: snapshot could not be used as an
-        #     accuracy-skip signal.
-        target_ops=$(extract_snapshot_groups "${snapshot_json}" needs_accuracy 2>/dev/null) || true
-    fi
-
-    if [ -z "${target_ops}" ]; then
-        if [ ${snapshot_exit} -eq 0 ]; then
-            log_info "All snapshot tests passed. No accuracy tests needed."
-            exit 0
-        fi
-        log_err "Snapshot tests exited ${snapshot_exit} but no group failures could be extracted."
-        exit ${snapshot_exit}
-    fi
+    # No snapshot result was produced. Treat the in-scope snapshot groups as
+    # unverified, same as missing goldens, and verify them through accuracy.
+    target_ops=$(list_in_scope_snapshot_groups 2>/dev/null) || true
+fi
+if [ "${generate_goldens}" = true ]; then
+    log_info "Goldens updated. Verifying accuracy for: ${target_ops}"
+else
+    log_info "Force-accuracy mode. Running accuracy for: ${target_ops}"
 fi
 
 if [ -z "${target_ops}" ]; then
@@ -406,9 +408,8 @@ log_info "Accuracy targets: ${target_ops}"
 # Pass 2: Accuracy tests for target groups
 # ---------------------------------------------------------------------------
 
-# Build gtest filter from group list and verify every unverified snapshot group
-# has a matching accuracy suite. This is the only setup failure for an
-# unverified snapshot: without QnnAcc_<Op>_Accuracy*, correctness is not gated.
+# Build the group filter and verify every in-scope snapshot group has a matching
+# accuracy suite; otherwise the producer lacks numerical evidence for that group.
 IFS=',' read -ra op_array <<< "${target_ops}"
 missing_accuracy=""
 for op in "${op_array[@]}"; do

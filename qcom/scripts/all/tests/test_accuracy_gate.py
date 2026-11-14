@@ -315,6 +315,15 @@ def test_detect_version_env_override(monkeypatch):
     assert cur.ort == "8.8.8"
 
 
+def test_detect_versions_missing_env_are_unknown(monkeypatch):
+    monkeypatch.delenv("QNN_UT_QAIRT_VERSION", raising=False)
+    monkeypatch.delenv("QNN_UT_ORT_VERSION", raising=False)
+
+    cur = gate.detect_current_versions()
+    assert cur == gate.ToolVersions()
+    assert cur.matches(_cur()) is False
+
+
 # ===========================================================================
 # run_gate end-to-end (synthetic files)
 # ===========================================================================
@@ -355,6 +364,44 @@ def test_run_gate_version_match_skips_passed(tmp_path):
     assert res.version_match is True
     assert res.run_set == []
     assert [d.name for d in res.skip_set] == ["Case/Clip_f32"]
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        '{"testsuites": [',
+        '{"testsuites": {}}',
+        '{"testsuites": [{"name": 123, "testsuite": []}]}',
+        '{"testsuites": [{"name": "QnnSnapshot_Clip_OpBuilderTest", "testsuite": [42]}]}',
+        "[]",
+    ],
+)
+def test_run_gate_unusable_snapshot_input_runs_all_accuracy(tmp_path, contents, capsys):
+    _write_manifest(tmp_path, qairt="2.35.0", ort="1.20.0")
+    snapshot_path = tmp_path / "snap.json"
+    snapshot_path.write_text(contents)
+    acc = [(PLAIN, "Case/Clip_f32"), (PLAIN, "Case/Clip_int32")]
+
+    res = gate.run_gate(str(snapshot_path), str(tmp_path), acc, current=_cur())
+
+    assert res.version_match is True
+    assert [decision.name for decision in res.run_set] == ["Case/Clip_f32", "Case/Clip_int32"]
+    assert all(decision.reasons == {gate.R_UNMAPPED} for decision in res.run_set)
+    assert res.skip_set == []
+    assert "running accuracy for every unverified case" in capsys.readouterr().err
+
+
+def test_run_gate_does_not_hide_unexpected_gate_failure(tmp_path, monkeypatch):
+    snapshot_path = tmp_path / "snap.json"
+    snapshot_path.write_text('{"testsuites": []}')
+
+    def raise_programming_error(_):
+        raise RuntimeError("gate implementation failure")
+
+    monkeypatch.setattr(gate, "load_snapshot_results", raise_programming_error)
+
+    with pytest.raises(RuntimeError, match="gate implementation failure"):
+        gate.run_gate(str(snapshot_path), None, [(PLAIN, "Case/Clip_f32")], current=_cur())
 
 
 def test_run_gate_version_match_drift_and_summary(tmp_path):

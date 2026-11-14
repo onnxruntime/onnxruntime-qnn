@@ -4,9 +4,9 @@
 #
 # Single source of truth for the QAIRT + ORT version strings that stamp the QNN
 # EP unit-test golden store. Shared by the manifest WRITER (publish_goldens.sh)
-# and — once it rebases on top of this script — the gate READER
-# (accuracy_gate.py). Keeping one resolver on both sides guarantees the manifest
-# is stamped with the same version string the gate later compares against.
+# and gate readers on Linux and Windows. Keeping one resolver on both sides
+# guarantees the manifest is stamped with the same version string the gate
+# later compares against.
 #
 # This file is dual-mode:
 #   * Executable  -> prints versions to stdout (CLI below).
