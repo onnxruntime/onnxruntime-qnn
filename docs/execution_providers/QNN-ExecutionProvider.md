@@ -712,6 +712,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:ReduceMin||
 |ai.onnx:ReduceProd||
 |ai.onnx:ReduceSum||
+|ai.onnx:ReduceSumSquare|Static axes only; per-channel quantization is not supported. HTP QDQ requires the input encoding's maximum absolute value squared to be at least the FP16 minimum normal value (2^-14), and its product with the number of reduced elements to be at most 65504. Ranges outside these conservative bounds fall back to CPU.|
 |ai.onnx:Relu||
 |ai.onnx:RMSNormalization||
 |ai.onnx:Reshape||

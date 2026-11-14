@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <set>
 #include <string>
 #include <vector>
@@ -24,6 +25,7 @@ enum ReduceOpType {
   REDUCE_OP_TYPE_SUM,
   REDUCE_OP_TYPE_L2,
   REDUCE_OP_TYPE_LOG_SUM_EXP,
+  REDUCE_OP_TYPE_SUM_SQUARE,
 
   REDUCE_OP_TYPE_COUNT,
   REDUCE_OP_TYPE_UNKNOWN,
@@ -44,6 +46,8 @@ ReduceOpType GetReduceOpType(const std::string& op_type) {
     return REDUCE_OP_TYPE_L2;
   } else if (op_type == "ReduceLogSumExp") {
     return REDUCE_OP_TYPE_LOG_SUM_EXP;
+  } else if (op_type == "ReduceSumSquare") {
+    return REDUCE_OP_TYPE_SUM_SQUARE;
   } else {
     return REDUCE_OP_TYPE_UNKNOWN;
   }
@@ -85,6 +89,7 @@ const std::array<int, REDUCE_OP_TYPE_COUNT> ReduceOpBuilder::opset_with_axes_as_
     13,  // ReduceSum
     18,  // ReduceL2
     18,  // ReduceLogSumExp
+    18,  // ReduceSumSquare
 };
 
 Ort::Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
@@ -103,6 +108,13 @@ Ort::Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, cons
   const int opset_axes_as_input = ReduceOpBuilder::opset_with_axes_as_input[reduce_op_type];
   const int opset = node_unit.SinceVersion();
   OrtNodeAttrHelper node_helper(node_unit);
+  const bool square_without_reduction =
+      reduce_op_type == REDUCE_OP_TYPE_SUM_SQUARE && opset >= opset_axes_as_input &&
+      node_helper.Get("noop_with_empty_axes", int64_t{0}) != 0;
+  if (square_without_reduction && inputs.size() == 1) {
+    // ONNX ReduceSumSquare-18 still squares its input when the reduction axes are omitted.
+    return Ort::Status();
+  }
 
   // Extract the axes values from either the attribute or initializer input (depending on opset).
   if (opset < opset_axes_as_input) {  // Axes is in ONNX node attribute.
@@ -116,6 +128,9 @@ Ort::Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, cons
     RETURN_IF(axes_shape.size() != 1, "QNN EP: \"axes\" input must have shape [M] where 0 < M <= rank(input[0])");
 
     bool noop_with_empty_axes = static_cast<bool>(node_helper.Get("noop_with_empty_axes", (int64_t)0));
+    if (axes_shape[0] == 0 && square_without_reduction) {
+      return Ort::Status();
+    }
     RETURN_IF(axes_shape[0] == 0 && noop_with_empty_axes,
               "QNN EP: does not support NoOp for reduction operators with empty axes.");
 
@@ -181,7 +196,8 @@ Ort::Status ReduceOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper, c
               "QNN EP: ReduceLogSumExp operator only supports float input dtypes.");
   }
 
-  if (reduce_op_type == ReduceOpType::REDUCE_OP_TYPE_L2) {
+  if (reduce_op_type == ReduceOpType::REDUCE_OP_TYPE_L2 ||
+      reduce_op_type == ReduceOpType::REDUCE_OP_TYPE_SUM_SQUARE) {
     // QNN's Dequantize/Quantize ops do not accept per-channel quantized tensors; the float32
     // decomposition below assumes the inserted Dequantize/Quantize can consume the node unit's
     // input/output quant params as-is.
@@ -192,7 +208,8 @@ Ort::Status ReduceOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper, c
       bool is_per_channel = false;
       int64_t axis = 0;
       RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(io_def, is_per_channel, axis));
-      RETURN_IF(is_per_channel, "QNN EP: ReduceL2 operator does not support per-channel quantized input/output.");
+      RETURN_IF(is_per_channel,
+                ("QNN EP: " + node_unit.OpType() + " operator does not support per-channel quantized input/output.").c_str());
     }
   }
 
@@ -228,30 +245,67 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   RETURN_IF_ERROR(GetAxesSet(qnn_model_wrapper, node_unit, axes_set));
   const size_t num_axes = axes_set.size();
 
-  // Truncate int64 ONNX axes values to QNN's required type (uint32_t).
-  std::vector<AxesQnnIntType> axes_shape{SafeInt<AxesQnnIntType>(num_axes)};
-  std::vector<AxesQnnIntType> axes_data;
-  axes_data.resize(num_axes);
-  std::transform(axes_set.begin(), axes_set.end(), axes_data.begin(),
-                 [](AxesOnnxIntType item) { return SafeInt<AxesQnnIntType>(item); });
+  if (node_unit.OpType() == "ReduceSumSquare" &&
+      qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
+      node_unit.Inputs()[0].quant_param.has_value()) {
+    // HTP executes these FLOAT_32 sub-ops at FP16 precision. Bound every possible
+    // square and sum from the input encoding, including the empty-axes Mul-only path,
+    // so overflow cannot saturate Quantize and a narrow range cannot lose all its
+    // squares to underflow before a long reduction makes them observable.
+    constexpr double kHtpFp16Max = 65504.0;
+    constexpr double kHtpFp16MinNormal = 0.00006103515625;
+    TensorInfo input_info;
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+    float scale = 0.0f;
+    int32_t offset = 0;
+    RETURN_IF_ERROR(input_info.quant_param.GetPerTensorScaleOffset(scale, offset));
+    double qmin = 0.0;
+    double qmax = 0.0;
+    RETURN_IF_ERROR(utils::GetQminQmax(input_info.qnn_data_type, qmin, qmax));
+    const double max_abs_input = std::max(std::abs(utils::Dequantize(offset, scale, qmin)),
+                                          std::abs(utils::Dequantize(offset, scale, qmax)));
+    const double max_square = max_abs_input * max_abs_input;
+    RETURN_IF_NOT(max_square >= kHtpFp16MinNormal,
+                  "QNN EP: ReduceSumSquare input encoding may underflow HTP FP16 squares.");
+    double max_sum_square = max_square;
+    for (int64_t axis : axes_set) {
+      RETURN_IF_NOT(axis >= 0 && static_cast<uint64_t>(axis) < input_info.shape.size(),
+                    "QNN EP: ReduceSumSquare axis is out of range.");
+      max_sum_square *= input_info.shape[static_cast<size_t>(axis)];
+    }
+    RETURN_IF_NOT(std::isfinite(max_sum_square) && max_sum_square <= kHtpFp16Max,
+                  "QNN EP: ReduceSumSquare input encoding and reduction size may overflow HTP FP16 intermediates.");
+  }
 
-  QnnParamWrapper axes_param(node_unit.Index(), node_unit.Name(), QNN_OP_REDUCE_MAX_PARAM_AXES, std::move(axes_shape),
-                             std::move(axes_data));
-  param_tensor_names.push_back(axes_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(axes_param));
+  // Truncate int64 ONNX axes values to QNN's required type (uint32_t).
+  // Empty axes are only used by ReduceSumSquare's square-without-reduction path.
+  if (num_axes > 0) {
+    std::vector<AxesQnnIntType> axes_shape{SafeInt<AxesQnnIntType>(num_axes)};
+    std::vector<AxesQnnIntType> axes_data;
+    axes_data.resize(num_axes);
+    std::transform(axes_set.begin(), axes_set.end(), axes_data.begin(),
+                   [](AxesOnnxIntType item) { return SafeInt<AxesQnnIntType>(item); });
+
+    QnnParamWrapper axes_param(node_unit.Index(), node_unit.Name(), QNN_OP_REDUCE_MAX_PARAM_AXES, std::move(axes_shape),
+                               std::move(axes_data));
+    param_tensor_names.push_back(axes_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(axes_param));
+  }
 
   //
   // Handle keepdims param.
   //
   const int32_t onnx_keepdims = node_attr_helper.Get("keepdims", (int32_t)1);
-  if (node_unit.OpType() != "ReduceLogSumExp") {
+  if (num_axes > 0 && node_unit.OpType() != "ReduceLogSumExp") {
     RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), onnx_keepdims != 0,
                                        QNN_OP_REDUCE_MAX_PARAM_KEEP_DIMS, param_tensor_names));
   }
 
-  if (node_unit.OpType() == "ReduceL2") {
-    // If ReduceL2, QNN doesn't have a single Op for it, we need to add a
-    // ElementWiseMultiply->ReduceSum->ElementWiseSquareRoot node sequence.
+  if (node_unit.OpType() == "ReduceL2" || node_unit.OpType() == "ReduceSumSquare") {
+    // Per ONNX ReduceSumSquare-18's function, square the input then reduce its sum.
+    // ReduceL2 additionally takes the square root. Use the same decomposition on both
+    // backends because QNN's native ReduceSumSquare is unavailable on HTP.
+    const bool needs_sqrt = node_unit.OpType() == "ReduceL2";
     //
     // The intermediate Multiply/ReduceSum activations don't have well-defined quantization
     // parameters (squaring a quantized value doesn't map to a simple rescale), so when the
@@ -291,10 +345,19 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
       input_name = dq_output_name;
     }
 
+    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output.name);
+    const std::string float_output_name =
+        is_quantized_input ? utils::UniqueNameGenerator().New(output.name, "_f32") : output.name;
+    const Qnn_TensorType_t float_output_tensor_type =
+        (!is_quantized_input && is_graph_output) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    const bool needs_reduction = num_axes > 0;  // ONNX noop_with_empty_axes skips ReduceSum, but still applies Mul.
+
     // Step 1: y_pow2 = x * x, using ElementWiseMultiply instead of ElementWisePower so we don't need to add a new
     // initializer tensor for the power value. The performance difference is negligible.
-    const std::string pow2_output_name = utils::UniqueNameGenerator().New(input_name, "_pow2");
-    RETURN_IF_NOT(add_tensor(pow2_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
+    const std::string pow2_output_name =
+        needs_reduction ? utils::UniqueNameGenerator().New(input_name, "_pow2") : float_output_name;
+    RETURN_IF_NOT(add_tensor(pow2_output_name, needs_reduction ? QNN_TENSOR_TYPE_NATIVE : float_output_tensor_type,
+                             qnn_data_type, QnnQuantParamsWrapper(),
                              std::move(input_shape)),
                   "AddTensorWrapper failed");
     std::string pow2_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY);
@@ -307,39 +370,40 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                   do_op_validation),
                   "CreateQnnNode failed");
 
-    // Step 2: y_pow2_sum = ReduceSum(y_pow2)
-    const std::string reduce_output_name = utils::UniqueNameGenerator().New(input_name, "_sum");
-    RETURN_IF_NOT(add_tensor(reduce_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
-                             std::vector<uint32_t>(output_shape)),
-                  "AddTensorWrapper failed");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_REDUCE_SUM),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_REDUCE_SUM,
-                                                  {pow2_output_name},
-                                                  {reduce_output_name},
-                                                  std::move(param_tensor_names),
-                                                  do_op_validation),
-                  "CreateQnnNode failed");
+    // Step 2: y_pow2_sum = ReduceSum(y_pow2). This is the final result for ReduceSumSquare.
+    const std::string reduce_output_name =
+        needs_sqrt ? utils::UniqueNameGenerator().New(input_name, "_sum") : float_output_name;
+    if (needs_reduction) {
+      RETURN_IF_NOT(add_tensor(reduce_output_name, needs_sqrt ? QNN_TENSOR_TYPE_NATIVE : float_output_tensor_type,
+                               qnn_data_type, QnnQuantParamsWrapper(),
+                               std::vector<uint32_t>(output_shape)),
+                    "AddTensorWrapper failed");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_REDUCE_SUM),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_REDUCE_SUM,
+                                                    {pow2_output_name},
+                                                    {reduce_output_name},
+                                                    std::move(param_tensor_names),
+                                                    do_op_validation),
+                    "CreateQnnNode failed");
+    }
 
-    // Step 3: y = Sqrt(y_pow2_sum)
-    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output.name);
-    const std::string sqrt_output_name =
-        is_quantized_input ? utils::UniqueNameGenerator().New(output.name, "_f32") : output.name;
-    Qnn_TensorType_t sqrt_tensor_type =
-        (!is_quantized_input && is_graph_output) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-    // The quantized branch below still needs output_shape for the final Quantize output tensor.
-    RETURN_IF_NOT(add_tensor(sqrt_output_name, sqrt_tensor_type, qnn_data_type, QnnQuantParamsWrapper(),
-                             is_quantized_input ? std::vector<uint32_t>(output_shape) : std::move(output_shape)),
-                  "AddTensorWrapper failed");
-    std::string sqrt_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT);
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sqrt_node_name,
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
-                                                  {reduce_output_name},
-                                                  {sqrt_output_name},
-                                                  {},
-                                                  do_op_validation),
-                  "CreateQnnNode failed");
+    if (needs_sqrt) {
+      // Step 3 (ReduceL2 only): y = Sqrt(y_pow2_sum).
+      // The quantized branch below still needs output_shape for the final Quantize output tensor.
+      RETURN_IF_NOT(add_tensor(float_output_name, float_output_tensor_type, qnn_data_type, QnnQuantParamsWrapper(),
+                               is_quantized_input ? std::vector<uint32_t>(output_shape) : std::move(output_shape)),
+                    "AddTensorWrapper failed");
+      std::string sqrt_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT);
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sqrt_node_name,
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
+                                                    {reduce_output_name},
+                                                    {float_output_name},
+                                                    {},
+                                                    do_op_validation),
+                    "CreateQnnNode failed");
+    }
 
     if (is_quantized_input) {
       // Insert Quantize (float32 -> quantized) after the float32 decomposition, using the
@@ -355,7 +419,7 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                     "AddTensorWrapper failed");
       RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_quant_out"),
                                                     QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_QUANTIZE,
-                                                    {sqrt_output_name}, {output.name}, {},
+                                                    {float_output_name}, {output.name}, {},
                                                     do_op_validation),
                     "Failed to add quantize node");
     }

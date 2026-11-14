@@ -1974,6 +1974,7 @@ void OrtSelectorManager::CreateSelectors() {
       {"ReduceMin", {}},
       {"ReduceProd", {}},
       {"ReduceSum", {}},
+      {"ReduceSumSquare", {}},
       {"Relu", {}},
       {"Round", {}},
       {"Sigmoid", {}},
