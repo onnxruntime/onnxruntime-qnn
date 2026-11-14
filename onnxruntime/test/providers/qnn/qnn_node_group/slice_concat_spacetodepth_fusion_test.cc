@@ -191,7 +191,8 @@ ProviderOptions HtpOptions([[maybe_unused]] uint32_t soc_model = QNN_SOC_MODEL_S
 
 void RunTiledSliceConcatFusionTest(const std::filesystem::path& dir, GetTestModelFn model_fn, int expect_s2d,
                                    int expect_gather, float tolerance = 1e-2f,
-                                   uint32_t soc_model = QNN_SOC_MODEL_SM8550) {
+                                   uint32_t soc_model = QNN_SOC_MODEL_SM8550,
+                                   ExpectedEPNodeAssignment ep_assignment = ExpectedEPNodeAssignment::All) {
   std::filesystem::remove_all(dir);
   ASSERT_TRUE(std::filesystem::create_directory(dir));
   auto cleanup = gsl::finally([&dir]() { std::filesystem::remove_all(dir); });
@@ -201,11 +202,14 @@ void RunTiledSliceConcatFusionTest(const std::filesystem::path& dir, GetTestMode
   options["json_qnn_graph_dir"] = dir.string();
 
   RunQnnModelTest(model_fn, options, /*opset_version=*/13,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All,
+                  EPVerificationParams{ep_assignment,
                                        ElementwiseAbsoluteVerifier(tolerance)},
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
-  AssertOpInQnnGraph(dir, "SpaceToDepth", expect_s2d);
-  AssertOpInQnnGraph(dir, "Gather", expect_gather);
+  // When no nodes are assigned to QNN EP there is no QNN graph and no JSON dump is written.
+  if (ep_assignment != ExpectedEPNodeAssignment::None) {
+    AssertOpInQnnGraph(dir, "SpaceToDepth", expect_s2d);
+    AssertOpInQnnGraph(dir, "Gather", expect_gather);
+  }
 }
 
 }  // namespace
@@ -288,7 +292,7 @@ TEST_F(QnnHTPBackendTests, TiledSliceConcat_Float16_Fused) {
 // Float SpaceToDepth is wrong on V68: a known-V68 target keeps Slice+Concat and stays accurate.
 TEST_F(QnnHTPBackendTests, TiledSliceConcat_Float_V68_NotFused) {
   RunTiledSliceConcatFusionTest("TiledSliceConcatFloatV68_HTP", BuildTiledSliceConcatTestCase(false, false), 0, 0,
-                                1e-2f, QNN_SOC_MODEL_SM8350);
+                                1e-2f, QNN_SOC_MODEL_SM8350, ExpectedEPNodeAssignment::None);
 }
 
 // Unquantized non-float tensors are not valid S2D input: fail closed. The AI Hub converter skips backend op
