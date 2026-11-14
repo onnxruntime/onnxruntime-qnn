@@ -241,6 +241,9 @@ std::ostream& operator<<(std::ostream& out, const Qnn_Scalar_t& scalar) {
     case QNN_DATATYPE_BOOL_8:
       out << static_cast<int32_t>(scalar.bool8Value);
       break;
+    case QNN_DATATYPE_STRING:
+      out << (scalar.stringValue != nullptr ? scalar.stringValue : "<null>");
+      break;
     default:
       ORT_CXX_API_THROW("Unknown Qnn Data type", ORT_EP_FAIL);
   }
@@ -305,6 +308,9 @@ std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type) {
       break;
     case QNN_DATATYPE_BOOL_8:
       out << "QNN_DATATYPE_BOOL_8";
+      break;
+    case QNN_DATATYPE_STRING:
+      out << "QNN_DATATYPE_STRING";
       break;
     case QNN_DATATYPE_SFIXED_POINT_4:
       out << "QNN_DATATYPE_SFIXED_POINT_4";
