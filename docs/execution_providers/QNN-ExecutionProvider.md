@@ -741,7 +741,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Tanh||
 |ai.onnx:ThresholdedRelu||
 |ai.onnx:Tile||
-|ai.onnx:TopK||
+|ai.onnx:TopK|Requires constant K. Equal values prefer smaller indices, as required by ONNX. The QNN graph reverses the selected axis and restores the original indices.|
 |ai.onnx:Transpose||
 |ai.onnx:Unsqueeze||
 |ai.onnx:Upsample||
