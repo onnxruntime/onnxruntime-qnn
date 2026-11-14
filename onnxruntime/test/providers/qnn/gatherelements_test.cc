@@ -271,15 +271,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataUint16_StaticNegIndicesInt64_Large) {
 }
 
 // Test QDQ GatherElements op on HTP backend with large number of indices.
-// TODO: Investigate inaccuracy.
-// Negative input[0] values seem to cause inaccuracies with 2M+ indices.
-// Inaccuracy detected for output 'output_0', element 131072
-// output_range=300, tolerance=0.40000000596046448%.
-// Expected val (f32@CPU_EP): 121
-// qdq@QNN_EP val: -97.999542236328125 (err: 218.99954223632812, err/output_range: 72.999847412109375%)
-// qdq@CPU_EP val: 120.99794006347656 (err: 0.0020599365234375, err/output_range: 0.0006866455078125%)
-// abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 72.999160766601562%
-TEST_F(QnnHTPBackendTests, DISABLED_GatherElems_DataUint16_StaticNegIndicesInt64_Large2) {
+TEST_F(QnnHTPBackendTests, GatherElems_DataUint16_StaticNegIndicesInt64_Large2) {
   // Input data with sequential values from -98.0f to 202.0f
   const std::vector<int64_t> input_shape = {12, 1024, 512};
   std::vector<float> input_data(12 * 1024 * 512);
