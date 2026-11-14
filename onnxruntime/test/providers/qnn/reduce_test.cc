@@ -202,6 +202,12 @@ TEST_F(QnnCPUBackendTests, ReduceSumSquare_Int32) {
                          {-1}, false, 18, ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnCPUBackendTests, ReduceSumSquare_LargeValues) {
+  RunReduceTest<float>("ReduceSumSquare",
+                       TestInputDef<float>({2, 2}, false, {-512.0f, 256.0f, 0.0f, 512.0f}),
+                       {1}, false, 18, ExpectedEPNodeAssignment::All);
+}
+
 static void RunReduceSumSquareEmptyAxesTests(bool enable_fp16) {
   ProviderOptions options{{"backend_type", enable_fp16 ? "htp" : "cpu"},
                           {"offload_graph_io_quantization", "0"}};
@@ -958,6 +964,62 @@ TEST_F(QnnHTPBackendTests, ReduceSumSquare_QDQ_U8) {
 
 TEST_F(QnnHTPBackendTests, ReduceSumSquare_QDQ_U16) {
   RunReduceSumSquareQDQTests<uint16_t>(true);
+}
+
+template <typename QuantType>
+static void RunReduceSumSquareRangeTests(bool use_ms_domain_qdq) {
+  // Both an individual square and the reduced sum must fit the FP16 compute range.
+  for (float magnitude : {512.0f, 200.0f}) {
+    SCOPED_TRACE(testing::Message() << "magnitude=" << magnitude);
+    const TestInputDef<float> input({2, 2}, false, {-magnitude, magnitude, 0.0f, magnitude});
+    RunReduceOpQDQTest<QuantType>("ReduceSumSquare", input, {1}, false, 18,
+                                  ExpectedEPNodeAssignment::None, use_ms_domain_qdq);
+  }
+  // noop_with_empty_axes still squares, so it must also reject an overflowing square.
+  const TestInputDef<float> input({2, 2}, false, {-512.0f, 256.0f, 0.0f, 512.0f});
+  TestQDQModelAccuracy(BuildReduceOpTestCase<float>("ReduceSumSquare", input, true, {}, true, true),
+                       BuildQDQReduceOpTestCase<QuantType>("ReduceSumSquare", input, true, {}, true, true,
+                                                           use_ms_domain_qdq),
+                       {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}},
+                       18, ExpectedEPNodeAssignment::None);
+}
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_QDQ_U8_LargeValuesRejected) {
+  RunReduceSumSquareRangeTests<uint8_t>(false);
+}
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_QDQ_U16_LargeValuesRejected) {
+  RunReduceSumSquareRangeTests<uint16_t>(true);
+}
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_QDQ_U8_NearRangeLimit) {
+  // An asymmetric range avoids input-quantization half-way ties on newer HTPs.
+  RunReduceOpQDQTest<uint8_t>("ReduceSumSquare",
+                              TestInputDef<float>({2, 2}, false, {-126.0f, 127.0f, 0.0f, 127.0f}),
+                              {1}, false, 18, ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_QDQ_U16_NearRangeLimit) {
+  RunReduceOpQDQTest<uint16_t>("ReduceSumSquare",
+                               TestInputDef<float>({2, 2}, false, {-126.0f, 127.0f, 0.0f, 127.0f}),
+                               {1}, false, 18, ExpectedEPNodeAssignment::All, true);
+}
+
+template <typename QuantType>
+static void RunReduceSumSquareTinyValuesTest(bool use_ms_domain_qdq) {
+  // A long reduction makes individually underflowing squares observable after output QDQ.
+  std::vector<float> data(8192, 0.0001f);
+  data[0] = -0.0001f;
+  RunReduceOpQDQTest<QuantType>("ReduceSumSquare", TestInputDef<float>({1, 8192}, false, data),
+                                {1}, false, 18, ExpectedEPNodeAssignment::None, use_ms_domain_qdq);
+}
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_QDQ_U8_TinyValuesRejected) {
+  RunReduceSumSquareTinyValuesTest<uint8_t>(false);
+}
+
+TEST_F(QnnHTPBackendTests, ReduceSumSquare_QDQ_U16_TinyValuesRejected) {
+  RunReduceSumSquareTinyValuesTest<uint16_t>(true);
 }
 
 //
