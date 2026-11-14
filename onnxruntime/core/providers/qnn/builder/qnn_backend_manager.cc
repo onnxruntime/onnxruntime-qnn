@@ -1297,11 +1297,12 @@ void QnnBackendManager::ProcessContextFromBinListAsync(
 
 Ort::Status QnnBackendManager::GetFileSizeIfValid(const std::string& filepath,
                                                   size_t& file_size) {
+  const auto native_path = std::filesystem::u8path(filepath);
   std::error_code ec;
-  RETURN_IF(!std::filesystem::exists(filepath, ec), ("Context binary does not exist: " + filepath).c_str());
+  RETURN_IF(!std::filesystem::exists(native_path, ec), ("Context binary does not exist: " + filepath).c_str());
   RETURN_IF(ec, ("Failed to read file: " + filepath + ", error: " + ec.message()).c_str());
 
-  auto size = std::filesystem::file_size(filepath, ec);
+  auto size = std::filesystem::file_size(native_path, ec);
   RETURN_IF(ec, ("Failed to retrieve size of file: " + filepath + ", error: " + ec.message()).c_str());
 
   RETURN_IF(size == 0, ("File is empty: " + filepath).c_str());
@@ -1315,8 +1316,8 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
                                                      std::vector<char>& buffer,
                                                      const qnn::EpContextIoDispatch& io_dispatch) {
   if (io_dispatch.HasReadCallback()) {
-    const std::string filename = std::filesystem::path(context_bin_filepath).filename().string();
-    RETURN_IF_ERROR(io_dispatch.Read(filename, buffer));
+    const std::string filename = std::filesystem::u8path(context_bin_filepath).filename().u8string();
+    RETURN_IF_ERROR(io_dispatch.Read(filename, buffer, context_bin_filepath));
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
                     ("EPContext binary decrypted via App read callback: " + filename +
                      " (" + std::to_string(buffer.size()) + " bytes)")
@@ -1329,7 +1330,7 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
 
   buffer.resize(buffer_size);
 
-  std::ifstream cache_file(context_bin_filepath.c_str(), std::ifstream::binary);
+  std::ifstream cache_file(std::filesystem::u8path(context_bin_filepath), std::ifstream::binary);
   RETURN_IF(!cache_file || !cache_file.good(), ("Failed to read context binary from: " + context_bin_filepath).c_str());
 
   const auto& read_result = cache_file.read(buffer.data(), buffer_size);
