@@ -112,6 +112,322 @@ Ort::Status DeserializeStubGraph(qnn::QnnModel& model, ModelGraphContextStub& co
 
 }  // namespace
 
+class QnnUnitModelExecutionTest : public ::testing::Test {
+ public:
+  QnnUnitModelExecutionTest() = default;
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnUnitModelExecutionTest);
+
+ protected:
+  // Keep the DLL's API valid through nested overrides and fixture teardown.
+  ScopedProviderModuleOrtApiOverride provider_api_override_{&Ort::GetApi()};
+
+  struct ExecutionStub {
+    ExecutionStub() = default;
+    ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ExecutionStub);
+
+    qnn::QnnBackendManager* backend = nullptr;
+    Qnn_ContextHandle_t original_context = nullptr;
+    Qnn_GraphHandle_t original_graph = nullptr;
+    Qnn_GraphHandle_t replacement_graph = nullptr;
+    void* input_buffer = nullptr;
+    void* output_buffer = nullptr;
+    std::vector<Qnn_ErrorHandle_t> results{QNN_GRAPH_NO_ERROR};
+    size_t calls = 0;
+    bool recover_context = false;
+  } execution_;
+
+  struct KernelContext {
+    KernelContext() = default;
+    ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(KernelContext);
+
+    float input_data[4]{};
+    float output_data[4]{};
+    int64_t shape[1]{4};
+    Ort::MemoryInfo memory_info{Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)};
+    Ort::Value input{Ort::Value::CreateTensor<float>(memory_info, input_data, 4, shape, 1)};
+    Ort::Value output{Ort::Value::CreateTensor<float>(memory_info, output_data, 4, shape, 1)};
+  } kernel_;
+
+  struct GraphStub {
+    ExecutionStub* execution;
+  } original_graph_{&execution_}, replacement_graph_{&execution_};
+
+  ModelGraphContextStub original_context_{&original_graph_};
+  ModelGraphContextStub replacement_context_{&replacement_graph_};
+  StubApiEnv env_;
+  StubBackendManager backend_{env_.api_ptrs, env_.logger};
+  std::unique_ptr<qnn::QnnModel> model_;
+
+  static constexpr Qnn_ErrorHandle_t kTrackingBits = Qnn_ErrorHandle_t{0x12345678} << 32;
+
+  static void ExpectTensorBuffer(const Qnn_Tensor_t* tensors, uint32_t count, void* buffer) {
+    ASSERT_EQ(count, 1u);
+    ASSERT_NE(tensors, nullptr);
+    EXPECT_EQ(qnn::GetQnnTensorMemType(tensors[0]), QNN_TENSORMEMTYPE_RAW);
+    const auto& client_buffer = qnn::GetQnnTensorClientBuf(tensors[0]);
+    EXPECT_EQ(client_buffer.data, buffer);
+    EXPECT_EQ(client_buffer.dataSize, 4u * sizeof(float));
+  }
+
+  void SetUp() override {
+    auto& qnn_interface = backend_.QnnInterface();
+    InstallModelGraphStubs(qnn_interface);
+    qnn_interface.contextFree = [](Qnn_ContextHandle_t, Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+      return QNN_SUCCESS;
+    };
+    qnn_interface.graphExecute = [](Qnn_GraphHandle_t graph, const Qnn_Tensor_t* inputs, uint32_t num_inputs,
+                                    Qnn_Tensor_t* outputs, uint32_t num_outputs, Qnn_ProfileHandle_t,
+                                    Qnn_SignalHandle_t) -> Qnn_ErrorHandle_t {
+      auto& execution = *static_cast<GraphStub*>(graph)->execution;
+      EXPECT_EQ(graph, execution.calls == 0 ? execution.original_graph : execution.replacement_graph);
+      EXPECT_NO_FATAL_FAILURE(ExpectTensorBuffer(inputs, num_inputs, execution.input_buffer));
+      EXPECT_NO_FATAL_FAILURE(ExpectTensorBuffer(outputs, num_outputs, execution.output_buffer));
+      const auto result = execution.results.at(execution.calls++);
+      if (execution.recover_context && execution.calls == 1) {
+        // Simulate a sibling model replacing the shared context after an SSR.
+        // RecoverFromSSR then reuses the replacement without loading a binary.
+        execution.backend->ReleaseSpecificContextHandle(execution.original_context);
+      }
+      return result;
+    };
+    qnn_interface.errorGetMessage = [](Qnn_ErrorHandle_t error, const char** message) -> Qnn_ErrorHandle_t {
+      *message = QNN_GET_ERROR_CODE(error) == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION
+                     ? "QNN_COMMON_ERROR_SYSTEM_COMMUNICATION"
+                     : "QNN_COMMON_ERROR_INVALID_ARGUMENT";
+      return QNN_SUCCESS;
+    };
+    execution_.backend = backend_.GetMutable();
+    execution_.original_context = &original_context_;
+    execution_.original_graph = &original_graph_;
+    execution_.replacement_graph = &replacement_graph_;
+    execution_.input_buffer = kernel_.input_data;
+    execution_.output_buffer = kernel_.output_data;
+    ASSERT_TRUE(backend_.GetMutable()->AddQnnContextHandle(&original_context_).IsOK());
+    ASSERT_TRUE(backend_.GetMutable()->AddQnnContextHandle(&replacement_context_).IsOK());
+    model_ = std::make_unique<qnn::QnnModel>(backend_.GetMutable(), env_.api_ptrs);
+
+    InstallFakeGraphApiStubs(env_.stub_ort_api);
+    {
+      OrtGlobalApiOverride api_override(&env_.stub_ort_api);
+      FakeValueInfo x{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {4}};
+      FakeValueInfo y{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {4}};
+      FakeGraph graph{{}, {&x}, {&y}, {}};
+      FakeNode fused{"fused", "QnnPartition_0", "", 13, {&x}, {&y}};
+      std::vector<std::string> input_names{"x"};
+      std::vector<std::string> output_names{"y"};
+      qnn::ModelSettings settings{};
+      qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), env_.logger,
+                                         &input_names, &output_names, &settings};
+      ASSERT_TRUE(model_->SetGraphInputOutputInfo(model_context).IsOK());
+    }
+    ASSERT_TRUE(DeserializeStubGraph(*model_, original_context_).IsOK());
+    ASSERT_TRUE(model_->SetupQnnInputOutput(env_.logger).IsOK());
+
+    // Bind real ORT tensors, while the QNN stub controls execution results.
+    env_.stub_ort_api = Ort::GetApi();
+    env_.stub_ort_api.KernelContext_GetInputCount = [](const OrtKernelContext*, size_t* count) noexcept -> OrtStatus* {
+      *count = 1;
+      return nullptr;
+    };
+    env_.stub_ort_api.KernelContext_GetOutputCount = env_.stub_ort_api.KernelContext_GetInputCount;
+    env_.stub_ort_api.KernelContext_GetInput = [](const OrtKernelContext* context, size_t,
+                                                  const OrtValue** input) noexcept -> OrtStatus* {
+      *input = static_cast<const KernelContext*>(static_cast<const void*>(context))->input;
+      return nullptr;
+    };
+    env_.stub_ort_api.KernelContext_GetOutput = [](OrtKernelContext* context, size_t, const int64_t*, size_t,
+                                                   OrtValue** output) noexcept -> OrtStatus* {
+      *output = static_cast<KernelContext*>(static_cast<void*>(context))->output;
+      return nullptr;
+    };
+  }
+
+  void EnableRecovery() {
+    model_->SetContextRecoveryInfo("context.bin", 0, qnn::ContextPriority::NORMAL);
+    execution_.recover_context = true;
+  }
+
+  Ort::Status Execute() {
+    return model_->ExecuteGraph(reinterpret_cast<OrtKernelContext*>(&kernel_), env_.logger,
+                                qnn::EpContextIoDispatch());
+  }
+
+  static void ExpectQnnError(const Ort::Status& status, Qnn_ErrorHandle_t error, const char* name) {
+    ASSERT_FALSE(status.IsOK());
+    EXPECT_NE(status.GetErrorMessage().find(name), std::string::npos);
+    EXPECT_NE(status.GetErrorMessage().find("Code: " + std::to_string(error)), std::string::npos);
+  }
+};
+
+TEST_F(QnnUnitModelExecutionTest, OrdinaryFailureIncludesQnnNameAndCode) {
+  execution_.results = {QNN_COMMON_ERROR_INVALID_ARGUMENT};
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, QNN_COMMON_ERROR_INVALID_ARGUMENT, "QNN_COMMON_ERROR_INVALID_ARGUMENT"));
+  EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, SsrWithoutRecoveryIncludesQnnNameAndCode) {
+  execution_.results = {QNN_COMMON_ERROR_SYSTEM_COMMUNICATION};
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, "QNN_COMMON_ERROR_SYSTEM_COMMUNICATION"));
+  EXPECT_EQ(status.GetErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+  EXPECT_NE(status.GetErrorMessage().find("Recovery not supported"), std::string::npos);
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, RepeatedSsrIncludesQnnNameAndCode) {
+  EnableRecovery();
+  execution_.results = {QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, QNN_COMMON_ERROR_SYSTEM_COMMUNICATION};
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, "QNN_COMMON_ERROR_SYSTEM_COMMUNICATION"));
+  EXPECT_EQ(status.GetErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+  EXPECT_NE(status.GetErrorMessage().find("after SSR recovery"), std::string::npos);
+  EXPECT_EQ(execution_.calls, 2u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, NonSsrRetryFailureReturnsQnnNameAndCode) {
+  EnableRecovery();
+  execution_.results = {QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, QNN_COMMON_ERROR_INVALID_ARGUMENT};
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, QNN_COMMON_ERROR_INVALID_ARGUMENT, "QNN_COMMON_ERROR_INVALID_ARGUMENT"));
+  EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+  EXPECT_EQ(execution_.calls, 2u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, SuccessfulSsrRecoveryReturnsSuccess) {
+  EnableRecovery();
+  execution_.results = {QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, QNN_GRAPH_NO_ERROR};
+  EXPECT_TRUE(Execute().IsOK());
+  EXPECT_EQ(execution_.calls, 2u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, SuccessfulExecutionReturnsSuccess) {
+  EXPECT_TRUE(Execute().IsOK());
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, TrackedOrdinaryFailurePreservesFullHandle) {
+  constexpr auto error = kTrackingBits | QNN_COMMON_ERROR_INVALID_ARGUMENT;
+  execution_.results = {error};
+  backend_.QnnInterface().errorGetMessage = [](Qnn_ErrorHandle_t handle, const char** message) -> Qnn_ErrorHandle_t {
+    EXPECT_EQ(handle, kTrackingBits | QNN_COMMON_ERROR_INVALID_ARGUMENT);
+    *message = "QNN_COMMON_ERROR_INVALID_ARGUMENT";
+    return QNN_SUCCESS;
+  };
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, error, "QNN_COMMON_ERROR_INVALID_ARGUMENT"));
+  EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, TrackedSuccessReturnsSuccess) {
+  execution_.results = {kTrackingBits | QNN_GRAPH_NO_ERROR};
+  EXPECT_TRUE(Execute().IsOK());
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, TrackedSsrWithoutRecoveryPreservesFullHandle) {
+  constexpr auto error = kTrackingBits | QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  execution_.results = {error};
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, error, "QNN_COMMON_ERROR_SYSTEM_COMMUNICATION"));
+  EXPECT_EQ(status.GetErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, TrackedRepeatedSsrPreservesFinalHandle) {
+  EnableRecovery();
+  constexpr auto first_error = kTrackingBits | QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  constexpr auto retry_error = (kTrackingBits << 1) | QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  execution_.results = {first_error, retry_error};
+  backend_.QnnInterface().errorGetMessage = [](Qnn_ErrorHandle_t handle, const char** message) -> Qnn_ErrorHandle_t {
+    EXPECT_EQ(handle, (kTrackingBits << 1) | QNN_COMMON_ERROR_SYSTEM_COMMUNICATION);
+    *message = "QNN_COMMON_ERROR_SYSTEM_COMMUNICATION";
+    return QNN_SUCCESS;
+  };
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, retry_error, "QNN_COMMON_ERROR_SYSTEM_COMMUNICATION"));
+  EXPECT_EQ(status.GetErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+  EXPECT_EQ(execution_.calls, 2u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, TrackedSsrRecoveryReturnsSuccess) {
+  EnableRecovery();
+  execution_.results = {kTrackingBits | QNN_COMMON_ERROR_SYSTEM_COMMUNICATION,
+                        (kTrackingBits << 1) | QNN_GRAPH_NO_ERROR};
+  EXPECT_TRUE(Execute().IsOK());
+  EXPECT_EQ(execution_.calls, 2u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, TrackedNonSsrRetryFailurePreservesFinalHandle) {
+  EnableRecovery();
+  constexpr auto retry_error = (kTrackingBits << 1) | QNN_COMMON_ERROR_INVALID_ARGUMENT;
+  execution_.results = {kTrackingBits | QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, retry_error};
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, retry_error, "QNN_COMMON_ERROR_INVALID_ARGUMENT"));
+  EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+  EXPECT_EQ(execution_.calls, 2u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, MissingMessageCallbackWithoutRecoveryRetainsNumericHandle) {
+  constexpr auto error = kTrackingBits | QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  execution_.results = {error};
+  backend_.QnnInterface().errorGetMessage = nullptr;
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, error, "Unknown error."));
+  EXPECT_EQ(status.GetErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, MissingMessageCallbackAfterRepeatedSsrRetainsFinalHandle) {
+  EnableRecovery();
+  constexpr auto retry_error = (kTrackingBits << 1) | QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  execution_.results = {kTrackingBits | QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, retry_error};
+  backend_.QnnInterface().errorGetMessage = nullptr;
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, retry_error, "Unknown error."));
+  EXPECT_EQ(status.GetErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+  EXPECT_EQ(execution_.calls, 2u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, MessageLookupFailureRetainsNumericHandle) {
+  execution_.results = {QNN_COMMON_ERROR_INVALID_ARGUMENT};
+  backend_.QnnInterface().errorGetMessage = [](Qnn_ErrorHandle_t, const char** message) -> Qnn_ErrorHandle_t {
+    *message = "ignore failed lookup text";
+    return QNN_COMMON_ERROR_GENERAL;
+  };
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, QNN_COMMON_ERROR_INVALID_ARGUMENT, "Unknown error."));
+  EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+  EXPECT_EQ(status.GetErrorMessage().find("ignore failed lookup text"), std::string::npos);
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, NullMessageRetainsNumericHandle) {
+  execution_.results = {QNN_COMMON_ERROR_INVALID_ARGUMENT};
+  backend_.QnnInterface().errorGetMessage = [](Qnn_ErrorHandle_t, const char** message) -> Qnn_ErrorHandle_t {
+    *message = nullptr;
+    return QNN_SUCCESS;
+  };
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, QNN_COMMON_ERROR_INVALID_ARGUMENT, "Unknown error."));
+  EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, MessageLookupTrackedSuccessPreservesQnnName) {
+  execution_.results = {QNN_COMMON_ERROR_INVALID_ARGUMENT};
+  backend_.QnnInterface().errorGetMessage = [](Qnn_ErrorHandle_t, const char** message) -> Qnn_ErrorHandle_t {
+    *message = "QNN_COMMON_ERROR_INVALID_ARGUMENT";
+    return kTrackingBits | QNN_SUCCESS;
+  };
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, QNN_COMMON_ERROR_INVALID_ARGUMENT, "QNN_COMMON_ERROR_INVALID_ARGUMENT"));
+  EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
 TEST(QnnUnit_ModelTest, DeserializeKeepsEmitterAndMetadataHandlesTogetherOnSuccessAndFailure) {
   StubApiEnv env;
   StubBackendManager backend(env.api_ptrs, env.logger);
