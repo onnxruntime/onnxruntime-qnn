@@ -913,13 +913,28 @@ Ort::Status ReadFileIntoBuffer(const ORTCHAR_T* file_path, int64_t offset, size_
   RETURN_IF_NOT(length <= buffer.size(), "length > buffer.size()");
 
 #ifdef _WIN32
-  wil::unique_hfile file_handle{CreateFile2(file_path, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, NULL)};
+  CREATEFILE2_EXTENDED_PARAMETERS extended_parameters{};
+  extended_parameters.dwSize = sizeof(extended_parameters);
+  extended_parameters.dwFileFlags = FILE_FLAG_OPEN_REPARSE_POINT;
+  wil::unique_hfile file_handle{
+      CreateFile2(file_path, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, &extended_parameters)};
   if (file_handle.get() == INVALID_HANDLE_VALUE) {
     const auto error_code = GetLastError();
     return MAKE_FAIL(("Open file failed with error " + std::to_string(error_code) + " - " +
                       std::system_category().message(error_code))
                          .c_str());
   }
+
+  FILE_ATTRIBUTE_TAG_INFO file_attribute_info{};
+  if (!GetFileInformationByHandleEx(file_handle.get(), FileAttributeTagInfo,
+                                    &file_attribute_info, sizeof(file_attribute_info))) {
+    const auto error_code = GetLastError();
+    return MAKE_FAIL(("Get file information failed with error " + std::to_string(error_code) + " - " +
+                      std::system_category().message(error_code))
+                         .c_str());
+  }
+  RETURN_IF_NOT((file_attribute_info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0,
+                "External initializer file must not be a reparse point");
 
   if (length == 0)
     return Ort::Status();
@@ -958,7 +973,7 @@ Ort::Status ReadFileIntoBuffer(const ORTCHAR_T* file_path, int64_t offset, size_
 
   return Ort::Status();
 #else
-  int file_descriptor = open(file_path, O_RDONLY);
+  int file_descriptor = open(file_path, O_RDONLY | O_NOFOLLOW);
   if (file_descriptor == -1) {
     return MAKE_FAIL("Failed to open file");
   }
