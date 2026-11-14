@@ -856,7 +856,10 @@ static void RunDynamicInput1QuantErrorTest(const char* test_name,
                                            float input1_min,
                                            float input1_max,
                                            Qnn_DataType_t expected_convert_type,
-                                           size_t expected_convert_count = 1) {
+                                           size_t expected_convert_count = 1,
+                                           const char* symmetric_u16_option = nullptr,
+                                           const std::vector<int64_t>& shape_0 = {2, 3},
+                                           const std::vector<int64_t>& shape_1 = {3, 2}) {
   namespace fs = std::filesystem;
   const fs::path graph_dir = fs::temp_directory_path() /
                              (std::string("MatMulOp_QDQ_U16DynamicInput1_") + test_name);
@@ -865,9 +868,12 @@ static void RunDynamicInput1QuantErrorTest(const char* test_name,
   auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
 
   ProviderOptions provider_options = GetQDQMatMulProviderOptions(graph_dir);
+  if (symmetric_u16_option) {
+    provider_options["htp_matmul_use_symmetric_uint16"] = symmetric_u16_option;
+  }
 
-  TestInputDef<float> input0_def({2, 3}, false, GetFloatDataInRange(-0.1f, 0.1f, 6));
-  TestInputDef<float> input1_def({3, 2}, false, GetFloatDataInRange(input1_min, input1_max, 6));
+  TestInputDef<float> input0_def(shape_0, false, GetFloatDataInRange(-0.1f, 0.1f, SizeOfShape(shape_0)));
+  TestInputDef<float> input1_def(shape_1, false, GetFloatDataInRange(input1_min, input1_max, SizeOfShape(shape_1)));
 
   const auto f32_model = BuildMatMulOpTestCase(input0_def, input1_def);
   const auto qdq_model = BuildMatMulOpQDQTestCase<uint16_t, uint16_t, uint16_t>(input0_def, input1_def, false);
@@ -973,6 +979,67 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16SymmetricDynamicInput1_PassesThrough)
                                  /*expected_convert_count=*/0);
 }
 
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_SymmetricOptIn_LowRange) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V69);
+  RunDynamicInput1QuantErrorTest("opt_in_low_range", 0.0f, 60.0f, QNN_DATATYPE_UFIXED_POINT_16, 1, "1");
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_SymmetricOptIn_Disabled) {
+  RunDynamicInput1QuantErrorTest("opt_in_disabled", 0.0f, 60.0f, QNN_DATATYPE_UFIXED_POINT_8, 1, "0");
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_SymmetricOptIn_SymmetricPassThrough) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V69);
+  RunDynamicInput1QuantErrorTest("opt_in_symmetric", -0.1f, 0.1f, QNN_DATATYPE_UFIXED_POINT_16, 0, "1");
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_SymmetricOptIn_Rank1) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V69);
+  RunDynamicInput1QuantErrorTest("opt_in_rank1", 0.0f, 60.0f, QNN_DATATYPE_UFIXED_POINT_16, 1, "1", {2, 3}, {3});
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_SymmetricOptIn_Rank4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V69);
+  RunDynamicInput1QuantErrorTest("opt_in_rank4", 0.0f, 60.0f, QNN_DATATYPE_UFIXED_POINT_16, 1, "1",
+                                 {1, 2, 2, 3}, {1, 2, 3, 2});
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_SymmetricOptIn_DotProductAccuracy) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V69);
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulOp_QDQ_U16SymmetricOptIn_Accuracy";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options = GetQDQMatMulProviderOptions(graph_dir);
+  provider_options["htp_matmul_use_symmetric_uint16"] = "1";
+
+  constexpr size_t kHeadSize = 128;
+  std::vector<float> rhs(kHeadSize * 2);
+  for (size_t i = 0; i < kHeadSize; ++i) {
+    rhs[i * 2] = 0.017f;
+    rhs[i * 2 + 1] = 0.008f;
+  }
+  // Outliers fix the asymmetric grid; U8 rounding loses the other 127 rows before reduction.
+  rhs[0] = -5.0f;
+  rhs[1] = 4.99f;
+  TestInputDef<float> input0_def({1, 1, 1, 128}, false, std::vector<float>(kHeadSize, 0.35f));
+  TestInputDef<float> input1_def({1, 1, 128, 2}, false, rhs);
+  ASSERT_NE(GetTestInputQuantParams<uint16_t>(input1_def).zero_point, 32768);
+
+  TestQDQModelAccuracy(
+      BuildMatMulOpTestCase(input0_def, input1_def),
+      BuildMatMulOpQDQTestCase<uint16_t, uint16_t, uint16_t>(input0_def, input1_def, false),
+      provider_options, 21, ExpectedEPNodeAssignment::All, QDQTolerance());
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "Convert", 1);
+  AssertConvertOutputDataType(graph_dir, QNN_DATATYPE_UFIXED_POINT_16);
+}
+
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_NonU16Input1DoesNotUseU16ConversionGate) {
   namespace fs = std::filesystem;
   const fs::path graph_dir = fs::temp_directory_path() / "MatMulOp_QDQ_NonU16Input1";
@@ -981,6 +1048,7 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_NonU16Input1DoesNotUseU16ConversionGate)
   auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
 
   ProviderOptions provider_options = GetQDQMatMulProviderOptions(graph_dir);
+  provider_options["htp_matmul_use_symmetric_uint16"] = "1";
 
   TestInputDef<float> input0_def({2, 3}, false, GetFloatDataInRange(-0.1f, 0.1f, 6));
   TestInputDef<float> input1_def({3, 2}, false, GetFloatDataInRange(0.0f, 100.0f, 6));
