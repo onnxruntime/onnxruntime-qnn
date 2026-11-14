@@ -209,9 +209,17 @@ TEST_F(QnnCPUBackendTests, ReduceSumSquare_LargeValues) {
 }
 
 static void RunReduceSumSquareEmptyAxesTests(bool enable_fp16) {
+#if defined(_WIN32)
+  if (enable_fp16) {
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  }
+#endif
   ProviderOptions options{{"backend_type", enable_fp16 ? "htp" : "cpu"},
                           {"offload_graph_io_quantization", "0"}};
   if (enable_fp16) {
+#if defined(__linux__) && !defined(__aarch64__)
+    options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
     options["enable_htp_fp16_precision"] = "1";
   }
 
@@ -242,9 +250,29 @@ TEST_F(QnnCPUBackendTests, ReduceSumSquare_DynamicAxesRejected) {
                   EPVerificationParams{ExpectedEPNodeAssignment::None, ElementwiseAbsoluteVerifier(1e-5f)});
 }
 
+TEST_F(QnnCPUBackendTests, ReduceSumSquare_DynamicEmptyAxesRejected) {
+  for (bool noop : {false, true}) {
+    SCOPED_TRACE(testing::Message() << "noop=" << noop);
+    auto build_model = [noop](ModelTestBuilder& builder) {
+      builder.MakeInput<float>("input", {2, 2}, {-1.0f, 0.5f, 0.0f, 2.0f});
+      builder.MakeInput<int64_t>("axes", {0}, std::vector<int64_t>{});
+      builder.MakeOutput("output");
+      builder.AddNode("reduce", "ReduceSumSquare", {"input", "axes"}, {"output"}, "",
+                      {test::MakeAttribute("noop_with_empty_axes", static_cast<int64_t>(noop))});
+    };
+    RunQnnModelTest(build_model, {{"backend_type", "cpu"}}, 18,
+                    EPVerificationParams{ExpectedEPNodeAssignment::None, ElementwiseAbsoluteVerifier(1e-5f)});
+  }
+}
+
 // Verifies that the reduction and a downstream node are both assigned to QNN.
 // Disable CPU fallback on HTP; the QNN CPU backend rejects that session option.
 static void RunReduceSumSquareChainTest(bool enable_fp16) {
+#if defined(_WIN32)
+  if (enable_fp16) {
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  }
+#endif
   auto build_model = [](ModelTestBuilder& builder) {
     builder.MakeInput<float>("input", {2, 3}, {-3.0f, -2.0f, -1.0f, 0.0f, 1.0f, 2.0f});
     builder.MakeInitializer<int64_t>("axes", {1}, {-1});
@@ -263,6 +291,9 @@ static void RunReduceSumSquareChainTest(bool enable_fp16) {
   ProviderOptions options{{"backend_type", enable_fp16 ? "htp" : "cpu"},
                           {"offload_graph_io_quantization", "0"}};
   if (enable_fp16) {
+#if defined(__linux__) && !defined(__aarch64__)
+    options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
     options["enable_htp_fp16_precision"] = "1";
   }
   RegisteredEpDeviceUniquePtr ep;
