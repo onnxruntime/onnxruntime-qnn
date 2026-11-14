@@ -123,8 +123,6 @@ done
 cd "$(dirname ${BASH_SOURCE[0]})"
 build_dir="${PWD}"
 
-onnx_models_root="$(get_onnx_models_dir)"
-
 # CTestTestfile.cmake files aren't relocatable. Rewrite it to find the build in this directory.
 orig_build_dir=$(sed -n "s@# Build directory: @@p" CTestTestfile.cmake)
 sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
@@ -158,12 +156,14 @@ count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args
 #     log_warn "Failed to find directory 'quantization' - may be OK on platforms which do not support Python."
 # fi
 
-log_info "-=-=-=- Running ONNX model tests -=-=-=-"
-
 if [ -n "${skip_model_tests}" ]; then
     log_info "Skipping ONNX model tests (ORT home mode)."
-else
+    exit "${errors}"
+fi
 
+log_info "-=-=-=- Running ONNX model tests -=-=-=-"
+
+onnx_models_root="$(get_onnx_models_dir)"
 cd "${onnx_models_root}"
 
 declare -a model_test_runners=("run_model_test")
@@ -177,7 +177,7 @@ for runner in "${model_test_runners[@]}"; do
         rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_upper"
         rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_empty_output"
     fi
-
+    
     "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
 
     #TODO: [AISW-164203] - Known issues with QDQ model suite
@@ -191,7 +191,5 @@ for runner in "${model_test_runners[@]}"; do
     fi
 
 done
-
-fi
 
 exit "${errors}"

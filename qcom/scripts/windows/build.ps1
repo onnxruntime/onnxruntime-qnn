@@ -59,6 +59,10 @@ param (
     [string]$PyVEnv
 )
 
+if ($OrtPrebuiltRoot -ne "") {
+    $UseOrtPrebuilt = $true
+}
+
 $RepoRoot = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)\..\..\..").Path
 
 . "$RepoRoot\qcom\scripts\windows\tools.ps1"
@@ -102,7 +106,7 @@ $QairtSdkVersion = Get-QairtSdkVersion -QairtSdkRoot $QairtSdkRoot
 
 if ($UseOrtPrebuilt -and $OrtPrebuiltRoot -eq "") {
     switch ($Arch) {
-        { $_ -in @("aarch64", "arm64", "arm64ec") } {
+        { $_ -in @("aarch64", "arm64") } {
             $OrtPrebuiltRoot = (Get-OrtARM64PrebuiltRoot)
         }
         "x86_64" {

@@ -43,6 +43,7 @@ The build system uses a task-based approach via `python qcom/build_and_test.py`.
 * `--config [Release/RelWithDebInfo/Debug]`: Build configuration (default: Release)
 * `--qairt-sdk PATH`: Path to QAIRT SDK (overrides environment variables)
 * `--use-ort-prebuilt`: Download and use prebuilt ORT binaries instead of building from source (optional)
+* `--ort-prebuilt PATH`: Use prebuilt ORT from this path; implies `--use-ort-prebuilt` and takes precedence over `ORT_PREBUILT_ROOT`
 
 With `--use-ort-prebuilt`, QNN EP and its unit tests are still compiled against
 the prebuilt ORT libraries; ORT itself is not compiled from source. Unit tests
@@ -63,7 +64,7 @@ archives to a separate ARM64 test runner.
 The build system supports the following environment variables:
 
 * `QAIRT_SDK_ROOT` / `QNN_SDK_ROOT` / `SNPE_ROOT`: Path to QAIRT SDK (searched in this order)
-* `ORT_PREBUILT_ROOT`: Path to pre-built ONNX Runtime
+* `ORT_PREBUILT_ROOT`: Path to pre-built ONNX Runtime; enables prebuilt mode unless overridden by `--ort-prebuilt`
 * `ORT_BUILD_DOCKER_CCACHE_ROOT`: Docker ccache root directory
 * `ORT_NIGHTLY_BUILD`: Set to 1 for nightly builds
 * `ANDROID_HOME` / `ANDROID_NDK_HOME`: Android SDK/NDK paths

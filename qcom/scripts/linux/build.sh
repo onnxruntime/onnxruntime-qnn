@@ -128,6 +128,10 @@ for i in "$@"; do
   esac
 done
 
+if [ -n "${ort_prebuilt_root}" ]; then
+  use_ort_prebuilt=1
+fi
+
 cmake_generator="Ninja"
 
 if [ -n "${build_dir_suffix}" ] && [[ ! "${build_dir_suffix}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then

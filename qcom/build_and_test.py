@@ -107,7 +107,7 @@ Environment variables
     If set to 1, instruct the ORT build to use a more verbose version string.
 
   ORT_PREBUILT_ROOT
-    If specified, this will be used for the path of ORT prebuilt.
+    If specified, use prebuilt ORT from this path. --ort-prebuilt takes precedence.
 
   QAIRT_SDK_ROOT
   QNN_SDK_ROOT
@@ -159,7 +159,8 @@ Environment variables
     parser.add_argument(
         "--ort-prebuilt",
         type=Path,
-        help="Path to pre-built ORT. Implies --use-ort-prebuilt.",
+        default=os.environ.get("ORT_PREBUILT_ROOT") or None,
+        help="Path to pre-built ORT. Defaults to ORT_PREBUILT_ROOT. Implies --use-ort-prebuilt.",
     )
     parser.add_argument(
         "--qairt-sdk",
