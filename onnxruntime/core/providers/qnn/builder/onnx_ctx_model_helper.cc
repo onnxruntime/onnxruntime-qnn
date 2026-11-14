@@ -426,10 +426,9 @@ Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
 
         // If generate ctx.onnx with share_ep_context enabled, all ctx.onnx should point to the same ctx.bin
         if (share_ep_contexts) {
-          auto shared_ctx_bin_name = SharedContext::GetInstance().GetSharedCtxBinFileName();
-          if (shared_ctx_bin_name.empty()) {
-            SharedContext::GetInstance().SetSharedCtxBinFileName(context_cache_name);
-          } else {
+          auto shared_ctx_bin_name =
+              SharedContext::GetInstance().GetOrSetSharedCtxBinFileName(context_cache_name);
+          if (shared_ctx_bin_name != context_cache_name) {
             context_cache_name = shared_ctx_bin_name;
             auto model_folder_path = std::filesystem::path(context_bin_path).parent_path();
             context_bin_path = FILEPATH_TO_STRING(model_folder_path / context_cache_name);
