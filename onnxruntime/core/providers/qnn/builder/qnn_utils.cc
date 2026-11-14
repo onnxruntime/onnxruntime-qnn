@@ -411,29 +411,8 @@ std::ostream& operator<<(std::ostream& out, const Qnn_QuantizeParams_t& quantize
       out << " axis=" << lpbq.axis
           << " numBlocksPerAxis=" << lpbq.numBlocksPerAxis
           << " blockScaleBitwidth=" << lpbq.blockScaleBitwidth;
-      // For LPBQ, num_elems are not present in the quantize_params,
-      // we are using numBlocksPerAxis instead to print the first numBlocksPerAxis scale offset values
-      size_t num_elems = lpbq.numBlocksPerAxis;
-      bool truncate = num_elems > 20;
-      num_elems = truncate ? 20 : num_elems;
-      if (lpbq.scaleOffsets != nullptr) {
-        out << " scales=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << lpbq.scaleOffsets[i].scale << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")") << " offsets=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << lpbq.scaleOffsets[i].offset << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")");
-      }
-      if (lpbq.blocksScale8 != nullptr) {
-        out << " perBlockIntScales=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << static_cast<int32_t>(lpbq.blocksScale8[i]) << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")");
-      }
+      // Neither LPBQ array length can be validated without the tensor's axis size.
+      // Keep this generic printer limited to scalar metadata.
     } else {
       out << " encoding not supported.";
     }
@@ -1425,6 +1404,8 @@ Ort::Status LowPowerBlockQuantizeData(gsl::span<const float> data,
                                       int64_t block_scales_axis,
                                       size_t data_block_size,
                                       gsl::span<const uint32_t> block_scales_shape) {
+  RETURN_IF_NOT(data_block_size != 0, "Data block size must be greater than zero");
+
   // transpose weight to match [K, N] where K : In Channel and N : Out Channel
   const size_t num_dims = data_shape.size();
   const size_t num_elems = ShapeSizeCalc(data_shape, 0, num_dims);
