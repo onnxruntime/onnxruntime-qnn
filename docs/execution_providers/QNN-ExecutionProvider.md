@@ -668,7 +668,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Identity||
 |ai.onnx:InstanceNormalization||
 |ai.onnx:Inverse||
-|ai.onnx:IsInf|float32 and float16 inputs only; CPU backend only|
+|ai.onnx:IsInf|CPU backend: float32 and float16 inputs. HTP backend: float16 inputs only; single-direction detection has a known accuracy issue. See [IsInf HTP limitation](#isinf-htp-limitation).|
 |ai.onnx:IsNaN||
 |ai.onnx:LRN||
 |ai.onnx:LSTM||
@@ -763,6 +763,14 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |qti_aisw:StatefulLstm|QTI AISW block op. See [QTI AISW block operators](#qti-aisw-block-operators).|
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
+
+### IsInf HTP limitation
+
+QNN EP accepts `IsInf` with float16 inputs on the HTP backend. Detection of both positive and negative infinity (the default) has passed accuracy testing. Single-direction detection has a known HTP accuracy issue: positive-only detection has returned `false` for positive infinity, while negative-only detection has returned `true` for positive infinity. These attribute combinations are not rejected by QNN EP and do not automatically fall back to the CPU EP. Use detection of both signs or execute single-direction detection on the CPU EP until the backend issue is resolved. This is a known accuracy issue, not a confirmed permanent backend limitation.
+
+Float32 inputs are declined because the QnnHtp op-config validator can accept the node even though its internal format conversion fails during graph finalization with error 1002 (`QNN_COMMON_ERROR_MEM_ALLOC`), causing the entire QNN subgraph to fail compilation at session creation.
+
+Declining unsupported input types during partitioning lets ORT fall back to the CPU EP. With `session.disable_cpu_ep_fallback=1`, a rejected node causes session creation to fail.
 
 ### QTI AISW block operators
 

@@ -113,6 +113,59 @@ TEST_F(QnnHTPBackendTests, IsInfMix2D) {
                       true);
 }
 
+static void RunIsInfFloat16Test(const std::vector<int64_t>& input_shape,
+                                const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs = {}) {
+  const std::vector<float> values{
+      std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(),
+      std::numeric_limits<float>::quiet_NaN(), 65504.0f, -65504.0f, 0.0f, -0.0f, 1.0f};
+  std::vector<float> input_data;
+  const size_t num_elements = SizeOfShape(input_shape);
+  input_data.reserve(num_elements);
+  for (size_t i = 0; i < num_elements; ++i) {
+    input_data.push_back(values[i % values.size()]);
+  }
+
+  RunIsInfTest<Ort::Float16_t>({ConvertToFP16InputDef(TestInputDef<float>(input_shape, false, input_data))},
+                               attrs,
+                               ExpectedEPNodeAssignment::All,
+                               0.0f,
+                               "htp",
+                               20,
+                               true);
+}
+
+TEST_F(QnnHTPBackendTests, IsInfFloat16Mix4D) {
+  RunIsInfFloat16Test({1, 1, 8, 32});
+}
+
+// Disabled for now because HTP returned false for +Inf with positive-only detection.
+// This test requires QNN assignment, not CPU fallback; re-enable after the HTP accuracy issue is fixed.
+TEST_F(QnnHTPBackendTests, DISABLED_IsInfFloat16DetectPositiveOnly) {
+  RunIsInfFloat16Test({1, 2, 8, 16},
+                      {test::MakeAttribute("detect_positive", static_cast<int64_t>(1)),
+                       test::MakeAttribute("detect_negative", static_cast<int64_t>(0))});
+}
+
+// Disabled for now because HTP returned true for +Inf with negative-only detection.
+// This test requires QNN assignment, not CPU fallback; re-enable after the HTP accuracy issue is fixed.
+TEST_F(QnnHTPBackendTests, DISABLED_IsInfFloat16DetectNegativeOnly) {
+  RunIsInfFloat16Test({1, 2, 8, 16},
+                      {test::MakeAttribute("detect_positive", static_cast<int64_t>(0)),
+                       test::MakeAttribute("detect_negative", static_cast<int64_t>(1))});
+}
+
+TEST_F(QnnHTPBackendTests, IsInfFloat16DetectBoth) {
+  RunIsInfFloat16Test({1, 2, 8, 16},
+                      {test::MakeAttribute("detect_positive", static_cast<int64_t>(1)),
+                       test::MakeAttribute("detect_negative", static_cast<int64_t>(1))});
+}
+
+TEST_F(QnnHTPBackendTests, IsInfFloat16DetectNeither) {
+  RunIsInfFloat16Test({1, 2, 8, 16},
+                      {test::MakeAttribute("detect_positive", static_cast<int64_t>(0)),
+                       test::MakeAttribute("detect_negative", static_cast<int64_t>(0))});
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
