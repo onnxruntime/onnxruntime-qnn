@@ -12,7 +12,10 @@ param(
     [Parameter(HelpMessage = "Repo root of the extracted test payload")]
     [string]$TestRepoRoot = "",
     [Parameter(HelpMessage = "Path to the report manifest created by QDC bootstrap")]
-    [string]$QdcManifestPath = ""
+    [string]$QdcManifestPath = "",
+    [Parameter(HelpMessage = "Number of sequential provider-test processes")]
+    [ValidateSet(1, 2)]
+    [int]$ProviderTestProcesses = 1
 )
 
 $RootDir = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)").Path
@@ -107,11 +110,38 @@ $Failed = $false
 
 Push-Location $RootDir
 Write-Host "--=-=-=- Running unit tests -=--=-=-"
-& $CTestExe --build-config $Config --verbose --timeout $TimeoutSec
-
-if (-not $?) {
+if ($ProviderTestProcesses -eq 1) {
+    & $CTestExe --build-config $Config --verbose --timeout $TimeoutSec
+    if ($LASTEXITCODE -ne 0) { $Failed = $true }
+} else {
+    # Keep the registered CTest command/filter; split the native ARM64 internal
+    # workload across two sequential processes while session cleanup is investigated.
+    $PreviousTotalShards = $env:GTEST_TOTAL_SHARDS
+    $PreviousShardIndex = $env:GTEST_SHARD_INDEX
+    $ProviderReport = Join-Path $ResultsXmlDir "onnxruntime_provider_test.exe.$Config.results.xml"
+    try {
+        $env:GTEST_TOTAL_SHARDS = "2"
+        for ($Shard = 0; $Shard -lt 2; $Shard++) {
+            $env:GTEST_SHARD_INDEX = "$Shard"
+            if (Test-Path -LiteralPath $ProviderReport) { Remove-Item -LiteralPath $ProviderReport }
+            Write-Host "Running provider-test process $($Shard + 1)/2 through CTest"
+            & $CTestExe --build-config $Config --verbose --timeout $TimeoutSec
+            if ($LASTEXITCODE -ne 0) { $Failed = $true }
+            if (Test-Path -LiteralPath $ProviderReport) {
+                $ShardReport = Join-Path $ResultsXmlDir "onnxruntime_provider_test.exe.$Config.shard$Shard.results.xml"
+                Move-Item -LiteralPath $ProviderReport -Destination $ShardReport -Force
+            } else {
+                Write-Warning "Provider-test process $($Shard + 1)/2 did not produce its XML report."
+                $Failed = $true
+            }
+        }
+    } finally {
+        $env:GTEST_TOTAL_SHARDS = $PreviousTotalShards
+        $env:GTEST_SHARD_INDEX = $PreviousShardIndex
+    }
+}
+if ($Failed) {
     Write-Host "Unit tests failed. Will exit with error after running model tests."
-    $Failed = $true
 }
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-

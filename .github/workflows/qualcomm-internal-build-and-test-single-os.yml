@@ -42,7 +42,7 @@ on:
         default: "Release"
         type: string
       qnn_internal_test_symbols:
-        description: "Enable QNN EP internal test symbols for supported targets. Test archives are not supported in this mode."
+        description: "Enable QNN EP internal test symbols for supported targets. Production artifacts are not supported in this mode."
         default: false
         type: boolean
       version_suffix:
@@ -159,7 +159,7 @@ jobs:
       - name: Validate internal-symbol artifact settings
         if: ${{ inputs.qnn_internal_test_symbols && (inputs.upload_test_archive || inputs.upload_wheel || inputs.upload_nuget || inputs.upload_archive || inputs.build_pdb_archive || inputs.upload_pdb_archive || inputs.upload_aar) }}
         run: |
-          echo "::error::Internal-symbol builds must not publish test or production artifacts."
+          echo "::error::Internal-symbol builds must not publish test or production artifacts to Artifactory."
           exit 1
 
       - name: Initialize submodules
@@ -197,6 +197,19 @@ jobs:
           name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
           retention-days: 1
           path: ${{ github.workspace }}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}linux-${{ env.BUILD_DIR_ARCH }}.tar.bz2
+          if-no-files-found: error
+
+      # Preserve the outer CTest file and multi-config layout for the ARM64
+      # test runner. Internal-symbol binaries stay in temporary Actions storage.
+      - name: Upload Windows internal-symbol test binaries
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols && !inputs.build_test_same_runner }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
+          retention-days: 1
+          path: |
+            ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ env.BUILD_DIR_ARCH }}/${{ inputs.build_config }}/CTestTestfile.cmake
+            ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ env.BUILD_DIR_ARCH }}/${{ env.BUILD_CONFIG_DIR }}/
           if-no-files-found: error
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
@@ -354,6 +367,13 @@ jobs:
         run: |
           tar -xjf "build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}linux-${{ env.BUILD_DIR_ARCH }}.tar.bz2"
 
+      - name: Download Windows internal-symbol test binaries
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols }}
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
+          path: ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ env.BUILD_DIR_ARCH }}/${{ inputs.build_config }}/
+
       - name: Download testdata from Artifactory
         if: ${{ inputs.has_code_changes && inputs.testdata_archive_artifact_name != '' }}
         uses: ./.github/actions/download-ci-artifact
@@ -377,6 +397,16 @@ jobs:
           create_venv
           extract_ort_${{inputs.target_os}}_${{inputs.target_arch}}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
+
+      - name: Test Windows ARM64 QNN internal-symbol build
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols }}
+        timeout-minutes: 60
+        run: >
+          python.exe qcom/build_and_test.py
+          --target-py-version ${{ inputs.target_py_vsn }}
+          --config ${{ inputs.build_config }}
+          create_venv
+          test_ort_windows_arm64_internal_symbols --only
 
       - name: Test Linux ARM64 QNN internal-symbol build
         if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols }}

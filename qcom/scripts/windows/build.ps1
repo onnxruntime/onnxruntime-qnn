@@ -359,7 +359,11 @@ else {
 
         Push-Location (Join-Path $BuildDir $Config)
         $OnnxModelsRoot = (Get-OnnxModelsRoot)
-        & .\run_tests.ps1 -Config $Config -OnnxModelsRoot $OnnxModelsRoot
+        $ProviderTestProcesses = 1
+        if ($QnnInternalTestSymbols -and $Arch -eq "ARM64" -and -not $BuildAsX) {
+            $ProviderTestProcesses = 2
+        }
+        & .\run_tests.ps1 -Config $Config -OnnxModelsRoot $OnnxModelsRoot -ProviderTestProcesses $ProviderTestProcesses
 
         if (-not $?) {
             $failed = $true
