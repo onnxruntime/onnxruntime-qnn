@@ -26,7 +26,6 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
 
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8350);
 
   RunQnnModelTest(BuildOpTestCase<DataType>("Inverse_node", "Inverse", input_defs, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
                   provider_options,
@@ -125,6 +124,10 @@ static void RunQDQInverseOpTest(const TestInputDef<float>& input_defs,
                        tolerance);
 }
 
+// These tests validate that FP32 Inverse runs correctly on HTP when the V68 rejection guard
+// is not active. V68-specific rejection is covered by base_op_builder_v68_rejection_test.cc.
+// Tolerance is 5e-2f: FP32 matrix inversion on the HTP simulator has lower accuracy than
+// the QDQ path.
 TEST_F(QnnHTPBackendTests, Inverse_2d) {
   RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{2, 2};
@@ -133,7 +136,7 @@ TEST_F(QnnHTPBackendTests, Inverse_2d) {
   RunInverseTest<float>({TestInputDef<float>({2, 2}, false, input_vector)},
                         {},
                         ExpectedEPNodeAssignment::All,
-                        1e-3f,
+                        5e-2f,
                         "htp");
 }
 
@@ -145,7 +148,7 @@ TEST_F(QnnHTPBackendTests, Inverse_3d) {
   RunInverseTest<float>({TestInputDef<float>({10, 2, 2}, false, input_vector)},
                         {},
                         ExpectedEPNodeAssignment::All,
-                        1e-3f,
+                        5e-2f,
                         "htp");
 }
 
@@ -157,7 +160,7 @@ TEST_F(QnnHTPBackendTests, Inverse_4d) {
   RunInverseTest<float>({TestInputDef<float>({1, 10, 2, 2}, false, input_vector)},
                         {},
                         ExpectedEPNodeAssignment::All,
-                        1e-3f,
+                        5e-2f,
                         "htp");
 }
 

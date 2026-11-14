@@ -45,6 +45,40 @@
 namespace onnxruntime {
 namespace qnn {
 
+// HTP V68 does not support FP32 or FP16 tensors. Applying this check here (rather than only inside
+// BaseOpBuilder::ProcessDataTypes) ensures that builders which override IsOpSupported without calling
+// the base class — Conv, BatchNormalization, Buffer, CumSum, etc. — are also gated before reaching
+// their own builder logic. QuantizeLinear and DequantizeLinear are exempt as type-bridging ops.
+static Ort::Status RejectIfV68Float(QnnModelWrapper& qmw, const OrtNodeUnit& node_unit) {
+  if (!IsNpuBackend(qmw.GetQnnBackendType()) || qmw.GetHtpArch() != QNN_HTP_DEVICE_ARCH_V68) {
+    return Ort::Status();
+  }
+  const std::string& op_type = node_unit.OpType();
+  if (op_type == "QuantizeLinear" || op_type == "DequantizeLinear") {
+    return Ort::Status();
+  }
+  auto is_float = [](Qnn_DataType_t dt) {
+    return dt == QNN_DATATYPE_FLOAT_32 || dt == QNN_DATATYPE_FLOAT_16;
+  };
+  for (const auto& input : node_unit.Inputs()) {
+    if (!input.Exists()) continue;
+    TensorInfo info{};
+    RETURN_IF_ERROR(qmw.GetTensorInfo(input, info));
+    if (is_float(info.qnn_data_type)) {
+      return MAKE_EP_FAIL("QNN EP does not support FP32 or FP16 tensors on HTP v68.");
+    }
+  }
+  for (const auto& output : node_unit.Outputs()) {
+    if (!output.Exists()) continue;
+    TensorInfo info{};
+    RETURN_IF_ERROR(qmw.GetTensorInfo(output, info));
+    if (is_float(info.qnn_data_type)) {
+      return MAKE_EP_FAIL("QNN EP does not support FP32 or FP16 tensors on HTP v68.");
+    }
+  }
+  return Ort::Status();
+}
+
 /// <summary>
 /// A IQnnNodeGroup class that wraps a single NodeUnit. Most NodeUnits in the ONNX graph will
 /// be wrapped by this class.
@@ -66,6 +100,10 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
     // op_affinity gate, generic across all op types (not just GroupQueryAttention): if the config
     // pins this op type to a different backend, decline before reaching the op builder.
     RETURN_IF_ERROR(qmw.GetModelSettings().op_affinity.Evaluate(op_type, qmw.GetQnnBackendType()));
+
+    // V68 float guard: applied here so it covers all op builders, including those that override
+    // IsOpSupported without delegating to BaseOpBuilder::IsOpSupported (Conv, BN, Buffer, etc.).
+    RETURN_IF_ERROR(RejectIfV68Float(qmw, *node_unit_));
 
     return op_builder->IsOpSupported(qmw, *node_unit_, logger);
   }
