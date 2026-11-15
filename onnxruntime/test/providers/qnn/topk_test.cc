@@ -143,7 +143,7 @@ TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0_Sorted) {
                             /*verify_outputs*/ false);  // Disable verify output. Unsorted doesn't guarantee output sequence
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -317,7 +317,7 @@ TEST_F(QnnHTPBackendTests, TopK_QDQ_U8_FoldsQDQIntoQuantizedTopK) {
   AssertNodeNotInQnnGraph(json_qnn_graph_dir, "qdq_in_dq");
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 #endif  // !defined(ORT_MINIMAL_BUILD)

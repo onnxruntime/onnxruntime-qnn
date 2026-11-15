@@ -42,6 +42,43 @@ bool IsBQGemmWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitI
   return bq::IsBQScale(scale_shape, weight_shape, block_axis);
 }
 
+bool IsLPBQGemmWeight(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
+                      const char*& failure_reason) {
+  failure_reason = nullptr;
+  const auto& inputs = node_unit.Inputs();
+  if (inputs.size() < 2 || node_unit.Outputs().empty()) {
+    return false;
+  }
+
+  TensorInfo weight_info = {};
+  const bool has_wt_info = qnn_model_wrapper.GetTensorInfo(inputs[1], weight_info).IsOK();
+  if (!has_wt_info || !weight_info.quant_param.IsLPBQ() || !weight_info.is_initializer ||
+      weight_info.shape.size() != 2) {
+    failure_reason = "weight is not LPBQ";
+    return false;
+  }
+
+  TensorInfo act_info = {};
+  const bool has_act_info = qnn_model_wrapper.GetTensorInfo(inputs[0], act_info).IsOK();
+  const bool is_act_int16 = has_act_info && act_info.shape.size() == 2 &&
+                            act_info.quant_param.IsQuantized() && utils::IsQuant16bit(act_info.qnn_data_type);
+  if (!is_act_int16) {
+    failure_reason = "activation must be rank-2 and 16-bit quantized";
+    return false;
+  }
+
+  TensorInfo output_info = {};
+  const bool has_output_info = qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info).IsOK();
+  const bool is_output_int16 = has_output_info && output_info.shape.size() == 2 &&
+                               output_info.quant_param.IsQuantized() && utils::IsQuant16bit(output_info.qnn_data_type);
+  if (!is_output_int16) {
+    failure_reason = "output must be rank-2 and 16-bit quantized";
+    return false;
+  }
+
+  return true;
+}
+
 // QNN FullyConnected accepts a vector bias, or a scalar bias for one output channel. Other valid
 // ONNX Gemm C broadcasts require a separate ElementWiseAdd.
 bool RequiresFcAddDecomposition(const OrtNodeUnit& node_unit, bool is_native_bias) {
@@ -93,12 +130,14 @@ class GemmOpBuilder : public BaseOpBuilder {
 
  private:
   enum class Lowering { kSingle,
+                        kLPBQ,
                         kBlockQuantized,
                         kReshaped,
                         kDecomposed };
   struct LoweringPlan {
     Lowering lowering = Lowering::kSingle;
     bool use_matmul = false;
+    const char* lpbq_skip_reason = nullptr;
   };
 
   LoweringPlan GetLoweringPlan(const QnnModelWrapper& qnn_model_wrapper,
@@ -119,6 +158,15 @@ class GemmOpBuilder : public BaseOpBuilder {
                                      const Ort::Logger& logger,
                                      std::vector<std::string>& input_names,
                                      bool do_op_validation) const ORT_MUST_USE_RESULT;
+  // LPBQ (BLOCKWISE_EXPANSION) weight path for Gemm→QNN Conv2D with 1×1 filters.
+  Ort::Status ProcessInputsForLPBQGemm(QnnModelWrapper& qnn_model_wrapper,
+                                       const OrtNodeUnit& node_unit,
+                                       int64_t trans_a,
+                                       int64_t trans_b,
+                                       float beta,
+                                       const Ort::Logger& logger,
+                                       std::vector<std::string>& input_names,
+                                       bool do_op_validation) const ORT_MUST_USE_RESULT;
 };
 
 GemmOpBuilder::LoweringPlan GemmOpBuilder::GetLoweringPlan(const QnnModelWrapper& qnn_model_wrapper,
@@ -132,8 +180,16 @@ GemmOpBuilder::LoweringPlan GemmOpBuilder::GetLoweringPlan(const QnnModelWrapper
 
   LoweringPlan plan;
   plan.use_matmul = qnn_model_wrapper.GetModelSettings().use_native_matmul;
+  if (inputs.size() < 2) {
+    return plan;
+  }
+
   if (IsBQGemmWeight(qnn_model_wrapper, inputs[1], trans_b)) {
-    plan.lowering = Lowering::kBlockQuantized;
+    if (IsLPBQGemmWeight(qnn_model_wrapper, node_unit, plan.lpbq_skip_reason)) {
+      plan.lowering = Lowering::kLPBQ;
+    } else {
+      plan.lowering = Lowering::kBlockQuantized;
+    }
   } else if (node_unit.GetOutputReshapeNode() != nullptr) {
     plan.lowering = Lowering::kReshaped;
   } else if (RequiresFcAddDecomposition(node_unit, is_native_bias) || (plan.use_matmul && has_bias)) {
@@ -186,6 +242,8 @@ Ort::Status GemmOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                           output_qnn_data_type));
     if (utils::NeedsPrecisionConvert(act_qnn_data_type, output_qnn_data_type)) {
       const LoweringPlan plan = GetLoweringPlan(qnn_model_wrapper, node_unit);
+      RETURN_IF(plan.lowering == Lowering::kLPBQ,
+                "QNN EP: mixed activation/output precision is not supported for LPBQ Gemm.");
       RETURN_IF(plan.lowering == Lowering::kBlockQuantized,
                 "QNN EP: mixed activation/output precision is not supported for a block-quantized weight.");
       RETURN_IF(plan.lowering == Lowering::kReshaped,
@@ -274,6 +332,7 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          std::vector<std::string>& input_names,
                                          bool do_op_validation) const {
   OrtNodeAttrHelper node_helper(node_unit);
+  const int64_t trans_a = node_helper.Get("transA", static_cast<int64_t>(0));
   const int64_t trans_b = node_helper.Get("transB", static_cast<int64_t>(0));
   const float beta = node_helper.Get("beta", 1.0f);
   const auto& inputs = node_unit.Inputs();
@@ -281,6 +340,20 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   if (do_op_validation) {
     RETURN_IF_ERROR(ExplictOpCheck(node_unit, plan));
+  }
+
+  if (plan.lpbq_skip_reason != nullptr) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                ("Gemm LPBQ path skipped: " + std::string(plan.lpbq_skip_reason) +
+                 "; using BQ FullyConnected")
+                    .c_str());
+  }
+
+  // LPBQ Gemm→Conv2D: activation is 4-D, weight is [1,1,K,N] with BLOCKWISE_EXPANSION.
+  // Conv2D outputs INT16 directly.
+  if (plan.lowering == Lowering::kLPBQ) {
+    return ProcessInputsForLPBQGemm(qnn_model_wrapper, node_unit, trans_a, trans_b, beta, logger,
+                                    input_names, do_op_validation);
   }
 
   // Block-quantized weight: translate to QNN FullyConnected with BW_FLOAT_BLOCK weight.
@@ -343,6 +416,108 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
     RETURN_IF_ERROR(RegisterGemmInput(qnn_model_wrapper, node_unit, input_i, input_trans_flag, logger,
                                       input_names, do_op_validation));
+  }
+
+  return Ort::Status();
+}
+
+Ort::Status GemmOpBuilder::ProcessInputsForLPBQGemm(QnnModelWrapper& qnn_model_wrapper,
+                                                    const OrtNodeUnit& node_unit,
+                                                    int64_t trans_a,
+                                                    int64_t trans_b,
+                                                    float beta,
+                                                    const Ort::Logger& logger,
+                                                    std::vector<std::string>& input_names,
+                                                    bool do_op_validation) const {
+  const auto& inputs = node_unit.Inputs();
+
+  //
+  // Input A (activation): INT16, shape [M, K] (or [K, M] if transA=1).
+  // Reshape to 4D [1, 1, M, K] (NHWC) for Conv2D.
+  //
+  TensorInfo act_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], act_info));
+
+  // Add activation to QNN graph.
+  if (!qnn_model_wrapper.IsQnnTensorWrapperExist(inputs[0].name)) {
+    QnnTensorWrapper act_wrapper;
+    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(act_info, inputs[0].name, act_wrapper));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(act_wrapper)), "Failed to add act tensor.");
+  }
+  input_names.push_back(inputs[0].name);
+
+  std::string act_name = input_names[0];
+  std::vector<uint32_t> act_shape_mk = act_info.shape;
+
+  // transA=1: activation is [K, M]; transpose to [M, K].
+  if (trans_a != 0) {
+    const std::vector<uint32_t> transposed_shape = {act_info.shape[1], act_info.shape[0]};
+    const std::string transposed_name = act_name + "_transpose";
+    RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), act_name, transposed_name,
+                                                       act_info.shape, {1u, 0u},
+                                                       transposed_shape, act_info.qnn_data_type,
+                                                       act_info.quant_param.Copy(), do_op_validation,
+                                                       /*is_for_input=*/false, /*is_for_output=*/false));
+    act_name = transposed_name;
+    act_shape_mk = transposed_shape;
+    input_names[0] = act_name;
+  }
+
+  // Reshape [M, K] → [1, 1, M, K] (NHWC for Conv2D).
+  const std::vector<uint32_t> act_shape_4d = {1u, 1u, act_shape_mk[0], act_shape_mk[1]};
+  const std::string act_4d_name = act_name + "_reshape_4d";
+  {
+    QnnQuantParamsWrapper act_quant_4d = act_info.quant_param.Copy();
+    RETURN_IF_ERROR(act_quant_4d.HandleUnsqueeze<uint32_t>(act_shape_mk, act_shape_4d));
+    QnnTensorWrapper act_4d_wrapper(act_4d_name, QNN_TENSOR_TYPE_NATIVE, act_info.qnn_data_type,
+                                    std::move(act_quant_4d), std::vector<uint32_t>(act_shape_4d));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(act_4d_wrapper)),
+                  "Failed to add 4D activation tensor for LPBQ Gemm.");
+  }
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_reshape_4d"),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                                                {act_name}, {act_4d_name}, {}, do_op_validation),
+                "Failed to add activation reshape node for LPBQ Gemm.");
+  input_names[0] = act_4d_name;
+
+  //
+  // Input B (weight): LPBQ, shape [K, N] (transB=0) or [N, K] (transB=1).
+  // RegisterLPBQWeightAsConv1x1Filter expects [K, N].
+  //
+  TensorInfo weight_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], weight_info));
+
+  std::vector<uint8_t> unpacked_weight;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(weight_info.initializer_tensor, unpacked_weight));
+
+  // For transB=1: weight is [N, K]; transpose data and quant params to [K, N].
+  TensorInfo weight_info_kn = weight_info;
+  if (trans_b != 0) {
+    std::vector<uint32_t> nk_shape = weight_info.shape;  // [N, K]
+    std::vector<uint8_t> transposed;
+    RETURN_IF_ERROR(utils::TwoDimensionTranspose<uint8_t>(unpacked_weight, nk_shape, transposed,
+                                                          logger, do_op_validation));
+    unpacked_weight = std::move(transposed);
+    weight_info_kn.shape = {nk_shape[1], nk_shape[0]};  // [K, N]
+    RETURN_IF_ERROR(weight_info_kn.quant_param.HandleTranspose<uint32_t>(std::vector<uint32_t>({1u, 0u})));
+  }
+
+  // Register as [1, 1, K, N] (HWCN 1×1 filter).
+  RETURN_IF_ERROR(bq::RegisterLPBQWeightAsConv1x1Filter(qnn_model_wrapper, inputs[1].name, weight_info_kn,
+                                                        std::move(unpacked_weight), input_names));
+
+  //
+  // Input C (bias, optional): use ProcessBiasForQuantizedOp.
+  // The registered weight tensor (after unsqueeze to [1,1,K,N]) carries the LPBQ quant params.
+  //
+  if (inputs.size() == 3 && beta != 0.0f) {
+    const std::string& weight_4d_name = input_names.back();
+    const auto& weight_4d_quant = qnn_model_wrapper.GetQnnTensorWrapper(weight_4d_name).GetQnnQuantParams();
+    bool was_handled = false;
+    RETURN_IF_ERROR(utils::ProcessBiasForQuantizedOp(qnn_model_wrapper, logger, node_unit, inputs[2],
+                                                     act_info.quant_param, weight_4d_quant,
+                                                     input_names, was_handled));
+    RETURN_IF_NOT(was_handled, "Failed to add bias tensor for LPBQ Gemm");
   }
 
   return Ort::Status();
@@ -570,8 +745,41 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                        bool do_op_validation) const {
   OrtNodeAttrHelper node_helper(node_unit);
   const int64_t trans_b_out = node_helper.Get("transB", static_cast<int64_t>(0));
-
   const LoweringPlan plan = GetLoweringPlan(qnn_model_wrapper, node_unit);
+
+  // LPBQ Gemm->Conv2D with 1x1 filters
+  if (plan.lowering == Lowering::kLPBQ) {
+    const std::string& org_output_name = node_unit.Outputs()[0].name;
+    TensorInfo output_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
+
+    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
+
+    // Conv2D output shape: [1, 1, M, N] (4D NHWC).
+    const std::vector<uint32_t> conv2d_output_shape = {1u, 1u, output_info.shape[0], output_info.shape[1]};
+    QnnQuantParamsWrapper conv2d_out_quant = output_info.quant_param.Copy();
+    RETURN_IF_ERROR(conv2d_out_quant.HandleUnsqueeze<uint32_t>(output_info.shape, conv2d_output_shape));
+
+    const std::string conv2d_out_name = org_output_name + "_conv2d";
+    RETURN_IF_ERROR(bq::AddConv2DNodeforBQLowering(qnn_model_wrapper, node_unit,
+                                                   std::move(input_names),
+                                                   conv2d_out_name,
+                                                   conv2d_output_shape,
+                                                   output_info.qnn_data_type,
+                                                   conv2d_out_quant,
+                                                   /*is_graph_output=*/false,
+                                                   do_op_validation));
+
+    // Reshape [1, 1, M, N] → [M, N].
+    RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(conv2d_out_name, org_output_name,
+                                                     conv2d_output_shape, output_info.shape,
+                                                     output_info.qnn_data_type,
+                                                     conv2d_out_quant, output_info.quant_param,
+                                                     do_op_validation,
+                                                     /*is_for_input=*/false,
+                                                     /*is_for_output=*/is_graph_output));
+    return Ort::Status();
+  }
 
   // BQ Gemm→FC: activation stays 2-D, weight is 2-D [N,K] with BW_FLOAT_BLOCK.
   // FC outputs FP16 → re-quantize to INT16.
