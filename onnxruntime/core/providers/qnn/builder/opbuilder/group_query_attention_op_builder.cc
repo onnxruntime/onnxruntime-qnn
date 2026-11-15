@@ -87,7 +87,8 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   RETURN_IF(has_attention_bias && backend_type != QnnBackendType::HTP,
             "attention_bias is only supported by QNN GroupQueryAttention on HTP");
 #else
-  RETURN_IF(has_attention_bias, "attention_bias requires the extended QNN GroupQueryAttention op spec");
+  RETURN_IF(has_attention_bias,
+            "attention_bias requires QNN EP built with QAIRT SDK >= 2.53 (QNN API >= 2.42)");
 #endif  // QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
 
   // Reject unsupported inputs when present, allowing empty trailing optional slots as the schema evolves.
@@ -132,7 +133,8 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
             "Truncating local windows and sliding_window_cache are only supported by QNN GroupQueryAttention on HTP");
 #else
   RETURN_IF(uses_window_features,
-            "Local attention and sliding_window_cache require the extended QNN GroupQueryAttention op spec");
+            "Truncating local windows and sliding_window_cache require QNN EP built with "
+            "QAIRT SDK >= 2.53 (QNN API >= 2.42)");
 #endif  // QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
 
   int32_t qk_output = node_helper.Get("qk_output", 0);
