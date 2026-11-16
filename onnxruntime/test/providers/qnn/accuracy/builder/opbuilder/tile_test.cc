@@ -3,7 +3,7 @@
 //
 // Op-builder-paired accuracy tests for TileOpBuilder.
 
-#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS && QNN_EP_ENABLE_ACCURACY_TESTS
+#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_ENABLE_ACCURACY_TESTS
 
 #include <cstdint>
 #include <string>
@@ -93,4 +93,4 @@ INSTANTIATE_TEST_SUITE_P(
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS && QNN_EP_ENABLE_ACCURACY_TESTS
+#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_ENABLE_ACCURACY_TESTS
