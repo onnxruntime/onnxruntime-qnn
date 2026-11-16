@@ -860,8 +860,8 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                      op_output_shape, do_op_validation));
   } else {
     if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-      RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names,
-                                                                output_info.qnn_data_type, do_op_validation));
+      RETURN_IF_ERROR(utils::ConvertActivationToPrecision(qnn_model_wrapper, input_names,
+                                                          output_info.qnn_data_type, do_op_validation));
     }
     const Qnn_DataType_t activation_qnn_data_type =
         qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
