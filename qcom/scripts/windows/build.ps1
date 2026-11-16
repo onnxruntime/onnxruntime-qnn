@@ -273,10 +273,14 @@ Push-Location $RepoRoot
 $failed = $false
 if ($MakeTestArchive) {
     $VcRedistDir = (Get-VcRedistDir)
+    $TestArchivePlatform = "windows-$BuildDirArch"
+    if ($QnnInternalTestSymbols) {
+        $TestArchivePlatform += "-internal-symbols"
+    }
     python.exe "$RepoRoot\qcom\scripts\all\archive_tests.py" `
         "--config=$Config" `
         "--qairt-sdk-root=$QairtSdkRoot" `
-        "--target-platform=windows-$BuildDirArch" `
+        "--target-platform=$TestArchivePlatform" `
         "--vc-redist-dir=$VcRedistDir"
     if (-not $?) {
         $failed = $true
@@ -360,10 +364,12 @@ else {
         Push-Location (Join-Path $BuildDir $Config)
         $OnnxModelsRoot = (Get-OnnxModelsRoot)
         $ProviderTestProcesses = 1
-        if ($QnnInternalTestSymbols -and $Arch -eq "ARM64" -and -not $BuildAsX) {
+        $Arm64InternalTests = $QnnInternalTestSymbols -and $Arch -eq "ARM64" -and -not $BuildAsX
+        if ($Arm64InternalTests) {
             $ProviderTestProcesses = 2
         }
-        & .\run_tests.ps1 -Config $Config -OnnxModelsRoot $OnnxModelsRoot -ProviderTestProcesses $ProviderTestProcesses
+        & .\run_tests.ps1 -Config $Config -OnnxModelsRoot $OnnxModelsRoot `
+            -ProviderTestProcesses $ProviderTestProcesses -SkipQnnSnapshots:$Arm64InternalTests
 
         if (-not $?) {
             $failed = $true

@@ -36,7 +36,15 @@ def validate_windows_results(log_dir: Path) -> None:
             if not isinstance(ctest_reports, list) or not ctest_reports:
                 raise ValueError("CTest report list is missing or empty")
             required.update(ctest_reports)
-            required.add(f"onnxruntime_provider_test.exe.{config}.results.xml")
+            provider_processes = manifest.get("provider_test_processes", 1)
+            if type(provider_processes) is not int or provider_processes not in (1, 2):
+                raise ValueError("Unsupported provider test process count")
+            if provider_processes == 2:
+                required.update(
+                    f"onnxruntime_provider_test.exe.{config}.shard{index}.results.xml" for index in range(2)
+                )
+            else:
+                required.add(f"onnxruntime_provider_test.exe.{config}.results.xml")
             required.update(
                 f"{suite}_model_tests.results.xml" for suite in ("node", "float32", "qdq", "qdq-with-context-cache")
             )
@@ -111,6 +119,7 @@ def prepare_windows_payload(
     installer: Path | None = None,
     python_info: dict[str, str] | None = None,
     htp_arch: int = DEFAULT_WINDOWS_HTP_ARCH,
+    internal_symbols: bool = False,
 ) -> Path:
     """Add bootstrap, installer, models and testdata to a copy of the build artifact.
 
@@ -128,7 +137,8 @@ def prepare_windows_payload(
     if not testdata_archive.is_file():
         raise FileNotFoundError(f"Windows QDC requires testdata: {testdata_archive}")
 
-    test_root = f"build/windows-arm64/{config}"
+    platform = "windows-arm64-internal-symbols" if internal_symbols else "windows-arm64"
+    test_root = f"build/{platform}/{config}"
     with zipfile.ZipFile(archive_path) as original:
         entries = set(original.namelist())
     required = (f"{test_root}/run_tests.ps1", f"{test_root}/ctest.exe", f"{test_root}/CTestTestfile.cmake")
@@ -192,6 +202,8 @@ def prepare_windows_payload(
                     "build_config": config,
                     "test_mode": test_mode,
                     "expected_htp_arch": htp_arch,
+                    "test_platform": platform,
+                    "provider_test_processes": 2 if internal_symbols else 1,
                 },
                 indent=2,
             ),
@@ -206,8 +218,8 @@ def prepare_windows_payload(
                 source_dir = staging / handle
                 if not source_dir.is_dir():
                     raise ValueError(f"Testdata archive is missing {handle}")
-                config_dir = binary_root.removeprefix("build/windows-arm64/")
-                add_tree(source_dir, mapping.format(plat="windows-arm64", config=config_dir))
+                config_dir = binary_root.removeprefix(f"build/{platform}/")
+                add_tree(source_dir, mapping.format(plat=platform, config=config_dir))
         # The model zoo differs from the four arch-neutral testdata handles above.
         if test_mode == "full":
             add_tree(models_dir, f"{test_root}/model_tests/onnx_models")

@@ -243,6 +243,7 @@ jobs:
       has_code_changes: ${{ needs['path-filter'].outputs.code == 'true' }}
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: arm64
+      testdata_archive_artifact_name: testdata-zip
       build_runner_arch: X64
       test_runner_arch: arm64
       target_py_vsn: None

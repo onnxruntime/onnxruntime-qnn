@@ -15,7 +15,9 @@ param(
     [string]$QdcManifestPath = "",
     [Parameter(HelpMessage = "Number of sequential provider-test processes")]
     [ValidateSet(1, 2)]
-    [int]$ProviderTestProcesses = 1
+    [int]$ProviderTestProcesses = 1,
+    [Parameter(HelpMessage = "Exclude QNN snapshots until an ARM64 golden producer is available")]
+    [switch]$SkipQnnSnapshots
 )
 
 $RootDir = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)").Path
@@ -61,10 +63,24 @@ $OldBuildDirectoryBackslashesRegex = ($OldBuildDirectoryRegex -replace "/", "\\\
 $NewBuildDirectory = ($RootDir -replace "\\", "/")
 $NewBuildDirectoryBackslashes = ($NewBuildDirectory -replace "/", "\\")
 
+# CTest passes its filter on the command line, overriding GTEST_FILTER.
+# Both Snapshot and SessionSnapshot use QnnSnapshot_* suite names.
+$ProviderTestFilterPattern = '"--gtest_filter=-(?:QnnAcc_\*(?::\*QnnSnapshot_\*)?|\*QnnSnapshot_\*)"'
+$ProviderTestFilter = '"--gtest_filter=-QnnAcc_*"'
+if ($SkipQnnSnapshots) {
+    if (-not (Select-String -LiteralPath $CTestTestFile -Pattern $ProviderTestFilterPattern -Quiet)) {
+        throw "Cannot exclude QNN snapshots: the expected provider CTest filter was not found."
+    }
+    # Keep Accuracy in the ARM64 shadow lane until dedicated routing exists.
+    $ProviderTestFilter = '"--gtest_filter=-*QnnSnapshot_*"'
+    Write-Host "Excluding QNN Snapshot/SessionSnapshot tests: no ARM64 golden producer is available."
+}
+
 # Rewrite CTestTestfile.cmake
 (Get-Content $CTestTestFile) `
     -replace $OldBuildDirectoryRegex, $NewBuildDirectory `
-    -replace $OldBuildDirectoryBackslashesRegex, $NewBuildDirectoryBackslashes |
+    -replace $OldBuildDirectoryBackslashesRegex, $NewBuildDirectoryBackslashes `
+    -replace $ProviderTestFilterPattern, $ProviderTestFilter |
     Out-File -Encoding ascii $CTestTestFile
 
 # Record every JUnit output registered by CTest when bootstrap supplies a manifest.
@@ -81,7 +97,12 @@ if ($QdcManifestPath) {
             foreach ($Test in $CTestPlan.tests) {
                 foreach ($Argument in $Test.command) {
                     if ($Argument.StartsWith("--gtest_output=xml:")) {
-                        [System.IO.Path]::GetFileName($Argument.Substring("--gtest_output=xml:".Length))
+                        $ReportName = [System.IO.Path]::GetFileName($Argument.Substring("--gtest_output=xml:".Length))
+                        if ($ProviderTestProcesses -eq 2 -and $ReportName -eq "onnxruntime_provider_test.exe.$Config.results.xml") {
+                            foreach ($Index in 0..1) { "onnxruntime_provider_test.exe.$Config.shard$Index.results.xml" }
+                        } else {
+                            $ReportName
+                        }
                     }
                 }
             }
@@ -89,6 +110,7 @@ if ($QdcManifestPath) {
         if ($CTestReports.Count -eq 0) { throw "CTest did not register any JUnit reports." }
         $Manifest = Get-Content -LiteralPath $QdcManifestPath -Raw | ConvertFrom-Json
         $Manifest.ctest_reports = @($CTestReports | Select-Object -Unique)
+        $Manifest | Add-Member -NotePropertyName provider_test_processes -NotePropertyValue $ProviderTestProcesses -Force
         $Manifest | ConvertTo-Json | Set-Content -LiteralPath $QdcManifestPath -Encoding UTF8
     } finally {
         Pop-Location
