@@ -1376,6 +1376,9 @@ Ort::Session session(env, ctx_model_path, inference_session_options);
 
 If no callback is registered, the EP uses the legacy plaintext behavior.
 
+The EP uses a successful read callback's output directly, without an additional binary copy,
+and releases it with the supplied ORT allocator after QNN loading and metadata use finish.
+
 - File-mapped weights and this feature are mutually exclusive for a given session: registering a
   read callback disables file mapping for that session, since file mapping requires reading the
   on-disk bytes directly.
