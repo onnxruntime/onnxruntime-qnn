@@ -519,6 +519,29 @@ jobs:
             echo "QA_TAG=${{ inputs.qa_tag }}" >> ${GITHUB_ENV}
           fi
 
+      - name: Report nightly QNN EP binary sizes
+        if: github.event_name == 'schedule' && inputs.nightly_build
+        run: |
+          baseline_args=()
+          current_report="${BUILD_ARTIFACTORY_REPO}/qa/${QA_TAG}/qnn-ep-sizes.json"
+          if inventory=$(jf rt search "${BUILD_ARTIFACTORY_REPO}/qa/nightly-*/qnn-ep-sizes.json" \
+              --sort-by=created --sort-order=desc); then
+            previous_report=$(printf '%s' "$inventory" | jq -r --arg current "$current_report" \
+              '[.[] | select(.path != $current)][0].path // empty')
+            if [ -n "$previous_report" ]; then
+              baseline_dir=$(mktemp -d)
+              if jf rt download "$previous_report" "$baseline_dir/" --flat --fail-no-op; then
+                baseline_args=(--baseline "$baseline_dir/qnn-ep-sizes.json")
+              else
+                echo "::warning::Could not download the previous size snapshot; reporting absolute sizes only."
+              fi
+            fi
+          else
+            echo "::warning::Could not find the previous size snapshot; reporting absolute sizes only."
+          fi
+          python3 qcom/scripts/all/report_qnn_ep_sizes.py \
+            --qa-tag "$QA_TAG" "${baseline_args[@]}"
+
       - name: Collect Test Archives
         # cp (not mv): archives must remain in build/ so the Upload Artifacts to QA Artifactory
         # step below also publishes them individually alongside the combined test_package.zip.
