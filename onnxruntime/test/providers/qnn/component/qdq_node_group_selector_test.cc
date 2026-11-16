@@ -397,15 +397,9 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, RegisterSelector_IncreasesSize) {
 // main_node.inputs.size() must equal dq_nodes.size().
 // =============================================================================
 
-// Beyond matching data type, OrtVariadicNodeGroupSelector::Check also requires every DQ
-// input to be QDQ-pair-compatible (matching scale, via IsQDQPairSupported) with the Q
-// output -- otherwise QNN's fused Concat/Max/Min kernel would silently misinterpret a
-// mismatched-encoding input's raw quantized codes under the output's encoding. The
-// fixtures below wire up real scale initializers (shared or distinctly-named, same or
-// different values) via FakeGraph so IsQDQPairSupported has something to compare.
-//
-// Note: IsQDQPairSupported only compares scale, not zero-point (see its implementation);
-// these tests cover the scale-mismatch case this check protects against.
+// OrtVariadicNodeGroupSelector::Check also requires each DQ input to match the Q
+// output's scale via IsQDQPairSupported; the fixtures below wire up scale initializers
+// via FakeGraph for this. Note: IsQDQPairSupported only compares scale, not zero-point.
 
 TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_Accepts2DqSameType) {
   QdqNodeGroupSelectorTestContext ctx;

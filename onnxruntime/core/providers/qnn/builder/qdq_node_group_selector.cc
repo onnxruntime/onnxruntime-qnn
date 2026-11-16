@@ -1106,18 +1106,10 @@ bool OrtVariadicNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
     return false;
   }
 
-  // Beyond data type, each DQ input must also share the Q output's scale/zero-point --
-  // but only when there is more than one input to compare encodings across. With a
-  // single input there is nothing to concatenate/select between, so the single-input
-  // case is left to the op builder's own input-count validation (e.g. Min/Max reject
-  // 1 input outright); skipping the check here avoids ungrouping that already-rejected
-  // node unit into separately-assignable Q/DQ nodes.
-  //
-  // With >= 2 inputs: without this check, QNN's fused Concat/Max/Min simply concatenates
-  // raw quantized codes; if an input's encoding differs from the output's, those codes
-  // are silently misinterpreted under the output's encoding, producing a wrong result
-  // with no error. Split's selector (below) already performs the equivalent check via
-  // IsQDQPairSupported; this mirrors that for the variadic (multi-input) case.
+  // With >= 2 inputs, each DQ input must also match the Q output's scale/zero-point --
+  // otherwise QNN's fused Concat/Max/Min would silently misinterpret a mismatched
+  // input's raw codes under the output's encoding. Skipped for a single input (nothing
+  // to compare); mirrors Split's selector below, which uses IsQDQPairSupported the same way.
   if (dq_nodes.size() > 1) {
     for (const OrtNode* dq_node : dq_nodes) {
       if (!IsQDQPairSupported(graph, ort_api, q_nodes[0], dq_node)) {
