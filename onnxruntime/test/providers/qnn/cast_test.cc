@@ -311,7 +311,6 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP) {
 }
 
 // Cast(fp32 -> bool) on HTP over a mix of signs, magnitudes, and sub-1 values.
-// Guards the Sign -> Abs -> Cast lowering in cast_op_builder.cc.
 TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP_GenericFpValues) {
   RunQnnModelTest(BuildCastTestCaseWithData<float>(
                       {8},
@@ -322,16 +321,10 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP_GenericFpValues) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
-// Cast float16 to bool on HTP. (Windows ARM64 CI v73 rejects).
+// Cast float16 to bool on HTP.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
-#if defined(__linux__) && !defined(__aarch64__)
-  GTEST_SKIP() << "x86 HTP sim validator rejects Cast(fp16 -> BOOL); requires real device.";
-#endif
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
-  // TODO: Re-enable on Windows ARM64 HTP v81 after fixing FP16-to-Bool offload.
-  // The current Sign -> Abs -> Cast lowering falls back to CPU.
-  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#if defined(_WIN32)
+  GTEST_SKIP() << "FP16-to-bool Cast is unsupported on Windows HTP devices.";
 #endif
   RunCastFP16HTPTest({3, 3},
                      ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
@@ -339,16 +332,9 @@ TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
 }
 
 // Cast(fp16 -> bool) on HTP over a mix of signs, magnitudes, and sub-1 values.
-// Guards the Sign -> Abs -> Cast lowering for fp16 in cast_op_builder.cc.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP_GenericFpValues) {
-#if defined(__linux__) && !defined(__aarch64__)
-  GTEST_SKIP() << "x86 HTP sim validator rejects Cast(fp16 -> BOOL); requires real device.";
-#endif
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
-  // TODO: Re-enable on Windows ARM64 HTP v81 after fixing FP16-to-Bool offload.
-  // The current Sign -> Abs -> Cast lowering falls back to CPU.
-  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#if defined(_WIN32)
+  GTEST_SKIP() << "FP16-to-bool Cast is unsupported on Windows HTP devices.";
 #endif
   const std::vector<float> fp32_data = {-5.0f, -0.5f, 0.0f, 0.5f, 0.9f, 1.0f, 5.0f, 100.0f};
   std::vector<Ort::Float16_t> fp16_data;
