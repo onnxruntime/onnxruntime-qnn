@@ -192,6 +192,32 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale_AU16_WS16Shifted) {
                                        true);
 }
 
+// A nonnegative INT16 gamma quantizes to a nonzero QNN offset. When the activation is also INT16,
+// HTP additionally rejects mixing a (would-be) UINT16 gamma with an SFIXED_POINT_16 activation, so a
+// static gamma is instead re-encoded as symmetric SFIXED_POINT_16 (offset forced to 0, scale doubled)
+// and still runs on QNN, at the cost of up to one quant step of gamma precision. The float range here
+// starts at 0.0f, so the computed zero_point lands at the INT16 minimum (-32768) -- the same maximal
+// offset seen on every layernorm gamma in production gpt-oss checkpoints -- which is also where the
+// doubled-scale re-encode saturates by exactly one quant level (see rmsnormalization_op_builder.cc).
+TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_WS16Shifted) {
+  RunRMSNormQDQTest<int16_t, int16_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+                                      TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
+                                      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                                      ExpectedEPNodeAssignment::All,
+                                      true);
+}
+
+// The same shifted INT16 gamma computed in-graph has no data to re-encode, so the RMSNorm node unit
+// is rejected and falls back to CPU, same as the AU16 case above. The rejection must stay soft: the
+// surrounding QDQ nodes are still claimed by QNN, the session initializes, and the results stay correct.
+TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale_AS16_WS16Shifted) {
+  RunRMSNormQDQTest<int16_t, int16_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+                                      TestInputDef<float>({3}, false, GetFloatDataInRange(0.0f, 1.0f, 3)),
+                                      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                                      ExpectedEPNodeAssignment::Some,
+                                      true);
+}
+
 TEST_F(QnnHTPBackendTests, RMSNormU8U8_4D_LastAxis) {
   RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18)),
                                       TestInputDef<float>({3}, true, GetFloatDataInRange(-2.0f, 2.0f, 3)),
