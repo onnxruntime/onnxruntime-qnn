@@ -186,6 +186,36 @@ python qcom/build_and_test.py test_ort_windows_x86_64
 python qcom/build_and_test.py test_ort_windows_arm64ec
 ```
 
+### Local Windows x86-64 QNN Coverage
+
+The following local-only task builds the internal-symbol x86-64 QNN CPU test
+binary and generates an OpenCppCoverage report. It is not enabled in CI.
+
+```batch
+python qcom/build_and_test.py coverage_windows_x86_64
+```
+
+If OpenCppCoverage is not already installed, the task installs
+`OpenCppCoverage.OpenCppCoverage` with `winget`. The report and captured run
+logs are written to:
+
+```text
+build\windows-x86_64-internal-symbols\RelWithDebInfo\coverage\
+```
+
+The default test filter covers the Windows x86-64 QNN CPU/IR/unit suites. To
+avoid a full run while iterating, invoke the script directly with a narrower
+GoogleTest filter:
+
+```batch
+powershell -ExecutionPolicy Bypass -File qcom\scripts\windows\generate_opencppcoverage.ps1 ^
+  -BuildDir build\windows-x86_64-internal-symbols ^
+  -TestFilter "QnnCPUBackendTests.ArgMaxMin_DefaultAttrs"
+```
+
+Use `-OpenCppCoveragePath` to supply a non-default executable location, or
+`-NoInstallCoverageTools` to require a preinstalled tool.
+
 ### Linux Testing
 
 ```bash
