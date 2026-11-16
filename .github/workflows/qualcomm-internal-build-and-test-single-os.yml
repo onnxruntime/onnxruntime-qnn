@@ -317,6 +317,19 @@ jobs:
           docker image prune -f
           docker builder prune -f --filter until=72h
 
+      - name: Clean Linux internal-symbol build outputs
+        if: ${{ always() && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols && (inputs.target_arch == 'x86_64_ubuntu_22_04' || inputs.target_arch == 'aarch64_manylinux_2_34') }}
+        continue-on-error: true
+        run: |
+          case "${BUILD_DIR_ARCH}" in
+            x86_64_ubuntu_22_04-internal-symbols|aarch64_manylinux_2_34-internal-symbols) ;;
+            *) echo "Refusing to clean unexpected build directory: ${BUILD_DIR_ARCH}" >&2; exit 1 ;;
+          esac
+          rm -rf -- "${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}"
+          rm -f -- \
+            "${GITHUB_WORKSPACE}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}linux-${BUILD_DIR_ARCH}.tar.bz2" \
+            "${GITHUB_WORKSPACE}/build/onnxruntime-testdata.tar.bz2"
+
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && '-self-hosted' || '' }}${{ inputs.qnn_internal_test_symbols && inputs.target_os != 'linux' && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     # Cross-runner tests also consume shared testdata from Artifactory; skip on fork PRs where secrets are unavailable.
@@ -432,6 +445,19 @@ jobs:
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+
+      - name: Clean Linux internal-symbol test outputs
+        if: ${{ always() && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols && (inputs.target_arch == 'x86_64_ubuntu_22_04' || inputs.target_arch == 'aarch64_manylinux_2_34') }}
+        continue-on-error: true
+        run: |
+          case "${BUILD_DIR_ARCH}" in
+            x86_64_ubuntu_22_04-internal-symbols|aarch64_manylinux_2_34-internal-symbols) ;;
+            *) echo "Refusing to clean unexpected build directory: ${BUILD_DIR_ARCH}" >&2; exit 1 ;;
+          esac
+          rm -rf -- "${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}"
+          rm -f -- \
+            "${GITHUB_WORKSPACE}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}linux-${BUILD_DIR_ARCH}.tar.bz2" \
+            "${GITHUB_WORKSPACE}/build/onnxruntime-testdata.tar.bz2"
 
   test-windows-arm64-qdc:
     # A WoS QDC test takes around 2 hours, tying up Linux CI resources.
