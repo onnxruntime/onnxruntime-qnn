@@ -39,7 +39,9 @@ def build_repo(tmp_path: Path) -> Path:
         "get_llvm_contentdir() { get_tools_dir; }\n"
         "get_hexagon_sdk_contentdir() { get_tools_dir; }\n"
     )
-    (scripts / "run_tests.sh").touch()
+    test_runner = scripts / "run_tests.sh"
+    test_runner.write_text("#!/bin/sh\nexit 0\n")
+    test_runner.chmod(0o755)
     all_scripts = tmp_path / "qcom/scripts/all"
     all_scripts.mkdir()
     shutil.copy2(QCOM_ROOT / "scripts/all/ort_build_identity.py", all_scripts / "ort_build_identity.py")
