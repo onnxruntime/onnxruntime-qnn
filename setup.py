@@ -167,7 +167,7 @@ if platform.system() == "Linux" or platform.system() == "AIX":
     dl_libs.append(providers_qnn)
     # QNN-EP is built as shared libs
     libs.append(providers_qnn)
-    # QNN
+    # QNN dependencies
     qnn_deps = [
         "libGenie.so",
         "libHtpPrepare.so",
@@ -187,6 +187,8 @@ if platform.system() == "Linux" or platform.system() == "AIX":
         "libQnnHtpV79Stub.so",
         "libQnnHtpV81Skel.so",
         "libQnnHtpV81Stub.so",
+        "libQnnHtpV85Skel.so",
+        "libQnnHtpV85Stub.so",
         "libQnnIr.so",
         "libQnnSaver.so",
         "libQnnSystem.so",
@@ -195,10 +197,17 @@ if platform.system() == "Linux" or platform.system() == "AIX":
 else:
     # QNN-EP is built as shared libs
     libs = [providers_qnn]
-    # QNN V68/V73/V81 dependencies
+    # QNN V68/V73/V81/V85 dependencies
     qnn_deps = [
         "Genie.dll",
         "HtpPrepare.dll",
+        "libQnnHtpV68Skel.so",
+        "libqnnhtpv73.cat",
+        "libQnnHtpV73Skel.so",
+        "libqnnhtpv81.cat",
+        "libQnnHtpV81Skel.so",
+        "libqnnhtpv85.cat",
+        "libQnnHtpV85Skel.so",
         "QnnGpu.dll",
         "QnnHtp.dll",
         "QnnHtpNetRunExtensions.dll",
@@ -206,14 +215,10 @@ else:
         "QnnHtpV68Stub.dll",
         "QnnHtpV73Stub.dll",
         "QnnHtpV81Stub.dll",
+        "QnnHtpV85Stub.dll",
         "QnnIr.dll",
         "QnnSaver.dll",
         "QnnSystem.dll",
-        "libQnnHtpV68Skel.so",
-        "libQnnHtpV73Skel.so",
-        "libQnnHtpV81Skel.so",
-        "libqnnhtpv73.cat",
-        "libqnnhtpv81.cat",
     ]
     libs.extend(qnn_deps)
 

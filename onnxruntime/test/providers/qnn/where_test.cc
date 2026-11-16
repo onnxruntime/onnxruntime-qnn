@@ -12,7 +12,7 @@
 
 namespace onnxruntime {
 namespace test {
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Function that builds a float32 model with a Where operator.
 GetTestModelFn BuildWhereTestCase(const TestInputDef<bool>& condition_def,
@@ -142,7 +142,7 @@ TEST_F(QnnHTPBackendTests, WhereLargeDataBroadcastTransformedU8) {
                   ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

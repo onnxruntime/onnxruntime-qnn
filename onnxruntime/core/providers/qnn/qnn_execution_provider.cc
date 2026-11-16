@@ -12,7 +12,6 @@
 #include <iterator>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -660,7 +659,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   OnRunStart = OnRunStartImpl;
   OnRunEnd = OnRunEndImpl;
   CreateAllocator = CreateAllocatorImpl;
-  GetDefaultMemoryDevice = GetDefaultMemoryDeviceImpl;
   SetDynamicOptions = SetDynamicOptionsImpl;
   GetCompiledModelCompatibilityInfo = GetCompiledModelCompatibilityInfoImpl;
 #if QNN_ORT_EP_PROFILING_API_ENABLED
@@ -1324,22 +1322,16 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     model_settings_.offload_graph_io_quantization = false;
   }
 
-  // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
-  // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
-  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
-                                                            runtime_capabilities,
-                                                            &logger_);
-
-  // Callback output uses ordinary loading; only native DMA loading needs this RPCMem setup.
-  if (enable_file_mapped_weights_ && !io_dispatch_->HasReadCallback() && !rpcmem_library_) {
-    // DMA import requires RPCMem. If initialization fails, keep CPU file
-    // mapping enabled and use ordinary context loading.
+  if (enable_file_mapped_weights_ && !rpcmem_library_) {
+    // Attempt to init rpcmem_library_ if needed. If this fails, then
+    // disable file mapped weights and proceed with normal operation
     std::string rpcmem_error;
     rpcmem_library_ = qnn::RpcMemLibraryManager::GetOrCreate(rpcmem_error);
     if (rpcmem_library_ == nullptr) {
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_WARNING,
-                  ("Unable to load RPCMem library: " + rpcmem_error + " - DMA loading is unavailable; retaining CPU file mapping for ordinary context loading.").c_str());
+                  ("Unable to load RPCMem library: " + rpcmem_error + " - Disabling file mapped weights.").c_str());
+      enable_file_mapped_weights_ = false;
     }
   }
 
@@ -1730,6 +1722,20 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
     etwRegistrationManager.RegisterInternalCallback(callback_ETWSink_provider_);
   }
 #endif
+
+  // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
+  // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
+  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
+                                                            runtime_capabilities,
+                                                            &logger_);
+
+  // File mapping and encryption are mutually exclusive: an App-provided read callback replaces
+  // the on-disk read, so file mapping must be off when a read callback is registered.
+  if (enable_file_mapped_weights_ && io_dispatch_->HasReadCallback()) {
+    enable_file_mapped_weights_ = false;
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "EPContext read callback registered; disabling file mapping for this session.");
+  }
 }
 
 QnnEp::~QnnEp() {
@@ -3296,6 +3302,13 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (ep->prepare_only_) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                 "prepare_only mode: context saved. Releasing QNN device resources.");
+#if defined(_WIN32)
+    if (ep->callback_ETWSink_provider_) {
+      // Unregistration waits for active callbacks before releasing the backend they use.
+      qnn::QnnTelemetry::Instance().UnregisterInternalCallback(ep->callback_ETWSink_provider_);
+      ep->callback_ETWSink_provider_ = nullptr;
+    }
+#endif
     ep->qnn_models_.clear();
     ep->qnn_backend_manager_.reset();
   }
@@ -3649,15 +3662,6 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
     // default memory device or QNN memhandle binding policy.
     return qnn::HtpSharedMemoryAllocator::Create(ep->ort_api, memory_info, allocator);
   }
-  return nullptr;
-}
-
-OrtStatus* ORT_API_CALL QnnEp::GetDefaultMemoryDeviceImpl(
-    _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept {
-  const auto* ep = static_cast<const QnnEp*>(this_ptr);
-  *device = qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)
-                ? ep->ep_api.MemoryInfo_GetMemoryDevice(ep->factory_.GetHostAccessibleMemoryInfo())
-                : nullptr;
   return nullptr;
 }
 

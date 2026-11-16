@@ -386,7 +386,7 @@ TEST_F(QnnCPUBackendTests, NonMaxSuppression_Fallback_DynamicIouThreshold) {
 // HTP tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 static ProviderOptions HtpNmsProviderOptions() {
   ProviderOptions opts;
@@ -475,7 +475,7 @@ TEST_F(QnnHTPBackendTests, NonMaxSuppression_HTP_QDQ_Uint16) {
              ExpectedEPNodeAssignment::All, HtpNmsProviderOptions());
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 // max_output_boxes_per_class == 0 must fall back.
 // 0 is legal in ONNX (selects no boxes) but produces a degenerate [0, 3] QNN output

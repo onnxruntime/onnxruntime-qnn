@@ -179,7 +179,7 @@ TEST_F(QnnCPUBackendTests, LpPool_Reject_Dilation) {
                   ExpectedEPNodeAssignment::None);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 //
 // HTP backend tests
@@ -330,9 +330,9 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_FP16_P1_Rank3) {
                     ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 static void RunLpPoolHTPBF16Test(const std::vector<TestInputDef<float>>& input_defs,
                                  const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
@@ -411,9 +411,9 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_BF16_P1) {
                        ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 //
 // GPU backend tests
@@ -485,7 +485,7 @@ TEST_F(QnnGPUBackendTests, LpPool_GPU_FP16_Rank3) {
                     "gpu");
 }
 
-#endif  // defined(_M_ARM64) — GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) — GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime

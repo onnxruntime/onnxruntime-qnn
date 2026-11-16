@@ -1193,7 +1193,7 @@ TEST_F(QnnCPUBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
                 ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // The bug is from a QDQ model, and Conv node gets processed before it's producer Mul node
 // A Transpose node gets inserted between Mul and the dynamic weight tensor shape on Conv
@@ -4261,9 +4261,9 @@ TEST_F(QnnHTPBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
                                      ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 //
 // GPU tests:
 //
@@ -4604,7 +4604,7 @@ TEST_F(QnnGPUBackendTests, ConvTranspose2D_NoReuseSparseIndices) {
                 "gpu");
 }
 
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime

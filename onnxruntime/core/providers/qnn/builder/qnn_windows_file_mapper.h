@@ -20,18 +20,16 @@ namespace onnxruntime {
 namespace qnn {
 
 class WindowsFileMapper : public FileMappingInterface {
+  using MappedMemoryPtr = std::unique_ptr<char[], std::function<void(void*)>>;
+
  public:
   explicit WindowsFileMapper(const Ort::Logger& logger);
   ~WindowsFileMapper() override;
 
-  // Returns a borrowed view from the path cache, creating it on a cache miss.
-  // The mapper owns the cached view until its destruction.
+  // Creates a file mapping of the context binary and returns the
+  // mapview pointer of the file mapping
   Ort::Status GetContextBinMappedMemoryPtr(const std::string& bin_filepath,
                                            void** mapped_data_ptr) override;
-
-  // Creates an independent read-only view. The caller owns it and may outlive the mapper.
-  Ort::Status MapContextBinary(const std::string& bin_filepath,
-                               MappedMemoryPtr& mapped_memory) override;
 
  private:
   // A container of smart pointers of mapview memory pointers to mapped context bins

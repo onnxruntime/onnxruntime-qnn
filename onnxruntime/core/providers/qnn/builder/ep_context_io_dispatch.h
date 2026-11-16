@@ -26,17 +26,6 @@ class EpContextBuffer {
     size_ = size;
   }
 
-  // Replaces the previous allocation only after the new allocation succeeds.
-  Ort::Status Allocate(size_t size) {
-    OrtAllocator* allocator = nullptr;
-    ORT_CXX_RETURN_ON_API_FAIL(Ort::GetApi().GetAllocatorWithDefaultOptions(&allocator));
-    void* data = nullptr;
-    ORT_CXX_RETURN_ON_API_FAIL(Ort::GetApi().AllocatorAlloc(allocator, size, &data));
-    RETURN_IF(size != 0 && data == nullptr, "Failed to allocate context binary buffer.");
-    Adopt(data, size, allocator);
-    return Ort::Status();
-  }
-
  private:
   OwnedBufferPtr data_{nullptr, Ort::detail::AllocatedFree(nullptr)};
   size_t size_ = 0;
@@ -81,8 +70,8 @@ class EpContextIoDispatch {
   bool HasReadCallback() const noexcept;
   bool HasWriteCallback() const noexcept;
 
-  // Precondition: HasReadCallback(). Adopts successful output without copying.
-  // On callback error, application cleanup and `out` remain unchanged.
+  // Precondition: HasReadCallback(). Adopts valid successful output without copying.
+  // On callback error, the callback cleans up and the previous output is preserved.
   Ort::Status Read(const std::string& file_name, EpContextBuffer& out) const;
 
   // Precondition: HasWriteCallback(). Logs INFO with byte count on success.

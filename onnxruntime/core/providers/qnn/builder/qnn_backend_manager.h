@@ -211,17 +211,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Reads a context binary file into a buffer. Validates the file exists and is non-empty.
   // Shared between LoadCachedQnnContextFromBuffer and RecoverFromSSR to avoid duplicating
-  // file I/O logic. If io_dispatch is non-null and carries a read callback, the
-  // callback is dispatched instead of reading from disk.
+  // native file I/O logic. Callback output is owned separately by the caller.
   Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                    EpContextBuffer& buffer,
-                                    const qnn::EpContextIoDispatch& io_dispatch);
+                                    std::vector<char>& buffer);
 
   // Reloads a QNN context from its binary file after an SSR event. Handles both file-mapped
-  // and direct-read paths. CPU mapping without FastRPC is currently limited to initial
-  // single-context loading; recovery keeps its existing buffered-read fallback.
-  // Always starts a new spill-fill group (firstGroupHandle = 0x0) since SSR
-  // invalidates all prior context handles.
+  // and direct-read paths to match initial-load behavior. Always starts a new spill-fill
+  // group (firstGroupHandle = 0x0) since SSR invalidates all prior context handles.
   // The new context handle is registered via AddQnnContextHandle on success.
   Ort::Status ReloadContextForSSR(const std::string& context_bin_filepath,
                                   int64_t max_spill_fill_size,
@@ -238,14 +234,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t>& configs_builder);
 
   // Shared dispatch helper used by ReloadContextForSSR and LoadCachedQnnContextFromBuffer.
-  // use_dma_loading requires a mapped binary and an attached FastRPC library.
-  // Attempts contextCreateFromBinaryWithCallback when use_dma_loading is true; falls back to
-  // contextCreateFromBinary on failure or when DMA is disabled.
+  // Attempts contextCreateFromBinaryWithCallback when use_file_mapping is true; falls back to
+  // contextCreateFromBinary on failure or when file mapping is disabled/unavailable.
   // bin_buffer: pre-acquired mapped or pre-read buffer; pass nullptr to read from context_bin_filepath.
   // Does NOT call AddQnnContextHandle — callers are responsible for registering the handle.
   Ort::Status CreateContextHandleFromBinary(void* bin_buffer,
                                             uint64_t buffer_length,
-                                            bool use_dma_loading,
+                                            bool use_file_mapping,
                                             const QnnContext_Config_t** context_configs,
                                             const std::string& context_bin_filepath,
                                             const qnn::EpContextIoDispatch& io_dispatch,
@@ -701,7 +696,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void InitializeProfilingManager(const QnnBackendManagerConfig& config);
 
-  std::shared_ptr<RpcMemLibrary> GetRpcMemLibrary();
   void DeallocateMappedDmaBuffers();
 
   // Checks if act_ver is >= min_ver. An act_ver of 0.0.0 is considered invalid.
@@ -818,7 +812,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   QnnHtpDevice_Arch_t htp_arch_internal_ = QNN_HTP_DEVICE_ARCH_NONE;
   uint32_t vtcm_size_internal_ = 0;
 
-  // The existing registration mutex also protects RPCMem attachment.
+  // File mapping.
   std::shared_ptr<RpcMemLibrary> rpcmem_library_ = nullptr;
   std::mutex mapped_fastrpc_buffers_mutex_;
   std::vector<std::pair<void*, uint64_t>> mapped_fastrpc_buffers_;
