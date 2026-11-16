@@ -178,18 +178,6 @@ jobs:
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
           ${{ inputs.upload_test_archive && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
 
-      # Preserve executable modes and symlinks in the temporary cross-runner
-      # hand-off. The existing archive accept-list excludes build intermediates.
-      - name: Pack Linux internal-symbol test inputs
-        if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner }}
-        run: |
-          python3 - <<'PY'
-          import sys
-          sys.path.insert(0, 'qcom/scripts/all')
-          from archive_tests import archive_linux
-          archive_linux('linux-${{ env.BUILD_DIR_ARCH }}', '${{ inputs.build_config }}')
-          PY
-
       # Artifactory credentials are also used to obtain version-aligned snapshot
       # goldens before the Linux x86_64 internal-symbol shadow test runs.
       - name: Setup JFrog CLI
