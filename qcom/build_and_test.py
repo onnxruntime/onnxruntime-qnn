@@ -504,6 +504,7 @@ class TaskLibrary:
                     [
                         str(self.__python_executable),
                         str(REPO_ROOT / "qcom" / "scripts" / "all" / "archive_testdata.py"),
+                        *([f"--ort-prebuilt={self.__ort_prebuilt_root}"] if self.__ort_prebuilt_root else []),
                     ]
                 ],
             )
@@ -536,6 +537,7 @@ class TaskLibrary:
                             self.__venv_path,
                             build_dir,
                             config="Debug",
+                            ort_prebuilt_root=self.__ort_prebuilt_root,
                         ),
                     ],
                 )
@@ -731,6 +733,7 @@ class TaskLibrary:
                             "Generating HTML coverage report",
                             self.__venv_path,
                             build_dir,
+                            ort_prebuilt_root=self.__ort_prebuilt_root,
                         ),
                     ],
                 )
@@ -745,6 +748,7 @@ class TaskLibrary:
                     "Generating HTML coverage report",
                     self.__venv_path,
                     build_dir,
+                    ort_prebuilt_root=self.__ort_prebuilt_root,
                 )
             )
 
@@ -922,6 +926,7 @@ class TaskLibrary:
                             "Generating HTML coverage report",
                             self.__venv_path,
                             build_dir,
+                            ort_prebuilt_root=self.__ort_prebuilt_root,
                         ),
                         GenerateDiffCoverageTask(
                             "Generating diff coverage report (Linux x86_64)",
@@ -1800,6 +1805,8 @@ def build_and_test():
 
     args = parse_arguments()
     ort_prebuilt_root = get_ort_prebuilt_root(args.ort_prebuilt)
+    if ort_prebuilt_root is not None:
+        os.environ[ORT_PREBUILT_ROOT_ENV_VAR] = str(ort_prebuilt_root.resolve())
     ort_test_assets_root = get_ort_test_assets_root(
         args.ort_test_assets,
         ort_prebuilt_root,

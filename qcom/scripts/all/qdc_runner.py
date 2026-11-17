@@ -25,6 +25,7 @@ from typing import ClassVar, NamedTuple
 import backoff
 import requests
 from extract_testdata import MAPPING as _TESTDATA_MAPPING
+from ort_build_identity import validate_testdata_archive
 from package_manager import PackageManager
 from prettytable import PrettyTable
 from qualcomm_device_cloud_sdk import Client
@@ -1090,6 +1091,7 @@ class RunnerCli:
                         # filter= parameter added in Python 3.12; fall back for older runtimes.
                         tf.extractall(staging)
 
+            validate_testdata_archive(staging)
             with zipfile.ZipFile(archive_path, mode="a") as out_zip:
                 for handle, rel_template in _TESTDATA_MAPPING.items():
                     src = staging / handle

@@ -172,12 +172,11 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         super().__init__(group_name, [cmd], env=ort_build_env_vars())
 
 
-class GenerateCoverageTask(BashScriptsWithVenvTask):
+class GenerateCoverageTask(RunExecutablesWithVenvTask):
     """Run generate_coverage.sh to collect gcov data and produce an HTML coverage report.
 
-    Uses BashScriptsWithVenvTask (rather than BashScriptsTask) intentionally:
-    Phase 2 will invoke Python tools (e.g. lcov_cobertura, diff-cover) that require
-    the venv to be active.
+    Reconciles prebuilt inputs before testing. Both Python preparation and the
+    coverage script run with the venv enabled for lcov_cobertura and diff-cover.
     """
 
     def __init__(
@@ -186,16 +185,18 @@ class GenerateCoverageTask(BashScriptsWithVenvTask):
         venv: Path | None,
         build_dir: Path,
         config: str = "RelWithDebInfo",
+        ort_prebuilt_root: Path | None = None,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "linux" / "generate_coverage.sh"),
             f"--build-dir={build_dir}",
             f"--config={config}",
         ]
-        super().__init__(group_name, venv, [cmd])
+        commands = prebuilt_test_reconciliation(build_dir, config, ort_prebuilt_root)
+        super().__init__(group_name, venv, [*commands, [BASH_EXECUTABLE, *cmd]])
 
 
-class RunAsanTask(BashScriptsWithVenvTask):
+class RunAsanTask(RunExecutablesWithVenvTask):
     """Run onnxruntime_provider_test under AddressSanitizer via run_asan.sh.
 
     The script wraps the binary with asan_filter_leaks.sh so that only Direct
@@ -209,13 +210,29 @@ class RunAsanTask(BashScriptsWithVenvTask):
         venv: Path | None,
         build_dir: Path,
         config: str = "Debug",
+        ort_prebuilt_root: Path | None = None,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "linux" / "run_asan.sh"),
             f"--build-dir={build_dir}",
             f"--config={config}",
         ]
-        super().__init__(group_name, venv, [cmd])
+        commands = prebuilt_test_reconciliation(build_dir, config, ort_prebuilt_root)
+        super().__init__(group_name, venv, [*commands, [BASH_EXECUTABLE, *cmd]])
+
+
+def prebuilt_test_reconciliation(build_dir: Path, config: str, sdk: Path | None) -> list[list[str]]:
+    if sdk is None:
+        return []
+    return [
+        [
+            "python3",
+            str(REPO_ROOT / "qcom/scripts/all/reconcile_prebuilt_tests.py"),
+            f"--build-dir={build_dir}",
+            f"--config={config}",
+            f"--sdk={sdk}",
+        ]
+    ]
 
 
 class GenerateDiffCoverageTask(CompositeTask):

@@ -277,14 +277,15 @@ foreach(_file IN LISTS ORT_BINARY_FILES)
 endforeach()
 
 if(onnxruntime_ORT_HOME)
-    add_custom_command(
-        OUTPUT ${ORT_BUILD_BYPRODUCTS}
+    # SDK archives can preserve timestamps older than the installed files, even
+    # when VERSION_NUMBER or the SDK path changes. Compare contents on every build.
+    add_custom_target(ort_core_target
         COMMAND ${ORT_INSTALL_COMMAND}
+        BYPRODUCTS ${ORT_BUILD_BYPRODUCTS}
         DEPENDS ${ORT_PREBUILT_SOURCE_FILES}
         COMMENT "Installing prebuilt ONNX Runtime ${ORT_CORE_VER}"
         VERBATIM
     )
-    add_custom_target(ort_core_target DEPENDS ${ORT_BUILD_BYPRODUCTS})
     if(onnxruntime_ORT_TEST_ASSETS_HOME)
         # Stage independently of whether the provider test binary relinks.
         # This directory is owned by the upstream assets; do not retain removed models.

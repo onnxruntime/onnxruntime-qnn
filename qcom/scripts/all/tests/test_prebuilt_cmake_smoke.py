@@ -27,12 +27,14 @@ def _write(path: Path, content: str = "smoke") -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _create_prebuilt_sdk(root: Path) -> list[str]:
+def _create_prebuilt_sdk(root: Path, *, windows: bool | None = None) -> list[str]:
     _write(root / "VERSION_NUMBER", ORT_VERSION)
     _write(root / "include" / "onnxruntime_c_api.h")
     _write(root / "include" / "onnxruntime_cxx_api.h")
 
-    if sys.platform == "win32":
+    if windows is None:
+        windows = sys.platform == "win32"
+    if windows:
         libraries = [
             "onnxruntime.dll",
             "onnxruntime.lib",
@@ -94,6 +96,79 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/selected-assets.txt" "${{onnxruntime_ORT_TEST_
 
 
 class PrebuiltCmakeSmokeTest(unittest.TestCase):
+    def test_sdk_transitions_replace_fixed_names_with_older_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env = os.environ.copy()
+            env.pop("ORT_TEST_ASSETS_ROOT", None)
+            cmake = os.environ.get("CMAKE_EXECUTABLE") or shutil.which("cmake")
+            for name, version in (("A", ORT_VERSION), ("B", ORT_VERSION), ("B", "1.25.0")):
+                sdk = root / name
+                libraries = _create_prebuilt_sdk(sdk, windows=True)
+                _create_project(root, sdk)
+                _write(sdk / "VERSION_NUMBER", version)
+                for library in libraries:
+                    _write(sdk / "lib" / library, name + version)
+                    os.utime(sdk / "lib" / library, (1_000_000, 1_000_000))
+                result = _configure(root, env, "-DCMAKE_SYSTEM_NAME=Windows")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                result = subprocess.run(
+                    [cmake, "--build", str(root / "build"), "--target", "ort_core_target"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=120,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                for library in libraries:
+                    self.assertEqual((root / "build" / library).read_text(), name + version)
+
+    def test_existing_instrumented_build_stages_assets_and_rejects_sdk_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            sdk = root / "sdk"
+            _create_prebuilt_sdk(sdk)
+            _create_runner(sdk)
+            _create_project(root, sdk)
+            env = os.environ.copy()
+            env.pop("ORT_TEST_ASSETS_ROOT", None)
+            result = _configure(root, env, "-DENABLE_COVERAGE:BOOL=ON")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            identity = subprocess.check_output([sys.executable, str(IDENTITY_SCRIPT), f"--sdk={sdk}"], text=True)
+            _write(root / "ort-build-identity-build.txt", identity)
+            binary = root / "build/onnxruntime_provider_test"
+            _write(binary, "instrumented binary")
+            binary_time = binary.stat().st_mtime_ns
+            command = [
+                sys.executable,
+                str(REPO_ROOT / "qcom/scripts/all/reconcile_prebuilt_tests.py"),
+                f"--build-dir={root}",
+                "--config=build",
+                f"--sdk={sdk}",
+            ]
+            for name in ("A", "B"):
+                assets = root / name
+                _write(assets / "VERSION_NUMBER", ORT_VERSION)
+                _write(assets / f"onnxruntime/test/testdata/{name}.onnx", name)
+                result = subprocess.run(
+                    [*command, f"--assets={assets}"], check=False, capture_output=True, text=True, env=env, timeout=120
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual([p.name for p in (root / "build/testdata").iterdir()], [f"{name}.onnx"])
+                self.assertEqual(binary.stat().st_mtime_ns, binary_time)
+                self.assertIn("ENABLE_COVERAGE:BOOL=ON", (root / "build/CMakeCache.txt").read_text())
+
+            # A different SDK cannot replace the one used by the instrumented binary.
+            _write(sdk / "VERSION_NUMBER", "1.25.0")
+            _write(assets / "VERSION_NUMBER", "1.25.0")
+            result = subprocess.run(
+                [*command, f"--assets={assets}"], check=False, capture_output=True, text=True, env=env, timeout=120
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("rebuild with the required coverage/ASan instrumentation", result.stderr)
+            self.assertEqual(binary.stat().st_mtime_ns, binary_time)
+
     def test_dependency_preparation_skips_only_replaced_ort_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -324,6 +399,55 @@ done <<< "$ORT_IDENTITIES"
                     timeout=120,
                 )
                 self.assertEqual(result.stdout.splitlines(), ["changed=1", "same="] * 4)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux-only task graph")
+    def test_coverage_report_tasks_reconcile_before_testing_with_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            sdk = root / "sdk"
+            assets = root / "assets"
+            _create_prebuilt_sdk(sdk)
+            _create_runner(sdk)
+            _write(assets / "VERSION_NUMBER", ORT_VERSION)
+            _write(assets / "onnxruntime/test/testdata/model.onnx")
+            recorder = f"""import json
+import sys
+from unittest.mock import patch
+sys.path.insert(0, {str(REPO_ROOT / "qcom")!r})
+import build_and_test
+def record(venv, command, **kwargs):
+    print("RECORDED " + json.dumps(command))
+with patch("ep_build.task.run_with_venv", side_effect=record):
+    build_and_test.build_and_test()
+"""
+            for task in ("coverage_report_linux_x86_64", "diff_coverage_linux_x86_64"):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        recorder,
+                        "--only",
+                        "--ort-prebuilt",
+                        str(sdk),
+                        "--ort-test-assets",
+                        str(assets),
+                        task,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                commands = [
+                    json.loads(line.removeprefix("RECORDED "))
+                    for line in result.stdout.splitlines()
+                    if line.startswith("RECORDED ")
+                ]
+                self.assertEqual(commands[0][0], "python3")
+                self.assertTrue(commands[0][1].endswith("reconcile_prebuilt_tests.py"))
+                self.assertIn(f"--sdk={sdk}", commands[0])
+                self.assertTrue(commands[1][1].endswith("generate_coverage.sh"))
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux-only task graph")
     def test_composite_test_tasks_require_assets(self) -> None:

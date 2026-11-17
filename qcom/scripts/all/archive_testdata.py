@@ -7,11 +7,12 @@
 Output: build/onnxruntime-testdata.zip and build/onnxruntime-testdata.tar.bz2
 
 The archive contains four arch-neutral top-level directories:
-    testdata/            (from upstream ORT source — fetched via cmake/deps.txt)
+    testdata/            (from selected prebuilt assets, or ORT source via cmake/deps.txt)
     pytorch-converted/   (from cmake/external/onnx submodule)
     pytorch-operator/    (from cmake/external/onnx submodule)
     node/                (from cmake/external/onnx submodule)
 
+Prebuilt archives also carry the selected SDK/assets identity, checked before extraction.
 extract_testdata.py knows how to re-map these handles into the on-disk locations
 expected by run_tests.{ps1,sh} and the test binaries.
 """
@@ -30,6 +31,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 from urllib.request import urlretrieve
+
+from ort_build_identity import TESTDATA_IDENTITY_FILE, testdata_identity
 
 QCOM_ROOT = Path(__file__).parent.parent.parent
 REPO_ROOT = QCOM_ROOT.parent
@@ -193,6 +196,8 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format=log_format, force=True)
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--ort-prebuilt", default=os.environ.get("ORT_PREBUILT_ROOT", ""))
+    parser.add_argument("--ort-test-assets", default=os.environ.get("ORT_TEST_ASSETS_ROOT", ""))
     parser.add_argument(
         "--build-dir",
         type=Path,
@@ -217,27 +222,32 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    dep = parse_deps_txt(REPO_ROOT / "cmake" / "deps.txt")
+    identity = testdata_identity(args.ort_prebuilt, args.ort_test_assets)
+    if args.ort_prebuilt:
+        ort_core_src = Path(args.ort_test_assets)
+    else:
+        dep = parse_deps_txt(REPO_ROOT / "cmake" / "deps.txt")
+        cache_zip = ort_core_cache_path(args.cache_dir, dep.url)
+        download_and_verify(dep.url, dep.sha1, cache_zip)
 
-    cache_zip = ort_core_cache_path(args.cache_dir, dep.url)
-    download_and_verify(dep.url, dep.sha1, cache_zip)
-
-    extract_root = args.build_dir / "ort_core-src"
-    if extract_root.exists():
-        shutil.rmtree(extract_root)
-    extract_root.mkdir(parents=True)
-    with zipfile.ZipFile(cache_zip) as zf:
-        zf.extractall(extract_root)
-    # The zip extracts to onnxruntime-<version>/, hop down one level.
-    children = [p for p in extract_root.iterdir() if p.is_dir()]
-    if len(children) != 1:
-        raise RuntimeError(f"Unexpected layout in ort_core extraction: {children}")
-    ort_core_src = children[0]
+        extract_root = args.build_dir / "ort_core-src"
+        if extract_root.exists():
+            shutil.rmtree(extract_root)
+        extract_root.mkdir(parents=True)
+        with zipfile.ZipFile(cache_zip) as zf:
+            zf.extractall(extract_root)
+        # The zip extracts to onnxruntime-<version>/, hop down one level.
+        children = [p for p in extract_root.iterdir() if p.is_dir()]
+        if len(children) != 1:
+            raise RuntimeError(f"Unexpected layout in ort_core extraction: {children}")
+        ort_core_src = children[0]
 
     onnx_src = REPO_ROOT / "cmake" / "external" / "onnx" / "onnx"
 
     stage_root = args.build_dir / "stage"
     stage_sources(stage_root=stage_root, ort_core_src=ort_core_src, onnx_src=onnx_src)
+    if args.ort_prebuilt:
+        (stage_root / TESTDATA_IDENTITY_FILE).write_text(identity, encoding="utf-8")
     written = write_archives(stage_root=stage_root, output_dir=args.output_dir)
     for p in written:
         logging.info("Wrote %s (%.1f MiB)", p, p.stat().st_size / (1 << 20))

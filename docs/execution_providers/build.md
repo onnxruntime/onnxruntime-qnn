@@ -106,6 +106,13 @@ Configuration validates and copies it next to the test binaries before execution
 The build tracks the resolved SDK and test-assets paths and versions. Adding assets to a build-only
 directory or switching asset trees regenerates the build and stages testdata even when the provider
 test executable does not need relinking. `--only` test tasks also regenerate a stale build before testing.
+Library and runner staging compares contents on each build, including SDK updates whose archive timestamps
+are older than the installed files. Device testdata archives use the selected assets in prebuilt mode,
+and extraction rejects an archive prepared for different SDK/assets paths or versions.
+
+Coverage report tasks preserve the existing instrumented binary: they reject a different SDK identity
+and configure/stage the selected compatible assets before running tests. Rebuild with
+`coverage_build_linux_x86_64` before reporting against another SDK.
 
 ### Windows Builds
 

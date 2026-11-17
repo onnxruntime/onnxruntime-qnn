@@ -16,6 +16,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from ort_build_identity import validate_testdata_archive
+
 QCOM_ROOT = Path(__file__).parent.parent.parent
 REPO_ROOT = QCOM_ROOT.parent
 
@@ -81,6 +83,7 @@ def extract(archive: Path, target_platform: str, repo_root: Path = REPO_ROOT, co
     with tempfile.TemporaryDirectory(prefix="extract-testdata-") as tmp:
         staging = Path(tmp)
         _extract_to_staging(archive, staging)
+        validate_testdata_archive(staging)
 
         present_handles = {p.name for p in staging.iterdir() if p.is_dir()}
         unknown = present_handles - set(MAPPING.keys())
