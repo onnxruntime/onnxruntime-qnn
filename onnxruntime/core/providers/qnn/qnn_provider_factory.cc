@@ -53,9 +53,9 @@ static const std::unordered_map<OrtHardwareDeviceType, std::string> kSupportedBa
     {OrtHardwareDeviceType_GPU, "gpu"},
 };
 
-// x86 advertises CPU always (HTP emulator); arm64 is opt-in via ORT_QNN_ENABLE_CPU_BACKEND (tests).
+// x86 advertises CPU always (HTP emulator); ARM64/ARM64EC opt in via ORT_QNN_ENABLE_CPU_BACKEND (tests).
 static bool QnnCpuBackendEnabled() {
-#if !defined(__aarch64__) && !defined(_M_ARM64)
+#if !QNN_ARCH_ARM64
   return true;  // x86 host: CPU backend is the HTP emulator.
 #else
   static const bool enabled = []() {

@@ -392,7 +392,7 @@ TEST_F(QnnCPUBackendTests, Resize2xNearestTfHalfPixelForNNFloor) {
                      ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -617,7 +617,7 @@ static void RunQDQResizeAndAssertQnnOp(const std::vector<int64_t>& input_shape,
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = graph_dir.string();
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
   TestQDQModelAccuracy<uint8_t>(
@@ -860,7 +860,7 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicTfHalfPixelForNN_Unsupported) {
                               GraphOptimizationLevel::ORT_DISABLE_ALL);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

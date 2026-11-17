@@ -231,7 +231,7 @@ TEST_F(QnnCPUBackendTests, Max_3Inputs_Int64) {
                          ExpectedEPNodeAssignment::All, "cpu", 13);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -415,7 +415,7 @@ TEST_F(QnnHTPBackendTests, Max_3Inputs_Int64) {
                          ExpectedEPNodeAssignment::All, "htp", 13);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 #endif  // !defined(ORT_MINIMAL_BUILD)

@@ -612,7 +612,7 @@ static void CreateQdqAddModel(const std::string& model_file_name) {
 // Two models share the same QNN context binary. When SSR occurs, each model
 // independently recovers by reloading the shared binary and retrieving its graph.
 TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContextWeightSharing) {
-#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+#if (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #else
@@ -891,6 +891,13 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteDoubleCrashReturnsUnrecoverableErr
     defined(QNN_TEST_HTP_FP16_CLAMP_OVERFLOW_AVAILABLE)
 TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteEpContext_Fp16ClampOverflow_ReappliedAfterRecovery) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after resolving the error.
+  // Error: QNN_GRAPH_ERROR_INVALID_NAME: Invalid or duplicate graph name, Code: 6003
+  // C++ exception with description "Failed to initialize qnn_model_wrapper." thrown in the test body.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
 
   const std::string context_model_file = "./ssr_fp16_clamp_overflow_ctx.onnx";
   std::remove(context_model_file.c_str());

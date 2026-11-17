@@ -323,7 +323,7 @@ TEST_F(QnnCPUBackendTests, Pad6d) {
                ExpectedEPNodeAssignment::None);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 TEST_F(QnnHTPBackendTests, PadNoConstantValue_FP32_as_FP16) {
@@ -723,9 +723,9 @@ TEST_F(QnnHTPBackendTests, PadFloatInputDirectlyToQ_NoDq) {
                   EPVerificationParams{ExpectedEPNodeAssignment::Some});
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 //
 // GPU tests:
 //
@@ -840,7 +840,7 @@ TEST_F(QnnGPUBackendTests, Pad6d) {
                "gpu");
 }
 
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime

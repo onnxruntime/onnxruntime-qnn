@@ -22,7 +22,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 namespace {
 
@@ -193,7 +193,7 @@ TEST_F(QnnHTPBackendTests, LPBQGemmFusion_OutOfRangeScaleMax) {
                   /*verify_outputs=*/false);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 }  // namespace test
 }  // namespace onnxruntime

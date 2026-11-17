@@ -16,7 +16,7 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, RandomUniformLike_GraphInputRegistered) {
   auto build_test_case = [](ModelTestBuilder& builder) {
@@ -54,7 +54,7 @@ TEST_F(QnnHTPBackendTests, RandomUniformLike_GraphInputRegistered) {
   });
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

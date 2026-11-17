@@ -3,6 +3,7 @@
 // Licensed under the MIT License.
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/qnn_graph_emitter.h"
 
 #include <filesystem>
 #include <fstream>
@@ -211,7 +212,8 @@ Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
         Qnn_GraphHandle_t graph;
         bool graph_retrieve_success = false;
         for (size_t cIdx = 0; cIdx < contexts_.size(); cIdx++) {
-          auto graph_retrieve_rt = qnn_interface_.graphRetrieve(contexts_[cIdx], graph_name.c_str(), &graph);
+          auto graph_retrieve_rt =
+              QnnGraphEmitter::RetrieveGraphHandle(qnn_interface_, contexts_[cIdx], graph_name.c_str(), &graph);
           if (QNN_SUCCESS != graph_retrieve_rt) {
             continue;
           }
