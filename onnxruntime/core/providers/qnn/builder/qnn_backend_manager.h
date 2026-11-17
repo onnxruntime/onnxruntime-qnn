@@ -228,7 +228,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                   Qnn_ContextHandle_t& new_context,
                                   const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch());
 
-  // Builds the common context configs (priority + spill-fill) used by both binary-load paths.
+  // Builds the common context configs (priority + optional HTP configs) used by both binary-load paths.
   // first_group_handle: 0x0 for SSR (always a new group); GetQnnContext(0) for initial multi-
   // context load (joins the existing spill-fill group).
   // Adding a new config here propagates to both LoadCachedQnnContextFromBuffer and ReloadContextForSSR.

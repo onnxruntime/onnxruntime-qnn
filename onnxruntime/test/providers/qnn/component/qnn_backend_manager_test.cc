@@ -35,6 +35,8 @@
 
 #include "test/providers/qnn/infra/qnn_test_windows_compat.h"
 
+#include "HTP/QnnHtpCommon.h"
+
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/ort_api.h"
@@ -62,6 +64,95 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeManager(
   cfg.skip_qnn_version_check = skip_version_check;
   cfg.configure_host_mode = configure_host_mode;
   return qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
+}
+
+TEST(QnnUnit_BackendManagerTest, BuildContextBinaryConfigs_ContextInitAcceleration_OptionAndBackend) {
+  struct Case {
+    uint32_t backend;
+    std::optional<bool> enabled;
+  };
+  const Case cases[] = {{QNN_BACKEND_ID_HTP, std::nullopt},
+                        {QNN_BACKEND_ID_HTP, false},
+                        {QNN_BACKEND_ID_HTP, true},
+                        {QNN_BACKEND_ID_CPU, true}};
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(test_case.backend);
+    SCOPED_TRACE(test_case.enabled.value_or(false));
+    StubApiEnv env;
+    qnn::QnnBackendManagerConfig config{};
+    config.context_priority = qnn::ContextPriority::NORMAL;
+    if (test_case.enabled) {
+      config.htp_context_init_acceleration = *test_case.enabled;
+    }
+    auto manager = qnn::QnnBackendManager::Create(config, env.api_ptrs, env.logger);
+    manager->SetQnnBackendType(test_case.backend);
+    qnn::QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> builder(
+        QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
+    ASSERT_TRUE(manager->BuildContextBinaryConfigs(0, nullptr, builder).IsOK());
+    const auto* configs = builder.GetQnnConfigs();
+    ASSERT_NE(configs[0], nullptr);
+    EXPECT_EQ(configs[0]->option, QNN_CONTEXT_CONFIG_OPTION_PRIORITY);
+    EXPECT_EQ(configs[0]->priority, QNN_PRIORITY_NORMAL);
+    size_t end = 1;
+#ifdef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+    if (test_case.backend == QNN_BACKEND_ID_HTP && test_case.enabled.value_or(false)) {
+      ASSERT_NE(configs[end], nullptr);
+      ASSERT_EQ(configs[end]->option, QNN_CONTEXT_CONFIG_OPTION_CUSTOM);
+      const auto* custom = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[end++]->customConfig);
+      ASSERT_NE(custom, nullptr);
+      EXPECT_EQ(custom->option, QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION);
+      EXPECT_TRUE(custom->initAcceleration);
+    }
+#endif
+    EXPECT_EQ(configs[end], nullptr);
+  }
+}
+
+TEST(QnnUnit_BackendManagerTest, BuildContextBinaryConfigs_ContextInitAcceleration_PreservesExistingConfigs) {
+  char group_token{};
+  const Qnn_ContextHandle_t group_handles[] = {nullptr, reinterpret_cast<Qnn_ContextHandle_t>(&group_token)};
+  for (auto group_handle : group_handles) {
+    SCOPED_TRACE(group_handle);
+    StubApiEnv env;
+    qnn::QnnBackendManagerConfig config{};
+    config.context_priority = qnn::ContextPriority::HIGH;
+    config.reused_io_limit_mb = 64;
+    config.htp_context_init_acceleration = true;
+    auto manager = qnn::QnnBackendManager::Create(config, env.api_ptrs, env.logger);
+    manager->SetQnnBackendType(QNN_BACKEND_ID_HTP);
+    qnn::QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> builder(
+        QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
+    ASSERT_TRUE(manager->BuildContextBinaryConfigs(4096, group_handle, builder).IsOK());
+    const auto* configs = builder.GetQnnConfigs();
+    ASSERT_NE(configs[0], nullptr);
+    EXPECT_EQ(configs[0]->option, QNN_CONTEXT_CONFIG_OPTION_PRIORITY);
+    EXPECT_EQ(configs[0]->priority, QNN_PRIORITY_HIGH);
+    ASSERT_NE(configs[1], nullptr);
+    ASSERT_EQ(configs[1]->option, QNN_CONTEXT_CONFIG_OPTION_CUSTOM);
+    const auto* spill = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[1]->customConfig);
+    ASSERT_NE(spill, nullptr);
+    EXPECT_EQ(spill->option, QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS);
+    EXPECT_EQ(spill->groupRegistration.firstGroupHandle, group_handle);
+    EXPECT_EQ(spill->groupRegistration.maxSpillFillBuffer, 4096u);
+    size_t end = 2;
+#ifdef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+    ASSERT_NE(configs[end], nullptr);
+    ASSERT_EQ(configs[end]->option, QNN_CONTEXT_CONFIG_OPTION_CUSTOM);
+    const auto* reused = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[end++]->customConfig);
+    ASSERT_NE(reused, nullptr);
+    EXPECT_EQ(reused->option, QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT);
+    EXPECT_EQ(reused->reusedIoLimitMb, 64u);
+#endif
+#ifdef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+    ASSERT_NE(configs[end], nullptr);
+    ASSERT_EQ(configs[end]->option, QNN_CONTEXT_CONFIG_OPTION_CUSTOM);
+    const auto* acceleration = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[end++]->customConfig);
+    ASSERT_NE(acceleration, nullptr);
+    EXPECT_EQ(acceleration->option, QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION);
+    EXPECT_TRUE(acceleration->initAcceleration);
+#endif
+    EXPECT_EQ(configs[end], nullptr);
+  }
 }
 
 // ---------------------------------------------------------------------------

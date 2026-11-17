@@ -1372,6 +1372,19 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
   }
 #endif
 
+#ifdef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+  if (htp_context_init_acceleration_ &&
+      GetQnnBackendType() == QnnBackendType::HTP) {
+    auto custom = configs_builder.PushCustomConfig();
+    custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION;
+    custom->initAcceleration = true;
+
+    auto config = configs_builder.PushConfig();
+    config->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    config->customConfig = custom;
+  }
+#endif
+
   return Ort::Status();
 }
 
@@ -2088,21 +2101,6 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> configs_builder(
         QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
     RETURN_IF_ERROR(BuildContextBinaryConfigs(max_spill_fill_size, first_group_handle, configs_builder));
-
-#ifdef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
-    if (htp_context_init_acceleration_ &&
-        GetQnnBackendType() == QnnBackendType::HTP &&
-        !is_multi_soc_buffer &&
-        !context_bin_filepath.empty()) {
-      auto custom = configs_builder.PushCustomConfig();
-      custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION;
-      custom->initAcceleration = true;
-
-      auto config = configs_builder.PushConfig();
-      config->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
-      config->customConfig = custom;
-    }
-#endif
 
     qnn::profile::ProfilingInfo profiling_info;
     qnn::QnnProfilingScope profiling_scope;

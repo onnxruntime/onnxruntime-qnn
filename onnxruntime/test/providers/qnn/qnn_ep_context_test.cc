@@ -1690,6 +1690,57 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   ASSERT_EQ(std::remove(qnn_ctx_bin.c_str()), 0);
 }
 
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 47))
+TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpInitAcceleration_LoadsAndRuns) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const ProviderOptions provider_options = {{"backend_type", "htp"},
+                                            {"offload_graph_io_quantization", "0"},
+                                            {"disable_file_mapped_weights", "1"},
+                                            {"num_graph_prepare_threads", "1"}};
+  const TestInputDef<float> input_def({1, 2, 3}, false,
+                                      std::vector<float>{-3.0f, -2.0f, -1.0f, 1.0f, 2.0f, 3.0f});
+  const auto f32_model = BuildOpTestCase<float>("Atan_node", "Atan", {input_def}, {}, {});
+  const auto qdq_model = BuildQDQOpTestCase<uint8_t>("Atan_node", "Atan", {input_def}, {}, {});
+
+  for (const char* embed_mode : {"0", "1"}) {
+    SCOPED_TRACE(embed_mode);
+    const std::string context_model_file = std::string("htp_init_acceleration_") + embed_mode + "_ctx.onnx";
+    const std::string context_bin_file = std::string("htp_init_acceleration_") + embed_mode + "_ctx_qnn.bin";
+    std::remove(context_model_file.c_str());
+    std::remove(context_bin_file.c_str());
+    const std::unordered_map<std::string, std::string> cache_options = {
+        {kOrtSessionOptionEpContextEnable, "1"},
+        {kOrtSessionOptionEpContextEmbedMode, embed_mode},
+        {kOrtSessionOptionEpContextFilePath, context_model_file}};
+    ASSERT_NO_FATAL_FAILURE(TestQDQModelAccuracy(
+        f32_model, qdq_model, provider_options, 14, ExpectedEPNodeAssignment::All,
+        QDQTolerance(), ORT_LOGGING_LEVEL_ERROR, "", cache_options));
+    ASSERT_TRUE(std::filesystem::exists(context_model_file));
+    if (std::string(embed_mode) == "0") {
+      ASSERT_TRUE(std::filesystem::exists(context_bin_file));
+    }
+
+    const std::unordered_map<std::string, std::string> load_options = {
+        {kOrtSessionOptionEpContextFilePath, context_model_file}};
+    for (const char* acceleration : {"0", "1"}) {
+      SCOPED_TRACE(acceleration);
+      ProviderOptions loading_provider_options(provider_options);
+      loading_provider_options["htp_context_init_acceleration"] = acceleration;
+      ASSERT_NO_FATAL_FAILURE(TestQDQModelAccuracy(
+          f32_model, qdq_model, loading_provider_options, 14, ExpectedEPNodeAssignment::All,
+          QDQTolerance(), ORT_LOGGING_LEVEL_ERROR, context_model_file, load_options));
+    }
+
+    if (std::string(embed_mode) == "0") {
+      CleanUpCtxFile(context_model_file);
+    } else {
+      EXPECT_TRUE(std::filesystem::remove(context_model_file));
+    }
+  }
+}
+#endif  // QAIRT SDK 2.47+
+
 // htp_reused_io_limit_mb: a valid numeric value is accepted when preparing and loading an AOT context.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceeds) {
 #if QNN_API_VERSION_MAJOR < 2 || \
