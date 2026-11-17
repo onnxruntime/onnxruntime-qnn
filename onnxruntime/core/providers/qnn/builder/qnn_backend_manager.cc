@@ -1315,8 +1315,8 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
                                                      std::vector<char>& buffer,
                                                      const qnn::EpContextIoDispatch& io_dispatch) {
   if (io_dispatch.HasReadCallback()) {
-    const std::string filename = std::filesystem::path(context_bin_filepath).filename().string();
-    RETURN_IF_ERROR(io_dispatch.Read(filename, buffer));
+    const std::string filename = std::filesystem::u8path(context_bin_filepath).filename().u8string();
+    RETURN_IF_ERROR(io_dispatch.Read(filename, buffer, context_bin_filepath));
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO,
                     ("EPContext binary decrypted via App read callback: " + filename +
                      " (" + std::to_string(buffer.size()) + " bytes)")
