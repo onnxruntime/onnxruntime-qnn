@@ -113,18 +113,23 @@ ProviderOptions GetProviderOptions() {
 void RunDefaultPermFusionTest(
     const std::filesystem::path& json_qnn_graph_dir,
     std::optional<std::vector<int64_t>> perm1,
-    std::optional<std::vector<int64_t>> perm2) {
+    std::optional<std::vector<int64_t>> perm2,
+    const std::vector<int64_t>& reshape_shape = {4, 3, 2},
+    bool use_htp = true) {
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
+  if (!use_htp) {
+    provider_options["backend_type"] = "cpu";
+  }
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   const auto input_def = TestInputDef<float>({2, 3, 4}, false, -1.0f, 1.0f);
   RunQnnModelTest(BuildTransposeReshapeTransposeTestCase(
-                      input_def, std::move(perm1), /*reshape_shape=*/{4, 3, 2}, std::move(perm2)),
+                      input_def, std::move(perm1), reshape_shape, std::move(perm2)),
                   provider_options, 13,
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-2f)});
 
@@ -133,6 +138,21 @@ void RunDefaultPermFusionTest(
 }
 
 }  // namespace
+
+TEST_F(QnnCPUBackendTests, TransposeReshapeTransposeFusion_DefaultPerms) {
+  RunDefaultPermFusionTest("TransposeReshapeTransposeFusion_CPU_DefaultPerms", std::nullopt, std::nullopt,
+                           {4, 3, 2}, /*use_htp=*/false);
+}
+
+TEST_F(QnnCPUBackendTests, TransposeReshapeTransposeFusion_DefaultPermOnFirstTranspose) {
+  RunDefaultPermFusionTest("TransposeReshapeTransposeFusion_CPU_DefaultPermOnFirstTranspose", std::nullopt,
+                           std::vector<int64_t>{2, 1, 0}, {4, 3, 2}, /*use_htp=*/false);
+}
+
+TEST_F(QnnCPUBackendTests, TransposeReshapeTransposeFusion_DefaultPermOnSecondTranspose) {
+  RunDefaultPermFusionTest("TransposeReshapeTransposeFusion_CPU_DefaultPermOnSecondTranspose",
+                           std::vector<int64_t>{1, 2, 0}, std::nullopt, {12, 2}, /*use_htp=*/false);
+}
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
@@ -185,8 +205,10 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_DefaultPermOnFirstTra
 
 TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_DefaultPermOnSecondTranspose) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  // Merge B and C so ORT cannot eliminate the middle Reshape as an identity.
+  // The default rank-2 reversal restores [A, B*C], equivalent to one Reshape.
   RunDefaultPermFusionTest("TransposeReshapeTransposeFusion_DefaultPermOnSecondTranspose",
-                           std::vector<int64_t>{2, 1, 0}, std::nullopt);
+                           std::vector<int64_t>{1, 2, 0}, std::nullopt, {12, 2});
 }
 
 TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_NameCollision) {
