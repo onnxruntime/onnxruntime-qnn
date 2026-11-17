@@ -103,6 +103,7 @@ void CreateQLinearConvOpBuilder(const std::string& op_type, OpBuilderRegistratio
 void CreateQLinearMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateQuickGeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRandomNormalLikeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateRandomUniformOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRandomUniformLikeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRangeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateReciprocalOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
