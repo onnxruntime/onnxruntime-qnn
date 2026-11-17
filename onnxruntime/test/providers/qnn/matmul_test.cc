@@ -909,6 +909,15 @@ static void RunMixedPrecisionOutputTest(const char* test_name, bool weight_is_in
   }
   AssertOpInQnnGraph(graph_dir, "Convert", 1);
   AssertConvertOutputDataType(graph_dir, expected_convert_type);
+  if constexpr (std::is_same_v<ActivationQType, uint8_t> && std::is_same_v<WeightQType, uint8_t> &&
+                std::is_same_v<OutputQType, uint16_t>) {
+    const std::string qnn_op = weight_is_initializer ? "FullyConnected" : "MatMul";
+    const QuantParams<uint8_t> weight_encoding = GetTestInputQuantParams<uint8_t>(input1_def);
+    AssertOpInputInQnnGraph(graph_dir, qnn_op, 0, QNN_DATATYPE_UFIXED_POINT_16);
+    AssertOpInputInQnnGraph(graph_dir, qnn_op, 1, QNN_DATATYPE_UFIXED_POINT_8,
+                            std::make_pair(weight_encoding.scale, -static_cast<int32_t>(weight_encoding.zero_point)));
+    AssertOpOutputInQnnGraph(graph_dir, qnn_op, QNN_DATATYPE_UFIXED_POINT_16);
+  }
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16ActivationU8Output_StaticWeight) {
@@ -939,6 +948,32 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationU16Output_StaticWeight) {
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationU16Output_DynamicInput1) {
   RunMixedPrecisionOutputTest<uint8_t, uint8_t, uint16_t>("u8_u16_dynamic", /*weight_is_initializer=*/false,
                                                           QNN_DATATYPE_UFIXED_POINT_16);
+}
+
+TEST_F(QnnHTPBackendTests, MatMulOpQdqU16ActivationU8RhsU16OutputPreservesPrecision) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / "MatMulOpQdqU16U8U16PreservesPrecision";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  const TestInputDef<float> input0_def({2, 16}, false, GetFloatDataInRange(-1.0f, 1.0f, 32));
+  const TestInputDef<float> input1_def({16, 8}, false, GetFloatDataInRange(-0.5f, 0.5f, 128));
+  const QuantParams<uint16_t> input0_encoding = GetTestInputQuantParams<uint16_t>(input0_def);
+  const QuantParams<uint8_t> input1_encoding = GetTestInputQuantParams<uint8_t>(input1_def);
+  TestQDQModelAccuracy(BuildMatMulOpTestCase(input0_def, input1_def),
+                       BuildMatMulOpQDQTestCase<uint16_t, uint8_t, uint16_t>(input0_def, input1_def, true),
+                       GetQDQMatMulProviderOptions(graph_dir), 21, ExpectedEPNodeAssignment::All, QDQTolerance());
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+
+  AssertOpInQnnGraph(graph_dir, "Convert", 0);
+  AssertOpInputInQnnGraph(graph_dir, "MatMul", 0, QNN_DATATYPE_UFIXED_POINT_16,
+                          std::make_pair(input0_encoding.scale, -static_cast<int32_t>(input0_encoding.zero_point)));
+  AssertOpInputInQnnGraph(graph_dir, "MatMul", 1, QNN_DATATYPE_UFIXED_POINT_8,
+                          std::make_pair(input1_encoding.scale, -static_cast<int32_t>(input1_encoding.zero_point)));
+  AssertOpOutputInQnnGraph(graph_dir, "MatMul", QNN_DATATYPE_UFIXED_POINT_16);
 }
 
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_S8ActivationS16Output_StaticWeight) {
@@ -988,6 +1023,10 @@ TEST_F(QnnHTPBackendTests, MatMulOpQdqU8ActivationU8OutputU16WeightDynamicInput1
   }
   AssertOpInQnnGraph(graph_dir, "MatMul", 1);
   AssertOpInQnnGraph(graph_dir, "Convert", 2);
+  AssertOpInputInQnnGraph(graph_dir, "MatMul", 0, QNN_DATATYPE_UFIXED_POINT_16);
+  const QuantParams<uint16_t> input1_encoding = GetTestInputQuantParams<uint16_t>(input1_def);
+  AssertOpInputInQnnGraph(graph_dir, "MatMul", 1, QNN_DATATYPE_UFIXED_POINT_16,
+                          std::make_pair(input1_encoding.scale, -static_cast<int32_t>(input1_encoding.zero_point)));
   AssertOpOutputInQnnGraph(graph_dir, "MatMul", QNN_DATATYPE_UFIXED_POINT_16);
   AssertOpOutputInQnnGraph(graph_dir, "Quantize", QNN_DATATYPE_UFIXED_POINT_8,
                            std::make_pair(input0_encoding.scale, -static_cast<int32_t>(input0_encoding.zero_point)),

@@ -39,6 +39,14 @@ void AssertOpOutputInQnnGraph(const std::filesystem::path& dump_dir,
                               std::optional<std::pair<float, int32_t>> expected_scale_offset = std::nullopt,
                               const std::string& expected_output_name = "");
 
+// Checks an input tensor of a single node of type `op`, including per-tensor
+// scale/offset when supplied. QNN's offset is the negative ONNX zero point.
+void AssertOpInputInQnnGraph(const std::filesystem::path& dump_dir,
+                             const std::string& op,
+                             size_t input_index,
+                             uint32_t expected_data_type,
+                             std::optional<std::pair<float, int32_t>> expected_scale_offset = std::nullopt);
+
 // Count APP_WRITE tensors to detect parameters left outside a QDQ group.
 void AssertQnnGraphInputCount(const std::filesystem::path& dump_dir, size_t expected_count);
 
