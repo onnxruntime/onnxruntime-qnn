@@ -176,7 +176,9 @@ jobs:
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
-          ${{ inputs.upload_test_archive && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
+          # Internal-symbol cross-runner tests hand off this archive through GitHub Actions;
+          # upload_test_archive controls Artifactory publication, not that local hand-off.
+          ${{ (inputs.upload_test_archive || (inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner)) && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
 
       # Artifactory credentials are also used to obtain version-aligned snapshot
       # goldens before the Linux x86_64 internal-symbol shadow test runs.
