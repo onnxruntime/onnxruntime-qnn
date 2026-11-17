@@ -35,6 +35,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGemmOpBuilder("Gemm", *this);
   CreateGroupNormalizationOpBuilder("GroupNormalization", *this);
   CreateGroupQueryAttentionOpBuilder("GroupQueryAttention", *this);
+  CreateCustomGroupQueryAttentionOpBuilder("CustomGroupQueryAttention", *this);
   CreateGRUOpBuilder("GRU", *this);
   CreateIdentityOpBuilder("Identity", *this);
   CreateIfOpBuilder("If", *this);

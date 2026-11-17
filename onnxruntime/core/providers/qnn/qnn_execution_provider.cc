@@ -979,6 +979,12 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("op_packages"), "", op_packages_str);
   if (!op_packages_str.empty()) {
     ParseOpPackages(op_packages_str, op_packages, logger_);
+    for (const auto& package : op_packages) {
+      if (package.op_type == "GroupQueryAttention" &&
+          package.interface == "gqa_op_packageInterfaceProvider") {
+        model_settings_.use_custom_gqa = true;
+      }
+    }
   }
 
   // HTP graph finalization optimization mode
@@ -2355,10 +2361,11 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // op_affinity: the GQA builder may trigger the known performance regression on HTP,
   // so HTP sessions default to keeping GQA on CPU
-  // -- users can opt into HTP via the op_affinity config once they've validated it.
+  // -- users can opt into HTP via op_affinity or an explicit custom GQA package registration.
   const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
   if (resolved_backend == qnn::QnnBackendType::HTP) {
-    ep->model_settings_.op_affinity.SeedDefaultIfAbsent("GroupQueryAttention", qnn::QnnBackendType::CPU);
+    ep->model_settings_.op_affinity.SeedDefaultIfAbsent(
+        "GroupQueryAttention", ep->model_settings_.use_custom_gqa ? qnn::QnnBackendType::HTP : qnn::QnnBackendType::CPU);
   }
 
   rt = ep->model_settings_.op_affinity.ValidateForSessionBackend(resolved_backend);

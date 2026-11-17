@@ -77,6 +77,7 @@ void CreateGatherNDOpBuilder(const std::string& op_type, OpBuilderRegistrations&
 void CreateGemmOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGroupNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGroupQueryAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateCustomGroupQueryAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGRUOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateHardSigmoidOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateIdentityOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

@@ -270,6 +270,21 @@ For `onnxruntime_perf_test`, to use HTP shared-memory zero-copy, enable `enable_
 |---|---|
 |Op package config (string)|Register custom op packages. Format: `<OpType>:<PackagePath>:<InterfaceSymbolName>[:<Target>]`. Multiple packages can be separated by commas.|
 
+For experimental FP16 GQA, registering
+`GroupQueryAttention:<PackagePath>:gqa_op_packageInterfaceProvider[:<Target>]` selects the dedicated
+custom GQA builder for original `com.microsoft::GroupQueryAttention` nodes. The builder reorders
+inputs, omits absent optional tensors, reshapes singleton `seqlens_k` to rank 1, casts INT64
+`position_ids` to INT32, and maps attributes to `gqa_op_package` parameters. No ONNX domain change
+or external model translation is required. The package must provide validation and parameter-order
+registration. Custom-domain nodes continue to use the generic UDO path.
+
+This path requires HTP, FP16 activations/cache/outputs, batch 1, and three outputs. It supports packed
+or separate QKV, full attention or compact sliding-window cache, non-interleaved RoPE, and optional
+attention bias, subject to package validation. Quantized KV cache, head sinks, and Q/K normalization
+are not supported. The explicit GQA package registration defaults GQA affinity to HTP; an explicit
+`op_affinity` still takes precedence. Without this registration, native GQA retains its existing
+behavior. Use a separate session/context compilation for each target.
+
 |`"dump_json_qnn_graph"`|Description|
 |---|---|
 |'0'|Default. Disabled.|

@@ -56,7 +56,7 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
 
   Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override {
     const std::string& op_type = node_unit_->OpType();
-    const auto* op_builder = qnn::GetOpBuilder(op_type);
+    const auto* op_builder = GetBuilder(qmw);
 
     RETURN_IF_NOT(op_builder != nullptr, ("Operators of type `" + op_type +
                                           "` are not supported by QNN EP." + op_type + " node `" +
@@ -72,7 +72,7 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
 
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override {
     const std::string& op_type = node_unit_->OpType();
-    const auto* op_builder = qnn::GetOpBuilder(op_type);
+    const auto* op_builder = GetBuilder(qmw);
     RETURN_IF_NOT(op_builder != nullptr, ("[QNN EP]: Missing OpBuilder for OpType " + op_type).c_str());
     return op_builder->AddToModelBuilder(qmw, *node_unit_, logger, /*do_op_validation*/ false);
   }
@@ -85,6 +85,14 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
   std::string_view Type() const override { return "OrtNodeUnit"; }
 
  private:
+  const IOpBuilder* GetBuilder(const QnnModelWrapper& qmw) const {
+    if (qmw.GetModelSettings().use_custom_gqa && node_unit_->Domain() == "com.microsoft" &&
+        node_unit_->OpType() == "GroupQueryAttention") {
+      return qnn::GetOpBuilder("CustomGroupQueryAttention");
+    }
+    return qnn::GetOpBuilder(node_unit_->OpType());
+  }
+
   const OrtNodeUnit* node_unit_;
 };
 
@@ -152,6 +160,11 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
+  // Contrib GQA needs schema translation; the generic UDO fusion expects package-order inputs.
+  // Also keep a previous session's global UDO registration from redirecting native GQA sessions.
+  if (starting_node_unit.Domain() == "com.microsoft" && starting_node_unit.OpType() == "GroupQueryAttention") {
+    return nullptr;
+  }
   // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes) except
   // MatMul/Gemm w/ LPBQ encodings, Erf, Tanh, Reshape, Concat, and a few others.
   if (starting_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode &&
