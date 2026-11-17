@@ -1292,6 +1292,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_Test_QDQConvWithDynamicWeightsFromMul) {
 // fp16 Conv smoke test; on QAIRT >= 2.49 it exercises the clamp-overflow path.
 TEST_F(QnnHTPBackendTests, Conv_Fp16ClampOverflow_Smoke) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after resolving the error.
+  // Error: QNN_GRAPH_ERROR_INVALID_NAME: Invalid or duplicate graph name, Code: 6003
+  // C++ exception with description "Failed to initialize qnn_model_wrapper." thrown in the test body.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";

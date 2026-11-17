@@ -200,6 +200,7 @@ python_312_windows_arm64:
   <<: *py_arm64_common
   version: 3.12.10
   md5: 37df52717faa6c514342b8d43cae7026
+  sha256: 377ac8fd478987940088e879441e702a71b53164d2a1e6f1d51ff77a7e470258
 python_313_windows_arm64:
   <<: *py_arm64_common
   version: 3.13.7
