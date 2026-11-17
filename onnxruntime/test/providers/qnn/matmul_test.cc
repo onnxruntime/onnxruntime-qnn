@@ -490,7 +490,7 @@ TEST_F(QnnHTPBackendTests, MatMulDefaultUsesFC) {
   AssertOpInQnnGraph(graph_dir, "MatMul", 0);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 //
 // HTP tests:
@@ -1130,9 +1130,9 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_BlockQuant_U16ActivationU8Output) {
       "u16_u8");
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 //
 // GPU tests:
 //
@@ -1191,7 +1191,7 @@ TEST_F(QnnGPUBackendTests, MatMulOp_rank1) {
   RunMatMulOpTest({2, 3, 3, 3}, {3}, false, false, ExpectedEPNodeAssignment::All, "gpu");
 }
 
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime

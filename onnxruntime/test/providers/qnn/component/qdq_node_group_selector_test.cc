@@ -988,7 +988,7 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, Gemm_RejectsInt8AWithUint8B) {
                          {dq_a.AsNode(), dq_b.AsNode()}, {}));
 }
 
-TEST(QnnUnit_QdqNodeGroupSelectorTest, Gemm_RejectsQOutputTypeMismatch) {
+TEST(QnnUnitQdqNodeGroupSelectorTest, GemmActivationOutputTypePairs) {
   QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
@@ -998,13 +998,26 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, Gemm_RejectsQOutputTypeMismatch) {
   FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeNode main_node{"gemm", "Gemm", "", 11, {&dummy, &dummy}, {&main_out}};
 
-  // Q output INT8 ≠ A input UINT8
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
 
   OrtGemmNodeGroupSelector sel;
-  EXPECT_FALSE(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
-                         {dq_a.AsNode(), dq_b.AsNode()}, {q.AsNode()}));
+  struct Case {
+    ONNXTensorElementDataType output_type;
+    bool expected;
+  };
+  const Case cases[] = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, true},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, true},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, false},
+  };
+  for (const auto& c : cases) {
+    q_out.elem_type = c.output_type;
+    EXPECT_EQ(sel.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
+                        {dq_a.AsNode(), dq_b.AsNode()}, {q.AsNode()}),
+              c.expected)
+        << "output=" << c.output_type;
+  }
 }
 
 // =============================================================================
@@ -1129,11 +1142,62 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, Where_AcceptsInt16) {
 }
 
 // =============================================================================
-// OrtInstanceAndLayerNormalizationNodeGroupSelector — type mismatch (private)
+// OrtNormalizationNodeGroupSelector — type mismatch (private)
 // =============================================================================
 
-TEST(QnnUnit_QdqNodeGroupSelectorTest, InstanceNorm_RejectsTypeMismatch) {
+TEST(QnnUnitQdqNodeGroupSelectorTest, NormMixedPrecisionRestrictedToLayerNorm) {
+  constexpr auto u8 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+  constexpr auto u16 = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
+  struct Case {
+    const char* op_type;
+    ONNXTensorElementDataType input_type;
+    ONNXTensorElementDataType output_type;
+    bool expected;
+  };
+  const Case cases[] = {
+      {"InstanceNormalization", u16, u8, false},
+      {"InstanceNormalization", u8, u16, false},
+      {"InstanceNormalization", u8, u8, true},
+      {"GroupNormalization", u16, u8, false},
+      {"GroupNormalization", u8, u16, false},
+      {"GroupNormalization", u8, u8, true},
+      {"LayerNormalization", u16, u8, true},
+      {"LayerNormalization", u8, u16, true},
+      {"LayerNormalization", u8, u8, true},
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.op_type);
+    QdqNodeGroupSelectorTestContext ctx;
+    OrtGlobalApiOverride global_guard(&ctx.api);
+    FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+    FakeValueInfo input{"x", c.input_type, {1, 8, 4, 4}};
+    FakeValueInfo weight{"w", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {8}};
+    FakeValueInfo bias{"b", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, {8}};
+    FakeNode dq_data{"dq0", "DequantizeLinear", "", 21, {&input}, {}};
+    FakeNode dq_scale{"dq1", "DequantizeLinear", "", 21, {&weight}, {}};
+    FakeNode dq_bias{"dq2", "DequantizeLinear", "", 21, {&bias}, {}};
+    FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 8, 4, 4}};
+    FakeNode main_node{"norm", c.op_type, "", 17, {&dummy, &dummy, &dummy}, {&main_out}};
+    FakeOrtValue scale_value = FakeOrtValue::MakeFloat(0.01f);
+    FakeValueInfo scale{"scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+    scale.initializer_value = &scale_value;
+    dq_data.inputs.push_back(&scale);
+    FakeValueInfo q_out{"z", c.output_type, {1, 8, 4, 4}};
+    FakeNode q{"q", "QuantizeLinear", "", 21, {&main_out, &scale}, {&q_out}};
+    FakeGraph graph{{}, {}, {}, {&scale}};
+
+    OrtNormalizationNodeGroupSelector sel;
+    OrtNodeGroupSelector& selector = sel;
+    EXPECT_EQ(selector.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
+                             {dq_data.AsNode(), dq_scale.AsNode(), dq_bias.AsNode()}, {q.AsNode()}),
+              c.expected)
+        << "input=" << c.input_type << " output=" << c.output_type;
+  }
+}
+
+TEST(QnnUnitQdqNodeGroupSelectorTest, InstanceNormRejectsTypeMismatch) {
   QdqNodeGroupSelectorTestContext ctx;
+  OrtGlobalApiOverride global_guard(&ctx.api);
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
   FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
   FakeNode dq_data{"dq0", "DequantizeLinear", "", 13, {&dq_in}, {}};
@@ -1143,7 +1207,7 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, InstanceNorm_RejectsTypeMismatch) {
   FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, {}};  // mismatch
   FakeNode q{"q", "QuantizeLinear", "", 13, {}, {&q_out}};
 
-  OrtInstanceAndLayerNormalizationNodeGroupSelector sel;
+  OrtNormalizationNodeGroupSelector sel;
   OrtNodeGroupSelector& base = sel;
   EXPECT_FALSE(base.Check(nullptr, ctx.api, main_node.AsNode(), nullptr,
                           {dq_data.AsNode(), dq_scale.AsNode()}, {q.AsNode()}));
@@ -1613,6 +1677,46 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, Conv_FirstDQHasNoInputs_CheckReturnsFalse
 // the test stub (FakeNode::op_type). MaxPool has a non-empty version list {12},
 // so the if(!versions.empty()) block is entered, covering L1808-1809.
 // =============================================================================
+
+TEST(QnnUnitQdqNodeGroupSelectorTest, GetOrtQDQSelectionsGroupNormalization) {
+  QdqNodeGroupSelectorTestContext ctx;
+  OrtGlobalApiOverride global_guard(&ctx.api);
+
+  FakeValueInfo q_input{"qx", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, {1, 8, 4, 4}};
+  FakeValueInfo q_scale{"qs", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, {8}};
+  FakeValueInfo q_bias{"qb", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, {8}};
+  FakeValueInfo dq_input_out{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 8, 4, 4}};
+  FakeValueInfo dq_scale_out{"scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {8}};
+  FakeValueInfo dq_bias_out{"bias", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {8}};
+  FakeValueInfo norm_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 8, 4, 4}};
+  FakeValueInfo q_out{"qy", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, {1, 8, 4, 4}};
+
+  FakeNode dq_input{"dq_input", "DequantizeLinear", "", 21, {&q_input}, {&dq_input_out}};
+  FakeNode dq_scale{"dq_scale", "DequantizeLinear", "", 21, {&q_scale}, {&dq_scale_out}};
+  FakeNode dq_bias{"dq_bias", "DequantizeLinear", "", 21, {&q_bias}, {&dq_bias_out}};
+  FakeNode group_norm{"group_norm", "GroupNormalization", "", 21, {&dq_input_out, &dq_scale_out, &dq_bias_out}, {&norm_out}};
+  FakeNode q{"q", "QuantizeLinear", "", 21, {&norm_out}, {&q_out}};
+
+  dq_input_out.producer = &dq_input;
+  dq_scale_out.producer = &dq_scale;
+  dq_bias_out.producer = &dq_bias;
+  norm_out.producer = &group_norm;
+  norm_out.consumers = {&q};
+
+  FakeGraph graph{{dq_input, dq_scale, dq_bias, group_norm, q}};
+  OrtSelectorManager selector_mgr;
+  auto logger = MakeNullLogger();
+  const auto selections = selector_mgr.GetOrtQDQSelections(graph.AsGraph(), ctx.api, logger);
+
+  ASSERT_EQ(selections.size(), 1u);
+  EXPECT_EQ(selections[0].dq_nodes.size(), 3u);
+  EXPECT_EQ(selections[0].q_nodes.size(), 1u);
+  EXPECT_EQ(Ort::ConstNode(selections[0].target_node).GetOperatorType(), "GroupNormalization");
+
+  group_norm.since_version = 18;
+  FakeGraph deprecated_graph{{dq_input, dq_scale, dq_bias, group_norm, q}};
+  EXPECT_TRUE(selector_mgr.GetOrtQDQSelections(deprecated_graph.AsGraph(), ctx.api, logger).empty());
+}
 
 TEST(QnnUnit_QdqNodeGroupSelectorTest, GetOrtQDQSelections_MaxPoolVersionCheck_CoversVersionPath) {
   QdqNodeGroupSelectorTestContext ctx;

@@ -510,10 +510,6 @@ Ort::Status EinsumOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
       // QAIRT 3.36.1: Failed to validate on GPU.
       return MAKE_EP_FAIL((node_unit.OpType() + " unsupported equation: " + equation + " on backend GPU").c_str());
     }
-    if (node_unit.Inputs()[0].quant_param.has_value()) {
-      // QAIRT 3.36.1: Failed to finalize QNN graph 1002.
-      return MAKE_EP_FAIL((node_unit.OpType() + " unsupported equation: " + equation + " for quantized inputs").c_str());
-    }
   }
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }

@@ -64,7 +64,7 @@ TEST_F(QnnCPUBackendTests, Slice_SharedInitializersBugFix) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 /**
  * Runs an Slice model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -342,7 +342,7 @@ TEST_F(QnnHTPBackendTests, SliceEmptyGraphOutputFallsBackOnHTP) {
                   13,
                   EPVerificationParams{ExpectedEPNodeAssignment::None});
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

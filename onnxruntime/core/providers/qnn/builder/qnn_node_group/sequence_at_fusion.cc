@@ -100,31 +100,11 @@ std::unique_ptr<IQnnNodeGroup> SequenceAtFusion::TryFusion(
     return nullptr;
   }
 
-  // (b)+(c) Count ALL consumers of seq_output_name; require exactly one, which must be SequenceAt.
-  const OrtNodeUnit* seq_at_unit_ptr = nullptr;
-  for (const auto& [node_ptr, unit_ptr] : node_to_node_unit) {
-    if (unit_ptr == nullptr) continue;
-    if (unit_ptr->UnitType() != OrtNodeUnit::Type::SingleNode) continue;
-    // Use the raw Node API: the sequence-typed input has name="" in the OrtNodeUnit layer
-    // because ParseOrtValueInfo fails for seq(tensor(T)). GetInputs() on the underlying
-    // OrtNode returns the real edge names.
-    const Ort::ConstNode candidate_node(node_ptr);
-    const auto candidate_inputs = candidate_node.GetInputs();
-    bool consumes_sequence = false;
-    for (const auto& inp : candidate_inputs) {
-      if (inp.GetName() == seq_output_name) {
-        consumes_sequence = true;
-        break;
-      }
-    }
-    if (!consumes_sequence) continue;
-
-    // This node consumes the sequence output — it must be the one and only SequenceAt.
-    if (unit_ptr->OpType() != "SequenceAt" || seq_at_unit_ptr != nullptr) {
-      return nullptr;  // non-SequenceAt consumer, or more than one total consumer
-    }
-    seq_at_unit_ptr = unit_ptr;
-  }
+  // (b)+(c) Exactly one consumer, must be SequenceAt.
+  // FindUniqueSequenceConsumer uses raw GetInputs() to bypass GetConsumers()
+  // which silently returns empty for seq(tensor(T)) edges.
+  const OrtNodeUnit* seq_at_unit_ptr =
+      FindUniqueSequenceConsumer(seq_output_name, "SequenceAt", node_to_node_unit);
   if (seq_at_unit_ptr == nullptr) {
     return nullptr;
   }

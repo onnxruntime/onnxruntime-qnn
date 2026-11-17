@@ -659,7 +659,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   OnRunStart = OnRunStartImpl;
   OnRunEnd = OnRunEndImpl;
   CreateAllocator = CreateAllocatorImpl;
-  GetDefaultMemoryDevice = GetDefaultMemoryDeviceImpl;
   SetDynamicOptions = SetDynamicOptionsImpl;
   GetCompiledModelCompatibilityInfo = GetCompiledModelCompatibilityInfoImpl;
 #if QNN_ORT_EP_PROFILING_API_ENABLED
@@ -1130,7 +1129,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                  FormatEPConfigKey("num_graph_prepare_threads"),
                                  "",
                                  num_graph_prepare_threads_str);
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   uint8_t max_num_supported_threads = static_cast<uint8_t>(std::thread::hardware_concurrency());
   if (max_num_supported_threads) {
     ORT_CXX_LOG(logger_,
@@ -1176,7 +1175,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   };
 #endif
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   if (!num_graph_prepare_threads_str.empty() && is_valid_number(num_graph_prepare_threads_str)) {
     int64_t parsed = 0;
     // is_valid_number already guaranteed all-digits; TryParseInteger additionally guards against overflow.
@@ -1205,7 +1204,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 "Multi-threaded graph compilation is currently only supported on Windows devices. Feature will not be enabled.");
   }
-#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
+#endif  // _WIN32 && QNN_ARCH_ARM64
 
   // Check for conflicts
   if (qnn_context_embed_mode_ && share_ep_contexts_) {
@@ -2261,7 +2260,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // Genie Pathway
   if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
     return ep->GetGenieCapability(this_ptr, graph, graph_support_info);
 #else
     return ep->ort_api.CreateStatus(ORT_EP_FAIL,
@@ -2558,7 +2557,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
                                    OrtNodeComputeInfo** node_compute_infos,
                                    const qnn::HtpGraphConfigs_t& htp_graph_configs,
                                    bool collect_subgraph_traces) {
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   // Initialize now for possible reuse in loop
   auto finalize_start = std::chrono::steady_clock::time_point::min();
   auto end = std::chrono::steady_clock::time_point::min();
@@ -2651,7 +2650,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     }
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
     if (use_multithreaded_prepare) {
       auto& model_info = model_infos.emplace_back();
       model_info.model_name = fused_node_name;
@@ -2680,7 +2679,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
         RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(logger_));
         RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
       }
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
       end = std::chrono::steady_clock::now();
       total_finalize_time += std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
 #endif
@@ -2696,12 +2695,12 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
 
       auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*this);
       node_compute_infos[graph_idx] = node_compute_info.release();
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
     }
 #endif
   }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   if (use_multithreaded_prepare) {
     qnn::thread::QnnJobThreadPool tp(num_graph_prepare_threads_);
     tp.Start();
@@ -3238,7 +3237,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     return status;
   }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   auto compile_start = std::chrono::steady_clock::now();
 #endif
 
@@ -3282,7 +3281,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   // Clean up tensor_name_overrides_ now that CreateEPContextNodes has serialized it.
   ep->tensor_name_overrides_.clear();
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   auto end = std::chrono::steady_clock::now();
   auto total_compile_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - compile_start);
   ORT_CXX_LOG(ep->logger_,
@@ -3303,6 +3302,13 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (ep->prepare_only_) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                 "prepare_only mode: context saved. Releasing QNN device resources.");
+#if defined(_WIN32)
+    if (ep->callback_ETWSink_provider_) {
+      // Unregistration waits for active callbacks before releasing the backend they use.
+      qnn::QnnTelemetry::Instance().UnregisterInternalCallback(ep->callback_ETWSink_provider_);
+      ep->callback_ETWSink_provider_ = nullptr;
+    }
+#endif
     ep->qnn_models_.clear();
     ep->qnn_backend_manager_.reset();
   }
@@ -3656,15 +3662,6 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
     // default memory device or QNN memhandle binding policy.
     return qnn::HtpSharedMemoryAllocator::Create(ep->ort_api, memory_info, allocator);
   }
-  return nullptr;
-}
-
-OrtStatus* ORT_API_CALL QnnEp::GetDefaultMemoryDeviceImpl(
-    _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept {
-  const auto* ep = static_cast<const QnnEp*>(this_ptr);
-  *device = qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)
-                ? ep->ep_api.MemoryInfo_GetMemoryDevice(ep->factory_.GetHostAccessibleMemoryInfo())
-                : nullptr;
   return nullptr;
 }
 
