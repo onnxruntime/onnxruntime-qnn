@@ -195,7 +195,8 @@ bool EpContextIoDispatch::HasSourceReadCallback() const noexcept {
 }
 
 Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<char>& out,
-                                      [[maybe_unused]] const std::string& validated_external_path) const {
+                                      [[maybe_unused]] const std::string& validated_external_path,
+                                      [[maybe_unused]] std::future<void>* source_cleanup) const {
   RETURN_IF_NOT(HasReadCallback(), "EPContext read callback is unavailable.");
 
   Ort::AllocatorWithDefaultOptions allocator;
@@ -237,6 +238,17 @@ Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<
   }
   auto free_output = gsl::finally([&] { allocator.Free(data); });
   std::vector<char> plaintext(static_cast<char*>(data), static_cast<char*>(data) + data_size);
+#if defined(QNN_FILE_MAPPED_WEIGHTS_AVAILABLE)
+  if (source && source_cleanup && !source_cleanup->valid()) {
+    try {
+      *source_cleanup = std::async(
+          std::launch::async,
+          [source = std::move(source)]() mutable noexcept { source.reset(); });
+    } catch (const std::exception&) {
+      // Failed launch releases the captured source synchronously.
+    }
+  }
+#endif
   out = std::move(plaintext);
   return Ort::Status();
 }
@@ -265,7 +277,7 @@ EpContextIoDispatch::EpContextIoDispatch() noexcept {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& /*session_options*/,
                                          const OrtApiRuntimeCapabilities& /*runtime_capabilities*/,
-                                         const Ort::Logger* logger,
+                                         const Ort::Logger* /*logger*/,
                                          bool map_decrypt_source) noexcept
     : map_decrypt_source_(map_decrypt_source) {}
 
@@ -275,7 +287,8 @@ bool EpContextIoDispatch::HasSourceReadCallback() const noexcept { return false;
 
 Ort::Status EpContextIoDispatch::Read(const std::string& /*file_name*/,
                                       std::vector<char>& /*out*/,
-                                      const std::string& /*validated_external_path*/) const {
+                                      const std::string& /*validated_external_path*/,
+                                      std::future<void>* /*source_cleanup*/) const {
   return MAKE_EP_FAIL("EPContext encryption unavailable in this build.");
 }
 
