@@ -1006,33 +1006,44 @@ class TaskLibrary:
 
     if is_host_linux() and is_host_arm64():
 
+        def __extract_ort_linux_aarch64_manylinux_2_34(self, *, internal_symbols: bool = False) -> CompositeTask:
+            target_platform = "linux-aarch64_manylinux_2_34"
+            if internal_symbols:
+                target_platform += "-internal-symbols"
+            config_prefix = "" if self.__config == "Release" else f"{self.__config}-"
+            return CompositeTask(
+                None,
+                [
+                    ExtractArchiveTask(
+                        "Extracting per-arch ONNX Runtime archive",
+                        REPO_ROOT / "build" / f"onnxruntime-tests-{config_prefix}{target_platform}.tar.bz2",
+                        REPO_ROOT,
+                    ),
+                    RunExecutablesTask(
+                        "Extracting global testdata archive",
+                        [
+                            [
+                                str(self.__python_executable),
+                                str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                "--target-platform",
+                                target_platform,
+                                "--config",
+                                self.__config,
+                                "--archive",
+                                str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
+                            ]
+                        ],
+                    ),
+                ],
+            )
+
         @task
         def extract_ort_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
-            return plan.add_step(
-                CompositeTask(
-                    None,
-                    [
-                        ExtractArchiveTask(
-                            "Extracting per-arch ONNX Runtime archive",
-                            REPO_ROOT / "build" / "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2",
-                            REPO_ROOT,
-                        ),
-                        RunExecutablesTask(
-                            "Extracting global testdata archive",
-                            [
-                                [
-                                    str(self.__python_executable),
-                                    str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
-                                    "--target-platform",
-                                    "linux-aarch64_manylinux_2_34",
-                                    "--archive",
-                                    str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
-                                ]
-                            ],
-                        ),
-                    ],
-                )
-            )
+            return plan.add_step(self.__extract_ort_linux_aarch64_manylinux_2_34())
+
+        @task
+        def extract_ort_linux_aarch64_manylinux_2_34_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(self.__extract_ort_linux_aarch64_manylinux_2_34(internal_symbols=True))
 
     @task
     def extract_ort_linux_x86_64(self, plan: Plan) -> str:
