@@ -952,7 +952,7 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationU16Output_U16Weight_DynamicI
 }
 
 // A dynamic U16 RHS requires a U16 activation even when the declared output is U8.
-TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8ActivationU8Output_U16Weight_DynamicInput1) {
+TEST_F(QnnHTPBackendTests, MatMulOpQdqU8ActivationU8OutputU16WeightDynamicInput1) {
   namespace fs = std::filesystem;
   const fs::path graph_dir = fs::temp_directory_path() / "MatMulOp_QDQ_U8U16U8";
   fs::remove_all(graph_dir);
@@ -1015,17 +1015,17 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U16DynamicInput1_HighQuantErrorUsesSymme
   RunDynamicInput1QuantErrorTest("high_error", 0.0f, 80.0f, QNN_DATATYPE_UFIXED_POINT_16);
 }
 
-TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8Activation_U16DynamicInput1_LowQuantErrorUsesAsymmetricU8) {
-  RunDynamicInput1QuantErrorTest<uint8_t, uint8_t>("u8_u8_low_error", 0.0f, 60.0f,
+TEST_F(QnnHTPBackendTests, MatMulOpQdqU8ActivationU16DynamicInput1LowQuantErrorUsesAsymmetricU8) {
+  RunDynamicInput1QuantErrorTest<uint8_t, uint8_t>("u8U8LowError", 0.0f, 60.0f,
                                                    QNN_DATATYPE_UFIXED_POINT_8, /*expected_convert_count=*/3);
-  RunDynamicInput1QuantErrorTest<uint8_t, uint16_t>("u8_u16_low_error", 0.0f, 60.0f,
+  RunDynamicInput1QuantErrorTest<uint8_t, uint16_t>("u8U16LowError", 0.0f, 60.0f,
                                                     QNN_DATATYPE_UFIXED_POINT_8, /*expected_convert_count=*/2);
 }
 
-TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_U8Activation_U16DynamicInput1_HighQuantErrorUsesSymmetricU16) {
-  RunDynamicInput1QuantErrorTest<uint8_t, uint8_t>("u8_u8_high_error", 0.0f, 80.0f,
+TEST_F(QnnHTPBackendTests, MatMulOpQdqU8ActivationU16DynamicInput1HighQuantErrorUsesSymmetricU16) {
+  RunDynamicInput1QuantErrorTest<uint8_t, uint8_t>("u8U8HighError", 0.0f, 80.0f,
                                                    QNN_DATATYPE_UFIXED_POINT_16, /*expected_convert_count=*/3);
-  RunDynamicInput1QuantErrorTest<uint8_t, uint16_t>("u8_u16_high_error", 0.0f, 80.0f,
+  RunDynamicInput1QuantErrorTest<uint8_t, uint16_t>("u8U16HighError", 0.0f, 80.0f,
                                                     QNN_DATATYPE_UFIXED_POINT_16, /*expected_convert_count=*/2);
 }
 
