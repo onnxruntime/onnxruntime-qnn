@@ -912,6 +912,11 @@ void VerifyQnnEpModelAssignment(const std::string& model_data,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
                                 OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR);
 
+// Creates a session without running the malformed model and checks that QNN EP
+// declines the node during graph partitioning. CPU kernels may reject the model
+// at execution time, so inference must not run.
+void VerifyMalformedNdIndexShapeIsRejected(const GetTestModelFn& build_model);
+
 // Runs a stateful QNN model in one session. With a reset input it runs true, false, true and
 // verifies that reset restores the initial state. Without one it runs twice and verifies that the
 // BlockOp default reset=false retains state. The model must have an output sensitive to retained
