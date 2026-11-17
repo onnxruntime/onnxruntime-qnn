@@ -294,6 +294,21 @@ struct QnnEpPrivateMember {
   friend typename Tag::type GetQnnEpPrivateMember(Tag) { return Member; }
 };
 
+struct QnnBackendManagerTag {
+  using type = std::shared_ptr<qnn::QnnBackendManager> QnnEp::*;
+  friend type GetQnnEpPrivateMember(QnnBackendManagerTag);
+};
+
+template struct QnnEpPrivateMember<QnnBackendManagerTag, &QnnEp::qnn_backend_manager_>;
+
+struct ContextInitAccelerationTag {
+  using type = bool qnn::QnnBackendManager::*;
+  friend type GetQnnEpPrivateMember(ContextInitAccelerationTag);
+};
+
+template struct QnnEpPrivateMember<ContextInitAccelerationTag,
+                                   &qnn::QnnBackendManager::htp_context_init_acceleration_>;
+
 struct GetPerThreadHtpPowerConfigsTag {
   using type = void (QnnEp::*)(qnn::PerThreadHtpPowerConfigs_t&, const OrtRunOptions*);
   friend type GetQnnEpPrivateMember(GetPerThreadHtpPowerConfigsTag);
@@ -1184,6 +1199,36 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresMalformed_Succeeds) {
   auto factory = MakeFactory(ctx);
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextInitAcceleration_OptionAndSdkGuard) {
+  for (const char* value : std::array<const char*, 4>{nullptr, "0", "1", "invalid"}) {
+    SCOPED_TRACE(value ? value : "unset");
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    if (value) {
+      ctx.session_config[EPKey("htp_context_init_acceleration")] = value;
+    }
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    const auto& manager = ep.get()->*GetQnnEpPrivateMember(QnnBackendManagerTag{});
+    ASSERT_NE(manager, nullptr);
+    const bool enabled = value && std::string(value) == "1";
+#ifdef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+    const bool expected = enabled;
+#else
+    const bool expected = false;
+    if (enabled) {
+      ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+                   "htp_context_init_acceleration=1 was set but this build was compiled against QAIRT SDK < 2.47");
+    }
+#endif
+    EXPECT_EQ(manager.get()->*GetQnnEpPrivateMember(ContextInitAccelerationTag{}), expected);
+    if (value && std::string(value) == "invalid") {
+      ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                   "Invalid value for " + EPKey("htp_context_init_acceleration"));
+    }
+  }
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_Default_Succeeds) {

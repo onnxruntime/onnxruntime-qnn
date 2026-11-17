@@ -39,6 +39,12 @@ namespace qnn {
 #define ORT_QNN_HTP_MATMUL_LUT_SUPPORTED 0
 #endif
 
+// Enable HTP context initialization acceleration on QAIRT SDK 2.47+ builds.
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 47))
+#define QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+#endif
+
 // HTP Graph Splitting (Graph Program Executor) requires QAIRT SDK 2.49+.
 #if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
     (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 49))

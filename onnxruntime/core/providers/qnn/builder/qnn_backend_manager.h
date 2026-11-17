@@ -144,6 +144,7 @@ struct QnnBackendManagerConfig {
   // Caps the reused IO buffer size at context load. 0 = SDK default.
   uint64_t reused_io_limit_mb = 0;
   bool configure_host_mode = false;
+  bool htp_context_init_acceleration = false;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -170,6 +171,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                     PrivateConstructorTag)
       : backend_path_(config.backend_path),
         reused_io_limit_mb_(config.reused_io_limit_mb),
+        htp_context_init_acceleration_(config.htp_context_init_acceleration),
         context_priority_(config.context_priority),
         qnn_serializer_config_(config.qnn_serializer_config),
         device_id_(config.device_id),
@@ -767,6 +769,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
   int htp_share_resource_optimization_ = -1;
   uint64_t reused_io_limit_mb_ = 0;
+  bool htp_context_init_acceleration_ = false;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   Qnn_Version_t core_api_version_ = QNN_VERSION_INIT;
