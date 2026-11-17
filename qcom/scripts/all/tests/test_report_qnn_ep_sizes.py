@@ -76,24 +76,27 @@ def test_summary_growth_shrink_unchanged_and_missing_baseline():
         "qa_tag": "nightly-previous",
         "sizes": [{"platform": platform, "size_bytes": 1000} for platform in ["growth", "shrink", "unchanged"]],
     }
-    summary = format_summary(report, baseline)
+    summary, alerts = format_summary(report, baseline)
+    assert not alerts
     assert "+100 | +10.00%" in summary
     assert "-100 | -10.00%" in summary
     assert "+0 | +0.00%" in summary
     assert "| new | 1,000 | 0.001 | N/A | N/A | N/A |" in summary
-    assert "unavailable" in format_summary(report, None)
+    assert "unavailable" in format_summary(report, None)[0]
     baseline["sizes"][0]["size_bytes"] = 0
     with pytest.raises(ValueError, match="Invalid baseline size"):
         format_summary(report, baseline)
 
 
-@pytest.mark.parametrize("same_ref", [True, False])
+@pytest.mark.parametrize("same_ref", [True, False, None])
 def test_cli_writes_snapshots_and_job_summary(packages, monkeypatch, same_ref):
     monkeypatch.setenv("GITHUB_SHA", "abc123")
     monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
     summary_path = packages / "job-summary.md"
     summary_path.write_text("Existing summary\n")
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
+    output_path = packages / "job-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
     baseline_path = packages / "previous.json"
     baseline_path.write_text(
         json.dumps(
@@ -113,8 +116,7 @@ def test_cli_writes_snapshots_and_job_summary(packages, monkeypatch, same_ref):
             str(packages),
             "--qa-tag",
             "nightly-current",
-            "--baseline",
-            str(baseline_path),
+            *(["--baseline", str(baseline_path)] if same_ref is not None else []),
         ],
         check=True,
         capture_output=True,
@@ -125,5 +127,83 @@ def test_cli_writes_snapshots_and_job_summary(packages, monkeypatch, same_ref):
     assert report["baseline_qa_tag"] == ("nightly-previous" if same_ref else None)
     assert len(report["sizes"]) == 6
     summary = (packages / "qnn-ep-sizes.md").read_text()
-    assert ("+200 | +25.00%" in summary) == same_ref
+    assert ("+200 | +25.00%" in summary) == bool(same_ref)
     assert summary_path.read_text() == "Existing summary\n" + summary
+    assert output_path.read_text() == "size_threshold_exceeded=false\n"
+
+
+@pytest.mark.parametrize(
+    "limit,delta,exceeded",
+    [(0.5, 500000, False), (0.5, 500001, True), (0.5, -600000, False), (0, 0, False), (0, 1, True)],
+)
+def test_growth_limit_boundary(limit, delta, exceeded):
+    report = {"qa_tag": "current", "commit_sha": "abc", "sizes": [{"platform": "arm64", "size_bytes": 1000000 + delta}]}
+    baseline = {"qa_tag": "previous", "sizes": [{"platform": "arm64", "size_bytes": 1000000}]}
+    summary, alerts = format_summary(report, baseline, limit)
+    assert bool(alerts) == exceeded
+    assert ("### Size growth alerts" in summary) == exceeded
+    if exceeded:
+        assert "arm64" in alerts[0]
+        assert f"{delta:,} bytes" in alerts[0]
+
+
+def test_cli_alerts_save_reports_and_output_without_failing(packages, monkeypatch):
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    output_path = packages / "job-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    baseline = packages / "previous.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "qa_tag": "nightly-previous",
+                "ref": "refs/heads/main",
+                "sizes": [{"platform": platform, "size_bytes": 800} for platform in PLATFORMS],
+            }
+        )
+    )
+    script = Path(__file__).resolve().parents[1] / "report_qnn_ep_sizes.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--build-dir",
+            str(packages),
+            "--qa-tag",
+            "nightly-current",
+            "--baseline",
+            str(baseline),
+            "--growth-limit-mb",
+            "0.000199",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads((packages / "qnn-ep-sizes.json").read_text())
+    assert report["growth_limit_mb"] == 0.000199
+    assert len(report["alerts"]) == 6
+    assert result.stdout.count("::warning::") == 6
+    assert "### Size growth alerts" in (packages / "qnn-ep-sizes.md").read_text()
+    assert output_path.read_text() == "size_threshold_exceeded=true\n"
+
+
+@pytest.mark.parametrize("limit", ["-1", "nan", "inf"])
+def test_invalid_limit_rejected_before_writing_reports(packages, limit):
+    script = Path(__file__).resolve().parents[1] / "report_qnn_ep_sizes.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--build-dir",
+            str(packages),
+            "--qa-tag",
+            "nightly-current",
+            f"--growth-limit-mb={limit}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "finite, nonnegative" in result.stderr
+    assert not (packages / "qnn-ep-sizes.json").exists()
