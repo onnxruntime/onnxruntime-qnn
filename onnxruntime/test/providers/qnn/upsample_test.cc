@@ -55,6 +55,15 @@ TEST_F(QnnCPUBackendTests, Upsample_DynamicScales_Unsupported) {
 }
 
 // Test Upsample with opset-9, mode `nearest`
+// Rank-1 Upsample must fall back because QNN Resize needs N, C, and a spatial dimension.
+TEST_F(QnnCPUBackendTests, Upsample_1D_FallsBack) {
+  RunUpsampleTestOnCPU(TestInputDef<float>({5}, false, -10.0f, 10.0f),
+                       TestInputDef<float>({1}, true, {1.0f}),
+                       {test::MakeAttribute("mode", "nearest")},
+                       ExpectedEPNodeAssignment::None,
+                       9);
+}
+
 TEST_F(QnnCPUBackendTests, Upsample_4D_Nearest_opset9) {
   RunUpsampleTestOnCPU(TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                        TestInputDef<float>({4}, true, {1.0f, 1.0f, 1.5f, 1.5f}),

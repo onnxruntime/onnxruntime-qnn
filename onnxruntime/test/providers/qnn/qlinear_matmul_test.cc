@@ -322,6 +322,11 @@ TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_Float16Scale) {
 TEST_F(QnnHTPBackendTests, QLinearMatMulOp_HTP_u8_BFloat16Scale) {
   // Scales provided as bfloat16 (opset 21 TS type) — BF16 initializers require v81+.
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Enable when the generic QNN datatype gate accepts BFLOAT16 scale initializers before
+  // QLinearMatMul's builder unpacks them; otherwise the node falls back to CPU, which lacks opset-21 support.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";

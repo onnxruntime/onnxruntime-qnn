@@ -486,9 +486,7 @@ if (MSVC OR ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
                                                     "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libqnnhtpv73.cat"
                                                     "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libQnnHtpV73Skel.so"
                                                     "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libqnnhtpv81.cat"
-                                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libQnnHtpV81Skel.so"
-                                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v85/unsigned/libqnnhtpv85.cat"
-                                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v85/unsigned/libQnnHtpV85Skel.so")
+                                                    "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libQnnHtpV81Skel.so")
       list(APPEND QNN_LIB_FILES ${EXTRA_HTP_LIB})
     elseif(${QNN_ARCH_ABI} STREQUAL "aarch64-ubuntu-gcc9.4")
       list(APPEND QNN_LIB_FILES "${onnxruntime_QNN_HOME}/lib/hexagon-v68/unsigned/libQnnHtpV68Skel.so")

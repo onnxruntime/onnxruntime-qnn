@@ -361,6 +361,30 @@ TEST(QnnUnit_QuantParamsWrapperTest, CopyAssign_SelfAssignment_LeavesUnchanged) 
   EXPECT_EQ(q.Get().axisScaleOffsetEncoding.scaleOffset, original_scaleoffset_ptr);
 }
 
+TEST(QnnUnit_QuantParamsWrapperTest, BwFloatBlock_RepeatedCopiesPreserveAllScaleOffsets) {
+  auto first = MakeBwFloatBlock().Copy();
+  QnnQuantParamsWrapper second(first);
+  QnnQuantParamsWrapper third;
+  third = second;
+
+  for (const auto* wrapper : {&first, &second, &third}) {
+    const auto& params = wrapper->Get();
+    ASSERT_EQ(params.quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK);
+    EXPECT_EQ(params.bwFloatBlockEncoding.bitwidth, 8u);
+    ASSERT_NE(params.bwFloatBlockEncoding.blockSize, nullptr);
+    EXPECT_EQ(params.bwFloatBlockEncoding.blockSize[0], 2u);
+    EXPECT_EQ(params.bwFloatBlockEncoding.blockSize[1], 1u);
+    ASSERT_NE(params.bwFloatBlockEncoding.floatScaleOffset, nullptr);
+    EXPECT_FLOAT_EQ(params.bwFloatBlockEncoding.floatScaleOffset[0].scale, 0.5f);
+    EXPECT_FLOAT_EQ(params.bwFloatBlockEncoding.floatScaleOffset[0].offset, 0.0f);
+    EXPECT_FLOAT_EQ(params.bwFloatBlockEncoding.floatScaleOffset[1].scale, 0.25f);
+    EXPECT_FLOAT_EQ(params.bwFloatBlockEncoding.floatScaleOffset[1].offset, 0.1f);
+  }
+  EXPECT_NE(first.Get().bwFloatBlockEncoding.floatScaleOffset, second.Get().bwFloatBlockEncoding.floatScaleOffset);
+  EXPECT_NE(second.Get().bwFloatBlockEncoding.floatScaleOffset, third.Get().bwFloatBlockEncoding.floatScaleOffset);
+  EXPECT_NE(first.Get().bwFloatBlockEncoding.blockSize, second.Get().bwFloatBlockEncoding.blockSize);
+}
+
 TEST(QnnUnit_QuantParamsWrapperTest, Copy_Method_ReturnsEquivalentDeepCopy) {
   QnnQuantParamsWrapper src = MakePerChannelNonInt4(/*axis=*/3);
   QnnQuantParamsWrapper dst = src.Copy();
@@ -674,6 +698,99 @@ TEST(QnnUnit_QuantParamsWrapperTest, InitFromRaw_UnsupportedEncoding_ReturnsErro
   raw.quantizationEncoding = QNN_QUANTIZATION_ENCODING_VECTOR;  // not in the switch.
   QnnQuantParamsWrapper q;
   EXPECT_FALSE(q.Init(raw).IsOK());
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, InitFromRaw_BlockEncodingsRejectMissingCounts) {
+  for (auto encoding : {QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION,
+                        QNN_QUANTIZATION_ENCODING_BLOCK,
+                        QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK}) {
+    SCOPED_TRACE(static_cast<int>(encoding));
+    auto source = encoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION
+                      ? MakeLPBQ()
+                      : (encoding == QNN_QUANTIZATION_ENCODING_BLOCK ? MakeBlockEncoding() : MakeBwFloatBlock());
+    QnnQuantParamsWrapper wrapper;
+    // Keep rank valid so only the missing count can cause rejection.
+    EXPECT_FALSE(wrapper.Init(source.Get(), /*num_scaleoffsets=*/0, /*tensor_rank=*/2).IsOK());
+    EXPECT_FALSE(wrapper.IsQuantized());
+  }
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, InitFromRaw_BlockEncodingsRejectMissingRank) {
+  for (auto encoding : {QNN_QUANTIZATION_ENCODING_BLOCK, QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK}) {
+    SCOPED_TRACE(static_cast<int>(encoding));
+    auto source = encoding == QNN_QUANTIZATION_ENCODING_BLOCK ? MakeBlockEncoding() : MakeBwFloatBlock();
+    QnnQuantParamsWrapper wrapper;
+    EXPECT_FALSE(wrapper.Init(source.Get(), /*num_scaleoffsets=*/2, /*tensor_rank=*/0).IsOK());
+    EXPECT_FALSE(wrapper.IsQuantized());
+  }
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, InitFromRaw_BlockwiseExpansionRejectsNullPointers) {
+  auto source = MakeLPBQ();
+  for (int missing_pointer = 0; missing_pointer < 3; ++missing_pointer) {
+    SCOPED_TRACE(missing_pointer);
+    Qnn_QuantizeParams_t raw = source.Get();
+    Qnn_BlockwiseExpansion_t blockwise = *raw.blockwiseExpansion;
+    raw.blockwiseExpansion = &blockwise;
+    if (missing_pointer == 0) {
+      raw.blockwiseExpansion = nullptr;
+    } else if (missing_pointer == 1) {
+      blockwise.scaleOffsets = nullptr;
+    } else {
+      blockwise.blocksScale8 = nullptr;
+    }
+
+    QnnQuantParamsWrapper wrapper;
+    EXPECT_FALSE(wrapper.Init(raw, /*num_scaleoffsets=*/3).IsOK());
+    EXPECT_FALSE(wrapper.IsQuantized());
+  }
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, InitFromRaw_BlockEncodingsRejectNullPointers) {
+  for (auto encoding : {QNN_QUANTIZATION_ENCODING_BLOCK, QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK}) {
+    for (bool missing_block_sizes : {true, false}) {
+      SCOPED_TRACE(static_cast<int>(encoding));
+      SCOPED_TRACE(missing_block_sizes);
+      auto source = encoding == QNN_QUANTIZATION_ENCODING_BLOCK ? MakeBlockEncoding() : MakeBwFloatBlock();
+      Qnn_QuantizeParams_t raw = source.Get();
+      if (encoding == QNN_QUANTIZATION_ENCODING_BLOCK) {
+        if (missing_block_sizes) {
+          raw.blockEncoding.blockSize = nullptr;
+        } else {
+          raw.blockEncoding.scaleOffset = nullptr;
+        }
+      } else {
+        if (missing_block_sizes) {
+          raw.bwFloatBlockEncoding.blockSize = nullptr;
+        } else {
+          raw.bwFloatBlockEncoding.floatScaleOffset = nullptr;
+        }
+      }
+
+      QnnQuantParamsWrapper wrapper;
+      EXPECT_FALSE(wrapper.Init(raw, /*num_scaleoffsets=*/2, /*tensor_rank=*/2).IsOK());
+      EXPECT_FALSE(wrapper.IsQuantized());
+    }
+  }
+}
+
+TEST(QnnUnit_QuantParamsWrapperTest, InitFromRaw_ReinitResetsPreviousEncodingCounts) {
+  auto wrapper = MakeLPBQ();
+  ASSERT_EQ(wrapper.GetPerChannelScalesSize(), 3u);
+  auto block = MakeBwFloatBlock();
+  ASSERT_TRUE(wrapper.Init(block.Get(), /*num_scaleoffsets=*/2, /*tensor_rank=*/2).IsOK());
+  EXPECT_EQ(wrapper.GetPerChannelScalesSize(), 0u);
+  auto block_copy = wrapper.Copy();
+  ASSERT_EQ(block_copy.Get().quantizationEncoding, QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK);
+  EXPECT_FLOAT_EQ(block_copy.Get().bwFloatBlockEncoding.floatScaleOffset[1].scale, 0.25f);
+
+  auto per_tensor = QnnQuantParamsWrapper::PerTensor(0.75f, -2);
+  ASSERT_TRUE(wrapper.Init(per_tensor.Get()).IsOK());
+  EXPECT_EQ(wrapper.GetPerChannelScalesSize(), 0u);
+  auto per_tensor_copy = wrapper.Copy();
+  ASSERT_TRUE(per_tensor_copy.IsPerTensor());
+  EXPECT_FLOAT_EQ(per_tensor_copy.Get().scaleOffsetEncoding.scale, 0.75f);
+  EXPECT_EQ(per_tensor_copy.Get().scaleOffsetEncoding.offset, -2);
 }
 
 TEST(QnnUnit_QuantParamsWrapperTest, InitFromRaw_AfterPriorPerChannelInit_ResetsThenRecopies) {
