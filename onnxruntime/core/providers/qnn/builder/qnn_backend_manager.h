@@ -503,6 +503,21 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
+  bool ShouldMapContextBinary(const qnn::EpContextIoDispatch& io_dispatch) const;
+
+  Ort::Status CreateContextFromBinary(const void* bin_buffer,
+                                      uint64_t buffer_length,
+                                      const QnnContext_Config_t** context_configs,
+                                      Qnn_ProfileHandle_t profile_handle,
+                                      Qnn_ContextHandle_t& context);
+
+  Ort::Status CreateContextFromBinaryListAsync(const std::vector<QnnContext_Params_t>& context_params_list,
+                                               const QnnContext_Config_t** configs);
+
+  Ort::Status ReadContextBinFromCallback(const std::string& context_bin_filepath,
+                                         qnn::EpContextBuffer& buffer,
+                                         const qnn::EpContextIoDispatch& io_dispatch);
+
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
                                                           const qnn::EpContextIoDispatch& io_dispatch);

@@ -13,7 +13,10 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <type_traits>
 #include <unordered_set>
 
@@ -118,20 +121,31 @@ TEST(QnnUnit_EpContextIoDispatchTest, EpContextEncryptionSupported_AttemptsExper
 
 #if ORT_API_HAS_EPCONTEXT_ENCRYPTION
 
-// Keep the private list entry point accessible only in this translation unit.
+// Keep private access local while exercising the production VTCM caller.
 struct CallbackListMethodTag {
   using type = Ort::Status (qnn::QnnBackendManager::*)(
-      const QnnContext_Config_t**,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>&,
       const qnn::EpContextIoDispatch&);
-  friend type GetCallbackListMethod(CallbackListMethodTag);
+  friend type GetCallbackBackendMember(CallbackListMethodTag);
+};
+struct CallbackBackendSetupTag {
+  using type = bool qnn::QnnBackendManager::*;
+  friend type GetCallbackBackendMember(CallbackBackendSetupTag);
+};
+struct CallbackMappingFlagTag {
+  using type = bool qnn::QnnBackendManager::*;
+  friend type GetCallbackBackendMember(CallbackMappingFlagTag);
 };
 template <typename Tag, typename Tag::type Member>
-struct CallbackListMethodAccess {
-  friend typename Tag::type GetCallbackListMethod(Tag) { return Member; }
+struct CallbackBackendMemberAccess {
+  friend typename Tag::type GetCallbackBackendMember(Tag) { return Member; }
 };
-template struct CallbackListMethodAccess<CallbackListMethodTag,
-                                         &qnn::QnnBackendManager::CreateContextFromListAsync>;
+template struct CallbackBackendMemberAccess<CallbackListMethodTag,
+                                            &qnn::QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled>;
+template struct CallbackBackendMemberAccess<CallbackBackendSetupTag,
+                                            &qnn::QnnBackendManager::backend_setup_completed_>;
+template struct CallbackBackendMemberAccess<CallbackMappingFlagTag,
+                                            &qnn::QnnBackendManager::file_mapped_weights_enabled_>;
 
 // Track the supplied allocator so a copy, premature free, or double free fails.
 class QnnUnit_CallbackBufferTest : public ::testing::Test {
@@ -274,6 +288,11 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
   }
 
   void TearDown() override {
+    for (const auto& path : native_files_) {
+      std::error_code ec;
+      std::filesystem::remove(path, ec);
+      EXPECT_FALSE(ec);
+    }
     models_.clear();
     backend_.reset();
     dispatch_.reset();
@@ -316,6 +335,55 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
     EXPECT_STREQ(static_cast<const char*>(data), "callback_graph");
   }
 
+  std::string WriteNativeBinary(const char* name) {
+    const auto path = std::filesystem::temp_directory_path() /
+                      ("qnn_callback_owner_" + std::to_string(reinterpret_cast<uintptr_t>(this)) +
+                       "_" + name + ".bin");
+    native_files_.push_back(path);
+    std::ofstream file(path, std::ios::binary);
+    file.write("native_graph", sizeof("native_graph"));
+    EXPECT_TRUE(file.good());
+    return path.string();
+  }
+
+  static void CheckNativeBinary(const void* data, uint64_t size) {
+    EXPECT_EQ(size, sizeof("native_graph"));
+    EXPECT_STREQ(static_cast<const char*>(data), "native_graph");
+  }
+
+  void UseNativeReads() {
+    auto& sdk = backend_->QnnInterface();
+    sdk.contextCreateFromBinary = [](Qnn_BackendHandle_t, Qnn_DeviceHandle_t,
+                                     const QnnContext_Config_t**, const void* data,
+                                     Qnn_ContextBinarySize_t size, Qnn_ContextHandle_t* context,
+                                     Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      CheckNativeBinary(data, size);
+      ++test.ordinary_calls_;
+      if (test.sdk_result_ == QNN_SUCCESS) *context = &test;
+      return test.sdk_result_;
+    };
+    sdk.contextCreateFromBinaryListAsync = [](Qnn_BackendHandle_t, Qnn_DeviceHandle_t,
+                                              const QnnContext_Params_t** params,
+                                              const QnnContext_Config_t**, Qnn_SignalHandle_t) -> Qnn_ErrorHandle_t {
+      auto& test = *current_;
+      ++test.list_calls_;
+      for (size_t count = 0; params[count]; ++count) {
+        const auto& item = params[count]->v1;
+        CheckNativeBinary(item.binaryBuffer, item.binaryBufferSize);
+        auto context = reinterpret_cast<Qnn_ContextHandle_t>(static_cast<uintptr_t>(count + 1));
+        item.notifyFunc(context, nullptr, "native_graph", QNN_CONTEXT_NOTIFY_TYPE_GRAPH_INIT,
+                        item.notifyParam, QNN_CONTEXT_NO_ERROR);
+        item.notifyFunc(context, nullptr, nullptr, QNN_CONTEXT_NOTIFY_TYPE_CONTEXT_INIT,
+                        item.notifyParam, QNN_CONTEXT_NO_ERROR);
+        for (size_t i = 0; params[i]; ++i) {
+          CheckNativeBinary(params[i]->v1.binaryBuffer, params[i]->v1.binaryBufferSize);
+        }
+      }
+      return test.sdk_result_;
+    };
+  }
+
   Ort::Status InitialLoad() {
     FakeOpAttr embed = FakeOpAttr::MakeInt64(qnn::EMBED_MODE, 0);
     FakeOpAttr path = FakeOpAttr::MakeString(qnn::EP_CACHE_CONTEXT, "callback.bin");
@@ -332,8 +400,7 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
       binaries.emplace(std::string("not-existing/") + name + ".bin",
                        std::make_unique<std::vector<std::string>>(1, name));
     }
-    const QnnContext_Config_t* configs[] = {nullptr};
-    return (backend_->GetMutable()->*GetCallbackListMethod(CallbackListMethodTag{}))(configs, binaries, *dispatch_);
+    return (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, *dispatch_);
   }
 
   static thread_local QnnUnit_CallbackBufferTest* current_;
@@ -349,6 +416,7 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
   std::unique_ptr<qnn::EpContextIoDispatch> dispatch_;
   std::unique_ptr<StubBackendManager> backend_;
   qnn::QnnModelLookupTable models_;
+  std::vector<std::filesystem::path> native_files_;
   std::unordered_set<void*> live_;
   std::vector<void*> outputs_;
   std::vector<std::string> read_names_, events_;
@@ -500,6 +568,67 @@ TEST_F(QnnUnit_CallbackBufferTest, ListReadFailureReleasesPreviouslyAdoptedOutpu
   EXPECT_EQ(read_calls_, 2u);
   EXPECT_EQ(list_calls_, 0u);
   EXPECT_EQ(frees_, 1u);
+}
+
+TEST_F(QnnUnit_CallbackBufferTest, NativeSsrBufferSurvivesSdkAndPreservesFailures) {
+  UseNativeReads();
+  const auto path = WriteNativeBinary("ssr");
+  const qnn::EpContextIoDispatch native_dispatch;
+  const Qnn_ErrorHandle_t results[] = {QNN_SUCCESS, QNN_CONTEXT_ERROR_INVALID_ARGUMENT};
+  for (auto result : results) {
+    sdk_result_ = result;
+    Qnn_ContextHandle_t context = nullptr;
+    auto status = backend_->GetMutable()->ReloadContextForSSR(path, 0, context, native_dispatch);
+    EXPECT_EQ(status.IsOK(), result == QNN_SUCCESS);
+    if (result != QNN_SUCCESS) EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+  }
+  EXPECT_EQ(ordinary_calls_, 2u);
+  EXPECT_TRUE(std::filesystem::remove(path));
+  Qnn_ContextHandle_t context = nullptr;
+  auto status = backend_->GetMutable()->ReloadContextForSSR(path, 0, context, native_dispatch);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(ordinary_calls_, 2u);
+  EXPECT_EQ(read_calls_, 0u);
+  EXPECT_EQ(frees_, 0u);
+}
+
+TEST_F(QnnUnit_CallbackBufferTest, NativeListBuffersSurviveNotificationsAndReadFailureSkipsSdk) {
+  UseNativeReads();
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
+  for (const auto* name : {"one", "two"}) {
+    binaries.emplace(WriteNativeBinary(name), std::make_unique<std::vector<std::string>>(1, name));
+  }
+  const qnn::EpContextIoDispatch native_dispatch;
+  const Qnn_ErrorHandle_t results[] = {QNN_SUCCESS, QNN_CONTEXT_ERROR_INVALID_ARGUMENT};
+  for (auto result : results) {
+    sdk_result_ = result;
+    auto status = (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, native_dispatch);
+    EXPECT_EQ(status.IsOK(), result == QNN_SUCCESS);
+    if (result != QNN_SUCCESS) EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+  }
+  EXPECT_EQ(list_calls_, 2u);
+  auto missing = binaries.begin();
+  ++missing;  // Fail the second read after the first native buffer has been loaded.
+  EXPECT_TRUE(std::filesystem::remove(missing->first));
+  auto status = (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, native_dispatch);
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_EQ(list_calls_, 2u);
+  EXPECT_EQ(read_calls_, 0u);
+  EXPECT_EQ(frees_, 0u);
+}
+
+TEST_F(QnnUnit_CallbackBufferTest, SharedManagerCallbackDoesNotClearMappingFlag) {
+  auto* manager = backend_->GetMutable();
+  manager->*GetCallbackBackendMember(CallbackBackendSetupTag{}) = true;
+  manager->*GetCallbackBackendMember(CallbackMappingFlagTag{}) = true;
+  const qnn::EpContextIoDispatch native_dispatch;
+  const qnn::EpContextIoDispatch* sequence[] = {&native_dispatch, dispatch_.get(), &native_dispatch};
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
+  for (const auto* io_dispatch : sequence) {
+    ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, *io_dispatch).IsOK());
+    EXPECT_TRUE(manager->FileMappingIsEnabled());
+  }
+  EXPECT_EQ(read_calls_, 0u);
 }
 
 #endif  // ORT_API_HAS_EPCONTEXT_ENCRYPTION

@@ -1728,14 +1728,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
                                                             runtime_capabilities,
                                                             &logger_);
-
-  // File mapping and encryption are mutually exclusive: an App-provided read callback replaces
-  // the on-disk read, so file mapping must be off when a read callback is registered.
-  if (enable_file_mapped_weights_ && io_dispatch_->HasReadCallback()) {
-    enable_file_mapped_weights_ = false;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "EPContext read callback registered; disabling file mapping for this session.");
-  }
 }
 
 QnnEp::~QnnEp() {
