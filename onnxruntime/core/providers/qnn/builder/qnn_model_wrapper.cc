@@ -14,6 +14,7 @@
 
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -37,7 +38,7 @@ QnnModelWrapper::QnnModelWrapper(const OrtGraph& ort_graph,
       graph_inputs_(graph_inputs),
       graph_outputs_(graph_outputs),
       model_settings_(model_settings),
-      api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
+      api_ptrs_(api_ptrs),
       tensor_name_overrides_(tensor_name_overrides),
       op_trace_collector_(op_trace_collector),
       is_post_layout_transform_(is_post_layout_transform) {
@@ -55,7 +56,8 @@ QnnBackendType QnnModelWrapper::GetQnnBackendType() const {
   return qnn_backend_manager_.GetQnnBackendType();
 }
 
-bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
+bool QnnModelWrapper::CreateQnnGraph(QnnGraphEmitter& graph_emitter,
+                                     const Qnn_ContextHandle_t& context,
                                      const std::string& graph_name,
                                      const QnnGraph_Config_t** graph_configs) {
   if (!graph_name_.empty()) {
@@ -63,32 +65,16 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Graph" + graph_name + " already initialized.").c_str());
     return false;
   }
-  if (context == nullptr) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid Qnn context.");
-    return false;
-  }
-  if (graph_name.length() == 0) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Empty graph name.");
+  const Ort::Status status = graph_emitter.CreateGraph(context, graph_name.c_str(), graph_configs);
+  if (!status.IsOK()) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
     return false;
   }
 
-  const auto& qnn_interface = qnn_backend_manager_.GetQnnInterface();
-  auto rt = qnn_interface.graphCreate(context, graph_name.c_str(), graph_configs, &graph_);
-  if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-    rt = qnn_interface.graphRetrieve(context, graph_name.c_str(), &graph_);
-    if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
-                  ("Failed to create Qnn graph: " + graph_name + ". " +
-                   utils::FormatQnnError(qnn_interface, rt))
-                      .c_str());
-      return false;
-    }
-  }
-
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Created Qnn graph: " + graph_name).c_str());
-
+  graph_ = graph_emitter.Graph();
   graph_name_ = graph_name;
-  graph_context_ = context;
+  graph_context_ = graph_emitter.Context();
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Created Qnn graph: " + graph_name).c_str());
   return true;
 }
 
@@ -159,8 +145,27 @@ void QnnModelWrapper::SetTensorMemTypeFromSettings(QnnTensorWrapper& tensor_wrap
   SetQnnTensorMemType(tensor_wrapper.GetQnnTensor(), mem_type);
 }
 
+QnnModelWrapper::FusionValidationGuard::FusionValidationGuard(QnnModelWrapper& wrapper) : wrapper_(wrapper) {
+  if (wrapper_.active_fusion_validation_guard_ != nullptr) {
+    ORT_CXX_API_THROW("Nested fusion validation guards are not supported.", ORT_EP_FAIL);
+  }
+  wrapper_.active_fusion_validation_guard_ = this;
+}
+
+QnnModelWrapper::FusionValidationGuard::~FusionValidationGuard() noexcept {
+  if (!committed_) {
+    for (const auto& name : param_names_) {
+      wrapper_.model_params_map_.erase(name);
+    }
+    for (const auto& name : tensor_names_) {
+      wrapper_.model_tensors_map_.erase(name);
+    }
+  }
+  wrapper_.active_fusion_validation_guard_ = nullptr;
+}
+
 bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
-  // Keep a copy of tensor name sine it will be moved with the wrapper into model_tensors_map_
+  // Keep a copy of tensor name since it will be moved with the wrapper into model_tensors_map_
   std::string tensor_name = tensor_wrapper.GetName();
   if (tensor_name.length() == 0) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid tensor encountered empty name.");
@@ -174,6 +179,11 @@ bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
 
   SetTensorMemTypeFromSettings(tensor_wrapper, tensor_name);
 
+  if (active_fusion_validation_guard_ != nullptr) {
+    // Record the absent key before insertion so an allocation failure cannot
+    // leave an untracked tensor. Erasing an absent key during rollback is safe.
+    active_fusion_validation_guard_->tensor_names_.push_back(tensor_name);
+  }
   model_tensors_map_.emplace(tensor_name, std::move(tensor_wrapper));
 
   return true;
@@ -191,13 +201,17 @@ bool QnnModelWrapper::AddParamWrapper(QnnParamWrapper&& param_wrapper) {
     return true;
   }
 
+  if (active_fusion_validation_guard_ != nullptr) {
+    // As with tensors, log the absent key before the potentially throwing insertion.
+    active_fusion_validation_guard_->param_names_.push_back(param_tensor_name);
+  }
   // save created tensors for later lookup to populate graph node construction
   model_params_map_.emplace(param_tensor_name, std::move(param_wrapper));
 
   return true;
 }
 
-const QnnTensorWrapper& QnnModelWrapper::GetQnnTensorWrapper(const std::string& tensor_name) {
+const QnnTensorWrapper& QnnModelWrapper::GetQnnTensorWrapper(const std::string& tensor_name) const {
   auto map_iter = model_tensors_map_.find(tensor_name);
   if (map_iter != model_tensors_map_.end()) {
     return (map_iter->second);
@@ -478,6 +492,8 @@ bool QnnModelWrapper::ApplyBF16ConversionForValidation(const std::vector<std::st
   return true;
 }
 
+// TODO: Preserve tensors that were already BF16 before validation. Track original
+// data types so cleanup only restores tensors converted from FP32 for validation.
 void QnnModelWrapper::RestoreFP32AfterValidation(const std::vector<std::string>& input_names,
                                                  const std::vector<std::string>& output_names) {
   // Restore FP32 data types after validation
@@ -523,14 +539,14 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
 
     if (IsBF16ConversionEnabled()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "[BF16] Validation with BF16 conversion enabled");
+      // Guard partial conversion if conversion fails or throws.
+      bf16_guard = std::make_unique<BF16ConversionGuard>(this, input_names, output_names);
       if (!ApplyBF16ConversionForValidation(input_names, output_names, validation_input_names, validation_output_names)) {
         ORT_CXX_LOG(logger_,
                     ORT_LOGGING_LEVEL_ERROR,
                     ("[BF16] ApplyBF16ConversionForValidation failed for node: " + qnn_node_name).c_str());
         return false;
       }
-      // Create the guard after successful conversion
-      bf16_guard = std::make_unique<BF16ConversionGuard>(this, input_names, output_names);
     } else {
       validation_input_names = input_names;
       validation_output_names = output_names;
@@ -1089,6 +1105,16 @@ Ort::Status QnnModelWrapper::AddTransposeNode(size_t node_index,
   // we don't need this right now.
   RETURN_IF(quantize_param.IsPerChannel(),
             "Do not support inserted Transpose nodes with per-channel quantization");
+
+  if (utils::NeedsHtpTransposeReshapeWorkaround(input_shape, transpose_perm, output_shape)) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                ("Lowering Transpose node '" + output_name +
+                 "' to Reshape because its perm only reorders size-1 dimensions.")
+                    .c_str());
+    return AddReshapeNode(input_name, output_name, input_shape, output_shape, tensor_data_type,
+                          quantize_param, do_op_validation, is_for_input, is_for_output);
+  }
+
   // During GetCapability, upstream node groups that validate via ValidateQnnNode() do not
   // populate model_tensors_map_, so the input wrapper may be missing. Register a NATIVE
   // fallback; AddTensorWrapper is idempotent, so Compose-path registration still wins.
@@ -1154,6 +1180,20 @@ Ort::Status QnnModelWrapper::AddNoopReshapeNode(const std::string& node_name,
                               do_op_validation),
                 "Failed to add no-op node.");
 
+  return Ort::Status();
+}
+
+Ort::Status QnnModelWrapper::AddStaticBiasTensor(const std::string& bias_name,
+                                                 const std::vector<uint32_t>& bias_shape,
+                                                 Qnn_DataType_t data_type,
+                                                 QnnQuantParamsWrapper quant_params,
+                                                 std::vector<uint8_t> bias_data,
+                                                 std::vector<std::string>& input_names) {
+  QnnTensorWrapper bias_wrapper(bias_name, QNN_TENSOR_TYPE_STATIC, data_type,
+                                std::move(quant_params), std::vector<uint32_t>(bias_shape),
+                                std::move(bias_data));
+  RETURN_IF_NOT(AddTensorWrapper(std::move(bias_wrapper)), "Failed to add bias tensor.");
+  input_names.push_back(bias_name);
   return Ort::Status();
 }
 

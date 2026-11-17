@@ -7,6 +7,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/mixed_precision_convert_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
@@ -61,6 +62,23 @@ class LayerNormalizationOpBuilder : public BaseOpBuilder {
     bool externalize_bias;
   };
 
+  enum class Lowering { kSingle,
+                        kFlattened,
+                        kDecomposed };
+
+  struct LoweringPlan {
+    std::vector<uint32_t> x_shape;
+    size_t x_rank = 0;
+    int32_t ln_axis = -1;
+    Lowering lowering = Lowering::kSingle;
+    bool externalize_scale = false;
+    bool externalize_bias = false;
+  };
+
+  Ort::Status GetLoweringPlan(QnnModelWrapper& qnn_model_wrapper,
+                              const OrtNodeUnit& node_unit,
+                              LoweringPlan& plan) const ORT_MUST_USE_RESULT;
+
   Ort::Status BuildDecomposedLayerNorm(QnnModelWrapper& qnn_model_wrapper,
                                        const OrtNodeUnit& node_unit,
                                        const std::vector<std::string>& input_names,
@@ -68,6 +86,24 @@ class LayerNormalizationOpBuilder : public BaseOpBuilder {
                                        const DecomposedLayerNormPlan& plan,
                                        bool do_op_validation,
                                        const Ort::Logger& logger) const ORT_MUST_USE_RESULT;
+
+  // Lowers LayerNormalization with axis != rank-1 on HTP (which only normalizes the last
+  // axis) by flattening the trailing reduced axes into one: Reshape -> LayerNorm(last axis)
+  // -> Reshape. ONNX reductions are always trailing ([axis, rank)), so the flatten is exact.
+  // Only handles static shapes with scale/bias sized exactly to the flattened norm shape;
+  // anything else keeps its CPU fallback.
+  Ort::Status BuildFlattenedLayerNorm(QnnModelWrapper& qnn_model_wrapper,
+                                      const OrtNodeUnit& node_unit,
+                                      const std::vector<std::string>& input_names,
+                                      bool do_op_validation,
+                                      const Ort::Logger& logger) const ORT_MUST_USE_RESULT;
+
+  // Verifies a multi-axis (axis != rank-1) LayerNorm flattens exactly: static X shape and
+  // scale/bias (if present) sized exactly to X.shape[axis:]. Fails (CPU fallback) otherwise.
+  static Ort::Status CheckFlattenableLayerNorm(QnnModelWrapper& qnn_model_wrapper,
+                                               const OrtNodeUnit& node_unit,
+                                               const std::vector<uint32_t>& input_shape,
+                                               size_t ln_axis);
 };
 
 namespace {
@@ -170,7 +206,61 @@ Ort::Status RequantizePerTensorStatic(const std::vector<uint8_t>& src,
   return Ort::Status();
 }
 
+// Element count of a fully-static shape; 0 if any dim is dynamic/unknown.
+size_t StaticNumElements(const std::vector<uint32_t>& shape) {
+  size_t n = 1;
+  for (uint32_t d : shape) {
+    if (d == 0) {
+      return 0;
+    }
+    n *= d;
+  }
+  return n;
+}
+
 }  // namespace
+
+Ort::Status LayerNormalizationOpBuilder::GetLoweringPlan(QnnModelWrapper& qnn_model_wrapper,
+                                                         const OrtNodeUnit& node_unit,
+                                                         LoweringPlan& plan) const {
+  const auto& inputs = node_unit.Inputs();
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, plan.x_shape), "Cannot get shape of input 0");
+  plan.x_rank = plan.x_shape.size();
+
+  std::vector<uint32_t> scale_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].shape, scale_shape), "Cannot get shape of input 1 (scale)");
+  RETURN_IF(scale_shape.size() > plan.x_rank,
+            "QNN LayerNorm: scale rank exceeds input rank; model violates ONNX broadcasting spec.");
+  const bool has_bias_input = inputs.size() > 2 && inputs[2].Exists();
+  std::vector<uint32_t> bias_shape;
+  if (has_bias_input) {
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[2].shape, bias_shape), "Cannot get shape of input 2 (bias)");
+    RETURN_IF(bias_shape.size() > plan.x_rank,
+              "QNN LayerNorm: bias rank exceeds input rank; model violates ONNX broadcasting spec.");
+  }
+
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, plan.ln_axis));
+  RETURN_IF(plan.ln_axis < 0 || static_cast<size_t>(plan.ln_axis) >= plan.x_rank,
+            "QNN LayerNorm: axis out of range after normalization.");
+  const size_t ln_axis = static_cast<size_t>(plan.ln_axis);
+
+  // HTP normalizes only the last axis.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) && ln_axis != plan.x_rank - 1) {
+    RETURN_IF_ERROR(CheckFlattenableLayerNorm(qnn_model_wrapper, node_unit, plan.x_shape, ln_axis));
+    plan.lowering = Lowering::kFlattened;
+    return Ort::Status();
+  }
+
+  // Misaligned scale/bias must be applied as Mul/Add after LayerNorm.
+  plan.externalize_scale = HasNonOneDimBeforeAxis(scale_shape, plan.x_rank, ln_axis);
+  plan.externalize_bias = has_bias_input &&
+                          (HasNonOneDimBeforeAxis(bias_shape, plan.x_rank, ln_axis) ||
+                           plan.externalize_scale);
+  if (plan.externalize_scale || plan.externalize_bias) {
+    plan.lowering = Lowering::kDecomposed;
+  }
+  return Ort::Status();
+}
 
 Ort::Status LayerNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                                        const OrtNodeUnit& node_unit,
@@ -180,33 +270,23 @@ Ort::Status LayerNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mode
   RETURN_IF(outputs.size() > 1, "QNN LayerNorm only support 1 output.");
 
   const auto& inputs = node_unit.Inputs();
-  std::vector<uint32_t> input_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape of input 0");
-  const size_t input_rank = input_shape.size();
 
-  // Reject scale/bias whose rank exceeds X's rank. ONNX LN requires scale/B to broadcast to
-  // X.shape[axis:], so their rank cannot exceed input_rank. Letting such a model through would
-  // either underflow the prefix arithmetic in HasNonOneDimBeforeAxis or surface later as an opaque
-  // QNN shape-mismatch error; falling back to CPU EP here gives a clean diagnostic instead.
-  std::vector<uint32_t> scale_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].shape, scale_shape), "Cannot get shape of input 1 (scale)");
-  RETURN_IF(scale_shape.size() > input_rank,
-            "QNN LayerNorm: scale rank exceeds input rank; model violates ONNX broadcasting spec.");
-  if (inputs.size() > 2 && inputs[2].Exists()) {
-    std::vector<uint32_t> bias_shape;
-    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[2].shape, bias_shape), "Cannot get shape of input 2 (bias)");
-    RETURN_IF(bias_shape.size() > input_rank,
-              "QNN LayerNorm: bias rank exceeds input rank; model violates ONNX broadcasting spec.");
-  }
+  LoweringPlan plan;
+  RETURN_IF_ERROR(GetLoweringPlan(qnn_model_wrapper, node_unit, plan));
 
-  // QNN Op validation can also do the same work, but the message is not so clear.
-  // Explicit check and provide clear message here
-  bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  if (is_npu_backend) {
-    int32_t ln_axis = -1;
-    RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, ln_axis));
-    RETURN_IF(static_cast<size_t>(ln_axis) != input_rank - 1,
-              "QNN LayerNorm on HTP only supports normalization along the last axis.");
+  // Flattened/decomposed lowerings construct their own outputs and cannot use the precision bridge.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    Qnn_DataType_t act_qnn_data_type = QNN_DATATYPE_FLOAT_32;
+    Qnn_DataType_t output_qnn_data_type = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(inputs[0].quant_param.has_value(), inputs[0].type,
+                                          act_qnn_data_type));
+    RETURN_IF_ERROR(utils::GetQnnDataType(outputs[0].quant_param.has_value(), outputs[0].type,
+                                          output_qnn_data_type));
+    if (utils::NeedsPrecisionConvert(act_qnn_data_type, output_qnn_data_type)) {
+      RETURN_IF(plan.lowering != Lowering::kSingle,
+                "QNN LayerNorm: mixed activation/output precision is only supported on the "
+                "single-op lowering (last axis, aligned scale/bias).");
+    }
   }
 
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
@@ -217,8 +297,6 @@ Ort::Status LayerNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
                                                        const Ort::Logger& logger,
                                                        std::vector<std::string>& input_names,
                                                        bool do_op_validation) const {
-  ORT_UNUSED_PARAMETER(do_op_validation);
-
   const auto& inputs = node_unit.Inputs();
   const auto input_count = inputs.size();
   constexpr size_t X_IDX = 0;
@@ -227,6 +305,15 @@ Ort::Status LayerNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
 
   // Input[0] (X, required)
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[X_IDX], logger, input_names));
+
+  // HTP LayerNorm emits at activation precision; scale/bias keep their existing encodings.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    const auto& output = node_unit.Outputs()[0];
+    Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(output.quant_param.has_value(), output.type, declared_output_dtype));
+    RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names,
+                                                              declared_output_dtype, do_op_validation));
+  }
 
   // Input[1] (scale, required)
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[SCALE_IDX], logger, input_names));
@@ -252,16 +339,17 @@ Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), epsilon,
                                       QNN_OP_LAYER_NORM_PARAM_EPSILON, param_tensor_names));
 
-  std::vector<uint32_t> input_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape of input 0");
-  const size_t input_rank = input_shape.size();
-  int32_t ln_axis = -1;
-  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, ln_axis));
-  // GetCanonicalizedAxisAttribute normalizes ln_axis into [0, input_rank); range-check before
-  // the subtract so a malformed axis fails loudly instead of underflowing axes_rank to ~SIZE_MAX.
-  RETURN_IF(ln_axis < 0 || static_cast<size_t>(ln_axis) >= input_rank,
-            "QNN LayerNorm: axis out of range after normalization.");
-  size_t axes_rank = input_rank - static_cast<size_t>(ln_axis);
+  LoweringPlan plan;
+  RETURN_IF_ERROR(GetLoweringPlan(qnn_model_wrapper, node_unit, plan));
+  const size_t input_rank = plan.x_rank;
+  const size_t ln_axis = static_cast<size_t>(plan.ln_axis);
+
+  if (plan.lowering == Lowering::kFlattened) {
+    return BuildFlattenedLayerNorm(qnn_model_wrapper, node_unit, input_names,
+                                   do_op_validation, logger);
+  }
+
+  size_t axes_rank = input_rank - ln_axis;
   std::vector<uint32_t> axes(axes_rank, 0);
   std::vector<uint32_t> axes_shape{SafeInt<uint32_t>(axes_rank)};
   axes[0] = static_cast<uint32_t>(ln_axis);
@@ -274,45 +362,23 @@ Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   param_tensor_names.push_back(axes_param.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(axes_param));
 
-  // ONNX LayerNormalization requires scale/B to broadcast to X.shape[axis:]. If the user-provided
-  // scale or bias has non-1 dims at axes outside [axis, rank) (e.g. they were folded in by an
-  // outer Mul/Add that broadcasts across the batch), QNN can't consume them as LN scale/B.
-  // Decide which side(s) to externalize:
-  //   - scale misaligned -> externalize scale; bias must also be externalized whenever it exists,
-  //   - scale legal, bias misaligned -> keep LN(scale), externalize only the Add.
   const auto& inputs = node_unit.Inputs();
-  const bool has_bias_input = inputs.size() > 2 && inputs[2].Exists();
-  TensorInfo scale_info{};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], scale_info));
-  const bool scale_misaligned =
-      HasNonOneDimBeforeAxis(scale_info.shape, input_rank, static_cast<size_t>(ln_axis));
 
-  bool bias_misaligned = false;
-  if (has_bias_input) {
-    TensorInfo bias_info{};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], bias_info));
-    bias_misaligned =
-        HasNonOneDimBeforeAxis(bias_info.shape, input_rank, static_cast<size_t>(ln_axis));
-  }
-
-  const bool externalize_scale = scale_misaligned;
-  const bool externalize_bias = has_bias_input && (bias_misaligned || scale_misaligned);
-
-  if (externalize_scale || externalize_bias) {
+  if (plan.lowering == Lowering::kDecomposed) {
     TensorInfo x_info{};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], x_info));
-    DecomposedLayerNormPlan plan{
-        /*x_shape=*/input_shape,
+    DecomposedLayerNormPlan decomposed_plan{
+        /*x_shape=*/plan.x_shape,
         /*x_qnn_data_type=*/x_info.qnn_data_type,
-        /*ln_axis=*/static_cast<size_t>(ln_axis),
-        /*externalize_scale=*/externalize_scale,
-        /*externalize_bias=*/externalize_bias,
+        /*ln_axis=*/ln_axis,
+        /*externalize_scale=*/plan.externalize_scale,
+        /*externalize_bias=*/plan.externalize_bias,
     };
     return BuildDecomposedLayerNorm(qnn_model_wrapper,
                                     node_unit,
                                     input_names,
                                     std::move(param_tensor_names),
-                                    plan,
+                                    decomposed_plan,
                                     do_op_validation,
                                     logger);
   }
@@ -322,22 +388,29 @@ Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   // implicit bias inputs, so provide an explicit bias of all 0 (quantized int32). Done here (after
   // the decomposition branch) so the synthesized tensor is never orphaned by the decomposed path,
   // which builds its own LN input list and applies the same workaround independently.
+  const bool has_bias_input = inputs.size() > 2 && inputs[2].Exists();
+  TensorInfo scale_info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], scale_info));
   if (!has_bias_input && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-    TensorInfo x_input_info{};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], x_input_info));
-    if (x_input_info.quant_param.IsPerTensor(/*include_bw*/ true) && scale_info.quant_param.IsQuantized()) {
+    // The bridge may have rebound input_names[0] to a converted activation.
+    const auto& x_input_qparams = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetQnnQuantParams();
+    if (x_input_qparams.IsPerTensor(/*include_bw*/ true) && scale_info.quant_param.IsQuantized()) {
       const std::string bias_name = utils::UniqueNameGenerator().New(node_unit, "_implicit_bias");
       std::vector<uint32_t> bias_shape = scale_info.shape;
-      RETURN_IF_ERROR(AddZeroBiasInput(qnn_model_wrapper, x_input_info.quant_param, scale_info.quant_param,
+      RETURN_IF_ERROR(AddZeroBiasInput(qnn_model_wrapper, x_input_qparams, scale_info.quant_param,
                                        std::move(bias_shape), bias_name, logger, input_names));
     }
   }
 #endif
 
-  RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,
-                                 std::move(input_names),
-                                 std::move(param_tensor_names),
-                                 logger, do_op_validation, GetQnnOpType(node_unit.OpType())));
+  const Qnn_DataType_t activation_qnn_data_type =
+      qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
+  RETURN_IF_ERROR(ProcessOutputsAcrossPrecision(qnn_model_wrapper, node_unit,
+                                                std::move(input_names),
+                                                std::move(param_tensor_names),
+                                                logger, do_op_validation,
+                                                GetQnnOpType(node_unit.OpType()),
+                                                activation_qnn_data_type));
 
   return Ort::Status();
 }
@@ -693,6 +766,160 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
                   "Failed to add decomposed Add node.");
   }
 
+  return Ort::Status();
+}
+
+Ort::Status LayerNormalizationOpBuilder::CheckFlattenableLayerNorm(
+    QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
+    const std::vector<uint32_t>& input_shape, size_t ln_axis) {
+  RETURN_IF(ln_axis >= input_shape.size(), "QNN LayerNorm: axis out of range.");
+  RETURN_IF(StaticNumElements(input_shape) == 0,
+            "QNN LayerNorm on HTP only supports normalization along the last axis "
+            "(multi-axis lowering needs a static input shape).");
+  size_t num_norm_elems = StaticNumElements(
+      std::vector<uint32_t>(input_shape.begin() + ln_axis, input_shape.end()));
+  const auto& inputs = node_unit.Inputs();
+  std::vector<uint32_t> scale_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].shape, scale_shape),
+                "Cannot get shape of input 1 (scale)");
+  RETURN_IF(StaticNumElements(scale_shape) != num_norm_elems,
+            "QNN LayerNorm on HTP only supports normalization along the last axis "
+            "(scale cannot be flattened exactly).");
+  if (inputs.size() > 2 && inputs[2].Exists()) {
+    std::vector<uint32_t> bias_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[2].shape, bias_shape),
+                  "Cannot get shape of input 2 (bias)");
+    RETURN_IF(StaticNumElements(bias_shape) != num_norm_elems,
+              "QNN LayerNorm on HTP only supports normalization along the last axis "
+              "(bias cannot be flattened exactly).");
+  }
+  return Ort::Status();
+}
+
+Ort::Status LayerNormalizationOpBuilder::BuildFlattenedLayerNorm(
+    QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
+    const std::vector<std::string>& input_names, bool do_op_validation,
+    const Ort::Logger& logger) const {
+  ORT_UNUSED_PARAMETER(logger);
+  const auto& inputs = node_unit.Inputs();
+  const auto& outputs = node_unit.Outputs();
+  const std::string& final_output_name = outputs[0].name;
+  const bool has_bias_input = inputs.size() > 2 && inputs[2].Exists();
+
+  TensorInfo x_info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], x_info));
+  TensorInfo scale_info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], scale_info));
+  TensorInfo bias_info{};
+  if (has_bias_input) {
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], bias_info));
+  }
+  TensorInfo final_output_info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], final_output_info));
+
+  OrtNodeAttrHelper node_helper(node_unit);
+  const float epsilon = node_helper.Get("epsilon", 1e-05f);
+  const std::vector<uint32_t>& x_shape = x_info.shape;
+  const size_t input_rank = x_shape.size();
+  int32_t ln_axis = -1;
+  RETURN_IF_ERROR(GetCanonicalizedAxisAttribute(qnn_model_wrapper, node_unit, "axis", -1, ln_axis));
+  RETURN_IF(ln_axis < 0 || static_cast<size_t>(ln_axis) >= input_rank,
+            "QNN LayerNorm: axis out of range after normalization.");
+
+  // Flatten X.shape[axis:] into one norm dim: [prefix, N]. Exact flattenability is
+  // established by CheckFlattenableLayerNorm (also called here so this stays safe standalone).
+  RETURN_IF_ERROR(CheckFlattenableLayerNorm(qnn_model_wrapper, node_unit, x_shape,
+                                            static_cast<size_t>(ln_axis)));
+  size_t num_prefix_elems = 1;
+  for (size_t i = 0; i < static_cast<size_t>(ln_axis); ++i) {
+    num_prefix_elems *= x_shape[i];
+  }
+  size_t num_norm_elems = 1;
+  for (size_t i = static_cast<size_t>(ln_axis); i < input_rank; ++i) {
+    num_norm_elems *= x_shape[i];
+  }
+  const std::vector<uint32_t> flat_x_shape{SafeInt<uint32_t>(num_prefix_elems),
+                                           SafeInt<uint32_t>(num_norm_elems)};
+  const std::vector<uint32_t> flat_param_shape{SafeInt<uint32_t>(num_norm_elems)};
+
+  // Reshape helper: reuses the source tensor when already flat, else inserts a Reshape.
+  // Reshape preserves values, so quant params carry over unchanged.
+  auto flatten_input = [&](size_t input_idx, const TensorInfo& info,
+                           const std::vector<uint32_t>& flat_shape,
+                           const std::string& suffix, std::string& out_name) -> Ort::Status {
+    if (info.shape == flat_shape) {
+      out_name = input_names[input_idx];
+      return Ort::Status();
+    }
+    out_name = utils::UniqueNameGenerator().New(node_unit, suffix);
+    QnnTensorWrapper flat_tensor(out_name, QNN_TENSOR_TYPE_NATIVE, info.qnn_data_type,
+                                 info.quant_param.Copy(), std::vector<uint32_t>(flat_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(flat_tensor)),
+                  "Failed to add flattened input tensor.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(node_unit, suffix + "_reshape"),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                      {input_names[input_idx]}, {out_name}, {}, do_op_validation),
+                  "Failed to add flatten Reshape node.");
+    return Ort::Status();
+  };
+
+  std::string flat_x_name, flat_scale_name, flat_bias_name;
+  RETURN_IF_ERROR(flatten_input(0, x_info, flat_x_shape, "_ln_flat_x", flat_x_name));
+  RETURN_IF_ERROR(flatten_input(1, scale_info, flat_param_shape, "_ln_flat_scale", flat_scale_name));
+  if (has_bias_input) {
+    RETURN_IF_ERROR(
+        flatten_input(2, bias_info, flat_param_shape, "_ln_flat_bias", flat_bias_name));
+  }
+
+  // Flattened LayerNorm over the single last axis.
+  std::vector<std::string> ln_inputs = {flat_x_name, flat_scale_name};
+  if (has_bias_input) {
+    ln_inputs.push_back(flat_bias_name);
+  }
+  std::vector<std::string> param_tensor_names;
+  RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), epsilon,
+                                      QNN_OP_LAYER_NORM_PARAM_EPSILON, param_tensor_names));
+  std::vector<uint32_t> axes{1};
+  std::vector<uint32_t> axes_shape{1};
+  QnnParamWrapper axes_param(node_unit.Index(), node_unit.Name(), QNN_OP_LAYER_NORM_PARAM_AXES,
+                             std::move(axes_shape), std::move(axes));
+  param_tensor_names.push_back(axes_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(axes_param));
+
+  // Flattened LN output carries final values, so it takes the final output's dtype/qp.
+  // When X is already flat (rank-2), the LN writes directly to the real output.
+  const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
+  const Qnn_TensorType_t final_tensor_type =
+      is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+  const bool needs_unflatten = (flat_x_shape != final_output_info.shape);
+  const std::string flat_y_name =
+      needs_unflatten ? utils::UniqueNameGenerator().New(node_unit, "_ln_flat_out") : final_output_name;
+  QnnTensorWrapper flat_y_tensor(flat_y_name,
+                                 needs_unflatten ? QNN_TENSOR_TYPE_NATIVE : final_tensor_type,
+                                 final_output_info.qnn_data_type, final_output_info.quant_param.Copy(),
+                                 std::vector<uint32_t>(flat_x_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(flat_y_tensor)),
+                "Failed to add flattened LayerNorm output tensor.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                    utils::UniqueNameGenerator().New(node_unit, "_ln_flat"),
+                    QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_LAYER_NORM,
+                    std::move(ln_inputs), {flat_y_name}, std::move(param_tensor_names),
+                    do_op_validation),
+                "Failed to add flattened LayerNorm node.");
+
+  if (needs_unflatten) {
+    // Reshape back to the real output.
+    QnnTensorWrapper y_tensor(final_output_name, final_tensor_type, final_output_info.qnn_data_type,
+                              final_output_info.quant_param.Copy(), std::vector<uint32_t>(final_output_info.shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(y_tensor)),
+                  "Failed to add LayerNorm output tensor.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(node_unit, "_ln_unflatten_reshape"),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                      {flat_y_name}, {final_output_name}, {}, do_op_validation),
+                  "Failed to add unflatten Reshape node.");
+  }
   return Ort::Status();
 }
 

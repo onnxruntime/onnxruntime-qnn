@@ -28,7 +28,7 @@ class QnnJobThreadPool {
 
     // Starts the main thread/loop
     // 1. Checks if there is a job in the queue
-    // 2a. If a job exists, then notify a job has started and run it
+    // 2a. If a job exists, run it and notify the pool when it finishes
     // 2b. If a job does not exist, then wait for a new submission
     // 3. Continue to do steps 1, 2a, and 2b until stopped
     void Start();
@@ -36,25 +36,7 @@ class QnnJobThreadPool {
     // Stops main thread/loop
     void Stop();
 
-    // If a job is actively being run, wait for it to finish and return
-    // If no job is actively being run, return immediately
-    void WaitUntilInactive();
-
    private:
-    // A job thread is considered active when a job is actively being run
-    void SetActive() {
-      std::unique_lock<std::mutex> lock(thread_activity_mutex_);
-      thread_active_ = true;
-      thread_activity_change_cv_.notify_all();
-    }
-
-    // A job thread is considered inactive when it is idling between jobs or stopped
-    void SetInactive() {
-      std::unique_lock<std::mutex> lock(thread_activity_mutex_);
-      thread_active_ = false;
-      thread_activity_change_cv_.notify_all();
-    }
-
     bool IsStopped() const {
       std::unique_lock<std::mutex> lock(thread_state_mutex_);
       return thread_stopped_;
@@ -65,11 +47,7 @@ class QnnJobThreadPool {
 
     std::function<bool()> exit_predicate_;
 
-    std::condition_variable thread_activity_change_cv_;
-
-    std::mutex thread_activity_mutex_;
     mutable std::mutex thread_state_mutex_;
-    bool thread_active_ = false;
     bool thread_stopped_ = true;
 
     std::unique_ptr<std::thread> thread_;
@@ -105,11 +83,8 @@ class QnnJobThreadPool {
   // Returns a job if one is available, nullptr otherwise
   std::function<void()> GetJobFromQueueIfExists(const uint8_t thread_num);
 
-  // Notifies a waiting thread that a new job has started
-  // Implies job has been taken from the job queue
-  void NotifyJobStarted() {
-    job_started_cv_.notify_all();
-  }
+  // Decrements the number of jobs owned by workers and wakes completion waiters.
+  void NotifyJobFinished();
 
   bool IsRunning() const {
     std::unique_lock<std::mutex> lock(state_mutex_);
@@ -117,10 +92,11 @@ class QnnJobThreadPool {
   }
 
   std::condition_variable job_submitted_cv_;
-  std::condition_variable job_started_cv_;
+  std::condition_variable jobs_finished_cv_;
 
   std::mutex queue_mutex_;
   std::queue<std::function<void()>> job_queue_;
+  size_t in_flight_jobs_ = 0;
 
   std::vector<std::unique_ptr<QnnJobThread>> thread_pool_;
 

@@ -103,7 +103,7 @@ Every helper takes both maps and refuses a neighbor already in `qnn_node_group_m
 | Helper | Use |
 |---|---|
 | `GetOnlyChildOfType` | Strict downstream walk; child must be the parent's only consumer and a `SingleNode`. |
-| `GetChildNodeUnitAllowQdq` | Like above but skips through Q/DQ wrappers to the next math op. |
+| `GetChildNodeUnitAllowQdq` | Like above but skips through the NodeUnits' own Q/DQ wrappers to the next math op; a standalone Q/DQ (e.g., a requantization) in between returns `nullptr`. |
 | `GetParentOfType` / `GetParentOfInput` / `GetParentOfInputByName` | Upstream walks (no single-consumer check). |
 | `GetOnlyChildOfOutput` | Downstream walk keyed on a specific output IODef (no `SingleNode` check). |
 | `GetReduceAxes`, `GetInitializerDataAsInt64` | Read constant attrs/initializers. |
@@ -182,13 +182,13 @@ If `AddToModelBuilder` returns non-OK during Compile, the error is logged at ERR
 | `HardSigmoid` | `HardSigmoidMulFusion` | `x * HardSigmoid(x)` → QNN HardSwish |
 | `MatMul` | `LowPowerBlockQuantizedMatMulFusion` | `DQ→Q→MatMul(+DQ,DQ,Q)` LPBQ → QNN MatMul w/ LPBQ |
 | `Gemm` | `LowPowerBlockQuantizedGemmFusion`, then `ReshapeGemmFusionGroup::TryFusion4/3/2` | LPBQ FC; `[Reshape→]Gemm[→Reshape]` → QNN FullyConnected |
-| `Mul` | `ScaleSoftmaxFusion` | `Softmax(Mul(x, scalar))` → QNN Softmax(beta=scale) |
+| `Mul` | `ScaleSoftmaxFusion` | `Softmax(Mul(x, scale))` (single-element scale) → QNN Softmax(beta=scale) |
 | `Cast` | `CastLoneQFusion` | Orphaned `Cast→Q` |
 | `Erf` | `GeluFusion` | 3 GELU ONNX expansions/variants → QNN Gelu |
 | `ReduceMean` | `LayerNormFusion` | Full LayerNorm expansion → QNN LayerNorm |
 | `Einsum` | `ReshapeEinsumReshapeNodeGroup` | `Reshape→Einsum→Reshape` (6D) → Reshape+DepthToSpace+Transpose |
 | `Reshape` | `SpaceToDepthFusion`, then `Rank6ToRank5Fusion` | SpaceToDepth lowering; rank-6 `Reshape→Transpose→Reshape` → rank-5 |
-| `Concat` | `SliceConcatSpaceToDepthFusion` | Strided `Slice` tiling (4 tiles) + `Concat(axis=1)` → `PreT + SpaceToDepth(DCR,block=2) + [Gather] + PostT` |
+| `Concat` | `SliceConcatSpaceToDepthFusion` | Strided `Slice` tiling (4 tiles) + `Concat(axis=1)` → `PreT + SpaceToDepth(DCR; two unequal-block stages for Focus order) + PostT + [Gather]` |
 | `Transpose` | `ChannelShuffleFusion`, then `TransposeReshapeTransposeFusion` | ChannelShuffle (5-node); `Transpose→Reshape→Transpose` → Reshape |
 | *(dynamic)* | `UDOQDQFusion` | `DQ→UDO→Q` → QNN custom op, via `registerUDO` |
 

@@ -61,6 +61,7 @@ typedef OrtStatus*(ORT_API_CALL* OrtReadNamedBufferFunc)(void* state, const char
 #include "core/providers/qnn/common/int2.h"
 #include "core/providers/qnn/common/int4.h"
 #include "core/providers/qnn/common/qnn_safeint.h"
+#include "core/providers/qnn/ort_api_runtime_capabilities.h"
 
 namespace onnxruntime {
 
@@ -252,6 +253,7 @@ struct ApiPtrs {
   const OrtApi& ort_api;
   const OrtEpApi& ep_api;
   const OrtModelEditorApi& model_editor_api;
+  OrtApiRuntimeCapabilities runtime_capabilities{OrtApiRuntimeCapabilities::Unavailable()};
 };
 
 // Helper to release Ort one or more objects obtained from the public C API at the end of their scope.

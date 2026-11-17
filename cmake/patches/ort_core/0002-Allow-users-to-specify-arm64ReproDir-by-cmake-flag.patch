@@ -1,7 +1,7 @@
-From 00c6d8b708dba62dd6192ce57610f1272210df58 Mon Sep 17 00:00:00 2001
-From: Badri Narayanan <mbadnara@qti.qualcomm.com>
-Date: Tue, 21 Jul 2026 11:35:39 -0700
-Subject: [PATCH 3/7] Allow users to specify arm64ReproDir by cmake flag
+From f37dab788a72a1fa8017981e06133599ce0f19fd Mon Sep 17 00:00:00 2001
+From: ORT QNN EP team <noreply@qualcomm.com>
+Date: Tue, 21 Jul 2026 00:00:00 +0000
+Subject: [PATCH 2/4] Allow users to specify arm64ReproDir by cmake flag
 
 ---
  cmake/arm64x.cmake | 3 ++-
