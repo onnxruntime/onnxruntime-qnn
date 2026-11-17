@@ -1690,8 +1690,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   ASSERT_EQ(std::remove(qnn_ctx_bin.c_str()), 0);
 }
 
-#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
-    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 47))
+#ifdef QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
 TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpInitAcceleration_LoadsAndRuns) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ProviderOptions provider_options = {{"backend_type", "htp"},
@@ -1739,7 +1738,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpInitAcceleration_LoadsAndRuns) {
     }
   }
 }
-#endif  // QAIRT SDK 2.47+
+#endif  // QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
 
 // htp_reused_io_limit_mb: a valid numeric value is accepted when preparing and loading an AOT context.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceeds) {

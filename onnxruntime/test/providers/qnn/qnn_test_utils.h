@@ -1765,6 +1765,12 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
   };
 }
 
+// Keep the build availability condition aligned with qnn_def.h.
+#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 47))
+#define QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+#endif
+
 // QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38 (QAIRT 2.49).
 // Defined here (duplicated from core/providers/qnn/builder/qnn_def.h) so test files that must
 // not include EP-private headers can gate on it without breaking the public-API-only boundary.

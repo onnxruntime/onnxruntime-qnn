@@ -160,7 +160,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 Acceleration uses all DSP hardware threads during deserialization and may affect other graphs running concurrently. Small graphs may see little benefit. Invalid values are logged and use the default (`"0"`). If QAIRT rejects the acceleration config, the existing load error is returned.
 
-Resource-sharing list loads use `contextCreateFromBinaryListAsync`, which already optimizes initialization and does not need this flag. Setting the option to `"0"` does not disable that API's own optimization. Non-HTP backends do not receive the HTP acceleration config.
+Resource-sharing list loads use `contextCreateFromBinaryListAsync`, which already optimizes initialization and does not need this flag. Setting the option to `"0"` does not disable that API's own optimization. This is an HTP-specific option.
 
 |`"htp_performance_mode"`|Description|
 |---|---|

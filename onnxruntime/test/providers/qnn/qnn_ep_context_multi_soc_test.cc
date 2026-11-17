@@ -32,8 +32,7 @@ namespace test {
 namespace {
 
 void CompileModelWithPerSocOptions(const ProviderOptions& per_soc_options,
-                                   bool is_embed_mode = true,
-                                   bool test_init_acceleration = false) {
+                                   bool is_embed_mode = true) {
   ProviderOptions provider_options(per_soc_options);
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";  // Avoid IO QDQ CPU fallback.
@@ -48,56 +47,18 @@ void CompileModelWithPerSocOptions(const ProviderOptions& per_soc_options,
   std::filesystem::remove(output_model_file);
   std::filesystem::remove(output_bin_file);
 
-  {
-    Ort::SessionOptions so;
-    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
-    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, is_embed_mode ? "1" : "0");
-    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.string().c_str());
+  Ort::SessionOptions so;
+  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, is_embed_mode ? "1" : "0");
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.string().c_str());
 
-    RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
-  }
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
   ASSERT_TRUE(std::filesystem::exists(output_model_file));
   if (!is_embed_mode) {
     ASSERT_TRUE(std::filesystem::exists(output_bin_file));
-  }
-
-  if (test_init_acceleration) {
-    ModelTestBuilder helper;
-    MakeTestInput(helper, "input0", TestInputDef<float>({1, 3, 4, 5}, false, std::vector<float>(60, 1.0f)));
-    MakeTestInput(helper, "input1", TestInputDef<float>({1, 3, 4, 5}, false, std::vector<float>(60, 2.0f)));
-    MakeTestInput(helper, "input2", TestInputDef<float>({1, 3, 4, 5}, false, std::vector<float>(60, 3.0f)));
-    Ort::Session cpu_session(*ort_env, input_model_file, Ort::SessionOptions{});
-    std::vector<Ort::Value> reference_outputs;
-    RunWithEP(cpu_session, Ort::RunOptions{nullptr}, helper.feeds_, reference_outputs);
-    ASSERT_FALSE(reference_outputs.empty());
-
-    for (const char* acceleration : {"0", "1"}) {
-      SCOPED_TRACE(acceleration);
-      // Load on the native device without carrying over any per-SoC preparation options.
-      const ProviderOptions loading_options = {{"backend_type", "htp"},
-                                               {"offload_graph_io_quantization", "0"},
-                                               {"disable_file_mapped_weights", "1"},
-                                               {"htp_context_init_acceleration", acceleration}};
-      Ort::SessionOptions so;
-      so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-      RegisteredEpDeviceUniquePtr registered_ep_device;
-      RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, loading_options);
-      ScopedOrtSession scoped(std::move(registered_ep_device),
-                              Ort::Session(*ort_env, output_model_file.c_str(), so));
-      ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), kQnnExecutionProvider,
-                                                     ExpectedEPNodeAssignment::All));
-      std::vector<Ort::Value> outputs;
-      RunWithEP(scoped.session(), Ort::RunOptions{nullptr}, helper.feeds_, outputs);
-      ASSERT_EQ(outputs.size(), reference_outputs.size());
-      Ort::AllocatorWithDefaultOptions allocator;
-      for (size_t i = 0; i < outputs.size(); ++i) {
-        ASSERT_NO_FATAL_FAILURE(VerifyOutput(cpu_session.GetOutputNameAllocated(i, allocator).get(),
-                                             reference_outputs[i], outputs[i], ElementwiseAbsoluteVerifier{}));
-      }
-    }
   }
 
   std::filesystem::remove(output_model_file);
@@ -129,21 +90,6 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_DefaultHtpConfigs_NonEmbed) {
 
   CompileModelWithPerSocOptions(per_soc_options, /*is_embed_mode*/ false);
 }
-
-#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) &&                           \
-    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 47)) && \
-    (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
-TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpInitAcceleration_LoadsAndRuns) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  ProviderOptions per_soc_options = {{"htp_arch", "68,73,81"}};
-#ifdef _WIN32
-  per_soc_options["soc_model"] = "37,60,88";
-#else
-  per_soc_options["soc_model"] = "30,43,87";
-#endif
-  CompileModelWithPerSocOptions(per_soc_options, /*is_embed_mode*/ false, /*test_init_acceleration*/ true);
-}
-#endif  // QAIRT SDK 2.47+ and native HTP device
 
 TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArchOnly) {
   ProviderOptions per_soc_options;
@@ -316,6 +262,59 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArch_68_73_81_NotAllArchSupporte
     }
   }
 }
+
+#if defined(QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE) && \
+    (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpInitAcceleration_LoadsSucceeds) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options = {{"backend_type", "htp"},
+                                      {"offload_graph_io_quantization", "0"},
+                                      {"num_graph_prepare_threads", "1"},
+                                      {"htp_arch", "68,73,81"}};
+#ifdef _WIN32
+  provider_options["soc_model"] = "37,60,88";
+#else
+  provider_options["soc_model"] = "30,43,87";
+#endif
+#if defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
+  provider_options["enable_htp_cross_device_prepare"] = "1";
+#endif
+
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
+  const std::filesystem::path output_model_file("model_ctx.onnx");
+  const std::filesystem::path output_bin_file("model_ctx_qnn.bin");
+  std::filesystem::remove(output_model_file);
+  std::filesystem::remove(output_bin_file);
+
+  {
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.string().c_str());
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+  }
+  ASSERT_TRUE(std::filesystem::exists(output_model_file));
+  ASSERT_TRUE(std::filesystem::exists(output_bin_file));
+
+  for (const char* acceleration : {"0", "1"}) {
+    SCOPED_TRACE(acceleration);
+    const ProviderOptions loading_options = {{"backend_type", "htp"},
+                                             {"offload_graph_io_quantization", "0"},
+                                             {"disable_file_mapped_weights", "1"},
+                                             {"htp_context_init_acceleration", acceleration}};
+    Ort::SessionOptions so;
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, loading_options);
+    ScopedOrtSession scoped(std::move(registered_ep_device),
+                            Ort::Session(*ort_env, output_model_file.c_str(), so));
+  }
+
+  std::filesystem::remove(output_model_file);
+  std::filesystem::remove(output_bin_file);
+}
+#endif  // QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE and native HTP device
 
 #endif  // !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
 

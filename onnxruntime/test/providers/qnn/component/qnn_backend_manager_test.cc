@@ -66,26 +66,18 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeManager(
   return qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
 }
 
-TEST(QnnUnit_BackendManagerTest, BuildContextBinaryConfigs_ContextInitAcceleration_OptionAndBackend) {
-  struct Case {
-    uint32_t backend;
-    std::optional<bool> enabled;
-  };
-  const Case cases[] = {{QNN_BACKEND_ID_HTP, std::nullopt},
-                        {QNN_BACKEND_ID_HTP, false},
-                        {QNN_BACKEND_ID_HTP, true},
-                        {QNN_BACKEND_ID_CPU, true}};
-  for (const auto& test_case : cases) {
-    SCOPED_TRACE(test_case.backend);
-    SCOPED_TRACE(test_case.enabled.value_or(false));
+TEST(QnnUnit_BackendManagerTest, BuildContextBinaryConfigs_ContextInitAcceleration_OptionAndSdkGuard) {
+  const std::optional<bool> cases[] = {std::nullopt, false, true};
+  for (const auto& enabled : cases) {
+    SCOPED_TRACE(enabled.value_or(false));
     StubApiEnv env;
     qnn::QnnBackendManagerConfig config{};
     config.context_priority = qnn::ContextPriority::NORMAL;
-    if (test_case.enabled) {
-      config.htp_context_init_acceleration = *test_case.enabled;
+    if (enabled) {
+      config.htp_context_init_acceleration = *enabled;
     }
     auto manager = qnn::QnnBackendManager::Create(config, env.api_ptrs, env.logger);
-    manager->SetQnnBackendType(test_case.backend);
+    manager->SetQnnBackendType(QNN_BACKEND_ID_HTP);
     qnn::QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> builder(
         QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
     ASSERT_TRUE(manager->BuildContextBinaryConfigs(0, nullptr, builder).IsOK());
@@ -95,7 +87,7 @@ TEST(QnnUnit_BackendManagerTest, BuildContextBinaryConfigs_ContextInitAccelerati
     EXPECT_EQ(configs[0]->priority, QNN_PRIORITY_NORMAL);
     size_t end = 1;
 #ifdef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
-    if (test_case.backend == QNN_BACKEND_ID_HTP && test_case.enabled.value_or(false)) {
+    if (enabled.value_or(false)) {
       ASSERT_NE(configs[end], nullptr);
       ASSERT_EQ(configs[end]->option, QNN_CONTEXT_CONFIG_OPTION_CUSTOM);
       const auto* custom = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[end++]->customConfig);

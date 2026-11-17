@@ -1373,8 +1373,7 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
 #endif
 
 #ifdef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
-  if (htp_context_init_acceleration_ &&
-      GetQnnBackendType() == QnnBackendType::HTP) {
+  if (htp_context_init_acceleration_) {
     auto custom = configs_builder.PushCustomConfig();
     custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION;
     custom->initAcceleration = true;
