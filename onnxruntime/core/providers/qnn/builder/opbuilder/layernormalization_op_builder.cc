@@ -311,7 +311,7 @@ Ort::Status LayerNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mode
     const auto& output = node_unit.Outputs()[0];
     Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
     RETURN_IF_ERROR(utils::GetQnnDataType(output.quant_param.has_value(), output.type, declared_output_dtype));
-    RETURN_IF_ERROR(utils::ConvertInputToPrecision(qnn_model_wrapper, input_names[0],
+    RETURN_IF_ERROR(utils::ConvertInputToPrecision(qnn_model_wrapper, node_unit, input_names[0],
                                                    declared_output_dtype, do_op_validation));
   }
 

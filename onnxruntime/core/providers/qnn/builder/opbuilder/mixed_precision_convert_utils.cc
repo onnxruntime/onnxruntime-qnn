@@ -91,9 +91,26 @@ Ort::Status AlignBinaryInputPrecision(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Ort::Status ConvertInputToPrecision(QnnModelWrapper& qnn_model_wrapper,
+                                    const OrtNodeUnit& node_unit,
                                     std::string& input_name,
                                     Qnn_DataType_t target_dtype,
                                     bool do_op_validation) {
+  // Callers may pass a processed derivative of a NodeUnit input (UniqueNameGenerator
+  // suffixes such as "_reshape"/"_convert", or Gemm's "_transpose") rather than the
+  // original IODef name. Accept those, but reject tensors that are not this op's inputs.
+  bool is_op_input = false;
+  for (const auto& input_def : node_unit.Inputs()) {
+    if (!input_def.Exists()) {
+      continue;
+    }
+    if (input_name == input_def.name || input_name.rfind(input_def.name + "_", 0) == 0) {
+      is_op_input = true;
+      break;
+    }
+  }
+  RETURN_IF_NOT(is_op_input,
+                "QNN EP's input precision Convert requires the tensor to be an input of the op.");
+
   const auto& input = qnn_model_wrapper.GetQnnTensorWrapper(input_name);
   const Qnn_DataType_t input_dtype = input.GetTensorDataType();
   if (IsNarrowingQuantOutput(input_dtype, target_dtype) || !NeedsPrecisionConvert(input_dtype, target_dtype)) {

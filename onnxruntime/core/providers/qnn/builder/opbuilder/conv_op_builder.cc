@@ -342,7 +342,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     // 2. Convert the activation to the output's precision before Conv consumes it, so Conv computes and emits
     // natively at declared_output_dtype. A 16-bit activation feeding an 8-bit output is left to
     // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output.
-    RETURN_IF_ERROR(utils::ConvertInputToPrecision(qnn_model_wrapper, input_names[0], declared_output_dtype,
+    RETURN_IF_ERROR(utils::ConvertInputToPrecision(qnn_model_wrapper, node_unit, input_names[0], declared_output_dtype,
                                                    do_op_validation));
     act_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
   }
