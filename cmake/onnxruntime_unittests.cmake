@@ -347,13 +347,19 @@ block()
 
   set(onnxruntime_provider_test_deps ${onnxruntime_test_providers_dependencies})
 
+  # Accuracy tests are run by the dedicated accuracy validation flow.
+  set(onnxruntime_provider_test_filter "-QnnAcc_*")
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND onnxruntime_target_platform STREQUAL "aarch64")
+    # Linux ARM64 has no snapshot golden producer yet.
+    string(APPEND onnxruntime_provider_test_filter ":QnnSnapshot_*")
+  endif()
+
   AddTest(
     TARGET onnxruntime_provider_test
     SOURCES ${onnxruntime_provider_test_srcs}
     LIBS ${onnxruntime_provider_test_libs}
     DEPENDS ${onnxruntime_provider_test_deps}
-    # Accuracy tests are run by the dedicated accuracy validation flow.
-    TEST_ARGS "--gtest_filter=-QnnAcc_*"
+    TEST_ARGS "--gtest_filter=${onnxruntime_provider_test_filter}"
   )
 
   # Expose QNN SDK headers to unit tests via an interface target
