@@ -185,6 +185,15 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                    ") exceeds its compute bitwidth (" + std::to_string(compute_bitwidth) + ")")
                       .c_str());
 
+    // V68 HTP only supports a16w8 among the 16-bit-activation combos, not a16w16 (unlike later
+    // HTP archs). Reject here so EP doesn't commit to this op in GetCapability and only discover
+    // the failure during QNN's own graph validation. An unset arch (NONE, e.g. AI Hub conversion)
+    // is not V68, so it's left to backend validation.
+    const int act_bitwidth = utils::FixedPointBitWidth(act_dtype_check);
+    RETURN_IF_NOT(qnn_model_wrapper.GetHtpArch() != QNN_HTP_DEVICE_ARCH_V68 ||
+                      act_bitwidth != 16 || weight_bitwidth != 16,
+                  "QNN EP: Conv a16w16 is not supported on V68 HTP (only a16w8).");
+
     // checking for per-channel quantization
     const auto& input_1 = inputs[1];  // weight
     bool is_per_axis_quant = false;

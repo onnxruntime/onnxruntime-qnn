@@ -386,7 +386,7 @@ TEST_F(QnnCPUBackendTests, GRU_fp32_layout1_forward) {
       std::exception);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Runs a GRU model on the QNN HTP backend with QDQ quantization.
 template <typename QuantType>
@@ -972,7 +972,7 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_reverse) {
   // TODO: Remove the platform-aware tolerance once the accuracy issue is solved.
 #if defined(__linux__) && defined(__x86_64__)
   constexpr float kTolerance = 0.15f;
-#elif defined(_WIN32) && defined(_M_ARM64)
+#elif defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
   constexpr float kTolerance = 0.012f;
 #else
   constexpr float kTolerance = 0.006f;
@@ -1210,7 +1210,7 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_linear_before_reset) {
                       kTolerance);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime
