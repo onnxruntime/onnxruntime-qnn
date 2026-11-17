@@ -11,7 +11,8 @@ namespace onnxruntime {
 namespace qnn {
 
 // High-level workflows:
-// 1) GatherElements on HTP with BOOL input: BOOL -> Cast(U8) -> GatherElements(U8) -> Cast(BOOL).
+// 1) BOOL Gather/GatherElements on HTP or QNN IR:
+//    BOOL -> Cast(U8) -> Gather/GatherElements(U8) -> Cast(BOOL).
 // 2) Gather with int64 inputs: inputs gets Cast(INT32) in ProcessInt64Tensors;
 //    if ONNX graph output is int64, cast back after Gather.
 // 2.1) Gather with static int64 indices: ProcessInputs normalizes negative values and converts
@@ -40,6 +41,16 @@ class GatherOpBuilder : public BaseOpBuilder {
                                           const Ort::Logger& logger,
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
+
+// A direct QNN IR backend selection reports SERIALIZER here. Preserve the HTP BOOL Gather lowering
+// for serialized DLCs so Gather itself uses the HTP-supported UINT8 representation.
+static bool NeedsBoolGatherCast(const QnnModelWrapper& qnn_model_wrapper,
+                                const OrtNodeUnitIODef& input) {
+  const QnnBackendType backend_type = qnn_model_wrapper.GetQnnBackendType();
+  const bool is_htp_or_serializer = backend_type == QnnBackendType::HTP ||
+                                    backend_type == QnnBackendType::SERIALIZER;
+  return is_htp_or_serializer && input.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL;
+}
 
 Ort::Status GatherOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                            const OrtNodeUnit& node_unit,
@@ -157,8 +168,7 @@ Ort::Status GatherOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
 
   // Gather/GatherElements on HTP BE don't support BOOL input. Add Cast node to convert BOOL to UINT8.
-  const bool needs_bool_cast = (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
-                                inputs[0].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
+  const bool needs_bool_cast = NeedsBoolGatherCast(qnn_model_wrapper, inputs[0]);
   if (needs_bool_cast) {
     const std::string& input0_name = input_names[0];
     TensorInfo input0_info = {};
@@ -189,8 +199,7 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                          const Ort::Logger& logger,
                                                          bool do_op_validation) const {
   const bool is_gather_elems = node_unit.OpType() == "GatherElements";
-  const bool needs_bool_cast = (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
-                                node_unit.Inputs()[0].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
+  const bool needs_bool_cast = NeedsBoolGatherCast(qnn_model_wrapper, node_unit.Inputs()[0]);
 
   // Create QNN 'axis' parameter. dtype differs by op: Gather->INT_32, GatherElements->UINT_32.
   // axis_value is kept in scope as uint32_t for the GatherElements output shape computation below.
