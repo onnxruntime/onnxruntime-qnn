@@ -30,13 +30,13 @@ Ort::Status AlignBinaryInputPrecision(QnnModelWrapper& qnn_model_wrapper,
                                       std::vector<std::string>& input_names,
                                       bool do_op_validation);
 
-// Converts the activation `input_names[0]` to `target_dtype` and rebinds it to the converted tensor.
-// No-op unless the pair is a mismatched fixed-point one whose activation is not wider than the target.
-// A wider activation is narrowed after the op by AddOpWithQuantizedOutput.
-Ort::Status ConvertActivationToPrecision(QnnModelWrapper& qnn_model_wrapper,
-                                         std::vector<std::string>& input_names,
-                                         Qnn_DataType_t target_dtype,
-                                         bool do_op_validation);
+// Converts one per-tensor quantized input to `target_dtype` and rebinds `input_name`.
+// The caller selects the input and target; other inputs and the declared output are unchanged.
+// No-op for matching/non-fixed-point types or a wider input. Same-width signedness conversion is allowed.
+Ort::Status ConvertInputToPrecision(QnnModelWrapper& qnn_model_wrapper,
+                                    std::string& input_name,
+                                    Qnn_DataType_t target_dtype,
+                                    bool do_op_validation);
 
 // Builds `qnn_op_type` at `native_dtype` and inserts a QNN Convert to the node's
 // declared output tensor/precision.

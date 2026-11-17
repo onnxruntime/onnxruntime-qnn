@@ -90,23 +90,23 @@ Ort::Status AlignBinaryInputPrecision(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-Ort::Status ConvertActivationToPrecision(QnnModelWrapper& qnn_model_wrapper,
-                                         std::vector<std::string>& input_names,
-                                         Qnn_DataType_t target_dtype,
-                                         bool do_op_validation) {
-  const auto& activation = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
-  const Qnn_DataType_t activation_dtype = activation.GetTensorDataType();
-  if (IsNarrowingQuantOutput(activation_dtype, target_dtype) || !NeedsPrecisionConvert(activation_dtype, target_dtype)) {
+Ort::Status ConvertInputToPrecision(QnnModelWrapper& qnn_model_wrapper,
+                                    std::string& input_name,
+                                    Qnn_DataType_t target_dtype,
+                                    bool do_op_validation) {
+  const auto& input = qnn_model_wrapper.GetQnnTensorWrapper(input_name);
+  const Qnn_DataType_t input_dtype = input.GetTensorDataType();
+  if (IsNarrowingQuantOutput(input_dtype, target_dtype) || !NeedsPrecisionConvert(input_dtype, target_dtype)) {
     return Ort::Status();
   }
-  RETURN_IF_NOT(activation.GetQnnQuantParams().IsPerTensor(),
-                "QNN EP's activation precision Convert only supports per-tensor quantization");
-  const Qnn_ScaleOffset_t& encoding = activation.GetQnnQuantParams().Get().scaleOffsetEncoding;
-  const std::string converted_name = UniqueNameGenerator().New(input_names[0], "_convert");
-  RETURN_IF_ERROR(InsertConvertOp(qnn_model_wrapper, input_names[0], converted_name, activation_dtype, target_dtype,
-                                  encoding.offset, encoding.scale, activation.GetTensorDims(),
+  RETURN_IF_NOT(input.GetQnnQuantParams().IsPerTensor(),
+                "QNN EP's input precision Convert only supports per-tensor quantization");
+  const Qnn_ScaleOffset_t& encoding = input.GetQnnQuantParams().Get().scaleOffsetEncoding;
+  const std::string converted_name = UniqueNameGenerator().New(input_name, "_convert");
+  RETURN_IF_ERROR(InsertConvertOp(qnn_model_wrapper, input_name, converted_name, input_dtype, target_dtype,
+                                  encoding.offset, encoding.scale, input.GetTensorDims(),
                                   /*output_symmetric*/ false, do_op_validation));
-  input_names[0] = converted_name;
+  input_name = converted_name;
   return Ort::Status();
 }
 

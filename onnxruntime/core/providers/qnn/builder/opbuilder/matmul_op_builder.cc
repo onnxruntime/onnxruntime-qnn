@@ -327,8 +327,8 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
       input_info_0.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 &&
       input_info_1.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
-    RETURN_IF_ERROR(utils::ConvertActivationToPrecision(qnn_model_wrapper, input_names,
-                                                        QNN_DATATYPE_UFIXED_POINT_16, do_op_validation));
+    RETURN_IF_ERROR(utils::ConvertInputToPrecision(qnn_model_wrapper, input_names[0],
+                                                   QNN_DATATYPE_UFIXED_POINT_16, do_op_validation));
   }
 
   // Process input 1.
@@ -870,8 +870,8 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                      op_output_shape, do_op_validation));
   } else {
     if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-      RETURN_IF_ERROR(utils::ConvertActivationToPrecision(qnn_model_wrapper, input_names,
-                                                          output_info.qnn_data_type, do_op_validation));
+      RETURN_IF_ERROR(utils::ConvertInputToPrecision(qnn_model_wrapper, input_names[0],
+                                                     output_info.qnn_data_type, do_op_validation));
     }
     const Qnn_DataType_t activation_qnn_data_type =
         qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
