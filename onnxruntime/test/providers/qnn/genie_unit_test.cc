@@ -18,7 +18,7 @@
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
-#include "core/providers/qnn/genie/genie_node_compute_info.h"
+#include "core/providers/qnn/genie/genie_output_shape.h"
 
 namespace onnxruntime {
 namespace test {
@@ -146,10 +146,19 @@ TEST(GenieOutputShapeTest, ParsesPositiveDimensionsAndAddsSequenceDimension) {
   EXPECT_EQ(shape, (std::vector<int64_t>{2, 1, 3}));
 }
 
+TEST(GenieOutputShapeTest, ParsesSingleDimensionAndInt64Values) {
+  std::vector<int64_t> shape;
+  EXPECT_TRUE(ParseGenieOutputShape("{\"dimensions\": [ 2147483648 ]}", shape));
+  EXPECT_EQ(shape, (std::vector<int64_t>{2147483648LL, 1}));
+}
+
 TEST(GenieOutputShapeTest, RejectsMalformedDimensionsWithoutThrowing) {
   const std::vector<const char*> malformed_configs{
       nullptr, "{}", "{\"dimensions\": []}", "{\"dimensions\": [x]}",
-      "{\"dimensions\": [0]}", "{\"dimensions\": [1,]}",
+      "{\"dimensions\": [0]}", "{\"dimensions\": [-1]}",
+      "{\"dimensions\": [ ]}", "{\"dimensions\": [1,]}",
+      "{\"dimensions\": [1,,2]}", "{\"dimensions\": [1,x]}",
+      "{\"dimensions\": [1x]}", "{\"dimensions\": [1,2}",
       "{\"dimensions\": [9223372036854775808]}"};
   for (const char* config : malformed_configs) {
     std::vector<int64_t> shape{7};

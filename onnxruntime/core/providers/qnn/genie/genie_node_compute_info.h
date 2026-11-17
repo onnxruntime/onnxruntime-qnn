@@ -4,7 +4,6 @@
 #pragma once
 
 #include <memory>
-#include <vector>
 
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/ort_api.h"
@@ -13,9 +12,6 @@
 namespace onnxruntime {
 
 class QnnEp;
-
-bool ParseGenieOutputShape(const char* output_config,
-                           std::vector<int64_t>& output_shape) noexcept;
 
 struct GenieNodeComputeInfo : QnnNodeComputeInfoBase {
   GenieNodeComputeInfo(QnnEp& ep, std::shared_ptr<GenieNodeBuilder> builder);
