@@ -161,8 +161,8 @@ jobs:
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
-          NUGET_API_KEY: ${{ steps.nuget_login.outputs.NUGET_API_KEY }}
-          TEST_NUGET_API_KEY: ${{ steps.testnuget_login.outputs.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.nuget_login.outputs.NUGET_API_KEY || '' }}
+          TEST_NUGET_API_KEY: ${{ steps.testnuget_login.outputs.NUGET_API_KEY || '' }}
         run: |
           py -m venv uplevel_venv
           .\uplevel_venv\Scripts\activate
