@@ -2034,12 +2034,18 @@ struct InitializerByteSizeCase {
 // External metadata exposes the actual buffer length independently of the
 // declared shape. Malformed cases must fail before opening the external file.
 static std::filesystem::path g_external_initializer_path;
+static std::filesystem::path g_external_initializer_model_path;
 static size_t g_external_initializer_byte_size = 0;
 static size_t g_external_initializer_file_queries = 0;
 static size_t g_external_initializer_releases = 0;
 
 void SetupExternalUnpackStubs(QnnModelWrapperTestContext& ctx) {
   SetupUnpackStubs(ctx);
+  ctx.stub_ort_api.Graph_GetModelPath =
+      [](const OrtGraph*, const ORTCHAR_T** model_path) noexcept -> OrtStatus* {
+    *model_path = g_external_initializer_model_path.c_str();
+    return nullptr;
+  };
   ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo =
       [](const OrtValueInfo*, OrtExternalInitializerInfo** info) noexcept -> OrtStatus* {
     *info = reinterpret_cast<OrtExternalInitializerInfo*>(&g_initializer_value_sentinel);
@@ -2069,19 +2075,19 @@ class QnnUnit_InitializerByteSizeTest : public ::testing::TestWithParam<Initiali
     g_external_initializer_file_queries = 0;
     g_external_initializer_releases = 0;
     const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    g_external_initializer_path = std::filesystem::temp_directory_path() /
-                                  ("qnn_initializer_size_" + std::to_string(timestamp) + ".bin");
+    g_external_initializer_model_path = std::filesystem::temp_directory_path() / "model.onnx";
+    g_external_initializer_path = "qnn_initializer_size_" + std::to_string(timestamp) + ".bin";
     SetupExternalUnpackStubs(ctx_);
     wrapper_ = ctx_.CreateWrapper(qnn::ModelSettings{});
   }
 
   void TearDown() override {
     std::error_code error;
-    std::filesystem::remove(g_external_initializer_path, error);
+    std::filesystem::remove(g_external_initializer_model_path.parent_path() / g_external_initializer_path, error);
   }
 
   void WriteExternalBytes() {
-    std::ofstream stream(g_external_initializer_path, std::ios::binary);
+    std::ofstream stream(g_external_initializer_model_path.parent_path() / g_external_initializer_path, std::ios::binary);
     ASSERT_TRUE(stream.is_open());
     const auto& bytes = GetParam().packed_bytes;
     stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
@@ -2243,7 +2249,8 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalAllocationException
   g_tensor_dims = {static_cast<int64_t>(max_size), 2};
   g_external_initializer_byte_size = max_size * 2;
   g_external_initializer_releases = 0;
-  g_external_initializer_path.clear();
+  g_external_initializer_model_path = std::filesystem::temp_directory_path() / "model.onnx";
+  g_external_initializer_path = "qnn_initializer_allocation_exception.bin";
   QnnModelWrapperTestContext ctx;
   SetupExternalUnpackStubs(ctx);
   auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
