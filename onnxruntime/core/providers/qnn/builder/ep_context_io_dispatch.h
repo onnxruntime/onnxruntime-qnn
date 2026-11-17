@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <future>
 #include <string>
 #include <vector>
 
@@ -57,8 +58,11 @@ class EpContextIoDispatch {
   // Precondition: HasReadCallback(). Copies valid successful output into out.
   // On callback error, application cleanup and `out` remain unchanged.
   // validated_external_path is the resolved UTF-8 path used for source mapping.
+  // Keep source_cleanup in the load scope so its async future waits for source release
+  // before loading returns, including errors and exceptions.
   Ort::Status Read(const std::string& file_name, std::vector<char>& out,
-                   const std::string& validated_external_path = "") const;
+                   const std::string& validated_external_path = "",
+                   std::future<void>* source_cleanup = nullptr) const;
 
   // Precondition: HasWriteCallback(). Logs INFO with byte count on success.
   Ort::Status Write(const std::string& name,
