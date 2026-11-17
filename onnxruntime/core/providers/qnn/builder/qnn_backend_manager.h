@@ -193,6 +193,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                      /*out*/ unsigned char** context_buffer,
                                      /*out*/ uint64_t& buffer_size);
 
+  // When preflight_derived_max_spill_fill_size is non-null, validates the binary and returns its
+  // spill-fill requirement without creating a QNN context.
   Ort::Status LoadCachedQnnContextFromBuffer(
       char* buffer,
       uint64_t buffer_length,
@@ -202,7 +204,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       int64_t group_max_spill_fill_size,
       int64_t declared_max_spill_fill_size,
       const qnn::EpContextIoDispatch& io_dispatch,
-      bool is_multi_soc_buffer = false);
+      bool is_multi_soc_buffer = false,
+      uint64_t* preflight_derived_max_spill_fill_size = nullptr);
 
   // Remove a single context handle from all tracking structures and free it via contextFree.
   void ReleaseSpecificContextHandle(Qnn_ContextHandle_t context_handle);

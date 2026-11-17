@@ -47,17 +47,26 @@ uint64_t GetMaxSpillFillBufferSizeFromGraphInfo(const QnnSystemContext_GraphInfo
 }
 
 Ort::Status ValidateSpillFillBufferSize(int64_t declared_max_spill_fill_size,
-                                        uint64_t derived_max_spill_fill_size) {
+                                        uint64_t derived_max_spill_fill_size,
+                                        int64_t group_max_spill_fill_size) {
   RETURN_IF(declared_max_spill_fill_size < 0, "EPContext max_size must not be negative.");
+  RETURN_IF(group_max_spill_fill_size < 0, "EPContext group max_size must not be negative.");
 
 #ifdef QNN_HTP_SPILL_FILL_BUFFER_AVAILABLE
-  RETURN_IF(static_cast<uint64_t>(declared_max_spill_fill_size) > derived_max_spill_fill_size,
+  RETURN_IF(declared_max_spill_fill_size != 0 &&
+                static_cast<uint64_t>(declared_max_spill_fill_size) != derived_max_spill_fill_size,
             ("EPContext max_size " + std::to_string(declared_max_spill_fill_size) +
-             " exceeds the spill-fill size " + std::to_string(derived_max_spill_fill_size) +
+             " does not match the spill-fill size " + std::to_string(derived_max_spill_fill_size) +
              " declared by the context binary.")
+                .c_str());
+  RETURN_IF(group_max_spill_fill_size > 0 &&
+                derived_max_spill_fill_size > static_cast<uint64_t>(group_max_spill_fill_size),
+            ("Context binary spill-fill size " + std::to_string(derived_max_spill_fill_size) +
+             " exceeds the EPContext group max_size " + std::to_string(group_max_spill_fill_size) + ".")
                 .c_str());
 #else
   ORT_UNUSED_PARAMETER(derived_max_spill_fill_size);
+  ORT_UNUSED_PARAMETER(group_max_spill_fill_size);
   RETURN_IF(declared_max_spill_fill_size != 0,
             "EPContext max_size is unsupported by this QNN SDK version.");
 #endif

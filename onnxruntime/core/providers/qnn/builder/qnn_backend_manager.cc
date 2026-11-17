@@ -1919,7 +1919,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     int64_t group_max_spill_fill_size,
     int64_t declared_max_spill_fill_size,
     const qnn::EpContextIoDispatch& io_dispatch,
-    bool is_multi_soc_buffer) {
+    bool is_multi_soc_buffer,
+    uint64_t* preflight_derived_max_spill_fill_size) {
   bool result = nullptr == qnn_sys_interface_.systemContextCreate ||
                 nullptr == qnn_sys_interface_.systemContextGetBinaryInfo ||
                 nullptr == qnn_sys_interface_.systemContextFree;
@@ -1976,6 +1977,16 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     RETURN_IF_ERROR(system_dlc_plugin->Release());
   }
 
+  RETURN_IF(graph_count < 1 || graphs_info == nullptr, "Failed to get graph info from Qnn cached context.");
+  // Check metadata immediately after parsing, before configuring or creating any context.
+  RETURN_IF_ERROR(ValidateSpillFillBufferSize(declared_max_spill_fill_size,
+                                              derived_max_spill_fill_size,
+                                              group_max_spill_fill_size));
+  if (preflight_derived_max_spill_fill_size != nullptr) {
+    *preflight_derived_max_spill_fill_size = derived_max_spill_fill_size;
+    return Ort::Status();
+  }
+
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
   if (use_file_mapping && !MinVersionMet(blob_version, {3, 3, 3})) {
@@ -1986,13 +1997,6 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     use_file_mapping = false;
   }
 #endif
-
-  RETURN_IF(graph_count < 1 || graphs_info == nullptr, "Failed to get graph info from Qnn cached context.");
-
-  // Validate each node's declaration against the binary it carries before the value
-  // is used for group registration or copied into SSR recovery state.
-  RETURN_IF_ERROR(ValidateSpillFillBufferSize(declared_max_spill_fill_size, derived_max_spill_fill_size));
-  const size_t current_contexts_size = GetQnnContextSize();
 
   ORT_CXX_LOG_PTR(logger_ptr_,
                   ORT_LOGGING_LEVEL_VERBOSE,
@@ -2009,6 +2013,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   } else {
 #endif
     // Join the existing spill-fill group if one exists; otherwise start a new one.
+    const size_t current_contexts_size = GetQnnContextSize();
     Qnn_ContextHandle_t first_group_handle =
         (group_max_spill_fill_size > 0 && current_contexts_size > 0) ? GetQnnContext(0) : 0x0;
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
