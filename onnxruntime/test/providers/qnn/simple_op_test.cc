@@ -8,7 +8,10 @@
 #include <optional>
 #include <string>
 #include <filesystem>
+#include <fstream>
 #include <variant>
+
+#include "nlohmann/json.hpp"
 
 #include "onnxruntime_session_options_config_keys.h"
 
@@ -56,6 +59,106 @@ static void RunOpTestOnCPU(const std::string& op_type,
                   provider_options,
                   opset_version,
                   EPVerificationParams{expected_ep_assignment});
+}
+
+static ProviderOptions MakeHtpIrDumpProviderOptions(const std::filesystem::path& dump_dir) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["skip_backend_op_validation"] = "1";
+  provider_options["dump_qnn_ir_dlc"] = "1";
+  provider_options["dump_qnn_ir_dlc_dir"] = dump_dir.string();
+#if defined(_WIN32)
+  provider_options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+  provider_options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = dump_dir.string();
+  return provider_options;
+}
+
+static void AssertGeluTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
+                                            const std::vector<uint32_t>& expected_shape) {
+  AssertOpInQnnGraph(dump_dir, "Gelu", 1);
+  for (const auto& file : std::filesystem::directory_iterator(dump_dir)) {
+    if (file.path().extension() != ".json" || file.path().stem().string().find("_tensor_log") != std::string::npos) {
+      continue;
+    }
+    std::ifstream stream(file.path());
+    const auto graph = nlohmann::json::parse(stream);
+    for (const auto& node : graph["graph"]["nodes"]) {
+      if (node["type"] == "Gelu") {
+        AssertTensorShapeInQnnGraph(dump_dir, node["input_names"][0].get<std::string>(), expected_shape);
+        AssertTensorShapeInQnnGraph(dump_dir, node["output_names"][0].get<std::string>(), expected_shape);
+      }
+    }
+  }
+}
+
+// Match the slow post-layout form of SegFormer-Base's MLP GELUs: channels-first rank-3 GELU,
+// followed by a sole [0, 2, 1] transpose and MatMul. Verify the HTP lowering with the IR backend.
+TEST_F(QnnIRBackendTests, Rank3GeluWithTransposeConsumerIsFlattened) {
+  const std::filesystem::path dump_dir = "Rank3GeluWithTransposeConsumerIsFlattened";
+  std::filesystem::remove_all(dump_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(dump_dir));
+  auto cleanup = gsl::finally([&dump_dir]() { std::filesystem::remove_all(dump_dir); });
+
+  const ProviderOptions provider_options = MakeHtpIrDumpProviderOptions(dump_dir);
+
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(
+      model, [](ModelTestBuilder& builder) {
+        builder.MakeInput<float>("input", {1, 128, 16384}, GetFloatDataInRange(-1.0f, 1.0f, 128 * 16384));
+        builder.MakeInitializer<float>("dense_weight", {128, 32}, GetFloatDataInRange(-0.1f, 0.1f, 128 * 32));
+
+        const auto perm = builder.MakeIntsAttribute("perm", {0, 2, 1});
+        builder.AddNode("gelu", "Gelu", {"input"}, {"gelu_channels_first"});
+        builder.AddNode("transpose_out", "Transpose", {"gelu_channels_first"}, {"gelu_out"}, kOnnxDomain, {perm});
+        builder.AddNode("dense", "MatMul", {"gelu_out", "dense_weight"}, {"output"});
+        builder.MakeOutput<float>("output", std::vector<int64_t>{1, 16384, 32});
+      },
+      21);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions session_options;
+  session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+  RegisterQnnEpLibrary(registered_ep_device, session_options, "QNNExecutionProvider", provider_options);
+  Ort::Session session(*GetOrtEnv(), model->model_data.data(), model->model_data.size(), session_options);
+
+  EXPECT_EQ(session.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(),
+            (std::vector<int64_t>{1, 16384, 32}));
+  AssertGeluTensorShapeInQnnGraph(dump_dir, {16384, 128});
+}
+
+// A rank-3 GELU with a non-Transpose consumer does not exhibit the slow post-layout pattern.
+// Keep its original rank instead of applying the targeted SegFormer workaround.
+TEST_F(QnnIRBackendTests, Rank3GeluWithoutTransposeConsumerIsNotFlattened) {
+  const std::filesystem::path dump_dir = "Rank3GeluWithoutTransposeConsumerIsNotFlattened";
+  std::filesystem::remove_all(dump_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(dump_dir));
+  auto cleanup = gsl::finally([&dump_dir]() { std::filesystem::remove_all(dump_dir); });
+
+  const ProviderOptions provider_options = MakeHtpIrDumpProviderOptions(dump_dir);
+
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(
+      model, [](ModelTestBuilder& builder) {
+        builder.MakeInput<float>("input", {1, 2, 3}, GetFloatDataInRange(-1.0f, 1.0f, 6));
+        builder.AddNode("gelu", "Gelu", {"input"}, {"gelu_out"});
+        builder.AddNode("relu", "Relu", {"gelu_out"}, {"output"});
+        builder.MakeOutput<float>("output", std::vector<int64_t>{1, 2, 3});
+      },
+      21);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions session_options;
+  session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+  RegisterQnnEpLibrary(registered_ep_device, session_options, "QNNExecutionProvider", provider_options);
+  Ort::Session session(*GetOrtEnv(), model->model_data.data(), model->model_data.size(), session_options);
+
+  EXPECT_EQ(session.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(),
+            (std::vector<int64_t>{1, 2, 3}));
+  AssertGeluTensorShapeInQnnGraph(dump_dir, {1, 2, 3});
 }
 
 // Test float DepthToSpace on the QNN CPU backend.
@@ -233,7 +336,7 @@ TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
                  ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Tests the accuracy of a QDQ model on QNN EP by comparing to CPU EP, which runs both the fp32 model
 // and the QDQ model.
@@ -1046,6 +1149,67 @@ TEST_F(QnnHTPBackendTests, DepthToSpaceOp_DCR) {
                          test::MakeAttribute("mode", "DCR")},
                         11,
                         ExpectedEPNodeAssignment::All);
+}
+
+// Test QDQ DepthToSpace with quantized tensor input (Conv -> Q -> DepthToSpace -> DQ,
+// as in quantized super-resolution models). The standalone node must carry the input
+// quantization to its output.
+TEST_F(QnnHTPBackendTests, DepthToSpaceOp_QuantizedInput_CRD) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  const std::vector<float> X = {0., 1., 2.,
+                                3., 4., 5.,
+                                9., 10., 11.,
+                                12., 13., 14.,
+                                18., 19., 20.,
+                                21., 22., 23.,
+                                27., 28., 29.,
+                                30., 31., 32.};
+  const TestInputDef<float> input_def({1, 4, 2, 3}, false, X);
+  const std::vector<ONNX_NAMESPACE::AttributeProto> shuffle_attrs =
+      {test::MakeAttribute("blocksize", static_cast<int64_t>(2)),
+       test::MakeAttribute("mode", "CRD")};
+
+  // 1x1 identity Conv preserves values while giving the shuffle a quantized producer.
+  auto add_identity_conv = [](ModelTestBuilder& builder, const std::string& input, const std::string& output) {
+    std::vector<float> weights(16, 0.0f);
+    for (int64_t i = 0; i < 4; ++i) {
+      weights[i * 4 + i] = 1.0f;
+    }
+    builder.MakeInitializer<float>("W", {4, 4, 1, 1}, weights);
+    builder.MakeInitializer<float>("B", {4}, std::vector<float>(4, 0.0f));
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
+    builder.AddNode("Conv", "Conv", {input, "W", "B"}, {output}, kOnnxDomain, conv_attrs);
+  };
+
+  GetTestModelFn f32_fn = [&](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "X", input_def);
+    add_identity_conv(builder, "X", "C");
+    builder.AddNode("Shuffle", "DepthToSpace", {"C"}, {"Y"}, kOnnxDomain, shuffle_attrs);
+    builder.MakeOutput("Y");
+  };
+
+  GetTestQDQModelFn<uint8_t> qdq_fn = [&](ModelTestBuilder& builder,
+                                          std::vector<QuantParams<uint8_t>>& output_qparams) {
+    MakeTestInput<float>(builder, "X", input_def);
+    const QuantParams<uint8_t> qp = GetTestInputQuantParams<uint8_t>(input_def);
+    const std::string x_dq = AddQDQNodePair<uint8_t>(builder, "qdq_in", "X", qp.scale, qp.zero_point);
+    add_identity_conv(builder, x_dq, "C");
+    builder.AddQuantizeLinearNode<uint8_t>("shuffle_in_q", "C", qp.scale, qp.zero_point, "Cq");
+    builder.AddNode("Shuffle", "DepthToSpace", {"Cq"}, {"Sq"}, kOnnxDomain, shuffle_attrs);
+    builder.AddDequantizeLinearNode<uint8_t>("shuffle_out_dq", "Sq",
+                                             output_qparams[0].scale, output_qparams[0].zero_point, "Y");
+    builder.MakeOutput("Y");
+  };
+
+  TestQDQModelAccuracy(f32_fn, qdq_fn, provider_options, /*opset*/ 13, ExpectedEPNodeAssignment::All);
 }
 
 // Test float32 SpaceToDepth on HTP.
@@ -1929,6 +2093,17 @@ TEST_F(QnnHTPBackendTests, GridSample_Linear_ReflectionPadding_U16) {
                          /*use_contrib_qdq=*/true);
 }
 
+// Rank-5 float GridSample exceeds QNN HTP's rank-4 limit and must fall back to CPU.
+TEST_F(QnnHTPBackendTests, GridSample_Rank5_Float_Unsupported) {
+  RunOpTest<float>("GridSample",
+                   {TestInputDef<float>({1, 1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8)),
+                    TestInputDef<float>({1, 2, 2, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 24))},
+                   {test::MakeAttribute("mode", "linear"), test::MakeAttribute("padding_mode", "zeros")},
+                   /*opset_version=*/20,
+                   ExpectedEPNodeAssignment::None,
+                   kOnnxDomain);
+}
+
 // Test QDQ GridSample with reflection padding mode
 // Inaccuracy detected for output 'output', element 2.
 // Output quant params: scale=0.024269860237836838, zero_point=0.
@@ -2047,71 +2222,106 @@ TEST_F(QnnHTPBackendTests, Add_U8_U16_Convert) {
                        ExpectedEPNodeAssignment::All);
 }
 
-// Builds a graph where a (DQ -> Q) sequence at the graph's output is fuse into a QNN Convert operator.
-// ONNX Graph: DQ -> Add -> Q -> DQ -> Q -> graph_output
-// QNN Graph:  DQ -> Add -> Q -> Convert -> graph_output
-template <typename InQuantType, typename OutQuantType>
-static GetTestModelFn BuildDQQConvertAtOutputTestCase(const TestInputDef<float>& input0_def,
-                                                      const TestInputDef<float>& input1_def,
-                                                      const QuantParams<OutQuantType>& output_qparams) {
-  return [input0_def, input1_def, output_qparams](ModelTestBuilder& builder) {
-    MakeTestInput<float>(builder, "input0", input0_def);
-    MakeTestInput<float>(builder, "input1", input1_def);
+// Builds a unary op model with a mismatched input/output QDQ type, exercising the precision bridge.
+template <typename InputQType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQUnaryMixedDtypeTestCase(const std::string& op_type,
+                                                                      const TestInputDef<float>& input_def) {
+  return [op_type, input_def](ModelTestBuilder& builder, std::vector<QuantParams<OutputQType>>& output_qparams) {
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def);
+    const std::string input_after_qdq =
+        AddQDQNodePair<InputQType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
-    // Input0 -> Quantize(InQuantType) -> Dequantize(InQuantType to float) -> input0_after_qdq
-    const QuantParams<InQuantType> input0_qparams = GetTestInputQuantParams<InQuantType>(input0_def);
-    const std::string input0_after_qdq =
-        AddQDQNodePair<InQuantType>(builder, "qdq0", "input0", input0_qparams.scale, input0_qparams.zero_point);
+    builder.AddNode(op_type, op_type, {input_after_qdq}, {"Y"}, kOnnxDomain);
 
-    // Input1 -> Quantize(InQuantType) -> Dequantize(InQuantType to float) -> input1_after_qdq
-    const QuantParams<InQuantType> input1_qparams = GetTestInputQuantParams<InQuantType>(input1_def);
-    const std::string input1_after_qdq =
-        AddQDQNodePair<InQuantType>(builder, "qdq1", "input1", input1_qparams.scale, input1_qparams.zero_point);
-
-    // Add op -> add_out
-    builder.AddNode("Add",
-                    "Add",
-                    {input0_after_qdq, input1_after_qdq},
-                    {"add_out"});
-
-    // op_output -> Quantize(InQuantType) -> add_out_q
-    QuantParams<InQuantType> add_out_qparams = ConvertQuantParams<OutQuantType, InQuantType>(output_qparams);
-    add_out_qparams.scale *= 1.01f;  // Make qparams slightly different so DQ->Q are not optimized out.
-
-    auto add_qdq_name = AddQDQNodePair(builder, "add_qdq", "add_out", add_out_qparams.scale, add_out_qparams.zero_point);
-
-    // Add a Q to quantize to OutQuantType.
-    // The previous DQ and this Q will be fused into a QNN Convert.
-    builder.MakeOutput("Y");
-    builder.AddQuantizeLinearNode<OutQuantType>("final_q", add_qdq_name, output_qparams.scale, output_qparams.zero_point, "Y");
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "qdq_out", "Y",
+                                                       output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
 
-// Test fusion of (DQ -> Q) into QNN's Convert op using the same quant type.
-TEST_F(QnnHTPBackendTests, DQ_Q_ConvertFusion_SameType) {
-  std::vector<float> input0_data = {-8.0f, -6.0, -2.0f, 0.0f, 2.0f, 4.0f, 6.0f, 8.0f};
-  std::vector<float> input1_data = {-8.0f, -6.0, -2.0f, 0.0f, 2.0f, 4.0f, 6.0f, 8.0f};
-  TestInputDef<float> input0_def({1, 2, 2, 2}, false, input0_data);
-  TestInputDef<float> input1_def({1, 2, 2, 2}, false, input1_data);
+// Builds a binary op model where the two inputs and/or output can use different QDQ types.
+template <typename Input0QType, typename Input1QType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQBinaryMixedDtypeTestCase(const std::string& op_type,
+                                                                       const TestInputDef<float>& input0_def,
+                                                                       const TestInputDef<float>& input1_def) {
+  return [op_type, input0_def, input1_def](ModelTestBuilder& builder,
+                                           std::vector<QuantParams<OutputQType>>& output_qparams) {
+    MakeTestInput<float>(builder, "input0", input0_def);
+    const QuantParams<Input0QType> input0_qparams = GetTestInputQuantParams<Input0QType>(input0_def);
+    const std::string input0_after_qdq =
+        AddQDQNodePair<Input0QType>(builder, "qdq_in0", "input0", input0_qparams.scale, input0_qparams.zero_point);
 
+    MakeTestInput<float>(builder, "input1", input1_def);
+    const QuantParams<Input1QType> input1_qparams = GetTestInputQuantParams<Input1QType>(input1_def);
+    const std::string input1_after_qdq =
+        AddQDQNodePair<Input1QType>(builder, "qdq_in1", "input1", input1_qparams.scale, input1_qparams.zero_point);
+
+    builder.AddNode(op_type, op_type, {input0_after_qdq, input1_after_qdq}, {"Y"}, kOnnxDomain);
+
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "qdq_out", "Y",
+                                                       output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+// Sigmoid computed at u16 (its HTP-required fixed encoding), output re-quantized to u8.
+TEST_F(QnnHTPBackendTests, Sigmoid_U16In_U8Out_Mixed) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  QuantParams<uint8_t> out_qparams_u8 = {1.0f, 128};
-  QuantParams<uint16_t> out_qparams_u16 = {1.0f, 32768};
+  TestInputDef<float> input_def({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6));
 
-  // QNN Convert op converts uint8 to uint8 at the graph output. Slightly different scale values.
-  RunQnnModelTest(BuildDQQConvertAtOutputTestCase<uint8_t, uint8_t>(input0_def, input1_def, out_qparams_u8),
-                  provider_options,
-                  21,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+  TestQDQModelAccuracy(BuildOpTestCase<float>("Sigmoid_node", "Sigmoid", {input_def}, {}, {}, kOnnxDomain),
+                       BuildQDQUnaryMixedDtypeTestCase<uint16_t, uint8_t>("Sigmoid", input_def),
+                       provider_options, 21, ExpectedEPNodeAssignment::All);
+}
 
-  // QNN Convert op converts uint16 to uint16 at the graph output. Slightly different scale values.
-  RunQnnModelTest(BuildDQQConvertAtOutputTestCase<uint16_t, uint16_t>(input0_def, input1_def, out_qparams_u16),
-                  provider_options,
-                  21,
-                  EPVerificationParams{ExpectedEPNodeAssignment::All});
+// Mul with mismatched input precisions (u8, u16); the u8 input is Converted up to u16 first.
+TEST_F(QnnHTPBackendTests, Mul_U8_U16_MixedInputs) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input0_def({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8));
+  TestInputDef<float> input1_def({1, 2, 2, 2}, false, GetFloatDataInRange(-20.0f, 20.0f, 8));
+
+  TestQDQModelAccuracy(
+      BuildOpTestCase<float>("Mul_node", "Mul", {input0_def, input1_def}, {}, {}, kOnnxDomain),
+      BuildQDQBinaryMixedDtypeTestCase<uint8_t, uint16_t, uint16_t>("Mul", input0_def, input1_def),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Mul with same-precision (u8) inputs but a declared u16 output.
+TEST_F(QnnHTPBackendTests, Mul_U8U8_U16Out_Mixed) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input0_def({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8));
+  TestInputDef<float> input1_def({1, 2, 2, 2}, false, GetFloatDataInRange(-5.0f, 5.0f, 8));
+
+  TestQDQModelAccuracy(
+      BuildOpTestCase<float>("Mul_node", "Mul", {input0_def, input1_def}, {}, {}, kOnnxDomain),
+      BuildQDQBinaryMixedDtypeTestCase<uint8_t, uint8_t, uint16_t>("Mul", input0_def, input1_def),
+      provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// Add with same-bitwidth but differing-signedness inputs (u8, s8). AlignBinaryInputPrecision
+// leaves both inputs untouched (no width mismatch); QNN HTP op validation rejects the
+// mixed-signedness pair, so Add itself falls back to another EP (only the input Quantize
+// nodes remain assigned to QNN).
+TEST_F(QnnHTPBackendTests, Add_U8_S8_SameWidthSignednessMixed) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestInputDef<float> input0_def({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8));
+  TestInputDef<float> input1_def({1, 2, 2, 2}, false, GetFloatDataInRange(-20.0f, 20.0f, 8));
+
+  TestQDQModelAccuracy(
+      BuildOpTestCase<float>("Add_node", "Add", {input0_def, input1_def}, {}, {}, kOnnxDomain),
+      BuildQDQBinaryMixedDtypeTestCase<uint8_t, int8_t, uint8_t>("Add", input0_def, input1_def),
+      provider_options, 21, ExpectedEPNodeAssignment::Some);
 }
 
 TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_QU8) {
@@ -2270,7 +2480,7 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
                   false);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

@@ -50,7 +50,8 @@ Ort::Status FillShapeInputData(std::vector<uint8_t>& shape_data,
 }
 
 // Use ElementWiseMultiply to implement data broadcast
-// Get the shape data, and create a initializer input with value 1 and same shape
+// Get the shape data, and create an initializer input with value 1 that broadcasts
+// to the output shape.
 // input[0] * input[1]
 Ort::Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                            const OrtNodeUnit& node_unit,
@@ -77,6 +78,29 @@ Ort::Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   std::vector<uint32_t> input_shape(shape_rank, 0);
   std::transform(shape_data_int64, shape_data_int64 + shape_rank, input_shape.begin(),
                  [](int64_t item) { return SafeInt<uint32_t>(item); });
+
+  // Smallest ones tensor that still yields the output shape: unexpanded dims
+  // stay 1 and rely on QNN implicit broadcasting. Falls back to the full
+  // output shape for dynamic, rank-mismatched, or non-broadcastable inputs.
+  std::vector<uint32_t> ones_shape = input_shape;
+  {
+    std::vector<uint32_t> data_shape;
+    if (qnn_model_wrapper.GetOnnxShape(inputs[0].shape, data_shape) &&
+        data_shape.size() == static_cast<size_t>(shape_rank)) {
+      bool valid_broadcast = true;
+      for (uint32_t i = 0; i < shape_rank; ++i) {
+        if (data_shape[i] == input_shape[i]) {
+          ones_shape[i] = 1;
+        } else if (data_shape[i] != 1) {
+          valid_broadcast = false;
+          break;
+        }
+      }
+      if (!valid_broadcast) {
+        ones_shape = input_shape;
+      }
+    }
+  }
   std::vector<uint8_t> shape_data;
   bool is_quantized_tensor = inputs[0].quant_param.has_value();
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
@@ -95,15 +119,15 @@ Ort::Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(utils::Quantize(ini_value, scale, zero_point, qnn_data_type, quant_value_int));
     switch (qnn_data_type) {
       case QNN_DATATYPE_SFIXED_POINT_8: {
-        RETURN_IF_ERROR(FillShapeInputData(shape_data, input_shape, qnn_data_type, static_cast<int8_t>(quant_value_int)));
+        RETURN_IF_ERROR(FillShapeInputData(shape_data, ones_shape, qnn_data_type, static_cast<int8_t>(quant_value_int)));
         break;
       }
       case QNN_DATATYPE_UFIXED_POINT_8: {
-        RETURN_IF_ERROR(FillShapeInputData(shape_data, input_shape, qnn_data_type, static_cast<uint8_t>(quant_value_int)));
+        RETURN_IF_ERROR(FillShapeInputData(shape_data, ones_shape, qnn_data_type, static_cast<uint8_t>(quant_value_int)));
         break;
       }
       case QNN_DATATYPE_UFIXED_POINT_16: {
-        RETURN_IF_ERROR(FillShapeInputData(shape_data, input_shape, qnn_data_type, static_cast<uint16_t>(quant_value_int)));
+        RETURN_IF_ERROR(FillShapeInputData(shape_data, ones_shape, qnn_data_type, static_cast<uint16_t>(quant_value_int)));
         break;
       }
       default:
@@ -113,29 +137,29 @@ Ort::Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(utils::GetQnnDataType(false, input_type, qnn_data_type));
     switch (qnn_data_type) {
       case QNN_DATATYPE_FLOAT_32: {
-        RETURN_IF_ERROR(FillShapeInputData(shape_data, input_shape, qnn_data_type, static_cast<float>(1.0)));
+        RETURN_IF_ERROR(FillShapeInputData(shape_data, ones_shape, qnn_data_type, static_cast<float>(1.0)));
         break;
       }
       case QNN_DATATYPE_FLOAT_16: {
-        RETURN_IF_ERROR(FillShapeInputData(shape_data, input_shape, qnn_data_type, static_cast<Ort::Float16_t>(1.0f)));
+        RETURN_IF_ERROR(FillShapeInputData(shape_data, ones_shape, qnn_data_type, static_cast<Ort::Float16_t>(1.0f)));
         break;
       }
       case QNN_DATATYPE_INT_64: {
         // QNN-EP doesn't support INT64 shape input.
         qnn_data_type = QNN_DATATYPE_INT_32;
-        RETURN_IF_ERROR(FillShapeInputData(shape_data, input_shape, qnn_data_type, static_cast<int32_t>(1)));
+        RETURN_IF_ERROR(FillShapeInputData(shape_data, ones_shape, qnn_data_type, static_cast<int32_t>(1)));
         break;
       }
       case QNN_DATATYPE_INT_32: {
-        RETURN_IF_ERROR(FillShapeInputData(shape_data, input_shape, qnn_data_type, static_cast<int32_t>(1)));
+        RETURN_IF_ERROR(FillShapeInputData(shape_data, ones_shape, qnn_data_type, static_cast<int32_t>(1)));
         break;
       }
       case QNN_DATATYPE_UINT_32: {
-        RETURN_IF_ERROR(FillShapeInputData(shape_data, input_shape, qnn_data_type, static_cast<uint32_t>(1)));
+        RETURN_IF_ERROR(FillShapeInputData(shape_data, ones_shape, qnn_data_type, static_cast<uint32_t>(1)));
         break;
       }
       case QNN_DATATYPE_BOOL_8: {
-        RETURN_IF_ERROR(FillShapeInputData(shape_data, input_shape, qnn_data_type, static_cast<uint8_t>(1)));
+        RETURN_IF_ERROR(FillShapeInputData(shape_data, ones_shape, qnn_data_type, static_cast<uint8_t>(1)));
         break;
       }
       default:
@@ -146,7 +170,7 @@ Ort::Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   const std::string& output_name = node_unit.Outputs()[0].name;
   std::string shape_input_name = utils::UniqueNameGenerator().New(input_name, output_name);
   QnnTensorWrapper input_tensorwrapper(shape_input_name, QNN_TENSOR_TYPE_STATIC, qnn_data_type,
-                                       std::move(quantize_param), std::move(input_shape),
+                                       std::move(quantize_param), std::move(ones_shape),
                                        std::move(shape_data));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
   input_names.push_back(shape_input_name);

@@ -450,7 +450,7 @@ TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_CrossPartitionImplicitInput) {
             ExpectedEPNodeAssignment::None);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 //
 // HTP tests (FP32 model executed at FP16 precision).
@@ -501,9 +501,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_If_QDQ_U8_BranchesWrapMul) {
             "htp", 19, 0.05f);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 //
 // GPU tests
@@ -534,7 +534,7 @@ TEST_F(QnnGPUBackendTests, If_Fp32_BothBranchesConstant) {
             "gpu", 19, 0.008f);
 }
 
-#endif  // defined(_M_ARM64)
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 }  // namespace test
 }  // namespace onnxruntime

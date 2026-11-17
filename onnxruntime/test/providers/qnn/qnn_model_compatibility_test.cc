@@ -72,7 +72,7 @@ class HnrdTestHandle {
   std::filesystem::path temp_dir_;
 };
 
-#if defined(_WIN32) && defined(_M_ARM64)
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 TEST_F(QnnHTPBackendTests, ModelCompatibility_SelfValidate_CbTradRtTrad) {
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   std::filesystem::path output_model_file("mul_1_ctx.onnx");
@@ -233,7 +233,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbHnrdRtHnrd
 
   std::filesystem::remove(output_model_file);
 }
-#endif  // defined(_WIN32) && defined(_M_ARM64)
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 struct CompatibilityTestInfoV1 {
   uint32_t backend_id = QNN_BACKEND_ID_HTP;
@@ -343,7 +343,7 @@ std::string GetInfoFromModelMetadata(const ORTCHAR_T* output_model_file) {
 TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
   auto platform_attrs = QnnHTPBackendTests::GetPlatformAttributes();
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
   const uint32_t htp_arch = static_cast<uint32_t>(platform_attrs.htp_arch);
 #else
   const uint32_t htp_arch = 73;
@@ -357,7 +357,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
 
   CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   qnn_options["num_graph_prepare_threads"] = "1";
@@ -395,7 +395,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
   std::filesystem::remove(output_model_file);
 }
 
-#if !defined(_M_ARM64) && !defined(__aarch64__)
+#if !defined(_M_ARM64) && !defined(_M_ARM64EC) && !defined(__aarch64__)
 
 TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MapHtpArchFromSocModel) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
@@ -574,9 +574,9 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MultiSoc_Override
   std::filesystem::remove(output_model_file);
 }
 
-#endif  // !defined(_M_ARM64) && !defined(__aarch64__)
+#endif  // !defined(_M_ARM64) && !defined(_M_ARM64EC) && !defined(__aarch64__)
 
-#if defined(_WIN32) && defined(_M_ARM64)
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_HostModeNoHnrd) {
 #ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
   // Use AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after GTEST_SKIP().
@@ -947,7 +947,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_V2_ApiValidate_NoHnrdWithoutPrepar
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
-#endif  // defined(_WIN32) && defined(_M_ARM64)
+#endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 }  // namespace test
 }  // namespace onnxruntime

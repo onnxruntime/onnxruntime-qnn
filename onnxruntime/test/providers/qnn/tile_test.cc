@@ -44,7 +44,7 @@ TEST_F(QnnCPUBackendTests, Tile_F32_Rank4) {
                    ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -126,7 +126,7 @@ TEST_F(QnnHTPBackendTests, Tile_U16_Rank4) {
                                 true);  // Use com.microsoft Q/DQ ops
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 #endif  // !defined(ORT_MINIMAL_BUILD)

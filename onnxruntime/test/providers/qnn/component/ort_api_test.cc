@@ -18,7 +18,7 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 // Platform coverage:
-//   Linux x86-64 (coverage build): all sections.
+//   Linux x86-64 (internal-symbol test build): all sections.
 //   Windows: GetSessionConfigEntryOrDefault, OrtNodeAttrHelper (not-found),
 //            and OrtNodeUnit stub series only.
 
@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
+#include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -161,6 +162,20 @@ TEST(QnnUnit_OrtApiTest, ReadFileIntoBuffer_ReadWithOffset_Succeeds) {
   EXPECT_EQ(std::string(buf.begin(), buf.end()), expected);
 
   ::unlink(path.c_str());
+}
+
+TEST(QnnUnit_OrtApiTest, ReadFileIntoBuffer_Symlink_Fails) {
+  const std::string target_path = MakeTempFile("external data");
+  ASSERT_FALSE(target_path.empty());
+  const std::string link_path = target_path + "_link";
+  ASSERT_EQ(::symlink(target_path.c_str(), link_path.c_str()), 0);
+
+  std::vector<char> buf(13);
+  auto status = ReadFileIntoBuffer(link_path.c_str(), 0, buf.size(), {buf.data(), buf.size()});
+  EXPECT_FALSE(status.IsOK());
+
+  ::unlink(link_path.c_str());
+  ::unlink(target_path.c_str());
 }
 
 // ============================================================
@@ -294,6 +309,7 @@ OrtNode* MakeAttrTestNode(const OrtModelEditorApi* ed,
 TEST(QnnUnit_OrtApiTest, OrtNodeAttrHelper_Get_KeyNotFound_ReturnsDefault) {
   const OrtModelEditorApi* ed = GetEditorApi();
   if (!ed) GTEST_SKIP() << "OrtModelEditorApi not available";
+  OrtGlobalApiOverride global_guard{&Ort::GetApi()};
 
   OrtNode* node = MakeAttrTestNode(ed, nullptr, 0);
   ASSERT_NE(node, nullptr);

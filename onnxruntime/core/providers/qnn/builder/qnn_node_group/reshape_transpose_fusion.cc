@@ -105,15 +105,6 @@ bool ComputeFusedPerm(const OrtNodeUnit& reshape_node_unit,
   return true;
 }
 
-bool IsIdentityPerm(const std::vector<int64_t>& perm) {
-  for (size_t i = 0; i < perm.size(); ++i) {
-    if (perm[i] != static_cast<int64_t>(i)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                   const OrtNodeUnit& reshape_node_unit,
                                   const OrtNodeUnit& transpose_node_unit,
@@ -130,7 +121,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                   "[ReshapeTransposeFusion] Failed to add input tensor wrapper");
   }
 
-  if (IsIdentityPerm(fused_perm)) {
+  if (utils::IsIdentityPerm(gsl::span<const int64_t>(fused_perm))) {
     // Identity composed perm => Reshape input and Transpose output shapes coincide.
     // Emit a noop Reshape so downstream consumers see the expected tensor name.
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
@@ -165,7 +156,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   QnnQuantParamsWrapper quant_param = output_wrapper.GetQnnQuantParams();
 
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-              ("[ReshapeTransposeFusion] Emitting single Transpose " + reshape_input.name +
+              ("[ReshapeTransposeFusion] Emitting fused op " + reshape_input.name +
                " -> " + transpose_output.name)
                   .c_str());
 
@@ -224,7 +215,7 @@ std::unique_ptr<IQnnNodeGroup> ReshapeTransposeFusion::TryFusion(
     return nullptr;
   }
 
-  const char* kind = IsIdentityPerm(fused_perm) ? "noop Reshape" : "single Transpose";
+  const char* kind = utils::IsIdentityPerm(gsl::span<const int64_t>(fused_perm)) ? "noop Reshape" : "single fused op";
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
               ("[ReshapeTransposeFusion] Collapsing Reshape (" + reshape_node_unit.Name() +
                ") -> Transpose (" + transpose_node_unit->Name() + ") to " + kind)

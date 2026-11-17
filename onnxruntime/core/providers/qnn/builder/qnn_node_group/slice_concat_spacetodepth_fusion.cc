@@ -41,6 +41,9 @@ struct SlicePhase {
 constexpr std::array<SlicePhase, 4> kCanonicalDcrPhases = {
     SlicePhase{0, 0}, SlicePhase{0, 1}, SlicePhase{1, 0}, SlicePhase{1, 1}};
 
+// Phase order (h0w0, h1w0, h0w1, h1w1) of YOLO Focus: S2D over H, then over W.
+constexpr std::array<int64_t, 4> kWidthMajorPermutation = {0, 2, 1, 3};
+
 [[nodiscard]] bool IsSliceUnit(const OrtNodeUnit* node_unit) {
   return node_unit != nullptr && node_unit->OpType() == "Slice";
 }
@@ -400,7 +403,7 @@ Ort::Status AddLayoutTranspose(QnnModelWrapper& model_wrapper, const OrtNodeUnit
 }
 
 // Lowering shared by IsSupported (validate=true) and AddToModelBuilder (validate=false):
-// PreT(NCHW->NHWC) + S2D(DCR) + [Gather channel reorder] + PostT(NHWC->NCHW).
+// PreT(NCHW->NHWC) + S2D(DCR) stages + PostT(NHWC->NCHW) + [Gather channel reorder].
 Ort::Status CreateOrValidateTiledGraph(QnnModelWrapper& model_wrapper, const OrtNodeUnit& common_input_owner,
                                        const OrtNodeUnit& concat_unit,
                                        const std::array<int64_t, 4>& dcr_permutation, uint32_t channel_count,
@@ -423,23 +426,33 @@ Ort::Status CreateOrValidateTiledGraph(QnnModelWrapper& model_wrapper, const Ort
   RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(tiled_output_def.shape, output_shape),
                 "SliceConcatS2D: bad output shape.");
 
+  const bool width_major = dcr_permutation == kWidthMajorPermutation;
+  const bool needs_gather = !width_major && dcr_permutation != std::array<int64_t, 4>{0, 1, 2, 3};
+  const std::vector<std::array<uint32_t, 2>> blocks =
+      width_major ? std::vector<std::array<uint32_t, 2>>{{2, 1}, {1, 2}}
+                  : std::vector<std::array<uint32_t, 2>>{{SliceConcatSpaceToDepthFusion::kBlockHeight,
+                                                          SliceConcatSpaceToDepthFusion::kBlockWidth}};
+
   const std::string base_name = utils::UniqueNameGenerator().New(concat_unit, "_tiled_s2d");
-  const std::string nhwc_input_name = base_name + "_in";
-  const std::string nhwc_output_name = base_name + "_s2d_out";
   const std::string pre_name = base_name + "_pre";
-  const std::string s2d_name = base_name + "_s2d";
   const std::string post_name = base_name + "_post";
 
-  QnnTensorWrapper nhwc_input_tensor(
-      nhwc_input_name, QNN_TENSOR_TYPE_NATIVE, tiled_input_info.qnn_data_type,
-      tiled_input_info.quant_param.Copy(),
-      std::vector<uint32_t>{input_shape[0], input_shape[2], input_shape[3], input_shape[1]});
-  QnnTensorWrapper nhwc_output_tensor(
-      nhwc_output_name, QNN_TENSOR_TYPE_NATIVE, tiled_output_info.qnn_data_type,
-      tiled_output_info.quant_param.Copy(),
-      std::vector<uint32_t>{output_shape[0], output_shape[2], output_shape[3], output_shape[1]});
+  // NHWC tensors: PreT output, then the output of each S2D stage.
+  std::vector<std::string> nhwc_names{base_name + "_in"};
+  std::vector<QnnTensorWrapper> nhwc_tensors;
+  nhwc_tensors.emplace_back(nhwc_names[0], QNN_TENSOR_TYPE_NATIVE, tiled_input_info.qnn_data_type,
+                            tiled_input_info.quant_param.Copy(),
+                            std::vector<uint32_t>{input_shape[0], input_shape[2], input_shape[3], input_shape[1]});
+  for (size_t stage = 0; stage < blocks.size(); ++stage) {
+    const bool last = stage + 1 == blocks.size();
+    nhwc_names.push_back(base_name + (last ? "_s2d_out" : "_s2d_mid"));
+    const std::vector<uint32_t>& prev = nhwc_tensors.back().GetTensorDims();
+    nhwc_tensors.emplace_back(nhwc_names.back(), QNN_TENSOR_TYPE_NATIVE, tiled_output_info.qnn_data_type,
+                              tiled_output_info.quant_param.Copy(),
+                              std::vector<uint32_t>{prev[0], prev[1] / blocks[stage][0], prev[2] / blocks[stage][1],
+                                                    prev[3] * blocks[stage][0] * blocks[stage][1]});
+  }
 
-  const bool needs_gather = dcr_permutation != std::array<int64_t, 4>{0, 1, 2, 3};
   // Gather runs on NCHW channels after PostT (mirrors upstream S2D-then-Gather order).
   // Without a Gather, PostT writes the group output directly; the intermediate must not
   // be re-declared under that name, or the real (possibly APP_READ) tensor is shadowed.
@@ -475,31 +488,33 @@ Ort::Status CreateOrValidateTiledGraph(QnnModelWrapper& model_wrapper, const Ort
                               QNN_OP_GATHER_PARAM_AXIS, gather_axis_scalar);
   }
 
-  std::vector<uint32_t> block_shape{2};
-  std::vector<uint32_t> block_data{SliceConcatSpaceToDepthFusion::kBlockHeight,
-                                   SliceConcatSpaceToDepthFusion::kBlockWidth};
-  QnnParamWrapper block_param(concat_unit.Index(), s2d_name, QNN_OP_SPACE_TO_DEPTH_PARAM_BLOCK_SIZE,
-                              std::move(block_shape), std::move(block_data));
-  Qnn_Scalar_t mode_scalar = QNN_SCALAR_INIT;
-  mode_scalar.dataType = QNN_DATATYPE_UINT_32;
-  mode_scalar.uint32Value = QNN_OP_SPACE_TO_DEPTH_MODE_DCR;
-  QnnParamWrapper mode_param(concat_unit.Index(), s2d_name, QNN_OP_SPACE_TO_DEPTH_PARAM_MODE, mode_scalar);
+  std::vector<std::string> s2d_names;
+  std::vector<QnnParamWrapper> block_params, mode_params;
+  for (size_t stage = 0; stage < blocks.size(); ++stage) {
+    s2d_names.push_back(base_name + "_s2d" + std::to_string(stage));
+    block_params.emplace_back(concat_unit.Index(), s2d_names[stage], QNN_OP_SPACE_TO_DEPTH_PARAM_BLOCK_SIZE,
+                              std::vector<uint32_t>{2}, std::vector<uint32_t>{blocks[stage][0], blocks[stage][1]});
+    Qnn_Scalar_t mode_scalar = QNN_SCALAR_INIT;
+    mode_scalar.dataType = QNN_DATATYPE_UINT_32;
+    mode_scalar.uint32Value = QNN_OP_SPACE_TO_DEPTH_MODE_DCR;
+    mode_params.emplace_back(concat_unit.Index(), s2d_names[stage], QNN_OP_SPACE_TO_DEPTH_PARAM_MODE, mode_scalar);
+  }
 
   if (validate) {
     RETURN_IF_ERROR(AddLayoutTranspose(model_wrapper, concat_unit, pre_name, tiled_input_def.name,
-                                       nhwc_input_name, {0, 2, 3, 1}, /*validate*/ true,
+                                       nhwc_names.front(), {0, 2, 3, 1}, /*validate*/ true,
                                        {tiled_input_tensor.GetQnnTensor()},
-                                       {nhwc_input_tensor.GetQnnTensor()}));
-    {
-      std::vector<Qnn_Param_t> params{block_param.GetQnnParam(), mode_param.GetQnnParam()};
-      RETURN_IF_ERROR(model_wrapper.ValidateQnnNode(s2d_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                       {nhwc_tensors.front().GetQnnTensor()}));
+    for (size_t stage = 0; stage < blocks.size(); ++stage) {
+      std::vector<Qnn_Param_t> params{block_params[stage].GetQnnParam(), mode_params[stage].GetQnnParam()};
+      RETURN_IF_ERROR(model_wrapper.ValidateQnnNode(s2d_names[stage], QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                     QNN_OP_SPACE_TO_DEPTH,
-                                                    {nhwc_input_tensor.GetQnnTensor()},
-                                                    {nhwc_output_tensor.GetQnnTensor()}, std::move(params)));
+                                                    {nhwc_tensors[stage].GetQnnTensor()},
+                                                    {nhwc_tensors[stage + 1].GetQnnTensor()}, std::move(params)));
     }
-    RETURN_IF_ERROR(AddLayoutTranspose(model_wrapper, concat_unit, post_name, nhwc_output_name,
+    RETURN_IF_ERROR(AddLayoutTranspose(model_wrapper, concat_unit, post_name, nhwc_names.back(),
                                        nchw_s2d_name, {0, 3, 1, 2}, /*validate*/ true,
-                                       {nhwc_output_tensor.GetQnnTensor()},
+                                       {nhwc_tensors.back().GetQnnTensor()},
                                        {needs_gather ? nchw_s2d_tensor->GetQnnTensor()
                                                      : tiled_output_tensor.GetQnnTensor()}));
     if (needs_gather) {
@@ -523,26 +538,27 @@ Ort::Status CreateOrValidateTiledGraph(QnnModelWrapper& model_wrapper, const Ort
   };
   RETURN_IF_ERROR(add_tensor_once(std::move(tiled_input_tensor), tiled_input_def.name, "Bad tiled input."));
   RETURN_IF_ERROR(add_tensor_once(std::move(tiled_output_tensor), tiled_output_def.name, "Bad tiled output."));
-  RETURN_IF_NOT(model_wrapper.AddTensorWrapper(std::move(nhwc_input_tensor)), "Bad NHWC input.");
-  RETURN_IF_NOT(model_wrapper.AddTensorWrapper(std::move(nhwc_output_tensor)), "Bad NHWC S2D output.");
+  for (QnnTensorWrapper& nhwc_tensor : nhwc_tensors) {
+    RETURN_IF_NOT(model_wrapper.AddTensorWrapper(std::move(nhwc_tensor)), "Bad NHWC tensor.");
+  }
   if (needs_gather) {
     RETURN_IF_NOT(model_wrapper.AddTensorWrapper(std::move(*nchw_s2d_tensor)), "Bad NCHW S2D output.");
     RETURN_IF_NOT(model_wrapper.AddTensorWrapper(std::move(*gather_indices_tensor)), "Bad Gather indices.");
   }
 
   RETURN_IF_ERROR(AddLayoutTranspose(model_wrapper, concat_unit, pre_name, tiled_input_def.name,
-                                     nhwc_input_name, {0, 2, 3, 1}, /*validate*/ false, {}, {}));
-  {
-    const std::string block_name = block_param.GetParamTensorName();
-    const std::string mode_name = mode_param.GetParamTensorName();
-    RETURN_IF_NOT(model_wrapper.AddParamWrapper(std::move(block_param)), "Failed to add S2D block param.");
-    RETURN_IF_NOT(model_wrapper.AddParamWrapper(std::move(mode_param)), "Failed to add S2D mode param.");
-    RETURN_IF_NOT(model_wrapper.CreateQnnNode(s2d_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_SPACE_TO_DEPTH,
-                                              {nhwc_input_name}, {nhwc_output_name}, {block_name, mode_name},
+                                     nhwc_names.front(), {0, 2, 3, 1}, /*validate*/ false, {}, {}));
+  for (size_t stage = 0; stage < blocks.size(); ++stage) {
+    const std::string block_name = block_params[stage].GetParamTensorName();
+    const std::string mode_name = mode_params[stage].GetParamTensorName();
+    RETURN_IF_NOT(model_wrapper.AddParamWrapper(std::move(block_params[stage])), "Failed to add S2D block param.");
+    RETURN_IF_NOT(model_wrapper.AddParamWrapper(std::move(mode_params[stage])), "Failed to add S2D mode param.");
+    RETURN_IF_NOT(model_wrapper.CreateQnnNode(s2d_names[stage], QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_SPACE_TO_DEPTH,
+                                              {nhwc_names[stage]}, {nhwc_names[stage + 1]}, {block_name, mode_name},
                                               /*validate*/ false),
                   "Failed to add SpaceToDepth.");
   }
-  RETURN_IF_ERROR(AddLayoutTranspose(model_wrapper, concat_unit, post_name, nhwc_output_name, nchw_s2d_name,
+  RETURN_IF_ERROR(AddLayoutTranspose(model_wrapper, concat_unit, post_name, nhwc_names.back(), nchw_s2d_name,
                                      {0, 3, 1, 2}, /*validate*/ false, {}, {}));
 
   if (needs_gather) {
@@ -649,7 +665,7 @@ std::unique_ptr<IQnnNodeGroup> SliceConcatSpaceToDepthFusion::TryFusion(
   }
 
   // Effective (h, w) phase per Concat input; any permutation of the four is accepted,
-  // with the Gather restoring exact Concat order downstream.
+  // with the lowering restoring exact Concat order.
   std::array<SlicePhase, 4> actual_phases{};
   for (size_t i = 0; i < walks.size(); ++i) {
     actual_phases[i] = walks[i].phase;
@@ -678,8 +694,6 @@ std::unique_ptr<IQnnNodeGroup> SliceConcatSpaceToDepthFusion::TryFusion(
     boundary_defs.push_back(&concat_input);
   }
   boundary_defs.push_back(&concat_unit.Outputs()[0]);
-  // Float S2D-DCR is inaccurate on HTP (upstream float-DCR tests remain disabled),
-  // so fuse quantized graphs only.
   std::optional<PerTensorQuant> reference_quant;
   for (const OrtNodeUnitIODef* boundary_def : boundary_defs) {
     const auto boundary_quant = GetBoundaryQuant(model_wrapper, *boundary_def);
@@ -693,7 +707,15 @@ std::unique_ptr<IQnnNodeGroup> SliceConcatSpaceToDepthFusion::TryFusion(
     }
   }
 
-  if (!reference_quant.has_value() || !reference_quant->quantized) {
+  // HTP SpaceToDepth supports float and fixed-point only, and float is wrong on V68. Backend validation can be
+  // skipped, so check here. An unset arch (NONE, e.g. AI Hub conversion) is not V68, so it still fuses.
+  if (!reference_quant.has_value()) {
+    return nullptr;
+  }
+  const bool is_float = reference_quant->qnn_dtype == QNN_DATATYPE_FLOAT_32 ||
+                        reference_quant->qnn_dtype == QNN_DATATYPE_FLOAT_16;
+  if (!reference_quant->quantized &&
+      (!is_float || model_wrapper.GetHtpArch() == QNN_HTP_DEVICE_ARCH_V68)) {
     return nullptr;
   }
 

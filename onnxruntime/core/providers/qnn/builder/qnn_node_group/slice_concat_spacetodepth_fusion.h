@@ -20,9 +20,10 @@ class QnnModelWrapper;
 
 // Strided Slice + Concat tiling (pixel-unshuffle by hand), either parallel
 // (4 multi-axis Slices off one input) or cascaded (2 H-slices feeding 4
-// W-slices), fused to QNN SpaceToDepth (DCR) + channel Gather. Canonical DCR
-// phase order needs no Gather; any other phase order is restored with a Gather
-// over the 4C channels. Bare S2D alone would silently reorder channels here.
+// W-slices), fused to QNN SpaceToDepth (DCR). Canonical DCR phase order needs no
+// Gather, nor does the YOLO Focus order (h0w0, h1w0, h0w1, h1w1), which is two
+// chained unequal-block S2D ops. Any other order is restored with a Gather over
+// the 4C channels.
 //
 // Matched pattern (QDQ groups shown as Slice/Concat units):
 //
@@ -35,7 +36,7 @@ class QnnModelWrapper;
 //       +-------+-------+--+--+                     +-------+-------+-------+
 //               | Concat (axis=1, 4 inputs)                  | Concat (axis=1)
 //               v                                            v
-//   Lowering: PreT(NCHW->NHWC) + S2D(DCR,block=2) + [Gather axis=1] + PostT(NHWC->NCHW).
+//   Lowering: PreT(NCHW->NHWC) + S2D(DCR) + PostT(NHWC->NCHW) + [Gather axis=1].
 class SliceConcatSpaceToDepthFusion : public IQnnNodeGroup {
  public:
   static constexpr uint32_t kBlockHeight = 2;
@@ -78,7 +79,7 @@ class SliceConcatSpaceToDepthFusion : public IQnnNodeGroup {
   const OrtNodeUnit* concat_node_unit_ = nullptr;
   // Slice whose input is the shared root tensor; node_units_ order is not meaningful.
   const OrtNodeUnit* root_input_owner_ = nullptr;
-  // Canonical DCR phase index per Concat input; {0,1,2,3} needs no Gather.
+  // Canonical DCR phase index per Concat input.
   std::array<int64_t, 4> phase_permutation_{0, 1, 2, 3};
   uint32_t channel_count_ = 0;
 };

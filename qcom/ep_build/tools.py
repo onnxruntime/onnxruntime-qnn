@@ -97,6 +97,17 @@ def get_tools_dir() -> Path:
     return tools_dir
 
 
+def get_uv_cache_dir() -> Path:
+    uv_cache_dir = Path(
+        os.environ.get(
+            "ORT_BUILD_UV_CACHE_PATH",
+            str((Path("~") / ".ort-uv-cache").expanduser()),
+        )
+    )
+    uv_cache_dir.mkdir(parents=True, exist_ok=True)
+    return uv_cache_dir
+
+
 def install_package(package_manager_venv: Path | None, package: str) -> None:
     _package_action(package_manager_venv, package, "install")
 

@@ -127,8 +127,28 @@ AllocationTracker<Dx12SharedMemoryAllocator>& GlobalDx12SharedMemoryAllocationTr
 
 }  // namespace
 
+OrtStatus* HtpSharedMemoryAllocator::Create(const OrtApi& ort_api,
+                                            const OrtMemoryInfo* memory_info,
+                                            OrtAllocator** allocator) noexcept {
+  *allocator = nullptr;
+
+  try {
+    auto htp_allocator = std::make_unique<HtpSharedMemoryAllocator>(memory_info);
+    *allocator = htp_allocator.release();
+  } catch (const std::exception& e) {
+    return ort_api.CreateStatus(ORT_FAIL, e.what());
+  }
+
+  return nullptr;
+}
+
 void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this_, size_t requested_size) {
   HtpSharedMemoryAllocator* allocator = static_cast<HtpSharedMemoryAllocator*>(this_);
+  std::string error_message;
+  auto rpcmem_library = RpcMemLibraryManager::GetOrCreate(error_message);
+  if (rpcmem_library == nullptr) {
+    ORT_CXX_API_THROW("Unable to load RPCMEM for QnnHtpShared allocator: " + error_message, ORT_EP_FAIL);
+  }
 
   const size_t shared_memory_block_size_in_bytes = requested_size;
 
@@ -138,13 +158,13 @@ void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this
   const SafeInt<int> shared_memory_block_size_in_bytes_int = shared_memory_block_size_in_bytes;
 
   // allocate shared memory
-  void* shared_memory_raw = allocator->rpcmem_lib_->Api().alloc(rpcmem::RPCMEM_HEAP_ID_SYSTEM,
-                                                                rpcmem::RPCMEM_DEFAULT_FLAGS,
-                                                                shared_memory_block_size_in_bytes_int);
+  void* shared_memory_raw = rpcmem_library->Api().alloc(rpcmem::RPCMEM_HEAP_ID_SYSTEM,
+                                                        rpcmem::RPCMEM_DEFAULT_FLAGS,
+                                                        shared_memory_block_size_in_bytes_int);
   if (shared_memory_raw == nullptr) {
     ORT_CXX_API_THROW("rpcmem_alloc() failed to allocate and returned nullptr.", ORT_EP_FAIL);
   }
-  auto shared_memory = WrapSharedMemoryWithUniquePtr(shared_memory_raw, allocator->rpcmem_lib_->Api());
+  auto shared_memory = WrapSharedMemoryWithUniquePtr(shared_memory_raw, rpcmem_library->Api());
 
   const size_t allocation_alignment = AllocationAlignment();
   if (!IsAligned(shared_memory_raw, allocation_alignment)) {
@@ -155,7 +175,7 @@ void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this
   }
 
   // get shared memory fd
-  const auto shared_memory_fd = allocator->rpcmem_lib_->Api().to_fd(shared_memory.get());
+  const auto shared_memory_fd = rpcmem_library->Api().to_fd(shared_memory.get());
   if (shared_memory_fd == -1) {
     ORT_CXX_API_THROW("rpcmem_to_fd() returned invalid file descriptor.", ORT_EP_FAIL);
   }
@@ -171,6 +191,7 @@ void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this
 
     AllocationRecord allocation_record{};
     allocation_record.shared_memory_info = std::move(shared_memory_info);
+    allocation_record.rpcmem_library = rpcmem_library;
 
     std::scoped_lock g{allocator->allocations_mutex_};
     const bool inserted = allocator->allocations_.emplace(allocation_address, std::move(allocation_record)).second;
@@ -213,8 +234,10 @@ void ORT_API_CALL HtpSharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_,
   // At this point, we have a valid allocation to free.
   // Avoid throwing exceptions as this may be running from a destructor.
   try {
+    const auto& allocation_record = allocation_node.mapped();
+
     // take ownership of shared memory and free at end of scope
-    auto shared_memory = WrapSharedMemoryWithUniquePtr(allocation_address, allocator->rpcmem_lib_->Api());
+    auto shared_memory = WrapSharedMemoryWithUniquePtr(allocation_address, allocation_record.rpcmem_library->Api());
 
     // unregister with global allocation tracker
     {
@@ -227,7 +250,6 @@ void ORT_API_CALL HtpSharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_,
     }
 
     // clean up allocation record
-    const auto& allocation_record = allocation_node.mapped();
     for (auto& clean_up_fn : allocation_record.clean_up_fns) {
       // attempt to run each clean_up_fn even if exceptions are thrown
       try {
@@ -264,6 +286,10 @@ Ort::Status HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfo(void* addres
 
   shared_memory_info_out = std::move(shared_memory_info);
   return Ort::Status();
+}
+
+bool HtpSharedMemoryAllocator::IsAllocationTracked(void* address_within_allocation) {
+  return GlobalHtpSharedMemoryAllocationTracker().LookUp(address_within_allocation).has_value();
 }
 
 Ort::Status HtpSharedMemoryAllocator::AddAllocationCleanUp(void* address_within_allocation,
@@ -485,6 +511,10 @@ Ort::Status Dx12SharedMemoryAllocator::GetAllocationDx12Info(void* address_withi
 
   allocation_info_out = std::move(dx12_info);
   return Ort::Status();
+}
+
+bool Dx12SharedMemoryAllocator::IsAllocationTracked(void* address_within_allocation) {
+  return GlobalDx12SharedMemoryAllocationTracker().LookUp(address_within_allocation).has_value();
 }
 
 Ort::Status Dx12SharedMemoryAllocator::AddAllocationCleanUp(void* address_within_allocation,

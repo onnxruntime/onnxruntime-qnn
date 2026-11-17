@@ -4,6 +4,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 
 #include <gsl/gsl>
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <string>
@@ -30,11 +31,15 @@ constexpr size_t kRank5 = 5;
 constexpr const char* kOpTypeReshape = "Reshape";
 constexpr const char* kOpTypeTranspose = "Transpose";
 constexpr const char* kAttrTransposePerm = "perm";
-constexpr std::array<int64_t, 6> kPermS2dDcr = {0, 3, 5, 1, 2, 4};
-constexpr std::array<int64_t, 6> kPermS2dCrd = {0, 1, 3, 5, 2, 4};
 
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
+
+// Validated rank reduction for a matched triple.
+struct Reduction {
+  RankReduction kind;
+  size_t index;  // Squeeze only; always 0 for MergeLeading.
+};
 
 /// @brief Match the pattern: Reshape -> Transpose -> Reshape with rank-6 intermediate tensors
 std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank6ToRank5Pattern(
@@ -65,8 +70,18 @@ std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank6ToRank5Pattern(
   return std::array<const OrtNodeUnit*, 3>{reshape1, transpose, reshape2};
 }
 
-/// @brief Validate the pattern conditions and find the unit dimension index
-std::optional<size_t> ValidatePatternConditions(
+/// @brief Validate the pattern conditions and compute the rank reduction.
+/// Squeeze is preferred: the first fixed unit dim wins, mirroring tetracode's
+/// DropBatch-before-MergeDims order.
+///
+/// Both reductions are pure view operations, so validity depends only on which axes
+/// survive and never on the permutation's semantics; the perm is read purely to build
+/// the rank-5 equivalent. SpaceToDepth permutations are deliberately not excluded here.
+/// Priority comes from fusions-table order -- SpaceToDepthFusion is tried first -- so it
+/// claims the patterns it can represent, and this fusion picks up the ones it declines.
+/// It declines bare RTR before Layout Transform runs (spacetodepth_fusion.cc), which is
+/// exactly the case that previously fell back to the CPU.
+std::optional<Reduction> ValidatePatternConditions(
     const OrtNodeUnit* reshape1,
     const OrtNodeUnit* transpose,
     const OrtNodeUnit* reshape2,
@@ -129,44 +144,34 @@ std::optional<size_t> ValidatePatternConditions(
     return std::nullopt;
   }
 
-  // Condition 2: Find a dimension with value 1 that exists at the same index in both t1 and t2
-  std::optional<size_t> unit_dim_index;
-  for (size_t i = 0; i < kRank6; ++i) {
-    if (t1_dims[i] == 1 && t2_dims[i] == 1) {
-      unit_dim_index = i;
-      break;
-    }
-  }
-
-  if (!unit_dim_index.has_value()) {
-    return std::nullopt;
-  }
-
-  // Condition 3: Transpose must leave the unit dimension in place
+  // Condition 2: transpose perm, needed by both modes below.
   OrtNodeAttrHelper transpose_helper(*transpose);
   std::vector<int64_t> perm = transpose_helper.Get(kAttrTransposePerm, std::vector<int64_t>{});
   if (perm.size() != kRank6) {
     return std::nullopt;
   }
 
-  // Keep SpaceToDepth RTR decomposition exclusively handled by SpaceToDepthFusion.
-  if (std::equal(perm.begin(), perm.end(), kPermS2dDcr.begin()) ||
-      std::equal(perm.begin(), perm.end(), kPermS2dCrd.begin())) {
-    return std::nullopt;
+  // Squeeze the first unit dimension left in place by the transpose.
+  for (size_t i = 0; i < kRank6; ++i) {
+    if (t1_dims[i] == 1 && t2_dims[i] == 1 && perm[i] == static_cast<int64_t>(i)) {
+      return Reduction{RankReduction::Squeeze, i};
+    }
   }
 
-  if (perm[unit_dim_index.value()] != static_cast<int64_t>(unit_dim_index.value())) {
-    return std::nullopt;
+  // Otherwise merge the first two input dims when they travel together. With
+  // perm[0] == 0, t1_dims[0] != 1 here (a unit dim 0 would have matched above).
+  if (perm[0] == 0 && perm[1] == 1) {
+    return Reduction{RankReduction::MergeLeading, 0};
   }
 
-  return unit_dim_index;
+  return std::nullopt;
 }
 
 /// @brief Create or validate the QNN nodes with rank-5 tensors
 Ort::Status CreateOrValidateOnQnn(
     QnnModelWrapper& qnn_model_wrapper,
     gsl::span<const OrtNodeUnit* const> node_units,
-    size_t unit_dim_index,
+    Reduction reduction,
     bool validate,
     const Ort::Logger& logger) {
   const OrtNodeUnit* reshape1 = node_units[0];
@@ -188,42 +193,67 @@ Ort::Status CreateOrValidateOnQnn(
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(transpose_output.shape, t2_dims),
                 ("Cannot get shape for " + transpose_output.name).c_str());
 
-  // Create rank-5 shape for t1 (remove unit dimension at unit_dim_index)
+  if (t1_dims.size() != kRank6 || t2_dims.size() != kRank6) {
+    return Ort::Status("Expected rank-6 intermediate tensors", OrtErrorCode::ORT_FAIL);
+  }
+
   std::vector<uint32_t> t1_rank5_dims;
   t1_rank5_dims.reserve(kRank5);
-  for (size_t i = 0; i < t1_dims.size(); ++i) {
-    if (i != unit_dim_index) {
-      t1_rank5_dims.push_back(static_cast<uint32_t>(t1_dims[i]));
-    }
-  }
-
-  // Create rank-5 shape for t2 (remove unit dimension at unit_dim_index)
   std::vector<uint32_t> t2_rank5_dims;
   t2_rank5_dims.reserve(kRank5);
-  for (size_t i = 0; i < t2_dims.size(); ++i) {
-    if (i != unit_dim_index) {
-      t2_rank5_dims.push_back(static_cast<uint32_t>(t2_dims[i]));
-    }
-  }
+  std::vector<uint32_t> perm_rank5;
+  perm_rank5.reserve(kRank5);
 
-  // Get transpose permutation and adjust for rank-5
+  // Get transpose permutation (re-read here; the graph is unchanged since validation).
   OrtNodeAttrHelper transpose_helper(*transpose);
   std::vector<int64_t> perm = transpose_helper.Get(kAttrTransposePerm, std::vector<int64_t>{});
   if (perm.size() != kRank6) {
     return Ort::Status("Expected rank-6 permutation", OrtErrorCode::ORT_FAIL);
   }
 
-  // Remove unit dimension and adjust indices
-  std::vector<uint32_t> perm_rank5;
-  perm_rank5.reserve(kRank5);
-  for (size_t i = 0; i < perm.size(); ++i) {
-    if (i != unit_dim_index) {
-      int64_t perm_val = perm[i];
-      // Adjust index: if perm_val > unit_dim_index, subtract 1
-      if (perm_val > static_cast<int64_t>(unit_dim_index)) {
-        perm_val--;
+  if (reduction.kind == RankReduction::MergeLeading) {
+    // Dims 0 and 1 travel together (perm[0] == 0 && perm[1] == 1, validated), so
+    // output position 1 disappears into position 0.
+    const uint64_t merged_t1 = static_cast<uint64_t>(t1_dims[0]) * t1_dims[1];
+    const uint64_t merged_t2 = static_cast<uint64_t>(t2_dims[0]) * t2_dims[1];
+    if (merged_t1 > UINT32_MAX || merged_t2 > UINT32_MAX) {
+      return Ort::Status("Merged dimension overflows uint32", OrtErrorCode::ORT_FAIL);
+    }
+    t1_rank5_dims.push_back(static_cast<uint32_t>(merged_t1));
+    t1_rank5_dims.insert(t1_rank5_dims.end(), t1_dims.begin() + 2, t1_dims.end());
+    t2_rank5_dims.push_back(static_cast<uint32_t>(merged_t2));
+    t2_rank5_dims.insert(t2_rank5_dims.end(), t2_dims.begin() + 2, t2_dims.end());
+    perm_rank5.push_back(0);
+    for (size_t i = 2; i < perm.size(); ++i) {
+      // perm[i] >= 2 here (values 0 and 1 sit at positions 0 and 1).
+      perm_rank5.push_back(static_cast<uint32_t>(perm[i] - 1));
+    }
+  } else {
+    const size_t unit_dim_index = reduction.index;
+    // Create rank-5 shape for t1 (remove unit dimension at unit_dim_index)
+    for (size_t i = 0; i < t1_dims.size(); ++i) {
+      if (i != unit_dim_index) {
+        t1_rank5_dims.push_back(static_cast<uint32_t>(t1_dims[i]));
       }
-      perm_rank5.push_back(static_cast<uint32_t>(perm_val));
+    }
+
+    // Create rank-5 shape for t2 (remove unit dimension at unit_dim_index)
+    for (size_t i = 0; i < t2_dims.size(); ++i) {
+      if (i != unit_dim_index) {
+        t2_rank5_dims.push_back(static_cast<uint32_t>(t2_dims[i]));
+      }
+    }
+
+    // Remove unit dimension and adjust indices
+    for (size_t i = 0; i < perm.size(); ++i) {
+      if (i != unit_dim_index) {
+        int64_t perm_val = perm[i];
+        // Adjust index: if perm_val > unit_dim_index, subtract 1
+        if (perm_val > static_cast<int64_t>(unit_dim_index)) {
+          perm_val--;
+        }
+        perm_rank5.push_back(static_cast<uint32_t>(perm_val));
+      }
     }
   }
 
@@ -338,18 +368,19 @@ std::unique_ptr<IQnnNodeGroup> Rank6ToRank5Fusion::TryFusion(
   const OrtNodeUnit* transpose = pattern->at(1);
   const OrtNodeUnit* reshape2 = pattern->at(2);
 
-  // Validate pattern conditions and get unit dimension index
-  auto unit_dim_index = ValidatePatternConditions(reshape1, transpose, reshape2, qnn_model_wrapper, logger);
-  if (!unit_dim_index.has_value()) {
+  // Validate pattern conditions and compute the rank reduction
+  auto reduction = ValidatePatternConditions(reshape1, transpose, reshape2, qnn_model_wrapper, logger);
+  if (!reduction.has_value()) {
     return nullptr;
   }
 
   // Validate on QNN
-  if (!CreateOrValidateOnQnn(qnn_model_wrapper, pattern.value(), unit_dim_index.value(), /*validate=*/true, logger).IsOK()) {
+  if (!CreateOrValidateOnQnn(qnn_model_wrapper, pattern.value(), reduction.value(), /*validate=*/true, logger).IsOK()) {
     return nullptr;
   }
 
-  return std::make_unique<Rank6ToRank5Fusion>(pattern.value(), unit_dim_index.value());
+  return std::make_unique<Rank6ToRank5Fusion>(pattern.value(), reduction->kind,
+                                              reduction->index);
 }
 
 gsl::span<const OrtNodeUnit* const> Rank6ToRank5Fusion::GetNodeUnits() const {
@@ -358,12 +389,14 @@ gsl::span<const OrtNodeUnit* const> Rank6ToRank5Fusion::GetNodeUnits() const {
 
 Ort::Status Rank6ToRank5Fusion::IsSupported(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), unit_dim_index_, /*validate=*/true, logger);
+  const Reduction reduction{kind_, index_};
+  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), reduction, /*validate=*/true, logger);
 }
 
 Ort::Status Rank6ToRank5Fusion::AddToModelBuilder(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), unit_dim_index_, /*validate=*/false, logger);
+  const Reduction reduction{kind_, index_};
+  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), reduction, /*validate=*/false, logger);
 }
 
 }  // namespace qnn
