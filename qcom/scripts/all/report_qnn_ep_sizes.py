@@ -12,7 +12,9 @@ import re
 import tarfile
 import zipfile
 from datetime import date, datetime, timedelta, timezone
+from html import escape
 from pathlib import Path, PurePosixPath
+from string import Template
 
 PLATFORMS = {
     "windows-arm64": "*-win-arm64.zip",
@@ -22,6 +24,16 @@ PLATFORMS = {
     "linux-aarch64_manylinux_2_34": "*-linux-aarch64.tgz",
     "linux-x86_64_ubuntu_22_04": "*-linux-x64.tgz",
 }
+HISTORY_HEADERS = [
+    "Date",
+    "Windows ARM64",
+    "Windows ARM64EC",
+    "Windows ARM64X",
+    "Windows x64",
+    "Linux aarch64 (manylinux_2_34)",
+    "Linux x64 (Ubuntu 22.04)",
+]
+CHART_COLORS = ["#2563eb", "#d97706", "#9333ea", "#0891b2", "#15803d", "#475569"]
 
 
 def collect_sizes(build_dir: Path) -> list[dict]:
@@ -92,15 +104,8 @@ def build_history(report: dict, baseline: dict | None) -> list[dict]:
     return [daily[run_date] for run_date in sorted(daily)]
 
 
-def format_history(history: list[dict]) -> str:
-    lines = [
-        "## QNN EP size history (last 60 calendar days)",
-        "",
-        "Each cell: size in MB (change in MB and % versus the previous available date). Missing dates are omitted.",
-        "",
-        "| Date | Windows ARM64 | Windows ARM64EC | Windows ARM64X | Windows x64 | Linux aarch64 (manylinux_2_34) | Linux x64 (Ubuntu 22.04) |",
-        "|---|---:|---:|---:|---:|---:|---:|",
-    ]
+def history_rows(history: list[dict]) -> list[list[str]]:
+    rows = []
     first_sizes = {}
     previous_sizes = {}
     for snapshot in history:
@@ -117,7 +122,7 @@ def format_history(history: list[dict]) -> str:
                     delta = size - previous
                     cell = f"{size / 1_000_000:.3f} ({delta / 1_000_000:+.3f}, {delta / previous * 100:+.2f}%)"
             cells.append(cell)
-        lines.append(f"| {snapshot['date']} | {' | '.join(cells)} |")
+        rows.append([snapshot["date"], *cells])
         previous_sizes = current_sizes
     if len(history) > 1:
         cells = []
@@ -129,14 +134,139 @@ def format_history(history: list[dict]) -> str:
                 delta = last - first
                 cell = f"{delta / 1_000_000:+.3f} MB ({delta / first * 100:+.2f}%)"
             cells.append(cell)
+        rows.append(["Window growth", *cells])
+    return rows
+
+
+def format_history(history: list[dict]) -> str:
+    lines = [
+        "## QNN EP size history (last 60 calendar days)",
+        "",
+        "Each cell: size in MB (change in MB and % versus the previous available date). Missing dates are omitted.",
+        "",
+        f"| {' | '.join(HISTORY_HEADERS)} |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for row in history_rows(history):
+        label = "**Window growth**" if row[0] == "Window growth" else row[0]
+        lines.append(f"| {label} | {' | '.join(row[1:])} |")
+    if len(history) > 1:
         lines.extend(
             [
-                f"| **Window growth** | {' | '.join(cells)} |",
                 "",
                 "Window growth compares the latest size with the first available size for each platform in this window.",
             ]
         )
     return "\n".join(lines) + "\n"
+
+
+def trend_svg(history: list[dict], growth: bool) -> str:
+    dates = [date.fromisoformat(snapshot["date"]) for snapshot in history]
+    sizes = [snapshot_sizes(snapshot) for snapshot in history]
+    series = []
+    for platform in PLATFORMS:
+        first = next((row[platform] for row in sizes if platform in row), None)
+        series.append(
+            [
+                ((row[platform] / first - 1) * 100 if growth else row[platform] / 1_000_000)
+                if platform in row
+                else None
+                for row in sizes
+            ]
+        )
+    values = [value for points in series for value in points if value is not None]
+    low, high = min([0, *values]), max([0, *values])
+    span = high - low or 1
+    magnitude = 10 ** math.floor(math.log10(span / 4))
+    step = next(scale * magnitude for scale in (1, 2, 2.5, 5, 10) if scale * magnitude >= span / 4)
+    low, high = math.floor(low / step) * step, math.ceil(high / step) * step
+    if low == high:
+        high = low + step * 4
+    days = (dates[-1] - dates[0]).days or 1
+    parts = [
+        '<svg viewBox="0 0 960 300" role="img" aria-label="'
+        + ("Window growth in percent" if growth else "Binary size in MB")
+        + '">',
+        "<desc>QNN EP measurements by platform and date. Exact values are available in the history table.</desc>",
+    ]
+    for tick in range(round((high - low) / step) + 1):
+        value = low + step * tick
+        y = 240 - (value - low) / (high - low) * 200
+        parts.append(
+            f'<path d="M70 {y}H930" stroke="#e2e8f0"/><text x="58" y="{y + 4}" text-anchor="end">{value:g}{"%" if growth else ""}</text>'
+        )
+    for index in sorted({0, len(dates) // 2, len(dates) - 1}):
+        x = 70 + (dates[index] - dates[0]).days / days * 860 if len(dates) > 1 else 500
+        parts.append(f'<text x="{x:.2f}" y="273" text-anchor="middle">{dates[index].isoformat()}</text>')
+    for platform, label, color, points in zip(PLATFORMS, HISTORY_HEADERS[1:], CHART_COLORS, series, strict=True):
+        path = []
+        connected = False
+        circles = []
+        for index, value in enumerate(points):
+            if value is None:
+                connected = False
+                continue
+            x = 70 + (dates[index] - dates[0]).days / days * 860 if len(dates) > 1 else 500
+            y = 240 - (value - low) / (high - low) * 200
+            path.append(f"{'L' if connected else 'M'}{x:.2f},{y:.2f}")
+            connected = True
+            tooltip = (
+                f"{label} | {dates[index]} | {sizes[index][platform]:,} bytes | {value:.3f}{'%' if growth else ' MB'}"
+            )
+            circles.append(
+                f'<circle cx="{x:.2f}" cy="{y:.2f}" r="4" fill="{color}"><title>{escape(tooltip)}</title></circle>'
+            )
+        parts.append(f'<path d="{" ".join(path)}" fill="none" stroke="{color}" stroke-width="2.5"/>')
+        parts.extend(circles)
+    return "".join([*parts, "</svg>"])
+
+
+def format_html(report: dict) -> str:
+    history = report["history"]
+    current = snapshot_sizes(history[-1])
+    previous = snapshot_sizes(history[-2]) if len(history) > 1 else {}
+    cards = []
+    legend = []
+    for platform, label, color in zip(PLATFORMS, HISTORY_HEADERS[1:], CHART_COLORS, strict=True):
+        size = current.get(platform)
+        delta = size - previous[platform] if size is not None and platform in previous else None
+        flagged = delta is not None and delta > report["growth_limit_mb"] * 1_000_000
+        change = f"{delta / 1_000_000:+.3f} MB vs previous date" if delta is not None else "No previous measurement"
+        cards.append(
+            f'<article class="card {"alert-card" if flagged else ""}"><h2>{label}</h2><strong>{size / 1_000_000:.3f} MB</strong><p>{change}{" · ABOVE LIMIT" if flagged else ""}</p></article>'
+            if size is not None
+            else f'<article class="card"><h2>{label}</h2><strong>N/A</strong></article>'
+        )
+        legend.append(f'<span><i style="background:{color}"></i>{label}</span>')
+    rows = []
+    for row in history_rows(history):
+        cells = f'<th scope="row">{escape(row[0])}</th>' + "".join(f"<td>{escape(cell)}</td>" for cell in row[1:])
+        rows.append(f'<tr class="{"total" if row[0] == "Window growth" else ""}">{cells}</tr>')
+    alerts = report["alerts"]
+    status = (
+        f"{len(alerts)} platform{'s' if len(alerts) != 1 else ''} above the daily growth limit"
+        if alerts
+        else "No platforms above the daily growth limit"
+    )
+    template = Template(Path(__file__).with_name("qnn_ep_sizes.html").read_text(encoding="utf-8"))
+    return template.substitute(
+        date=escape(report["date"]),
+        qa_tag=escape(report["qa_tag"]),
+        commit=escape(report["commit_sha"]),
+        version=escape(report["ep_version"]),
+        limit=f"{report['growth_limit_mb']:g}",
+        status=escape(status),
+        status_class="warning" if alerts else "healthy",
+        alerts="".join(f"<li>{escape(alert)}</li>" for alert in alerts),
+        cards="".join(cards),
+        legend="".join(legend),
+        growth_chart=trend_svg(history, True),
+        size_chart=trend_svg(history, False),
+        headers="".join(f'<th scope="col">{escape(header)}</th>' for header in HISTORY_HEADERS),
+        rows="".join(rows),
+        start=escape(history[0]["date"]),
+        count=len(history),
+    )
 
 
 def format_summary(report: dict, baseline: dict | None, growth_limit_mb: float = 0.5) -> tuple[str, list[str]]:
@@ -205,6 +335,7 @@ def main() -> None:
     report["alerts"] = alerts
     (args.build_dir / "qnn-ep-sizes.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     (args.build_dir / "qnn-ep-sizes.md").write_text(summary, encoding="utf-8")
+    (args.build_dir / "qnn-ep-sizes.html").write_text(format_html(report), encoding="utf-8")
     if summary_path := os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(summary_path).open("a", encoding="utf-8") as output:
             output.write(summary)

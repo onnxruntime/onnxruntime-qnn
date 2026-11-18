@@ -6,12 +6,21 @@ import json
 import subprocess
 import sys
 import tarfile
+import xml.etree.ElementTree as ET
 import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
-from report_qnn_ep_sizes import PLATFORMS, build_history, collect_sizes, format_history, format_summary
+from report_qnn_ep_sizes import (
+    PLATFORMS,
+    build_history,
+    collect_sizes,
+    format_history,
+    format_html,
+    format_summary,
+    trend_svg,
+)
 
 
 @pytest.fixture
@@ -134,6 +143,9 @@ def test_cli_writes_snapshots_and_job_summary(packages, monkeypatch, same_ref):
     assert ("+200 | +25.00%" in summary) == bool(same_ref)
     assert summary_path.read_text() == "Existing summary\n" + summary
     assert output_path.read_text() == "size_threshold_exceeded=false\n"
+    html = (packages / "qnn-ep-sizes.html").read_text(encoding="utf-8")
+    assert "No platforms above the daily growth limit" in html
+    assert html.count("<svg ") == 2
 
 
 @pytest.mark.parametrize(
@@ -189,6 +201,7 @@ def test_cli_alerts_save_reports_and_output_without_failing(packages, monkeypatc
     assert result.stdout.count("::warning::") == 6
     assert "### Size growth alerts" in (packages / "qnn-ep-sizes.md").read_text()
     assert output_path.read_text() == "size_threshold_exceeded=true\n"
+    assert "6 platforms above" in (packages / "qnn-ep-sizes.html").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("limit", ["-1", "nan", "inf"])
@@ -297,3 +310,36 @@ def test_cli_carries_history_and_uses_previous_date_for_alerts(packages, monkeyp
     assert len(report["history"]) == (2 if same_day else 3)
     assert report["baseline_qa_tag"] == f"nightly-2026-11-{'16' if same_day else '17'}-abc"
     assert bool(report["alerts"]) == same_day
+
+
+@pytest.mark.parametrize("growth", [False, True])
+def test_svg_growth_and_size_modes_with_missing_platforms_and_single_date(growth):
+    first = history_snapshot("2026-11-16", size=1000000)
+    second = history_snapshot("2026-11-17", size=1100000)
+    second["sizes"] = second["sizes"][:1]
+    third = history_snapshot("2026-11-18", size=900000)
+    svg = ET.fromstring(trend_svg([first, second, third], growth))
+    titles = [node.text for node in svg.iter("title")]
+    assert any("900,000 bytes" in title and ("-10.000%" if growth else "0.900 MB") in title for title in titles)
+    assert len(list(svg.iter("circle"))) == 13
+    paths = [node for node in svg.iter("path") if node.get("stroke-width")]
+    assert paths[1].get("d").count("M") == 2
+    assert "nan" not in ET.tostring(svg, encoding="unicode").lower()
+    single = ET.fromstring(trend_svg([first], growth))
+    assert len(list(single.iter("circle"))) == 6
+
+
+def test_html_escapes_metadata_and_shares_history_table_values():
+    first = history_snapshot("2026-11-16")
+    last = history_snapshot("2026-11-18", size=1600000)
+    report = {**last, "history": [first, last], "growth_limit_mb": 0.5, "alerts": ['<script>alert("x")</script>']}
+    report["qa_tag"] = '<img src=x onerror="alert(1)">'
+    document = format_html(report)
+    assert "<script>" not in document
+    assert "<img src=x" not in document
+    assert "&lt;script&gt;" in document
+    assert "&lt;img src=x" in document
+    assert "+0.600 MB (+60.00%)" in document
+    assert 'class="card alert-card"' in document
+    assert "http://" not in document and "https://" not in document
+    assert "$growth_chart" not in document

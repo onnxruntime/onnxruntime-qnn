@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries. SPDX-License-Identifier: MIT -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QNN EP size report · $date</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f7fb;color:#17233a;font:15px/1.5 system-ui,sans-serif}
+main{max-width:1280px;margin:auto;padding:32px 28px}h1{font-size:32px;letter-spacing:-1px;margin:4px 0 8px}h2{font-size:19px;margin:0 0 8px}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:2px;color:#52677f}.muted{color:#52677f}.meta{overflow-wrap:anywhere;font-size:13px}
+.status{border-radius:10px;padding:14px 18px;margin:24px 0}.healthy{background:#e6f4eb;color:#176534}.warning{background:#fff0e3;color:#9a3412}
+.status ul{margin:8px 0 0;padding-left:20px}.cards{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin:24px 0}
+.card,.panel{background:white;border:1px solid #dce4ef;border-radius:12px;padding:20px}.card{padding:16px}.card h2{font-size:12px;min-height:36px;color:#52677f}.card strong{font-size:24px}.card p{font-size:12px;margin:4px 0 0;color:#52677f}.alert-card{border-color:#fb923c}.alert-card p{color:#9a3412}
+.panel{margin:20px 0}.tabs{display:flex;align-items:center;gap:8px;margin:16px 0}.tabs input{accent-color:#2563eb}.tabs label{margin-right:16px;cursor:pointer}
+.chart svg{display:block;width:100%;height:auto}.chart text{fill:#52677f;font:12px system-ui,sans-serif}.size-chart{display:none}
+.panel:has(#size:checked) .growth-chart{display:none}.panel:has(#size:checked) .size-chart{display:block}
+.legend{display:flex;flex-wrap:wrap;gap:10px 24px;font-size:12px;margin:12px 0}.legend span{display:flex;align-items:center;gap:7px}.legend i{width:10px;height:10px;border-radius:50%;display:inline-block}
+.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}th,td{text-align:right;padding:13px 12px;border-bottom:1px solid #e2e8f0}th:first-child{text-align:left}thead th{background:#f4f7fb;color:#52677f}tbody th{font-weight:500}.total{background:#eaf1ff;font-weight:700}.total th{font-weight:700}
+footer{font-size:12px;color:#52677f;padding:8px 0 24px}input:focus-visible{outline:3px solid #2563eb;outline-offset:4px}
+@media(max-width:1100px){.cards{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:700px){main{padding:20px 14px}h1{font-size:26px}.cards{grid-template-columns:repeat(2,1fr)}.card,.panel{padding:14px}}
+</style>
+</head>
+<body><main>
+<div class="eyebrow">QNN EXECUTION PROVIDER / NIGHTLY</div>
+<h1>Binary size &amp; growth</h1>
+<p class="muted">$start to $date · $count recorded dates · Release binaries · 1 MB = 1,000,000 bytes</p>
+<p class="meta muted">EP $version · $qa_tag · Commit $commit</p>
+<section class="status $status_class" aria-label="Size alert status"><strong>$status</strong> · Limit: &gt; $limit MB<ul>$alerts</ul></section>
+<div class="cards">$cards</div>
+<section class="panel" aria-labelledby="trend-title">
+<h2 id="trend-title">60-day trend</h2>
+<p class="muted">Growth compares each platform with its first measurement in this window. Hover over a point for exact bytes.</p>
+<div class="tabs" role="group" aria-label="Chart metric">
+<input type="radio" name="metric" id="growth" checked><label for="growth">Window growth (%)</label>
+<input type="radio" name="metric" id="size"><label for="size">Size (MB)</label>
+</div>
+<div class="chart growth-chart">$growth_chart</div><div class="chart size-chart">$size_chart</div>
+<div class="legend" aria-label="Chart platforms">$legend</div>
+</section>
+<section class="panel" aria-labelledby="history-title">
+<h2 id="history-title">Daily measurements</h2>
+<p class="muted">Size in MB, followed by change in MB and % versus the previous recorded date. Missing dates are omitted.</p>
+<div class="table-wrap"><table><caption class="muted">QNN EP binary size history and cumulative window growth</caption><thead><tr>$headers</tr></thead><tbody>$rows</tbody></table></div>
+</section>
+<footer>Measures onnxruntime_providers_qnn.dll / libonnxruntime_providers_qnn.so. Window growth uses the first available measurement for each platform. A missing baseline starts a new history.</footer>
+</main></body></html>
