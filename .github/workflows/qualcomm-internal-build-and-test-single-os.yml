@@ -166,6 +166,8 @@ jobs:
         if: ${{ inputs.has_code_changes }}
         run: git submodule update --init --recursive
 
+      # Internal-symbol cross-runner tests hand off this archive through GitHub Actions;
+      # upload_test_archive controls Artifactory publication, not that local hand-off.
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.has_code_changes }}
         run: >
@@ -176,8 +178,6 @@ jobs:
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
-          # Internal-symbol cross-runner tests hand off this archive through GitHub Actions;
-          # upload_test_archive controls Artifactory publication, not that local hand-off.
           ${{ (inputs.upload_test_archive || (inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner)) && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
 
       - name: Upload Linux internal-symbol test inputs
