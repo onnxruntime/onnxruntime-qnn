@@ -65,7 +65,7 @@ jobs:
     secrets: inherit
 
   build-android-aarch64:
-    if: ${{ always() && (inputs.build_android_aarch64 || inputs.build_android_aarch64_aar) && (inputs.maven_only || needs.archive-testdata.result == 'success') }}
+    if: ${{ always() && (inputs.maven_only || inputs.build_android_aarch64 || inputs.build_android_aarch64_aar) && (inputs.maven_only || needs.archive-testdata.result == 'success') }}
     needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -78,10 +78,10 @@ jobs:
       testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: None
       run_tests: false
-      upload_test_archive: true
+      upload_test_archive: ${{ !inputs.maven_only }}
       upload_wheel: false
-      build_aar: ${{ inputs.build_android_aarch64_aar }}
-      upload_aar: ${{ inputs.build_android_aarch64_aar }}
+      build_aar: ${{ inputs.maven_only || inputs.build_android_aarch64_aar }}
+      upload_aar: ${{ inputs.maven_only || inputs.build_android_aarch64_aar }}
 
   test-android-aarch64:
     if: ${{ !inputs.maven_only && (inputs.build_android_aarch64 || inputs.build_android_aarch64_aar) }}
