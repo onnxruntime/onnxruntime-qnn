@@ -12,8 +12,8 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "${script_dir}/common.sh"
-# shellcheck source=resolve_tool_versions.sh
-source "${script_dir}/resolve_tool_versions.sh"
+# shellcheck source=../all/resolve_tool_versions.sh
+source "${script_dir}/../all/resolve_tool_versions.sh"
 
 usage() {
     cat <<USAGE

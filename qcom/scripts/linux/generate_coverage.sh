@@ -261,7 +261,7 @@ snapshot_json="${build_dir}/${config}/snapshot_results.json"
 
 # Accuracy-routing gate artifacts.
 gate_script="${REPO_ROOT}/qcom/scripts/linux/accuracy_gate.py"
-version_resolver="${REPO_ROOT}/qcom/scripts/linux/resolve_tool_versions.sh"
+version_resolver="${REPO_ROOT}/qcom/scripts/all/resolve_tool_versions.sh"
 accuracy_list_file="${build_dir}/${config}/accuracy_list.txt"
 accuracy_filter_file="${build_dir}/${config}/accuracy_filter.txt"
 gate_summary_file="${build_dir}/${config}/accuracy_gate_summary.txt"

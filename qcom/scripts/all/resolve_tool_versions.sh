@@ -57,9 +57,9 @@
 # onnxruntime-qnn PLUGIN/wheel version (get_ort_version(), build.py:27-28, used
 # only to name the wheel), NOT the ORT RUNTIME version.
 
-_RTV_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=common.sh
-source "${_RTV_SCRIPT_DIR}/common.sh"
+_rtv_log_err() {
+    printf 'ERROR: %s\n' "$*" >&2
+}
 
 # ---------------------------------------------------------------------------
 # _rtv_trim <string>
@@ -185,7 +185,7 @@ EOF
 }
 
 main() {
-    set_strict_mode
+    set -euo pipefail
     local bin_dir="" what="both"
     for arg in "$@"; do
         case "${arg}" in
@@ -200,14 +200,14 @@ main() {
                 return 0
                 ;;
             *)
-                log_err "Unknown argument: ${arg}"
+                _rtv_log_err "Unknown argument: ${arg}"
                 _rtv_usage
                 return 2
                 ;;
         esac
     done
     if [ -z "${bin_dir}" ]; then
-        log_err "--bin-dir=<path> is required."
+        _rtv_log_err "--bin-dir=<path> is required."
         _rtv_usage
         return 2
     fi
@@ -219,7 +219,7 @@ main() {
                 printf '%s\n' "${v}"
                 return 0
             fi
-            log_err "QAIRT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_QNN_HOME) and its sdk.yaml."
+            _rtv_log_err "QAIRT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_QNN_HOME) and its sdk.yaml."
             return 3
             ;;
         ort)
@@ -228,18 +228,18 @@ main() {
                 printf '%s\n' "${v}"
                 return 0
             fi
-            log_err "ORT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_ORT_HOME) and ${bin_dir}/_deps/ort_core-src/VERSION_NUMBER."
+            _rtv_log_err "ORT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_ORT_HOME) and ${bin_dir}/_deps/ort_core-src/VERSION_NUMBER."
             return 3
             ;;
         both)
             local qv ov rc=0
             if ! qv="$(resolve_qairt_version "${bin_dir}")"; then
                 rc=3
-                log_err "QAIRT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_QNN_HOME) and its sdk.yaml."
+                _rtv_log_err "QAIRT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_QNN_HOME) and its sdk.yaml."
             fi
             if ! ov="$(resolve_ort_version "${bin_dir}")"; then
                 rc=3
-                log_err "ORT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_ORT_HOME) and ${bin_dir}/_deps/ort_core-src/VERSION_NUMBER."
+                _rtv_log_err "ORT version undeterminable. Checked ${bin_dir}/CMakeCache.txt (onnxruntime_ORT_HOME) and ${bin_dir}/_deps/ort_core-src/VERSION_NUMBER."
             fi
             if [ "${rc}" -ne 0 ]; then
                 return 3

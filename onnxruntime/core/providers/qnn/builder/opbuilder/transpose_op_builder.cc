@@ -30,6 +30,7 @@ class TransposeOpBuilder : public BaseOpBuilder {
  private:
   Ort::Status ProcessPermAttribute(QnnModelWrapper& qnn_model_wrapper,
                                    const OrtNodeUnit& node_unit,
+                                   const std::vector<uint32_t>& perm,
                                    std::vector<std::string>& param_tensor_names) const;
 };
 
@@ -120,10 +121,10 @@ static Ort::Status TryFoldConstantTranspose(QnnModelWrapper& qnn_model_wrapper,
 
 Ort::Status TransposeOpBuilder::ProcessPermAttribute(QnnModelWrapper& qnn_model_wrapper,
                                                      const OrtNodeUnit& node_unit,
+                                                     const std::vector<uint32_t>& perm,
                                                      std::vector<std::string>& param_tensor_names) const {
-  std::vector<uint32_t> perm_data;
-  RETURN_IF_ERROR(GetTransposePerm(qnn_model_wrapper, node_unit, perm_data));
-  std::vector<uint32_t> perm_shape{static_cast<uint32_t>(perm_data.size())};
+  std::vector<uint32_t> perm_shape{static_cast<uint32_t>(perm.size())};
+  std::vector<uint32_t> perm_data(perm);
 
   QnnParamWrapper transpose_param(node_unit.Index(), node_unit.Name(), QNN_OP_TRANSPOSE_PARAM_PERM,
                                   std::move(perm_shape), std::move(perm_data));
@@ -156,8 +157,8 @@ Ort::Status TransposeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                     .c_str());
   }
 
-  std::vector<std::string> param_tensor_names;
-  RETURN_IF_ERROR(ProcessPermAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
+  std::vector<uint32_t> perm;
+  RETURN_IF_ERROR(GetTransposePerm(qnn_model_wrapper, node_unit, perm));
 
   const auto& output_name = node_unit.Outputs()[0].name;
   std::vector<std::string> output_names;
@@ -191,6 +192,28 @@ Ort::Status TransposeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Outputs()[0].shape, output_shape), "Cannot get shape");
 
   const QnnTensorWrapper& input_tensor_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
+  const QnnQuantParamsWrapper& input_quant_param = input_tensor_wrapper.GetQnnQuantParams();
+
+  // Workaround for QNN HTP Transpose miscomputation (issue #1020). Keep the Transpose
+  // path when an int64 output cast must be emitted or the quantization is per-channel.
+  if (!needs_int64_cast && !input_quant_param.IsPerChannel()) {
+    std::vector<uint32_t> input_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape");
+    if (utils::NeedsHtpTransposeReshapeWorkaround(input_shape, perm, output_shape)) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Lowering Transpose node '" + node_unit.Name() +
+                   "' to Reshape because its perm only reorders size-1 dimensions.")
+                      .c_str());
+      return qnn_model_wrapper.AddReshapeNode(input_names[0], output_name, input_shape, output_shape,
+                                              input_tensor_wrapper.GetTensorDataType(),
+                                              input_quant_param, do_op_validation,
+                                              qnn_model_wrapper.IsGraphInput(input_names[0]),
+                                              is_graph_output);
+    }
+  }
+
+  std::vector<std::string> param_tensor_names;
+  RETURN_IF_ERROR(ProcessPermAttribute(qnn_model_wrapper, node_unit, perm, param_tensor_names));
 
   // If a cast to int64 is needed, add the cast node
   if (needs_int64_cast) {

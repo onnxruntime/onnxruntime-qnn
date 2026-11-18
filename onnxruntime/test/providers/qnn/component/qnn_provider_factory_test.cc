@@ -7,8 +7,9 @@
 // without constructing a real QnnEp instance. They exercise:
 //   - Basic getters (name/vendor/version/vendor-id/is-stream-aware) and the
 //     ctor's CreateMemoryInfo_V2 wiring.
+//   - Factory data-transfer creation.
 //   - Trivial factory methods that never dispatch through the OrtApi tables
-//     (CreateDataTransferImpl, ReleaseEpImpl(nullptr)).
+//     (ReleaseEpImpl(nullptr)).
 //   - CreateEpFactories / ReleaseEpFactory extern-"C" entry points, focused
 //     on argument-validation and version-check error paths that do NOT
 //     reach the QnnEpFactory ctor's Ort::InitApi() (which would clobber the
@@ -492,13 +493,18 @@ TEST_F(QnnUnit_ProviderFactoryTest, IsStreamAware_ReturnsFalse) {
   EXPECT_FALSE(factory.IsStreamAware(&factory));
 }
 
-TEST_F(QnnUnit_ProviderFactoryTest, CreateDataTransfer_SetsNullAndReturnsOk) {
+TEST_F(QnnUnit_ProviderFactoryTest, CreateDataTransfer_ReturnsInitializedTransfer) {
   FactoryStubContext ctx;
   UseFactoryStubs use(ctx);
   QnnEpFactory factory("ep", ctx.MakeApiPtrs());
-  OrtDataTransferImpl* transfer = reinterpret_cast<OrtDataTransferImpl*>(0xDEAD);
+  OrtDataTransferImpl* transfer = nullptr;
   EXPECT_EQ(factory.CreateDataTransfer(&factory, &transfer), nullptr);
-  EXPECT_EQ(transfer, nullptr);
+  ASSERT_NE(transfer, nullptr);
+  EXPECT_EQ(transfer->ort_version_supported, ORT_API_VERSION);
+  EXPECT_NE(transfer->CanCopy, nullptr);
+  EXPECT_NE(transfer->CopyTensors, nullptr);
+  EXPECT_NE(transfer->Release, nullptr);
+  transfer->Release(transfer);
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, CreateAllocator_HostAccessible_DoesNotLoadRpcMem) {
@@ -728,6 +734,30 @@ TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_CpuHost_CreatesEpDevice)
   EXPECT_EQ(num, 1u);
   ASSERT_EQ(ctx.created_ep_devices.size(), 1u);
   EXPECT_EQ(ctx.created_ep_devices[0], cpu);
+}
+
+TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_HtpHost_CreatesEpDevice) {
+#if !QNN_ARCH_ARM64
+  GTEST_SKIP() << "This HTP-host discovery case is for ARM64 hosts.";
+#endif
+  FactoryStubContext ctx;
+  UseFactoryStubs use(ctx);
+  QnnEpFactory factory("ep", ctx.MakeApiPtrs());
+
+  // The fake device id is arbitrary; discovery is driven by device type and
+  // Qualcomm vendor id below.
+  constexpr uint32_t kFakeHtpDeviceId = 35;
+  OrtHardwareDevice* htp = MakeFakeHwDevice(kFakeHtpDeviceId);
+  ctx.device_type_map[htp] = OrtHardwareDeviceType_NPU;
+  ctx.device_vendor_map[htp] = kQualcommVendorId;
+
+  const OrtHardwareDevice* devices[] = {htp};
+  OrtEpDevice* ep_devices[1] = {nullptr};
+  size_t num = 0;
+  EXPECT_EQ(factory.GetSupportedDevices(&factory, devices, 1, ep_devices, 1, &num), nullptr);
+  EXPECT_EQ(num, 1u);
+  ASSERT_EQ(ctx.created_ep_devices.size(), 1u);
+  EXPECT_EQ(ctx.created_ep_devices[0], htp);
 }
 
 TEST_F(QnnUnit_ProviderFactoryTest, GetSupportedDevices_VendorMismatch_NotCreated) {

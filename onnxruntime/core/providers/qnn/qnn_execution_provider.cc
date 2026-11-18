@@ -659,7 +659,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   OnRunStart = OnRunStartImpl;
   OnRunEnd = OnRunEndImpl;
   CreateAllocator = CreateAllocatorImpl;
-  GetDefaultMemoryDevice = GetDefaultMemoryDeviceImpl;
   SetDynamicOptions = SetDynamicOptionsImpl;
   GetCompiledModelCompatibilityInfo = GetCompiledModelCompatibilityInfoImpl;
 #if QNN_ORT_EP_PROFILING_API_ENABLED
@@ -1130,7 +1129,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                  FormatEPConfigKey("num_graph_prepare_threads"),
                                  "",
                                  num_graph_prepare_threads_str);
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   uint8_t max_num_supported_threads = static_cast<uint8_t>(std::thread::hardware_concurrency());
   if (max_num_supported_threads) {
     ORT_CXX_LOG(logger_,
@@ -1176,7 +1175,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   };
 #endif
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   if (!num_graph_prepare_threads_str.empty() && is_valid_number(num_graph_prepare_threads_str)) {
     int64_t parsed = 0;
     // is_valid_number already guaranteed all-digits; TryParseInteger additionally guards against overflow.
@@ -1205,7 +1204,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 "Multi-threaded graph compilation is currently only supported on Windows devices. Feature will not be enabled.");
   }
-#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
+#endif  // _WIN32 && QNN_ARCH_ARM64
 
   // Check for conflicts
   if (qnn_context_embed_mode_ && share_ep_contexts_) {
@@ -1306,6 +1305,12 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                                            FormatEPConfigKey("enable_block_quant_weight_optimization"),
                                                                            false,
                                                                            logger_);
+
+  model_settings_.use_native_matmul = ParseBoolOption(ort_api,
+                                                      session_options_,
+                                                      FormatEPConfigKey("use_native_matmul"),
+                                                      false,
+                                                      logger_);
 
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
@@ -2161,33 +2166,30 @@ static void GetContextOnnxModelFilePath(const std::string& user_context_cache_pa
   }
 }
 
-OrtStatus* QnnEp::GetGenieCapability(const OrtGraph* graph,
-                                     OrtEpGraphSupportInfo* graph_support_info) {
-  // CREATE GENIE_BACKEND_MANAGER
-  if (!genie_backend_manager_) {
-    genie_backend_manager_ = qnn::GenieBackendManager::Create(
-        qnn::GenieBackendManagerConfig{kDefaultGenieBackendPath}, logger_);
-    auto setup_st = genie_backend_manager_->SetupBackend();
+OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
+                                                  const OrtGraph* graph,
+                                                  OrtEpGraphSupportInfo* graph_support_info) {
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  if (!ep->genie_backend_manager_) {
+    ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
+        qnn::GenieBackendManagerConfig{kDefaultGenieBackendPath}, ep->logger_);
+    auto setup_st = ep->genie_backend_manager_->SetupBackend();
     if (!setup_st.IsOK()) {
-      return ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
+      return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
     }
   }
-  genie_api_loader_ = std::make_shared<GenieApiLoader>(genie_backend_manager_->GetGenieBackendHandle());
+  ep->genie_api_loader_ = std::make_shared<GenieApiLoader>((ep->genie_backend_manager_)->GetGenieBackendHandle());
   // Get all nodes from the graph
   size_t num_nodes = 0;
-  auto get_num_nodes_status = ort_api.Graph_GetNumNodes(graph, &num_nodes);
-  if (get_num_nodes_status != nullptr) {
-    ort_api.ReleaseStatus(get_num_nodes_status);
-    return ort_api.CreateStatus(ORT_EP_FAIL, "Graph_GetNumNodes failed");
+  if (ep->ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph_GetNumNodes failed");
   }
   if (num_nodes != 1) {
-    return ort_api.CreateStatus(ORT_EP_FAIL, "Number of nodes must be 1 for Genie");
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Number of nodes must be 1 for Genie");
   }
   std::vector<const OrtNode*> graph_nodes(num_nodes);
-  auto get_nodes_status = ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size());
-  if (get_nodes_status != nullptr) {
-    ort_api.ReleaseStatus(get_nodes_status);
-    return ort_api.CreateStatus(ORT_EP_FAIL, "Graph Creation error");
+  if (ep->ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()) != nullptr) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph Creation error");
   }
 
   // Identify the single node in the graph (which should be the only node)
@@ -2195,13 +2197,12 @@ OrtStatus* QnnEp::GetGenieCapability(const OrtGraph* graph,
   std::vector<const OrtNode*> supported_group{node};
   OrtNodeFusionOptions node_fusion_options = {};
   node_fusion_options.ort_version_supported = ORT_API_VERSION;
-  auto add_status = ep_api.EpGraphSupportInfo_AddNodesToFuse(graph_support_info,
-                                                             supported_group.data(),
-                                                             supported_group.size(),
-                                                             &node_fusion_options);
+  auto add_status = ep->ep_api.EpGraphSupportInfo_AddNodesToFuse(graph_support_info,
+                                                                 supported_group.data(),
+                                                                 supported_group.size(),
+                                                                 &node_fusion_options);
   if (add_status != nullptr) {
-    ort_api.ReleaseStatus(add_status);
-    return ort_api.CreateStatus(ORT_EP_FAIL, "Error adding Node.");
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Error adding Node.");
   }
   return nullptr;
 }
@@ -2255,8 +2256,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // Genie Pathway
   if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-    return ep->GetGenieCapability(graph, graph_support_info);
+#if defined(_WIN32) && QNN_ARCH_ARM64
+    return ep->GetGenieCapability(this_ptr, graph, graph_support_info);
 #else
     return ep->ort_api.CreateStatus(ORT_EP_FAIL,
                                     "Genie execution pathway is unsupported on this platform.");
@@ -2390,6 +2391,11 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return nullptr;
   }
 
+  // Reset the flag in case there are patterns rejected in the first GetCapability pass but supported in the second.
+  if (ep->is_post_layout_transform_) {
+    ep->has_unsupported_nodes_wo_cpu_fallback_ = false;
+  }
+
   // GetCapability runs up to twice. Clear before pass 2 so its collection
   // supersedes pass 1; pass 1's data is kept for the all-unsupported flush below
   // (reached only on pass 1, since pass 2 doesn't run when nothing is supported).
@@ -2479,6 +2485,17 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
       }
       ep->WriteFrameworkOpTrace(graph);
     }
+
+    // This flag will in fact have no effect as QnnEp::Compile will be entirely skipped without any supported nodes.
+    // Considering the bottleneck for large models should be in graph finalize instead of ORT Core graph
+    // transformations and the cases of completely no supported nodes should be rather rare, it may be okay not to stop
+    // session initialization immediately like partial support cases like below.
+    // Setting to true here is merely to make the flag consistent.
+    if (!is_qnn_ctx_model && ep->disable_cpu_ep_fallback_) {
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, "No nodes are supported in QNN EP.");
+      ep->has_unsupported_nodes_wo_cpu_fallback_ = true;
+    }
+
     return nullptr;
   }
 
@@ -2524,6 +2541,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     ORT_CXX_LOG(ep->logger_,
                 ORT_LOGGING_LEVEL_ERROR,
                 ("Unsupported nodes in QNN EP: " + get_unsupported_node_names()).c_str());
+    ep->has_unsupported_nodes_wo_cpu_fallback_ = true;
   }
 
   return nullptr;
@@ -2536,7 +2554,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
                                    OrtNodeComputeInfo** node_compute_infos,
                                    const qnn::HtpGraphConfigs_t& htp_graph_configs,
                                    bool collect_subgraph_traces) {
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   // Initialize now for possible reuse in loop
   auto finalize_start = std::chrono::steady_clock::time_point::min();
   auto end = std::chrono::steady_clock::time_point::min();
@@ -2629,7 +2647,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     }
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
     if (use_multithreaded_prepare) {
       auto& model_info = model_infos.emplace_back();
       model_info.model_name = fused_node_name;
@@ -2658,7 +2676,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
         RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(logger_));
         RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
       }
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
       end = std::chrono::steady_clock::now();
       total_finalize_time += std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
 #endif
@@ -2674,12 +2692,12 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
 
       auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*this);
       node_compute_infos[graph_idx] = node_compute_info.release();
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
     }
 #endif
   }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   if (use_multithreaded_prepare) {
     qnn::thread::QnnJobThreadPool tp(num_graph_prepare_threads_);
     tp.Start();
@@ -2710,6 +2728,9 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
     end = std::chrono::steady_clock::now();
     total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
+
+    // Join every worker before consuming results or moving model ownership.
+    tp.Stop();
 
     for (auto& model_info : model_infos) {
       RETURN_IF_NOT_OK(std::move(model_info.result));
@@ -3158,6 +3179,22 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   QNN_EP_API_IMPL_BEGIN
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
+  // Early fail without actual compile and make session initialization immediately terminate.
+  if (ep->has_unsupported_nodes_wo_cpu_fallback_) {
+    // Write collected trace(s) before early fail.
+    if (ep->enable_framework_op_trace_ && count > 0) {
+      if (ep->enable_multi_soc_ep_context_) {
+        ep->AppendMultiSocTraces();
+      } else {
+        ep->AppendSingleSocTrace();
+      }
+      ep->WriteFrameworkOpTrace(graphs[0]);
+    }
+
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                    "User disabled CPU EP fallback but not all nodes are supported by QNN-EP.");
+  }
+
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     if (ep->prepare_and_load_) {
       ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
@@ -3198,7 +3235,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     return status;
   }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   auto compile_start = std::chrono::steady_clock::now();
 #endif
 
@@ -3242,7 +3279,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   // Clean up tensor_name_overrides_ now that CreateEPContextNodes has serialized it.
   ep->tensor_name_overrides_.clear();
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && QNN_ARCH_ARM64
   auto end = std::chrono::steady_clock::now();
   auto total_compile_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - compile_start);
   ORT_CXX_LOG(ep->logger_,
@@ -3263,6 +3300,13 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (ep->prepare_only_) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                 "prepare_only mode: context saved. Releasing QNN device resources.");
+#if defined(_WIN32)
+    if (ep->callback_ETWSink_provider_) {
+      // Unregistration waits for active callbacks before releasing the backend they use.
+      qnn::QnnTelemetry::Instance().UnregisterInternalCallback(ep->callback_ETWSink_provider_);
+      ep->callback_ETWSink_provider_ = nullptr;
+    }
+#endif
     ep->qnn_models_.clear();
     ep->qnn_backend_manager_.reset();
   }
@@ -3630,16 +3674,6 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   QNN_EP_API_IMPL_END
 }
 
-OrtStatus* ORT_API_CALL QnnEp::GetDefaultMemoryDeviceImpl(
-    _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept {
-  QNN_EP_API_IMPL_BEGIN
-  const auto* ep = static_cast<const QnnEp*>(this_ptr);
-  *device = qnn::IsHtpSharedMemoryAllocator(ep->qnn_allocator_type_)
-                ? ep->ep_api.MemoryInfo_GetMemoryDevice(ep->factory_.GetHostAccessibleMemoryInfo())
-                : nullptr;
-  return nullptr;
-  QNN_EP_API_IMPL_END
-}
 
 OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                      _In_reads_(num_options) const char* const* option_keys,

@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <numeric>
 #include <optional>
@@ -230,6 +232,17 @@ static Ort::Status InvertPerm(gsl::span<const IntType> perm, /*out*/ gsl::span<I
   }
 
   return Ort::Status();
+}
+
+template <typename IntType>
+inline bool IsIdentityPerm(gsl::span<const IntType> perm) {
+  static_assert(std::is_integral<IntType>::value, "permutation arrays must contain integer elements");
+  for (size_t i = 0; i < perm.size(); ++i) {
+    if (perm[i] != static_cast<IntType>(i)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // Utility function that checks if an array of strings contains a specific string.
@@ -584,6 +597,55 @@ Ort::Status PermuteShape(gsl::span<const T> input_shape, gsl::span<const P> perm
   return Ort::Status();
 }
 
+// Workaround for a QNN HTP backend bug: a non-identity, shape-changing Transpose that only
+// moves dimensions of size 1 preserves the flat element order and is therefore equivalent to a
+// Reshape. HTP can silently miscompute such a Transpose (for example, [128, 1, 128] with perm
+// [1, 0, 2] returns the transposed data instead of the original order).
+//
+// The lowering is semantically valid on every QNN backend, so callers apply it unconditionally.
+// `output_shape` must equal the permuted input shape, and `perm` must be a valid permutation.
+// Zero-sized dimensions are rejected to keep empty tensors on the original Transpose path.
+// TODO: Remove this workaround and its call sites once the downstream QNN HTP bug is fixed.
+// https://github.com/onnxruntime/onnxruntime-qnn/issues/1020
+inline bool NeedsHtpTransposeReshapeWorkaround(gsl::span<const uint32_t> input_shape,
+                                               gsl::span<const uint32_t> perm,
+                                               gsl::span<const uint32_t> output_shape) {
+  const size_t rank = input_shape.size();
+  if (perm.size() != rank || output_shape.size() != rank || IsIdentityPerm(perm) ||
+      std::equal(input_shape.begin(), input_shape.end(), output_shape.begin())) {
+    return false;
+  }
+
+  std::vector<bool> seen_axis(rank, false);
+  bool has_previous_non_unit_axis = false;
+  uint32_t previous_non_unit_axis = 0;
+
+  for (size_t i = 0; i < rank; ++i) {
+    const uint32_t axis = perm[i];
+    if (axis >= rank || seen_axis[axis]) {
+      return false;
+    }
+    seen_axis[axis] = true;
+
+    const uint32_t dim = input_shape[axis];
+    if (dim == 0 || output_shape[i] != dim) {
+      return false;
+    }
+
+    // Moving size-1 dimensions does not change the flat element order. Non-unit dimensions must
+    // keep their relative order.
+    if (dim != 1) {
+      if (has_previous_non_unit_axis && axis < previous_non_unit_axis) {
+        return false;
+      }
+      previous_non_unit_axis = axis;
+      has_previous_non_unit_axis = true;
+    }
+  }
+
+  return true;
+}
+
 // Computes the broadcasted shape of two shapes following NumPy/ONNX broadcasting rules
 // (right-aligned dimensions; a dim of 1 broadcasts against any dim).
 template <typename T>
@@ -743,13 +805,20 @@ Ort::Status TwoDimensionTranspose(size_t rows,
                                   gsl::span<const uint8_t> input_buffer,
                                   gsl::span<uint8_t> output_buffer);
 
+Ort::Status ValidateTwoDimensionTransposeInput(gsl::span<const uint32_t> data_shape,
+                                               size_t data_size);
+
 template <typename T>
 Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
                                   const std::vector<uint32_t>& data_shape,
                                   /* out */ std::vector<T>& transposed_data,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false) {
-  transposed_data.resize(data.size(), 0);
+  RETURN_IF_ERROR(ValidateTwoDimensionTransposeInput(data_shape, data.size()));
+  const size_t rows = data_shape[0];
+  const size_t cols = data_shape[1];
+  const size_t element_count = rows * cols;
+  transposed_data.resize(element_count, 0);
 
   if (skip_output_data_copy) {
     ORT_CXX_LOG(logger,
@@ -758,16 +827,10 @@ Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
     return Ort::Status();
   }
 
-  const size_t rows = data_shape[0];
-  const size_t cols = data_shape[1];
-
   for (size_t row = 0; row < rows; row++) {
     for (size_t col = 0; col < cols; col++) {
       const size_t src_index = (row * cols + col);
       const size_t dst_index = (col * rows + row);
-      assert(src_index < data.size());
-      assert(dst_index < transposed_data.size());
-
       transposed_data[dst_index] = data[src_index];
     }
   }
@@ -1042,6 +1105,10 @@ Ort::Status ReadExternalData(const OrtApi& ort_api,
                              const OrtExternalInitializerInfo* initializer,
                              const std::filesystem::path& model_path,
                              std::vector<uint8_t>& unpacked_tensor);
+
+Ort::Status ResolveExternalDataPath(const std::filesystem::path& model_directory,
+                                    const std::filesystem::path& relative_data_path,
+                                    std::filesystem::path& resolved_data_path);
 
 Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const OrtValueInfo* initializer,

@@ -325,7 +325,7 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     provider_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";

@@ -46,8 +46,8 @@
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
 source "${REPO_ROOT}/qcom/scripts/linux/common.sh"
-# shellcheck source=resolve_tool_versions.sh
-source "${REPO_ROOT}/qcom/scripts/linux/resolve_tool_versions.sh"
+# shellcheck source=../all/resolve_tool_versions.sh
+source "${REPO_ROOT}/qcom/scripts/all/resolve_tool_versions.sh"
 
 set_strict_mode
 
@@ -160,7 +160,7 @@ fi
 # ---------------------------------------------------------------------------
 # Regenerate goldens + verify accuracy
 # ---------------------------------------------------------------------------
-runner="${REPO_ROOT}/qcom/scripts/linux/run_snapshot_accuracy.sh"
+runner="${REPO_ROOT}/qcom/scripts/all/run_snapshot_accuracy.sh"
 
 if [ "${skip_regen}" = true ]; then
     log_info "--- Skipping regen (--skip-regen); reusing existing goldens + results ---"

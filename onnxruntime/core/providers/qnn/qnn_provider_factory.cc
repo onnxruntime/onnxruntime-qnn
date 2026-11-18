@@ -5,24 +5,26 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cstring>
-#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
 #include <iostream>
 #include <optional>
 #include <utility>
 
+#include "QnnCommon.h"
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
 #include "onnxruntime_env_config_keys.h"
-#include "QnnCommon.h"
 
+#include "core/providers/qnn/custom_op/qnn_custom_op_domain_registry.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/ort_api_version_parser.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_data_transfer.h"
 #include "core/providers/qnn/soc_utility/soc_utils.h"
-#include "core/providers/qnn/custom_op/qnn_custom_op_domain_registry.h"
 #include "qnn_ep_min_ort_api_version.h"
 
 #ifdef _WIN32
@@ -51,9 +53,9 @@ static const std::unordered_map<OrtHardwareDeviceType, std::string> kSupportedBa
     {OrtHardwareDeviceType_GPU, "gpu"},
 };
 
-// x86 advertises CPU always (HTP emulator); arm64 is opt-in via ORT_QNN_ENABLE_CPU_BACKEND (tests).
+// x86 advertises CPU always (HTP emulator); ARM64/ARM64EC opt in via ORT_QNN_ENABLE_CPU_BACKEND (tests).
 static bool QnnCpuBackendEnabled() {
-#if !defined(__aarch64__) && !defined(_M_ARM64)
+#if !QNN_ARCH_ARM64
   return true;  // x86 host: CPU backend is the HTP emulator.
 #else
   static const bool enabled = []() {
@@ -128,7 +130,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   OrtMemoryInfo* mem_info = nullptr;
   auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
                                              OrtMemoryInfoDeviceType_CPU,
-                                             /*vendor*/ 0x5143,
+                                             qnn::kQualcommPciVendorId,
                                              /*device_id*/ 0,
                                              OrtDeviceMemoryType_HOST_ACCESSIBLE,
                                              /*alignment*/ 0,
@@ -469,11 +471,14 @@ void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, Ort
   QNN_EP_API_IMPL_END_VOID
 }
 
-OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* /* this_ptr */,
+OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* this_ptr,
                                                              OrtDataTransferImpl** data_transfer) noexcept {
+  QNN_EP_API_IMPL_BEGIN
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
   *data_transfer = nullptr;
-
+  *data_transfer = new qnn::QnnHostAccessibleDataTransfer(factory->ort_api, factory->ep_api);
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 bool ORT_API_CALL QnnEpFactory::IsStreamAwareImpl(const OrtEpFactory* /*this_ptr*/) noexcept {
