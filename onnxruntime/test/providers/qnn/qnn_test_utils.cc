@@ -488,16 +488,8 @@ void VerifyQnnEpModelAssignment(const std::string& model_data,
 }
 
 void VerifyMalformedNdIndexShapeIsRejected(const GetTestModelFn& build_model) {
-  ModelTestBuilder builder;
-  build_model(builder);
-
-  auto* opset = builder.model_.add_opset_import();
-  opset->set_domain(kOnnxDomain);
-  opset->set_version(18);
-  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
-
-  std::string model_data;
-  ASSERT_TRUE(builder.model_.SerializeToString(&model_data));
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, build_model);
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -507,7 +499,7 @@ void VerifyMalformedNdIndexShapeIsRejected(const GetTestModelFn& build_model) {
 #endif
   TryEnableQNNSaver(provider_options);
 
-  ASSERT_NO_FATAL_FAILURE(VerifyQnnEpModelAssignment(model_data, "InvalidNDIndexShape", provider_options,
+  ASSERT_NO_FATAL_FAILURE(VerifyQnnEpModelAssignment(model->model_data, "InvalidNDIndexShape", provider_options,
                                                      ExpectedEPNodeAssignment::None));
 }
 
