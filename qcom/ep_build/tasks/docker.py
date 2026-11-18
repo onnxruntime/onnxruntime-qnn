@@ -94,6 +94,8 @@ class DockerBuildAndTestTask(DockerRunTask):
         ccache_root: Path | None = None,
         build_archive: bool = False,
         platform: str = "linux/aarch64",
+        use_ort_prebuilt: bool = False,
+        ort_prebuilt_root: Path | None = None,
     ) -> None:
         # deferred to avoid circular import
         from ..tools import get_package_dir, get_tools_dir, get_uv_cache_dir  # noqa:PLC0415
@@ -107,6 +109,8 @@ class DockerBuildAndTestTask(DockerRunTask):
             cmd.append(f"--venv-path={venv_path}")
         if build_archive:
             cmd.append("--build-archive")
+        if use_ort_prebuilt:
+            cmd.append("--use-ort-prebuilt")
         cmd.extend(tasks)
 
         volumes_with_caches = dict({} if volumes is None else volumes)
@@ -132,6 +136,10 @@ class DockerBuildAndTestTask(DockerRunTask):
         if qairt_sdk_root is not None:
             volumes_with_caches[qairt_sdk_root] = Path("/ort_caches/qairt")
             cmd.append("--qairt-sdk=/ort_caches/qairt")
+
+        if ort_prebuilt_root is not None:
+            volumes_with_caches[ort_prebuilt_root] = Path("/ort_caches/ort_prebuilt")
+            cmd.append("--ort-prebuilt=/ort_caches/ort_prebuilt")
 
         if ccache_root is not None:
             volumes_with_caches[ccache_root] = Path("/ort_caches/ccache")

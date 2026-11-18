@@ -7,6 +7,8 @@ param(
     [string]$Config = "Release",
     [Parameter(HelpMessage = "Path to onnx/models models")]
     $OnnxModelsRoot = $null,
+    [Parameter(HelpMessage = "If set, skip ONNX model tests (e.g. when using ORT home).")]
+    [switch]$SkipModelTests,
     [Parameter(HelpMessage = "Python executable for test helpers")]
     [string]$PythonExe = "py",
     [Parameter(HelpMessage = "Repo root of the extracted test payload")]
@@ -245,6 +247,10 @@ $TestModelsViaEpPlugin = {
 
 Write-Host "--=-=-=- Running ONNX model tests -=--=-=-"
 
+if ($SkipModelTests) {
+    Write-Host "Skipping ONNX model tests (ORT home mode)."
+} else {
+
 Push-Location $OnnxModelsRoot
 if (-not $?) {
     throw "Could not cd to $OnnxModelsRoot"
@@ -264,6 +270,8 @@ foreach ($RunModelTests in ($TestModelsViaEpPlugin)) {
     } else {
         Write-Host "Not running onnx/models qdq tests with context cache enabled on CPU backend."
     }
+}
+
 }
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-

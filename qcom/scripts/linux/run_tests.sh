@@ -102,11 +102,16 @@ function run_model_test() {
 }
 
 python_exe=python3
+skip_model_tests=
 
 for i in "$@"; do
   case $i in
     --python=*)
       python_exe="${i#*=}"
+      shift
+      ;;
+    --skip-model-tests)
+      skip_model_tests=1
       shift
       ;;
     *)
@@ -117,8 +122,6 @@ done
 
 cd "$(dirname ${BASH_SOURCE[0]})"
 build_dir="${PWD}"
-
-onnx_models_root="$(get_onnx_models_dir)"
 
 # CTestTestfile.cmake files aren't relocatable. Rewrite it to find the build in this directory.
 orig_build_dir=$(sed -n "s@# Build directory: @@p" CTestTestfile.cmake)
@@ -153,8 +156,14 @@ count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args
 #     log_warn "Failed to find directory 'quantization' - may be OK on platforms which do not support Python."
 # fi
 
+if [ -n "${skip_model_tests}" ]; then
+    log_info "Skipping ONNX model tests (ORT home mode)."
+    exit "${errors}"
+fi
+
 log_info "-=-=-=- Running ONNX model tests -=-=-=-"
 
+onnx_models_root="$(get_onnx_models_dir)"
 cd "${onnx_models_root}"
 
 declare -a model_test_runners=("run_model_test")

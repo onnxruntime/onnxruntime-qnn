@@ -224,7 +224,7 @@ jobs:
       testdata_archive_artifact_name: testdata-zip
       build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
       test_runner_arch: arm64
-      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn }}
+      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn != 'None' && inputs.target_py_vsn != '' }}
       upload_test_archive: true
       # X Elite and QDC X2 Elite consume the same archive in separate test jobs.
       build_test_same_runner: false
