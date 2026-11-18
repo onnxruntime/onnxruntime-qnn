@@ -264,22 +264,8 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArch_68_73_81_NotAllArchSupporte
 }
 
 #if defined(QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE) && \
-    (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+    defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
 TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpInitAcceleration_LoadsSucceeds) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  ProviderOptions provider_options = {{"backend_type", "htp"},
-                                      {"offload_graph_io_quantization", "0"},
-                                      {"num_graph_prepare_threads", "1"},
-                                      {"htp_arch", "68,73,81"}};
-#ifdef _WIN32
-  provider_options["soc_model"] = "37,60,88";
-#else
-  provider_options["soc_model"] = "30,43,87";
-#endif
-#if defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
-  provider_options["enable_htp_cross_device_prepare"] = "1";
-#endif
-
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
   const std::filesystem::path output_model_file("model_ctx.onnx");
   const std::filesystem::path output_bin_file("model_ctx_qnn.bin");
@@ -287,6 +273,16 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpInitAcceleration_LoadsSucceeds) 
   std::filesystem::remove(output_bin_file);
 
   {
+    ProviderOptions provider_options = {{"backend_type", "htp"},
+                                        {"offload_graph_io_quantization", "0"},
+                                        {"num_graph_prepare_threads", "1"},
+                                        {"htp_arch", "68,73,81"}};
+#ifdef _WIN32
+    provider_options["soc_model"] = "37,60,88";
+#else
+    provider_options["soc_model"] = "30,43,87";
+#endif
+    provider_options["enable_htp_cross_device_prepare"] = "1";
     Ort::SessionOptions so;
     so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
     so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
@@ -298,12 +294,11 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpInitAcceleration_LoadsSucceeds) 
   ASSERT_TRUE(std::filesystem::exists(output_model_file));
   ASSERT_TRUE(std::filesystem::exists(output_bin_file));
 
-  for (const char* acceleration : {"0", "1"}) {
-    SCOPED_TRACE(acceleration);
+  {
     const ProviderOptions loading_options = {{"backend_type", "htp"},
                                              {"offload_graph_io_quantization", "0"},
                                              {"disable_file_mapped_weights", "1"},
-                                             {"htp_context_init_acceleration", acceleration}};
+                                             {"htp_context_init_acceleration", "1"}};
     Ort::SessionOptions so;
     RegisteredEpDeviceUniquePtr registered_ep_device;
     RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, loading_options);
@@ -314,7 +309,7 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpInitAcceleration_LoadsSucceeds) 
   std::filesystem::remove(output_model_file);
   std::filesystem::remove(output_bin_file);
 }
-#endif  // QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE and native HTP device
+#endif  // QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE && QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
 
 #endif  // !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
 

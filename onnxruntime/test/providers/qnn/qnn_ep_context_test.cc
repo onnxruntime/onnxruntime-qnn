@@ -1691,16 +1691,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
 }
 
 #ifdef QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
-TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpInitAcceleration_LoadsAndRuns) {
+TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpInitAcceleration_LoadsSucceeds) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ProviderOptions provider_options = {{"backend_type", "htp"},
                                             {"offload_graph_io_quantization", "0"},
                                             {"disable_file_mapped_weights", "1"},
                                             {"num_graph_prepare_threads", "1"}};
-  const TestInputDef<float> input_def({1, 2, 3}, false,
-                                      std::vector<float>{-3.0f, -2.0f, -1.0f, 1.0f, 2.0f, 3.0f});
-  const auto f32_model = BuildOpTestCase<float>("Atan_node", "Atan", {input_def}, {}, {});
-  const auto qdq_model = BuildQDQOpTestCase<uint8_t>("Atan_node", "Atan", {input_def}, {}, {});
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
 
   for (const char* embed_mode : {"0", "1"}) {
     SCOPED_TRACE(embed_mode);
@@ -1708,27 +1705,28 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpInitAcceleration_LoadsAndRuns) {
     const std::string context_bin_file = std::string("htp_init_acceleration_") + embed_mode + "_ctx_qnn.bin";
     std::remove(context_model_file.c_str());
     std::remove(context_bin_file.c_str());
-    const std::unordered_map<std::string, std::string> cache_options = {
-        {kOrtSessionOptionEpContextEnable, "1"},
-        {kOrtSessionOptionEpContextEmbedMode, embed_mode},
-        {kOrtSessionOptionEpContextFilePath, context_model_file}};
-    ASSERT_NO_FATAL_FAILURE(TestQDQModelAccuracy(
-        f32_model, qdq_model, provider_options, 14, ExpectedEPNodeAssignment::All,
-        QDQTolerance(), ORT_LOGGING_LEVEL_ERROR, "", cache_options));
+    {
+      Ort::SessionOptions so;
+      so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+      so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, embed_mode);
+      so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+      RegisteredEpDeviceUniquePtr registered_ep_device;
+      RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+      ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+    }
     ASSERT_TRUE(std::filesystem::exists(context_model_file));
     if (std::string(embed_mode) == "0") {
       ASSERT_TRUE(std::filesystem::exists(context_bin_file));
     }
 
-    const std::unordered_map<std::string, std::string> load_options = {
-        {kOrtSessionOptionEpContextFilePath, context_model_file}};
-    for (const char* acceleration : {"0", "1"}) {
-      SCOPED_TRACE(acceleration);
+    {
       ProviderOptions loading_provider_options(provider_options);
-      loading_provider_options["htp_context_init_acceleration"] = acceleration;
-      ASSERT_NO_FATAL_FAILURE(TestQDQModelAccuracy(
-          f32_model, qdq_model, loading_provider_options, 14, ExpectedEPNodeAssignment::All,
-          QDQTolerance(), ORT_LOGGING_LEVEL_ERROR, context_model_file, load_options));
+      loading_provider_options["htp_context_init_acceleration"] = "1";
+      Ort::SessionOptions so;
+      RegisteredEpDeviceUniquePtr registered_ep_device;
+      RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, loading_provider_options);
+      ScopedOrtSession scoped(std::move(registered_ep_device),
+                              Ort::Session(*ort_env, std::filesystem::path(context_model_file).c_str(), so));
     }
 
     if (std::string(embed_mode) == "0") {

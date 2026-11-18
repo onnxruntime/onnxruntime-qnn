@@ -1765,9 +1765,9 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
   };
 }
 
-// Keep the build availability condition aligned with qnn_def.h.
-#if defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
-    (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 47))
+// QAIRT 2.47 uses QNN API 2.36.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 36)
 #define QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
 #endif
 
