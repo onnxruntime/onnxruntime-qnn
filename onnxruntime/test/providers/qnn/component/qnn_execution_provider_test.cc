@@ -765,6 +765,7 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpSharedResourceOptimizationWithLega
       SCOPED_TRACE(level);
       SCOPED_TRACE(legacy_value);
       EpStubContext ctx;
+      ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
       ctx.session_config[EPKey("htp_share_resource_optimization")] = level;
       ctx.session_config[EPKey("enable_vtcm_backup_buffer_sharing")] = legacy_value;
       auto factory = MakeFactory(ctx);
