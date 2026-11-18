@@ -79,6 +79,11 @@ GetTestModelFn BuildMaxPoolSessionModel(const MaxPoolSpec& spec) {
 }
 
 void RunMaxPoolSessionSnapshot(const MaxPoolSpec& spec) {
+  if (spec.data_type == MaxPoolDataType::Float) {
+    // The rank-3 FP32 reshape-fusion path is not supported on HTP V68.
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
