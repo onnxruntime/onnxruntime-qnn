@@ -1209,7 +1209,8 @@ TEST_F(QnnUnit_ExecutionProviderTest, HtpContextInitAcceleration_ValidatesOption
     ctx.session_config[EPKey("htp_context_init_acceleration")] = "invalid";
     auto factory = MakeFactory(ctx);
     EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
-    ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "htp_context_init_acceleration must be 0 or 1.");
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR,
+                 "Invalid value for " + EPKey("htp_context_init_acceleration"));
   }
 }
 

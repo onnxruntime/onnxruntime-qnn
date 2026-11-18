@@ -273,16 +273,17 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpInitAcceleration_LoadsSucceeds) 
   std::filesystem::remove(output_bin_file);
 
   {
-    ProviderOptions provider_options = {{"backend_type", "htp"},
-                                        {"offload_graph_io_quantization", "0"},
-                                        {"num_graph_prepare_threads", "1"},
-                                        {"htp_arch", "68,73,81"}};
+    ProviderOptions provider_options = {
+        {"backend_type", "htp"},
+        {"offload_graph_io_quantization", "0"},
+        {"num_graph_prepare_threads", "1"},
+        {"htp_arch", "68,73,81"},
 #ifdef _WIN32
-    provider_options["soc_model"] = "37,60,88";
+        {"soc_model", "37,60,88"},
 #else
-    provider_options["soc_model"] = "30,43,87";
+        {"soc_model", "30,43,87"},
 #endif
-    provider_options["enable_htp_cross_device_prepare"] = "1";
+        {"enable_htp_cross_device_prepare", "1"}};
     Ort::SessionOptions so;
     so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
     so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");

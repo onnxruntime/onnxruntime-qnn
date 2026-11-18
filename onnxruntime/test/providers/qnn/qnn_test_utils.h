@@ -1765,12 +1765,6 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
   };
 }
 
-// QAIRT 2.47 uses QNN API 2.36.
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 36)
-#define QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
-#endif
-
 // QNN_HTP_GRAPH_CONFIG_OPTION_FP16_CLAMP_OVERFLOW is available from QNN API 2.38 (QAIRT 2.49).
 // Defined here (duplicated from core/providers/qnn/builder/qnn_def.h) so test files that must
 // not include EP-private headers can gate on it without breaking the public-API-only boundary.
@@ -2250,6 +2244,12 @@ inline HRESULT CreateD3D12Buffer(
 }
 
 #endif  // _WIN32 && ...
+
+// QAIRT 2.47 uses QNN API 2.36.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 36)
+#define QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+#endif
 
 // HTP native BQ support starts from QAIRT 2.51 (QNN API 2.40).
 #if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)

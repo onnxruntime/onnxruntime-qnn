@@ -364,7 +364,8 @@ static bool ParseBoolOption(const OrtApi& ort_api,
                             const OrtSessionOptions& session_options,
                             const std::string& key,
                             bool default_value,
-                            const Ort::Logger& logger) {
+                            const Ort::Logger& logger,
+                            bool reject_invalid_value = false) {
   bool result = default_value;
   std::string value_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options, key, default_value ? "1" : "0", value_str);
@@ -374,9 +375,12 @@ static bool ParseBoolOption(const OrtApi& ort_api,
   } else if ("0" == value_str) {
     result = false;
   } else {
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Invalid value for " + key + " (" + value_str + "). Only 0 or 1 allowed.").c_str());
+    const std::string message =
+        "Invalid value for " + key + " (" + value_str + "). Only 0 or 1 allowed.";
+    if (reject_invalid_value) {
+      LOG_AND_THROW_ERROR(logger, message.c_str());
+    }
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, message.c_str());
   }
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("User specified " + key + ": " + (result ? "1" : "0")).c_str());
 
@@ -1469,18 +1473,10 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
               (std::string(kHtpReusedIoLimitMb) + ": " + std::to_string(reused_io_limit_mb)).c_str());
 
-  std::string init_acceleration_value;
-  GetSessionConfigEntryOrDefault(ort_api, session_options_,
-                                 FormatEPConfigKey("htp_context_init_acceleration"),
-                                 "0", init_acceleration_value);
-  if (init_acceleration_value != "0" && init_acceleration_value != "1") {
-    LOG_AND_THROW_ERROR(logger_, "htp_context_init_acceleration must be 0 or 1.");
-  }
-  bool htp_context_init_acceleration = init_acceleration_value == "1";
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
-              ("User specified " + FormatEPConfigKey("htp_context_init_acceleration") + ": " +
-               init_acceleration_value)
-                  .c_str());
+  bool htp_context_init_acceleration = ParseBoolOption(
+      ort_api, session_options_,
+      FormatEPConfigKey("htp_context_init_acceleration"),
+      false, logger_, /*reject_invalid_value=*/true);
 #ifndef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
   if (htp_context_init_acceleration) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
