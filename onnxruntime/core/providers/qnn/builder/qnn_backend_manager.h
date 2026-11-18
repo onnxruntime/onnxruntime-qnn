@@ -503,8 +503,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
-  bool ShouldMapContextBinary(const qnn::EpContextIoDispatch& io_dispatch) const;
-
   Ort::Status ReadContextBinFromCallback(const std::string& context_bin_filepath,
                                          qnn::EpContextBuffer& buffer,
                                          const qnn::EpContextIoDispatch& io_dispatch);
