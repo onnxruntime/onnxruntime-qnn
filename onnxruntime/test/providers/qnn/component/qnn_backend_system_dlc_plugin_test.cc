@@ -34,6 +34,8 @@
 #include <string>
 #include <vector>
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 // QnnCommon.h must precede the HTP/System headers: it defines the UNNAMED macro
 // that turns their `union UNNAMED { ... }` into anonymous unions.
 #include "QnnCommon.h"
@@ -84,6 +86,7 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
     QnnSystemContext_GraphInfoVersion_t version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3;
     QnnHtpSystemContext_GraphInfoBlobVersion_t blob_version = QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_VERSION_V1;
     uint64_t spill_fill_buffer_size = 0;
+    bool has_blob_info = true;
   };
 
   void SetUp() override {
@@ -137,7 +140,7 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
     for (const GraphSpec& spec : graphs) {
       QnnSystemContext_GraphInfo_t graph_info{};
       graph_info.version = spec.version;
-      if (spec.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
+      if (spec.version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3 && spec.has_blob_info) {
         QnnHtpSystemContext_GraphBlobInfo_t& blob = blobs_.emplace_back();
         std::memset(&blob, 0, sizeof(blob));
         blob.version = spec.blob_version;
@@ -436,7 +439,7 @@ TEST_F(QnnUnit_BackendSystemDlcPluginTest, PreflightQnnContexts_MissingAttribute
 
   ASSERT_TRUE(qnn::PreflightQnnContexts(graphs, env_.stub_ort_api, ORT_TSTR("model.onnx"),
                                         backend_manager_.GetMutable(), env_.logger,
-                                        qnn::EpContextIoDispatch(nullptr), main_context_pos_list, group_size)
+                                        qnn::EpContextIoDispatch(), main_context_pos_list, group_size)
                   .IsOK());
 
   EXPECT_EQ(group_size, 300);
@@ -468,7 +471,7 @@ TEST_F(QnnUnit_BackendSystemDlcPluginTest, PreflightQnnContexts_StaleSecondDecla
 
   const auto status = qnn::PreflightQnnContexts(graphs, env_.stub_ort_api, ORT_TSTR("model.onnx"),
                                                 backend_manager_.GetMutable(), env_.logger,
-                                                qnn::EpContextIoDispatch(nullptr), main_context_pos_list, group_size);
+                                                qnn::EpContextIoDispatch(), main_context_pos_list, group_size);
 
   ExpectErrorContains(status, "does not match the spill-fill size 300");
   EXPECT_EQ(group_size, 0);
@@ -494,7 +497,7 @@ TEST_F(QnnUnit_BackendSystemDlcPluginTest,
                       qnn_models,
                       /*group_max_spill_fill_size=*/0,
                       /*declared_max_spill_fill_size=*/300,
-                      qnn::EpContextIoDispatch(nullptr),
+                      qnn::EpContextIoDispatch(),
                       /*is_multi_soc_buffer=*/false,
                       &derived_max_spill_fill_size)
                   .IsOK());
@@ -520,7 +523,7 @@ TEST_F(QnnUnit_BackendSystemDlcPluginTest,
           qnn_models,
           301,
           301,
-          qnn::EpContextIoDispatch(nullptr),
+          qnn::EpContextIoDispatch(),
           /*is_multi_soc_buffer=*/false),
       "does not match the spill-fill size 300");
 
@@ -544,7 +547,7 @@ TEST_F(QnnUnit_BackendSystemDlcPluginTest,
           qnn_models,
           299,
           300,
-          qnn::EpContextIoDispatch(nullptr),
+          qnn::EpContextIoDispatch(),
           /*is_multi_soc_buffer=*/false),
       "exceeds the EPContext group max_size 299");
 
@@ -1053,6 +1056,18 @@ TEST_F(QnnUnit_BackendSystemDlcPluginTest, GetDlcMaxSpillFillBufferSize_GetBinar
   EXPECT_EQ(calls.back(), "systemContextFree");
 }
 
+TEST_F(QnnUnit_BackendSystemDlcPluginTest, GetDlcMaxSpillFillBufferSize_NullHtpGraphInfo_ReturnsError) {
+  const uint8_t dlc[4] = {0};
+  ASSERT_TRUE(Plugin().SetupDlcFromBinary(dlc, sizeof(dlc)).IsOK());
+  GraphSpec graph;
+  graph.has_blob_info = false;
+  AddRecord({graph});
+  uint64_t max_size = 0;
+
+  ExpectErrorContains(Plugin().GetDlcMaxSpillFillBufferSize(max_size), "DLC HTP graph info is null");
+  EXPECT_EQ(calls.back(), "systemContextFree");
+}
+
 // Max is taken across every record and every V3 graph with an HTP V1 blob; V1/V2
 // graphs, unknown graph versions, and unknown HTP blob versions are skipped.
 TEST_F(QnnUnit_BackendSystemDlcPluginTest, GetDlcMaxSpillFillBufferSize_MultipleRecords_ReturnsMaximum) {
@@ -1131,7 +1146,7 @@ TEST_F(QnnUnit_BackendSystemDlcPluginTest,
           qnn_models,
           301,
           301,
-          qnn::EpContextIoDispatch(nullptr),
+          qnn::EpContextIoDispatch(),
           /*is_multi_soc_buffer=*/true),
       "does not match the spill-fill size 300");
 }

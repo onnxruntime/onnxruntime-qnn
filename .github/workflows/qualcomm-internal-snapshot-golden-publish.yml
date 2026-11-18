@@ -18,6 +18,30 @@ on:
         description: "Artifactory path prefix under BUILD_ARTIFACTORY_REPO."
         type: string
         default: 'ci/qnn-ep-test-store/snapshot-goldens'
+      golden_profile:
+        description: "Required execution profile below repo_subpath (for example, linux-x86_64-htp-simulator)."
+        type: string
+        required: true
+      runner_labels:
+        description: "JSON array of self-hosted runner labels for the producer."
+        type: string
+        default: '["self-hosted", "X64", "Linux", "Build"]'
+      build_task:
+        description: "build_and_test.py task that builds the snapshot/accuracy test binary."
+        type: string
+        default: 'build_ort_linux_x86_64_internal_symbols'
+      build_dir:
+        description: "Build root containing the snapshot/accuracy test binary."
+        type: string
+        default: 'build/linux-x86_64-internal-symbols'
+      build_config:
+        description: "Build configuration passed to build_and_test.py."
+        type: string
+        default: 'Release'
+      python_executable:
+        description: "Python executable available on the selected producer runner."
+        type: string
+        default: 'python3'
       dry_run:
         description: "Do everything except the actual Artifactory upload. Defaults true so a manual dispatch never clobbers the shared store by accident; the scheduled producer passes false explicitly."
         type: boolean
@@ -28,29 +52,56 @@ on:
 jobs:
   publish-snapshot-goldens:
     name: "Publish Snapshot Golden Files"
-    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    defaults:
+      run:
+        shell: bash
     env:
       BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
       # Ephemeral golden store: regen writes goldens here, publish_goldens.sh
       # zips + uploads them. Not persisted across runs — the uploaded zip is the
       # source of truth, this is just staging.
-      QNN_UT_SNAPSHOT_GOLDEN_DIR: "${{ github.workspace }}/build/linux-x86_64/golden_store"
+      QNN_UT_SNAPSHOT_GOLDEN_DIR: "${{ github.workspace }}/${{ inputs.build_dir }}/golden_store"
+      PYTHON_BIN: "${{ inputs.python_executable }}"
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
+      - name: Add Git Bash to PATH
+        if: ${{ runner.os == 'Windows' }}
+        shell: powershell
+        run: |
+          $gitBashDir = Join-Path $env:ProgramW6432 "Git\bin"
+          if (-not (Test-Path (Join-Path $gitBashDir "bash.exe"))) {
+            throw "Git Bash was not found under $gitBashDir"
+          }
+          $gitBashDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Initialize submodules
         run: git submodule update --init --recursive
 
-      - name: Build coverage-instrumented test binary
+      - name: Clean selected build directory
+        env:
+          BUILD_DIR_INPUT: ${{ inputs.build_dir }}
         run: |
-          # Snapshot/accuracy tiers are only compiled into the binary under
-          # --enable-coverage. publish_goldens.sh regenerates goldens + verifies
-          # accuracy itself, so we build the instrumented binary only (no report).
-          python3 qcom/build_and_test.py \
-            --config RelWithDebInfo \
-            coverage_build_linux_x86_64
+          if [[ ! "${BUILD_DIR_INPUT}" =~ ^build/[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$ ]]; then
+            echo "Invalid build_dir: ${BUILD_DIR_INPUT}" >&2
+            exit 1
+          fi
+
+          # Self-hosted runners may retain outputs from an earlier producer run.
+          # The selected directory also owns this run's ephemeral golden store.
+          rm -rf -- "${BUILD_DIR_INPUT}"
+
+      - name: Build snapshot/accuracy test binary
+        run: |
+          # The selected build task must enable the snapshot/accuracy tiers through
+          # QNN EP internal-symbol access. Golden publishing does not require
+          # coverage instrumentation or report generation.
+          "${PYTHON_BIN}" qcom/build_and_test.py \
+            --config "${{ inputs.build_config }}" \
+            "${{ inputs.build_task }}"
 
       - name: Prepare golden store
         run: mkdir -p "${QNN_UT_SNAPSHOT_GOLDEN_DIR}"
@@ -70,13 +121,14 @@ jobs:
         env:
           FILTER_INPUT: ${{ inputs.filter }}
           REPO_SUBPATH_INPUT: ${{ inputs.repo_subpath }}
+          GOLDEN_PROFILE_INPUT: ${{ inputs.golden_profile }}
           DRY_RUN_INPUT: ${{ inputs.dry_run }}
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
         run: |
           set -euo pipefail
 
-          build_dir="build/linux-x86_64"
+          build_dir="${{ inputs.build_dir }}"
 
           args=(--build-dir="${build_dir}")
 
@@ -93,6 +145,8 @@ jobs:
             fi
             args+=(--repo-subpath="${REPO_SUBPATH_INPUT}")
           fi
+
+          args+=(--golden-profile="${GOLDEN_PROFILE_INPUT}")
 
           if [ "${DRY_RUN_INPUT}" = "true" ]; then
             args+=(--dry-run)
@@ -112,3 +166,45 @@ jobs:
           else
             echo "Mode: **publish** (uploaded to Artifactory)" >> "${GITHUB_STEP_SUMMARY}"
           fi
+
+      - name: Clean producer build directory (Windows)
+        if: ${{ always() && runner.os == 'Windows' }}
+        shell: powershell
+        env:
+          PRODUCER_BUILD_DIR: ${{ inputs.build_dir }}
+        run: |
+          $workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd(
+            [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+          $buildRoot = [IO.Path]::GetFullPath((Join-Path $workspace "build")).TrimEnd(
+            [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+          $target = [IO.Path]::GetFullPath((Join-Path $workspace $env:PRODUCER_BUILD_DIR)).TrimEnd(
+            [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+          $buildPrefix = $buildRoot + [IO.Path]::DirectorySeparatorChar
+
+          if (-not $target.StartsWith($buildPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to clean path outside the workspace build directory: $target"
+          }
+
+          if (Test-Path -LiteralPath $target) {
+            Remove-Item -LiteralPath $target -Recurse -Force
+          }
+
+      - name: Clean producer build directory (Linux)
+        if: ${{ always() && runner.os != 'Windows' }}
+        env:
+          PRODUCER_BUILD_DIR: ${{ inputs.build_dir }}
+        run: |
+          set -euo pipefail
+
+          build_root="$(realpath -m "${GITHUB_WORKSPACE}/build")"
+          target="$(realpath -m "${GITHUB_WORKSPACE}/${PRODUCER_BUILD_DIR}")"
+
+          case "${target}" in
+            "${build_root}"/*) ;;
+            *)
+              echo "Refusing to clean path outside the workspace build directory: ${target}" >&2
+              exit 1
+              ;;
+          esac
+
+          rm -rf -- "${target}"

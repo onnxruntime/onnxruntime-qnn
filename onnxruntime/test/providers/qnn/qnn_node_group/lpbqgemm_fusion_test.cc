@@ -3,7 +3,9 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -12,6 +14,7 @@
 #include <array>
 #include <memory>
 #include <unordered_map>
+#include <type_traits>
 
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
@@ -21,12 +24,17 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 namespace {
 
-GetQDQTestCaseFn BuildLPBQGemmTestCase() {
-  return [](ModelTestBuilder& builder) -> void {
+template <typename INT4_DTYPE = Int4x2>
+GetQDQTestCaseFn BuildLPBQGemmTestCase(uint8_t scale_min = 1, uint8_t scale_max = 17,
+                                       bool dynamic_bias = false) {
+  static_assert(std::is_same<INT4_DTYPE, Int4x2>::value || std::is_same<INT4_DTYPE, UInt4x2>::value,
+                "Only INT4x2 or UINT4x2 data type is supported");
+
+  return [scale_min, scale_max, dynamic_bias](ModelTestBuilder& builder) -> void {
     // Define the test case for LPBQGemm fusion here
     const int64_t input_channels = 16;
     const int64_t output_channels = 16;
@@ -50,8 +58,7 @@ GetQDQTestCaseFn BuildLPBQGemmTestCase() {
                     {"act_dql_output"});
 
     // DequantizeLinear for Scale
-    builder.MakeInitializer<uint8_t>("scale_dql_input", {blocks_per_axis, output_channels},
-                                     static_cast<uint8_t>(1), static_cast<uint8_t>(15));
+    builder.MakeInitializer<uint8_t>("scale_dql_input", {blocks_per_axis, output_channels}, scale_min, scale_max);
     builder.MakeInitializer<float>("scale_dql_scale", {output_channels}, 0.01f, 0.02f);
     std::vector<uint8_t> dql_zero_points_data = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     builder.Make1DInitializer<uint8_t>("scale_dql_zero_point", dql_zero_points_data);
@@ -62,15 +69,19 @@ GetQDQTestCaseFn BuildLPBQGemmTestCase() {
 
     // QuantizeLinear for Weight
     builder.MakeInitializer<float>("w_ql_input", {input_channels, output_channels}, -1.0f, 1.0f);
-    std::vector<Int4x2> zero_points_data;
+    std::vector<INT4_DTYPE> zero_points_data;
     size_t num_storage_elems = blocks_per_axis * output_channels;
-    zero_points_data.resize(Int4x2::CalcNumInt4Pairs(num_storage_elems));
+    if (std::is_same<INT4_DTYPE, Int4x2>::value) {
+      zero_points_data.resize(Int4x2::CalcNumInt4Pairs(num_storage_elems));
+    } else {
+      zero_points_data.resize(UInt4x2::CalcNumInt4Pairs(num_storage_elems));
+    }
     for (size_t i = 0; i < num_storage_elems; ++i) {
       size_t r = i >> 1;
       size_t c = i & 0x1;
       zero_points_data[r].SetElem(c, 0);
     }
-    builder.MakeInitializer<Int4x2>("w_ql_zero_point", {blocks_per_axis, output_channels}, zero_points_data);
+    builder.MakeInitializer<INT4_DTYPE>("w_ql_zero_point", {blocks_per_axis, output_channels}, zero_points_data);
     builder.AddNode("w_ql", "QuantizeLinear",
                     {"w_ql_input", "scale_dql_output", "w_ql_zero_point"},
                     {"w_ql_output"}, "",
@@ -78,7 +89,7 @@ GetQDQTestCaseFn BuildLPBQGemmTestCase() {
                      builder.MakeScalarAttribute("block_size", static_cast<int64_t>(4))});
 
     // DequantizeLinear for Weight
-    builder.MakeInitializer<Int4x2>("w_dql_zero_point", {blocks_per_axis, output_channels}, zero_points_data);
+    builder.MakeInitializer<INT4_DTYPE>("w_dql_zero_point", {blocks_per_axis, output_channels}, zero_points_data);
     builder.AddNode("w_dql", "DequantizeLinear",
                     {"w_ql_output", "scale_dql_output", "w_dql_zero_point"},
                     {"w_dql_output"}, "",
@@ -86,7 +97,11 @@ GetQDQTestCaseFn BuildLPBQGemmTestCase() {
                      builder.MakeScalarAttribute("block_size", static_cast<int64_t>(4))});
 
     // Gemm
-    builder.MakeInitializer<float>("gemm_bias", {output_channels}, -1.0f, 1.0f);
+    if (dynamic_bias) {
+      builder.MakeInput<float>("gemm_bias", {output_channels}, -1.0f, 1.0f);
+    } else {
+      builder.MakeInitializer<float>("gemm_bias", {output_channels}, -1.0f, 1.0f);
+    }
     builder.AddNode("gemm", "Gemm",
                     {"act_dql_output", "w_dql_output", "gemm_bias"},
                     {"gemm_output"});
@@ -117,12 +132,7 @@ ProviderOptions GetProviderOptions() {
 
 }  // namespace
 
-#if defined(_WIN32)
-// Graph fails to compose on ARM64 Windows since QNN 2.37.0
-TEST_F(QnnHTPBackendTests, DISABLED_LPBQGemmFusion) {
-#else
 TEST_F(QnnHTPBackendTests, LPBQGemmFusion) {
-#endif
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "LPBQGemmFusion";
   std::filesystem::remove_all(json_qnn_graph_dir);
@@ -142,7 +152,78 @@ TEST_F(QnnHTPBackendTests, LPBQGemmFusion) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected");
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+TEST_F(QnnHTPBackendTests, LPBQGemmFusion_UnsupportUInt4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  ProviderOptions provider_options = GetProviderOptions();
+  const auto graph_verifier = CreateEPNodeAssignmentVerifier(kQnnExecutionProvider,
+                                                             {"act_ql", "act_dql", "gemm", "output_ql", "output_dql"});
+  RunQnnModelTest(BuildLPBQGemmTestCase<UInt4x2>(),
+                  provider_options,
+                  /*opset_version=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some,
+                                       ElementwiseAbsoluteVerifier(1e-2f),
+                                       &graph_verifier},
+                  /*log_severity =*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+TEST_F(QnnHTPBackendTests, LPBQGemmFusion_OutOfRangeScaleMin) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  ProviderOptions provider_options = GetProviderOptions();
+  const auto graph_verifier = CreateEPNodeAssignmentVerifier(kQnnExecutionProvider,
+                                                             {"act_ql", "act_dql", "gemm", "output_ql", "output_dql"});
+  RunQnnModelTest(BuildLPBQGemmTestCase(/*scale_min=*/0, /*scale_max=*/1),
+                  provider_options,
+                  /*opset_version=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some,
+                                       ElementwiseAbsoluteVerifier(1e-2f),
+                                       &graph_verifier},
+                  /*log_severity =*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+TEST_F(QnnHTPBackendTests, LPBQGemmFusion_OutOfRangeScaleMax) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  ProviderOptions provider_options = GetProviderOptions();
+  const auto graph_verifier = CreateEPNodeAssignmentVerifier(kQnnExecutionProvider,
+                                                             {"act_ql", "act_dql", "gemm", "output_ql", "output_dql"});
+  RunQnnModelTest(BuildLPBQGemmTestCase(/*scale_min=*/17, /*scale_max=*/18),
+                  provider_options,
+                  /*opset_version=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some,
+                                       ElementwiseAbsoluteVerifier(1e-2f),
+                                       &graph_verifier},
+                  /*log_severity =*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+TEST_F(QnnHTPBackendTests, LPBQGemmFusion_DynamicBiasFallsBack) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::function<void(const Ort::Session&)> graph_verifier = [](const Ort::Session& session) {
+    bool weight_dq_on_cpu = false;
+    for (const auto& subgraph : session.GetEpGraphAssignmentInfo()) {
+      if (subgraph.GetEpName() == kCpuExecutionProvider) {
+        const auto nodes = subgraph.GetNodes();
+        weight_dq_on_cpu |= std::any_of(nodes.begin(), nodes.end(),
+                                        [](const auto& node) { return node.GetName() == "w_dql"; });
+      }
+    }
+    EXPECT_TRUE(weight_dq_on_cpu) << "Dynamic bias must prevent the LPBQ Gemm fusion from claiming weight DQ";
+  };
+  RunQnnModelTest(BuildLPBQGemmTestCase(/*scale_min=*/1, /*scale_max=*/15, /*dynamic_bias=*/true),
+                  GetProviderOptions(),
+                  /*opset_version=*/21,
+                  EPVerificationParams{ExpectedEPNodeAssignment::Some,
+                                       ElementwiseAbsoluteVerifier(1e-2f),
+                                       &graph_verifier},
+                  /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/true);
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 }  // namespace test
 }  // namespace onnxruntime

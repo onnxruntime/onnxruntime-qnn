@@ -20,6 +20,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "test/providers/qnn/infra/qnn_test_windows_compat.h"
+
 #include "HTP/QnnHtpDevice.h"
 
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
@@ -551,7 +553,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_WrongOpType_Return
   FakeNode node{"relu", "Relu", "", 13, {}, {}};
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
-                                         qnn::EpContextIoDispatch(nullptr));
+                                         qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
 }
 
@@ -563,7 +565,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedEmptyPath_
   node.attrs[EMBED_MODE] = &embed_mode;
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
-                                         qnn::EpContextIoDispatch(nullptr));
+                                         qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
   // Pin the specific guard: without this the terminal is_regular_file() check
   // catches every path case, so the test would pass even if the empty-path
@@ -576,13 +578,17 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedAbsolutePa
   // embed_mode=0, path starts with '/' → rejected by the absolute-path guard.
   CtxHelperTestContext ctx;
   FakeOpAttr embed_mode = FakeOpAttr::MakeInt64(EMBED_MODE, 0);
+#ifdef _WIN32
+  FakeOpAttr cache_ctx = FakeOpAttr::MakeString(EP_CACHE_CONTEXT, "C:\\absolute\\path.bin");
+#else
   FakeOpAttr cache_ctx = FakeOpAttr::MakeString(EP_CACHE_CONTEXT, "/absolute/path.bin");
+#endif
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
   node.attrs[EMBED_MODE] = &embed_mode;
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
-                                         qnn::EpContextIoDispatch(nullptr));
+                                         qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
   // Pin the absolute-path (directory-traversal) guard: removing it lets the
   // path fall through to the "does not exist" check, which this substring
@@ -601,7 +607,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedDotDotPath
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
-                                         qnn::EpContextIoDispatch(nullptr));
+                                         qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
   // Pin the ".." guard by both code and message. Removing it lets the path
   // fall through to the terminal "does not exist" check (also ORT_INVALID_GRAPH),
@@ -623,7 +629,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedFileNotFou
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
   auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
-                                         qnn::EpContextIoDispatch(nullptr));
+                                         qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
 }
 
@@ -660,12 +666,15 @@ MultiSocAttrCapture g_multi_soc_capture;
 struct CreateEpCtxNodeTestContext {
   Ort::Logger logger = MakeNullLogger();
   OrtApi ort_api{};
+  OrtGlobalApiOverride global_guard{&ort_api};
   OrtEpApi ep_api{};
   OrtModelEditorApi editor_api{};
   std::shared_ptr<qnn::QnnBackendManager> manager;
   std::unique_ptr<qnn::QnnModel> model;
 
   CreateEpCtxNodeTestContext() {
+    InstallFakeGraphApiStubs(ort_api);
+
     ort_api.Node_GetName = [](const OrtNode*, const char** name) noexcept -> OrtStatus* {
       *name = "graph_0";
       return nullptr;
@@ -691,7 +700,7 @@ struct CreateEpCtxNodeTestContext {
     };
 
     qnn::QnnBackendManagerConfig cfg;
-    cfg.backend_path = "libQnnHtp.so";
+    cfg.backend_path = QnnHtpBackendLibraryName();
     cfg.profiling_level_etw = qnn::ProfilingLevel::OFF;
     cfg.profiling_level = qnn::ProfilingLevel::OFF;
     cfg.context_priority = qnn::ContextPriority::NORMAL;
@@ -727,7 +736,7 @@ int64_t RunCreateEpCtxAndCaptureMultiSoc(bool enable_multi_soc_ep_context) {
   unsigned char buffer[] = {0x1, 0x2, 0x3, 0x4};
   std::basic_string<ORTCHAR_T> context_model_path;  // unused in embed mode
   std::unordered_map<std::string, std::string> no_overrides;
-  qnn::EpContextIoDispatch dummy_io_dispatch(nullptr);
+  qnn::EpContextIoDispatch dummy_io_dispatch;
 
   auto status = CreateEPContextNodes(&fused_node, 1, &ep_context_node,
                                      ctx.ort_api, ctx.editor_api,

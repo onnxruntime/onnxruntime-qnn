@@ -1,0 +1,28 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal PR Sanity
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+
+jobs:
+  sanity-checks:
+    name: sanity-checks
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Run Linting Tool
+        run: |
+          python3 qcom/build_and_test.py lint
+
+      - name: Run QNN script tests
+        run: |
+          venv/bin/python -m pytest qcom/scripts/all/tests qcom/scripts/linux/tests -q

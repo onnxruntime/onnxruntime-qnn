@@ -8,9 +8,7 @@ subprocess, feeding a synthetic `--bin-dir` tree (CMakeCache.txt + sdk.yaml /
 VERSION_NUMBER files) to assert its precedence rules and exit codes. Run
 locally with:
 
-    pytest qcom/scripts/linux/tests -v
-
-(These are not CI-wired, mirroring qcom/scripts/all/tests.)
+    pytest qcom/scripts/all/tests/test_resolve_tool_versions.py -v
 """
 
 import subprocess
@@ -100,6 +98,22 @@ def test_qairt_missing_cmake_cache_is_undeterminable(tmp_path):
     r = run([f"--bin-dir={bin_dir}", "qairt"])
     assert r.returncode == 3
     assert r.stdout == ""
+
+
+def test_versions_resolve_from_windows_build_root_cache(tmp_path):
+    # Windows internal-symbol builds place CMakeCache.txt at the build root,
+    # above the configuration directory containing the provider test binary.
+    build_root = tmp_path / "windows-x86_64-internal-symbols"
+    bin_dir = build_root / "Release"
+    qnn_home = write_sdk_yaml(tmp_path / "qairt_sdk", "version: 2.50.40\n")
+    write_cmake_cache(build_root, onnxruntime_QNN_HOME=str(qnn_home))
+    fc_dir = build_root / "_deps" / "ort_core-src"
+    fc_dir.mkdir(parents=True)
+    (fc_dir / "VERSION_NUMBER").write_text("1.29.0\n")
+
+    r = run([f"--bin-dir={bin_dir}", "both"])
+    assert r.returncode == 0
+    assert r.stdout == "qairt=2.50.40\nort=1.29.0\n"
 
 
 # ---------------------------------------------------------------------------

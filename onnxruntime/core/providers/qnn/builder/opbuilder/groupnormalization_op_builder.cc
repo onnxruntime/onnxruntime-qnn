@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <limits>
+
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -81,11 +83,12 @@ Ort::Status GroupNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mode
   }
 
   const int64_t num_groups = node_helper.Get("num_groups", static_cast<int64_t>(1));
-  if (num_groups <= 0) {
-    return MAKE_EP_FAIL("QNN GroupNorm num_groups must be greater than 0");
+  if (num_groups <= 0 || num_groups > static_cast<int64_t>(num_channels)) {
+    return MAKE_EP_FAIL("QNN GroupNorm num_groups must be in the range [1, num_channels]");
   }
 
-  if (num_channels % static_cast<uint32_t>(num_groups) != 0) {
+  const uint32_t num_groups_u32 = static_cast<uint32_t>(num_groups);
+  if (num_channels % num_groups_u32 != 0) {
     return MAKE_EP_FAIL("QNN GroupNorm requires num_channels to be divisible by num_groups");
   }
 
@@ -125,6 +128,8 @@ Ort::Status GroupNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
                                       QNN_OP_GROUP_NORM_PARAM_EPSILON, param_tensor_names));
 
   const int64_t num_groups = node_helper.Get("num_groups", static_cast<int64_t>(1));
+  RETURN_IF(num_groups <= 0 || num_groups > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
+            "QNN GroupNorm num_groups is outside the supported uint32 range.");
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                          static_cast<uint32_t>(num_groups),
                                          QNN_OP_GROUP_NORM_PARAM_GROUP, param_tensor_names));

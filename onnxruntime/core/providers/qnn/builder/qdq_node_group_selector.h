@@ -103,6 +103,15 @@ class OrtDropDQNodeGroupSelector : public OrtNodeGroupSelector {
              const std::vector<const OrtNode*>& q_nodes) const override;
 };
 
+// RandomNormalLike only uses its input's shape, so input DQ is optional.
+class OrtRandomNormalLikeNodeGroupSelector : public OrtNodeGroupSelector {
+ public:
+  bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+             const OrtNode* redundant_clip_node,
+             const std::vector<const OrtNode*>& dq_nodes,
+             const std::vector<const OrtNode*>& q_nodes) const override;
+};
+
 // Selector for unary operations
 class OrtUnaryNodeGroupSelector : public OrtNodeGroupSelector {
  public:
@@ -242,9 +251,9 @@ class OrtGemmNodeGroupSelector : public OrtNodeGroupSelector {
              const std::vector<const OrtNode*>& q_nodes) const override;
 };
 
-// Input: DQ nodes for input, scale, and B
+// Input: DQ nodes for input, scale, and optional bias
 // Output: Q node for output
-class OrtInstanceAndLayerNormalizationNodeGroupSelector : public OrtNodeGroupSelector {
+class OrtNormalizationNodeGroupSelector : public OrtNodeGroupSelector {
   bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
              const OrtNode* redundant_clip_node,
              const std::vector<const OrtNode*>& dq_nodes,
@@ -354,18 +363,6 @@ class OrtSelectorManager {
   void CreateSelectors();
 };
 }  // namespace QDQ
-
-namespace utils {
-
-// Refer to CreateSupportedPartitions in partitioning_utils.cc.
-std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
-    const OrtGraph* graph,
-    const OrtApi& ort_api,
-    const std::vector<const OrtNode*>& supported_nodes,
-    const std::string& ep_type,
-    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map);
-
-}  // namespace utils
 
 // Function to get QDQ node units from OrtGraph
 std::pair<std::vector<std::unique_ptr<OrtNodeUnit>>, std::unordered_map<const OrtNode*, const OrtNodeUnit*>>

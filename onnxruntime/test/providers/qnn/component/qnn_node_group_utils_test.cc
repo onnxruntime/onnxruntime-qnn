@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Function-level unit tests for the shape/permutation helpers in
-// qnn_node_group/utils.h. Both helpers are defined inline in the header, so
+// qnn_node_group/utils.h. The helpers are defined inline in the header, so
 // these tests run in every build (no QNN_EP_INTERNAL_SYMBOL_ACCESS guard).
 
 #include "gtest/gtest.h"
@@ -16,6 +16,42 @@
 
 namespace onnxruntime {
 namespace test {
+
+// =============================================================================
+// qnn::IsSingleElementShape
+// =============================================================================
+
+TEST(QnnUnit_NodeGroupUtilsTest, IsSingleElementShape_Scalar) {
+  const std::vector<int64_t> scalar_shape;
+  EXPECT_TRUE(qnn::IsSingleElementShape(scalar_shape));
+}
+
+TEST(QnnUnit_NodeGroupUtilsTest, IsSingleElementShape_AllUnitDims) {
+  const std::vector<int64_t> rank1_shape{1};
+  const std::vector<int64_t> rank2_shape{1, 1};
+  const std::vector<int64_t> rank4_shape{1, 1, 1, 1};
+  EXPECT_TRUE(qnn::IsSingleElementShape(rank1_shape));
+  EXPECT_TRUE(qnn::IsSingleElementShape(rank2_shape));
+  EXPECT_TRUE(qnn::IsSingleElementShape(rank4_shape));
+}
+
+TEST(QnnUnit_NodeGroupUtilsTest, IsSingleElementShape_NonUnitOrZeroDimRejected) {
+  const std::vector<int64_t> non_unit_shape{2};
+  const std::vector<int64_t> mixed_shape{1, 3, 1};
+  const std::vector<int64_t> empty_tensor_shape{0};
+  const std::vector<int64_t> mixed_empty_shape{1, 0};
+  EXPECT_FALSE(qnn::IsSingleElementShape(non_unit_shape));
+  EXPECT_FALSE(qnn::IsSingleElementShape(mixed_shape));
+  EXPECT_FALSE(qnn::IsSingleElementShape(empty_tensor_shape));
+  EXPECT_FALSE(qnn::IsSingleElementShape(mixed_empty_shape));
+}
+
+TEST(QnnUnit_NodeGroupUtilsTest, IsSingleElementShape_SymbolicDimNotProvable) {
+  const std::vector<int64_t> symbolic_shape{-1};
+  const std::vector<int64_t> mixed_symbolic_shape{1, -1, 1};
+  EXPECT_FALSE(qnn::IsSingleElementShape(symbolic_shape));
+  EXPECT_FALSE(qnn::IsSingleElementShape(mixed_symbolic_shape));
+}
 
 // =============================================================================
 // qnn::IsReshapePermutable
