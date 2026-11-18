@@ -124,6 +124,11 @@ onnx_models_root="$(get_onnx_models_dir)"
 orig_build_dir=$(sed -n "s@# Build directory: @@p" CTestTestfile.cmake)
 sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
 
+if [ "$(uname -m)" == "aarch64" ]; then
+    # Linux ARM64 has no snapshot golden producer or accuracy routing yet.
+    sed --in-place '/onnxruntime_provider_test/s@--gtest_filter=-QnnAcc_\*@--gtest_filter=-QnnSnapshot_*@g' CTestTestfile.cmake
+fi
+
 log_info "-=-=-=- Running ctests -=-=-=-"
 exclude_args=()
 count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"
