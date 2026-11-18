@@ -97,7 +97,7 @@ static void RunNonZeroTest(const GetTestModelFn& build_test_case,
   }
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -272,7 +272,7 @@ TEST_F(QnnHTPBackendTests, NonZero_DynamicOutputShape_Negative) {
   RunNonZeroTest(build_model, 11, ExpectedEPNodeAssignment::None);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

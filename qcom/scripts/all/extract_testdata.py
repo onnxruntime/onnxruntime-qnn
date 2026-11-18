@@ -33,24 +33,24 @@ MAPPING: dict[str, str] = {
 }
 
 
-def _detect_config_dir(repo_root: Path, plat: str) -> str:
-    """Return 'Release/Release' for multi-config Windows builds, 'Release' otherwise.
+def _detect_config_dir(repo_root: Path, plat: str, build_config: str = "Release") -> str:
+    """Detect single- or multi-config placement for the selected build configuration.
 
     Documented fallback. Prefer passing config explicitly via the --config flag —
     this probe relies on the per-arch test archive having already been extracted
-    so build/<plat>/Release/Release/ exists, which couples this script to caller
+    so build/<plat>/<config>/<config>/ exists, which couples this script to caller
     ordering. Future callers that parallelise the two extractions or reuse build/
     across single-config and multi-config flavours should not depend on this.
 
-    Visual Studio generators create build/<plat>/Release/Release/ for cross-compiled
+    Visual Studio generators create build/<plat>/<config>/<config>/ for cross-compiled
     Windows targets (e.g. ARM64 built from an X64 host).
     """
-    if (repo_root / "build" / plat / "Release" / "Release").is_dir():
-        return "Release/Release"
-    return "Release"
+    if (repo_root / "build" / plat / build_config / build_config).is_dir():
+        return f"{build_config}/{build_config}"
+    return build_config
 
 
-def _extract_to_staging(archive: Path, staging: Path) -> None:
+def extract_to_staging(archive: Path, staging: Path) -> None:
     """Extract archive into staging dir. Supports .zip and .tar.bz2."""
     if archive.suffix == ".zip":
         with zipfile.ZipFile(archive) as zf:
@@ -66,21 +66,27 @@ def _extract_to_staging(archive: Path, staging: Path) -> None:
         raise ValueError(f"Unsupported archive format: {archive}")
 
 
-def extract(archive: Path, target_platform: str, repo_root: Path = REPO_ROOT, config: str | None = None) -> None:
+def extract(
+    archive: Path,
+    target_platform: str,
+    repo_root: Path = REPO_ROOT,
+    config: str | None = None,
+    build_config: str = "Release",
+) -> None:
     """Extract testdata archive and re-map its 4 handles to expected on-disk paths.
 
     `config` selects the build config dir under build/<plat>/. Pass it explicitly
     ("Release" or "Release/Release") to make the layout self-describing. When omitted,
-    falls back to probing build/<plat>/Release/Release/ — which only exists if the
-    per-arch test archive was already extracted into repo_root.
+    detects single- or multi-config placement for `build_config` (default Release)
+    after the per-arch test archive has been extracted into repo_root.
     """
     if config is None:
-        config_dir = _detect_config_dir(repo_root, target_platform)
+        config_dir = _detect_config_dir(repo_root, target_platform, build_config)
     else:
         config_dir = config
     with tempfile.TemporaryDirectory(prefix="extract-testdata-") as tmp:
         staging = Path(tmp)
-        _extract_to_staging(archive, staging)
+        extract_to_staging(archive, staging)
 
         present_handles = {p.name for p in staging.iterdir() if p.is_dir()}
         unknown = present_handles - set(MAPPING.keys())
@@ -112,6 +118,12 @@ def main() -> int:
         help="Repository root; defaults to REPO_ROOT inferred from script location.",
     )
     parser.add_argument(
+        "--build-config",
+        choices=("Release", "Debug", "RelWithDebInfo"),
+        default="Release",
+        help="Build configuration to detect when --config is omitted; extract the per-arch archive first.",
+    )
+    parser.add_argument(
         "--config",
         default=None,
         help=(
@@ -126,6 +138,7 @@ def main() -> int:
         target_platform=args.target_platform,
         repo_root=args.repo_root,
         config=args.config,
+        build_config=args.build_config,
     )
     return 0
 

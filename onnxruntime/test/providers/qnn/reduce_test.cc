@@ -402,7 +402,7 @@ TEST_F(QnnCPUBackendTests, ReduceLogSumExpOpset18_Rank1) {
                        ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Test creates a graph with a ReduceSum node, and checks that all nodes are supported by the QNN EP
 // HTP backend with FP16 precision, and that the inference results match the CPU EP results.
@@ -911,7 +911,7 @@ TEST_F(QnnHTPBackendTests, ReduceLogSumExpOpset18_FP16_LargeInput) {
                        true);  // enable_fp16
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
 static void RunReduceLogSumExpHTPBF16Test(const TestInputDef<float>& input_def,
                                           const std::vector<int64_t>& axes,
@@ -938,6 +938,12 @@ static void RunReduceLogSumExpHTPBF16Test(const TestInputDef<float>& input_def,
 
 TEST_F(QnnHTPBackendTests, ReduceLogSumExp_HTP_BF16_KeepDims) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after resolving BF16 SoC model validation and offload.
+  // The configured SoC model is rejected before graph partitioning. Forcing it to 88 permits setup,
+  // but the BF16 decomposition is not assigned to QNN EP.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
   RunReduceLogSumExpHTPBF16Test(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-5.0f, 5.0f, 6)),
                                 {1, 2},  // axes
                                 true,    // keepdims
@@ -945,9 +951,9 @@ TEST_F(QnnHTPBackendTests, ReduceLogSumExp_HTP_BF16_KeepDims) {
                                 ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 

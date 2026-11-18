@@ -138,7 +138,7 @@ void RunClipAccuracy(const ClipSpec& spec) {
                       EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)});
       break;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: {
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
       SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 
@@ -164,7 +164,7 @@ template <typename QType>
 void RunClipQDQFloatHelper(const ClipQDQFloatSpec& spec,
                            const TestInputDef<float>& input_def,
                            const std::vector<TestInputDef<float>>& min_max_defs) {
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 
@@ -356,7 +356,7 @@ class QnnAccHtpTestBase : public ::testing::Test,
                           public ::testing::WithParamInterface<T> {
  protected:
   void SetUp() override {
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
     Ort::Logger logger;
     Ort::Status status = QnnHTPBackendTests::EnsurePlatformAttributes(logger);
     ASSERT_TRUE(status.IsOK())

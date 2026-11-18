@@ -44,9 +44,9 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.8.0         | v2.51.0           | v1.30.0              |
+| v2.8.0         | v2.52.0           | v1.29.0              |
 
-> **Note**: ONNX Runtime QNN EP 2.8.0 was built and tested with ORT 1.30.0 but it is compatible with ORT >= 1.24.1
+> **Note**: ONNX Runtime QNN EP 2.8.0 was built and tested with ORT 1.29.0 but it is compatible with ORT >= 1.24.1
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
@@ -71,9 +71,9 @@ For build instructions, please see the [BUILD page](./build.md).
   - This release is validated against the following dependency versions:
     | Dependency | Maven Coordinate | Version |
     |---|---|---|
-    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.30.0` |
-    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.51.0` |
-  - **Version note:** QNN EP v2.8.0 was built and tested with QAIRT SDK 2.51.0; the public Android Maven runtime artifact is versioned `2.51.0`.
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.29.0` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.52.0` |
+  - **Version note:** QNN EP v2.8.0 was built and tested with QAIRT SDK 2.52.0; the public Android Maven runtime artifact is versioned `2.52.0`.
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
@@ -253,6 +253,8 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |---|---|
 |'0'|Default. Disabled.|
 |'1'|Enable QNN HTP shared-memory binding for this session. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
+
+For `onnxruntime_perf_test`, to use HTP shared-memory zero-copy, enable `enable_htp_shared_memory_allocator=1` and select a single QNN NPU device with `--select_ep_devices 1` (replace `1` with the appropriate device index).
 
 |`"enable_dx12_shared_memory_allocator"`|Description|
 |---|---|
@@ -749,8 +751,8 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:FusedMatMul||
 |com.microsoft:Gelu||
-|com.microsoft:GatherBlockQuantized|GPU backend only; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis=1; symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
-|com.microsoft:GroupQueryAttention|GPU and HTP backends (float precision); GPU support requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP support requires QAIRT SDK ≥ 2.49|
+|com.microsoft:GatherBlockQuantized|GPU backend only; weights/scales must have rank > 1; indices may be scalar or have rank < 4; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis must resolve to the trailing axis (`-1` is supported); symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
+|com.microsoft:GroupQueryAttention|GPU and HTP backends (FP16/FP32); GPU requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP requires QAIRT SDK ≥ 2.49. When the backend is set to HTP, GQA falls back to CPU by default. Enable HTP GQA with an explicit HTP pin using [Op Affinity](#op-affinity). HTP `attention_bias` and sliding-window attention require QAIRT SDK ≥ 2.53 (QNN API ≥ 2.42). On HTP, GQA may run slower than on CPU and may exhibit accuracy deviations on certain models.|
 |com.microsoft:MatMulNBits||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:RMSNormalization||
@@ -804,6 +806,7 @@ QNN EP recognizes the following multi-op patterns and fuses them into a single Q
 | `Mul(scalar constant) → Softmax` | `QNN_OP_SOFTMAX` | The scalar multiplier is folded into the beta parameter of QNN's Softmax. |
 | `ReduceL2 → Add(ε) → Div(x, .)` | `QNN_OP_L2_NORM` | Avoids fp16 overflow in the ReduceL2→Sqrt decomposition by using HTP's native L2Norm kernel. Epsilon must be a constant scalar. |
 | `SequenceConstruct(t₀..tₙ₋₁) → SequenceAt(seq, pos)` | `QNN_OP_RESHAPE × N + QNN_OP_CONCAT + QNN_OP_GATHER` | Requires homogeneous element shapes. String/complex element types fall back to CPU EP. Negative `position` values are normalized at compile time (static) or via `QNN_OP_ELEMENT_WISE_ADD + QNN_OP_ELEMENT_WISE_SELECT` (dynamic). |
+| `SequenceConstruct(t₀..tₙ₋₁) → SequenceLength(seq)` | `QNN_OP_REDUCE_SUM × N + QNN_OP_ELEMENT_WISE_ADD × (N-1) + QNN_OP_RESHAPE + QNN_OP_ELEMENT_WISE_MULTIPLY + QNN_OP_CAST + QNN_OP_ELEMENT_WISE_ADD` | N is known at compile time. Each element is consumed by a `ReduceSum` (→ `{1,...,1}`) to ensure the HTP's graph connectivity requirement. FP32 and FP16 only; other dtypes, heterogeneous shapes, scalar elements, and symbolic dimensions fall back to CPU EP. |
 | `Reshape(ND→2D) → Gemm` | `QNN_OP_FULLY_CONNECTED` | Input Reshape must not be shared; Gemm: transA=0, transB=0, alpha=1, beta=1; weight must be a constant; input rank ≤ 4. CPU and HTP backends only. |
 | `Reshape(ND→2D) → Gemm → Reshape(2D→MD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 3-node variant; quantized weights supported. |
 | `Reshape(ND→2D) → Gemm → Reshape(2D→MD) → Reshape(MD→PD)` | `QNN_OP_FULLY_CONNECTED` + `QNN_OP_RESHAPE` | 4-node variant; two consecutive output Reshapes. |
