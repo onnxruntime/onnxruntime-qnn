@@ -148,7 +148,7 @@ jobs:
       qnn_internal_test_symbols: true
       run_tests: true
       test_wheel: false
-      # The same-runner validation job has no cross-runner hand-off and must not publish its archive.
+      # Same-runner validation does not need an archive hand-off.
       upload_test_archive: false
       upload_wheel: true
 
@@ -165,9 +165,8 @@ jobs:
       testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: ${{ inputs.target_py_vsn }}
       qnn_internal_test_symbols: true
-      # The reusable workflow still builds a local archive for the cross-runner hand-off.
-      # Keep it out of Artifactory because this is validation-only.
-      upload_test_archive: false
+      # Preserve the canonical Linux CI test-archive artifact contract.
+      upload_test_archive: true
       upload_wheel: true
       test_wheel: false
       run_tests: true
