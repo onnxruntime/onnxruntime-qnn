@@ -1377,6 +1377,8 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
   return Ort::Status();
 }
 
+// A callback session can reuse a native manager. Keep its mapping flag intact
+// so native sessions can still map on later loads, including SSR/VTCM.
 bool QnnBackendManager::ShouldMapContextBinary(const qnn::EpContextIoDispatch& io_dispatch) const {
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   return file_mapped_weights_enabled_ && file_mapper_ && !io_dispatch.HasReadCallback();
@@ -1384,24 +1386,6 @@ bool QnnBackendManager::ShouldMapContextBinary(const qnn::EpContextIoDispatch& i
   ORT_UNUSED_PARAMETER(io_dispatch);
   return false;
 #endif
-}
-
-Ort::Status QnnBackendManager::CreateContextFromBinary(
-    const void* bin_buffer,
-    uint64_t buffer_length,
-    const QnnContext_Config_t** context_configs,
-    Qnn_ProfileHandle_t profile_handle,
-    Qnn_ContextHandle_t& context) {
-  auto rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
-                                                   device_handle_,
-                                                   context_configs,
-                                                   bin_buffer,
-                                                   static_cast<Qnn_ContextBinarySize_t>(buffer_length),
-                                                   &context,
-                                                   profile_handle);
-  RETURN_IF(QNN_SUCCESS != rt,
-            ("contextCreateFromBinary failed. Error: " + QnnErrorHandleToString(rt)).c_str());
-  return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
@@ -1454,22 +1438,29 @@ Ort::Status QnnBackendManager::CreateContextHandleFromBinary(
 #endif
 
   if (!use_file_mapping || rt != QNN_SUCCESS) {
+    auto create_context = [&](const void* data, uint64_t size) -> Ort::Status {
+      auto result = qnn_interface_.contextCreateFromBinary(
+          backend_handle_, device_handle_, context_configs, data,
+          static_cast<Qnn_ContextBinarySize_t>(size), &context, profile_handle);
+      RETURN_IF(QNN_SUCCESS != result,
+                ("contextCreateFromBinary failed. Error: " + QnnErrorHandleToString(result)).c_str());
+      return Ort::Status();
+    };
+
     if (bin_buffer != nullptr && rt == QNN_SUCCESS) {
-      return CreateContextFromBinary(bin_buffer, buffer_length, context_configs, profile_handle, context);
+      return create_context(bin_buffer, buffer_length);
     }
 
     // Keep only the selected owner alive through the SDK call; re-read if mapping failed.
     if (io_dispatch.HasReadCallback()) {
       qnn::EpContextBuffer callback_buffer;
       RETURN_IF_ERROR(ReadContextBinFromCallback(context_bin_filepath, callback_buffer, io_dispatch));
-      return CreateContextFromBinary(callback_buffer.data(), callback_buffer.size(),
-                                     context_configs, profile_handle, context);
+      return create_context(callback_buffer.data(), callback_buffer.size());
     }
 
     std::vector<char> file_buffer;
     RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, file_buffer));
-    return CreateContextFromBinary(file_buffer.data(), file_buffer.size(),
-                                   context_configs, profile_handle, context);
+    return create_context(file_buffer.data(), file_buffer.size());
   }
 
   return Ort::Status();
@@ -1603,24 +1594,6 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   return CreateContextFromListAsync(configs_vec.data(), context_bin_map, io_dispatch);
 }
 
-Ort::Status QnnBackendManager::CreateContextFromBinaryListAsync(
-    const std::vector<QnnContext_Params_t>& context_params_list,
-    const QnnContext_Config_t** configs) {
-  std::vector<const QnnContext_Params_t*> context_params_ptr_list;
-  context_params_ptr_list.reserve(context_params_list.size() + 1);
-  for (const auto& params : context_params_list) {
-    context_params_ptr_list.push_back(&params);
-  }
-  context_params_ptr_list.push_back(nullptr);
-  auto result = qnn_interface_.contextCreateFromBinaryListAsync(backend_handle_,
-                                                                device_handle_,
-                                                                context_params_ptr_list.data(),
-                                                                configs,
-                                                                nullptr);
-  RETURN_IF(QNN_CONTEXT_NO_ERROR != result, ("Failed to create context. Error: " + QnnErrorHandleToString(result) + ", Code:" + std::to_string(result)).c_str());
-  return Ort::Status();
-}
-
 Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Config_t** configs,
                                                           std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
@@ -1636,6 +1609,22 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
     callback_infos.push_back({this, it.second.get()});
   }
 
+  auto create_contexts = [&]() -> Ort::Status {
+    std::vector<const QnnContext_Params_t*> context_params_ptr_list;
+    context_params_ptr_list.reserve(context_params_list.size() + 1);
+    for (const auto& params : context_params_list) {
+      context_params_ptr_list.push_back(&params);
+    }
+    context_params_ptr_list.push_back(nullptr);
+    auto result = qnn_interface_.contextCreateFromBinaryListAsync(backend_handle_,
+                                                                  device_handle_,
+                                                                  context_params_ptr_list.data(),
+                                                                  configs,
+                                                                  nullptr);
+    RETURN_IF(QNN_CONTEXT_NO_ERROR != result, ("Failed to create context. Error: " + QnnErrorHandleToString(result) + ", Code:" + std::to_string(result)).c_str());
+    return Ort::Status();
+  };
+
   // Each branch owns its binaries through all notifications and the SDK return.
   if (io_dispatch.HasReadCallback()) {
     std::vector<qnn::EpContextBuffer> callback_buffers(context_bin_map.size());
@@ -1647,7 +1636,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
                                       ContextCreateAsyncCallback, &callback_infos[index++]};
       context_params_list.push_back({QNN_CONTEXT_PARAMS_VERSION_1, {params}});
     }
-    return CreateContextFromBinaryListAsync(context_params_list, configs);
+    return create_contexts();
   }
 
   std::vector<std::vector<char>> buffer_list(context_bin_map.size());
@@ -1659,7 +1648,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
                                     ContextCreateAsyncCallback, &callback_infos[index++]};
     context_params_list.push_back({QNN_CONTEXT_PARAMS_VERSION_1, {params}});
   }
-  return CreateContextFromBinaryListAsync(context_params_list, configs);
+  return create_contexts();
 }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE

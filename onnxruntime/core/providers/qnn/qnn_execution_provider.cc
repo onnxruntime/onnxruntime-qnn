@@ -1728,6 +1728,13 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
                                                             runtime_capabilities,
                                                             &logger_);
+
+  // A callback session may initialize a manager later reused by native sessions.
+  // Preserve the setup option; the manager decides mapping per load.
+  if (enable_file_mapped_weights_ && io_dispatch_->HasReadCallback()) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "EPContext read callback registered; disabling file mapping for this session.");
+  }
 }
 
 QnnEp::~QnnEp() {
