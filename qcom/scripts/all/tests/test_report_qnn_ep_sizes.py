@@ -7,10 +7,11 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
-from report_qnn_ep_sizes import PLATFORMS, collect_sizes, format_summary
+from report_qnn_ep_sizes import PLATFORMS, build_history, collect_sizes, format_history, format_summary
 
 
 @pytest.fixture
@@ -84,7 +85,7 @@ def test_summary_growth_shrink_unchanged_and_missing_baseline():
     assert "| new | 1,000 | 0.001 | N/A | N/A | N/A |" in summary
     assert "unavailable" in format_summary(report, None)[0]
     baseline["sizes"][0]["size_bytes"] = 0
-    with pytest.raises(ValueError, match="Invalid baseline size"):
+    with pytest.raises(ValueError, match="Invalid snapshot size"):
         format_summary(report, baseline)
 
 
@@ -126,6 +127,9 @@ def test_cli_writes_snapshots_and_job_summary(packages, monkeypatch, same_ref):
     assert report["commit_sha"] == "abc123"
     assert report["baseline_qa_tag"] == ("nightly-previous" if same_ref else None)
     assert len(report["sizes"]) == 6
+    assert len(report["history"]) == 1
+    assert report["history"][0]["date"] == report["date"]
+    assert "QNN EP size history" in (packages / "qnn-ep-sizes.md").read_text()
     summary = (packages / "qnn-ep-sizes.md").read_text()
     assert ("+200 | +25.00%" in summary) == bool(same_ref)
     assert summary_path.read_text() == "Existing summary\n" + summary
@@ -207,3 +211,89 @@ def test_invalid_limit_rejected_before_writing_reports(packages, limit):
     assert result.returncode == 2
     assert "finite, nonnegative" in result.stderr
     assert not (packages / "qnn-ep-sizes.json").exists()
+
+
+def history_snapshot(run_date, size=1000000, ref="refs/heads/main"):
+    return {
+        "date": run_date,
+        "qa_tag": f"nightly-{run_date}-abc",
+        "commit_sha": "abc",
+        "ref": ref,
+        "ep_version": "2.9.0",
+        "sizes": [{"platform": platform, "size_bytes": size} for platform in PLATFORMS],
+    }
+
+
+def test_history_window_dates_reruns_refs_and_compact_snapshots():
+    today = date(2026, 11, 18)
+    baseline = history_snapshot("2026-11-17")
+    baseline["history"] = [history_snapshot((today - timedelta(days=days)).isoformat()) for days in range(65, 0, -1)]
+    baseline["history"].extend(
+        [
+            history_snapshot("2026-11-18", size=2000000),
+            history_snapshot("2026-11-19"),
+            history_snapshot("2026-11-16", ref="refs/heads/other"),
+        ]
+    )
+    current = history_snapshot("2026-11-18", size=1500000)
+    history = build_history(current, baseline)
+    assert len(history) == 60
+    assert history[0]["date"] == "2026-09-20"
+    assert history[-1]["sizes"][0]["size_bytes"] == 1500000
+    assert all(snapshot["ref"] == current["ref"] for snapshot in history)
+    assert all("history" not in snapshot for snapshot in history)
+    assert [snapshot["date"] for snapshot in history] == sorted({snapshot["date"] for snapshot in history})
+
+
+def test_legacy_snapshot_seeds_history_from_qa_tag():
+    baseline = history_snapshot("2026-11-16")
+    del baseline["date"]
+    history = build_history(history_snapshot("2026-11-18"), baseline)
+    assert [snapshot["date"] for snapshot in history] == ["2026-11-16", "2026-11-18"]
+    baseline["sizes"][0]["size_bytes"] = 0
+    with pytest.raises(ValueError, match="Invalid snapshot size"):
+        build_history(history_snapshot("2026-11-18"), baseline)
+
+
+def test_history_table_daily_and_window_growth_and_new_platform():
+    first = history_snapshot("2026-11-16", size=1000000)
+    first["sizes"] = first["sizes"][:1]
+    second = history_snapshot("2026-11-18", size=1100000)
+    third = history_snapshot("2026-11-19", size=1050000)
+    summary = format_history([first, second, third])
+    assert "| 2026-11-16 | 1.000 (N/A) | N/A" in summary
+    assert "1.100 (+0.100, +10.00%) | 1.100 (N/A)" in summary
+    assert "1.050 (-0.050, -4.55%)" in summary
+    assert "| **Window growth** | +0.050 MB (+5.00%) | -0.050 MB (-4.55%)" in summary
+
+
+@pytest.mark.parametrize("same_day", [False, True])
+def test_cli_carries_history_and_uses_previous_date_for_alerts(packages, monkeypatch, same_day):
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    baseline = history_snapshot("2026-11-18" if same_day else "2026-11-17", size=999)
+    baseline["history"] = [history_snapshot("2026-11-16", size=800)]
+    baseline_path = packages / "previous.json"
+    baseline_path.write_text(json.dumps(baseline))
+    script = Path(__file__).resolve().parents[1] / "report_qnn_ep_sizes.py"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--build-dir",
+            str(packages),
+            "--qa-tag",
+            "nightly-2026-11-18-current",
+            "--baseline",
+            str(baseline_path),
+            "--growth-limit-mb",
+            "0.0001",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads((packages / "qnn-ep-sizes.json").read_text())
+    assert report["date"] == "2026-11-18"
+    assert len(report["history"]) == (2 if same_day else 3)
+    assert report["baseline_qa_tag"] == f"nightly-2026-11-{'16' if same_day else '17'}-abc"
+    assert bool(report["alerts"]) == same_day
