@@ -135,6 +135,8 @@ def retry_with_backoff():
             exception=(
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
+                httpx.NetworkError,
+                httpx.TimeoutException,
             ),
             max_tries=MAX_TRIES,
         )
