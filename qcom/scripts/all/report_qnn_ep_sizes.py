@@ -71,6 +71,7 @@ def snapshot_date(snapshot: dict) -> date | None:
 
 
 def build_history(report: dict, baseline: dict | None) -> list[dict]:
+    # shortcut: a missing baseline restarts history; reload retained reports when gap recovery is required.
     current_date = date.fromisoformat(report["date"])
     cutoff = current_date - timedelta(days=59)
     snapshots = [*baseline.get("history", []), baseline] if baseline else []
