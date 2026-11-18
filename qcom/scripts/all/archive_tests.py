@@ -5,12 +5,16 @@
 """Produce the per-arch test archive: binaries + scripts only (testdata moved to a separate archive)."""
 
 import argparse
+import io
+import json
 import logging
 import platform
 import re
 import tarfile
 import zipfile
 from pathlib import Path
+
+from ort_build_identity import RUNTIME_VERSION_FILE
 
 QCOM_ROOT = Path(__file__).parent.parent.parent
 REPO_ROOT = QCOM_ROOT.parent
@@ -204,6 +208,26 @@ def _select_release_entries(release_dir: Path, rules: PerArchAcceptRules, repo_r
                 yield p, p.relative_to(repo_root)
 
 
+def _add_runtime_version(archive, release_dir: Path, config: str, repo_root: Path) -> None:
+    """Carry the successfully built SDK version to consumers without local SDK roots."""
+    marker = release_dir.parent / f"ort-build-identity-{config}.txt"
+    if not marker.is_file():
+        return  # Existing source builds do not have a prebuilt SDK snapshot.
+    sdk = json.loads(marker.read_text(encoding="utf-8"))["sdk"]
+    if sdk is None:
+        return
+    if not sdk["version"]:
+        raise ValueError("Prebuilt test archive requires a successful build with an ORT SDK version.")
+    name = (release_dir.relative_to(repo_root) / RUNTIME_VERSION_FILE).as_posix()
+    content = sdk["version"].encode("utf-8")
+    if isinstance(archive, zipfile.ZipFile):
+        archive.writestr(name, content)
+    else:
+        info = tarfile.TarInfo(name)
+        info.size = len(content)
+        archive.addfile(info, io.BytesIO(content))
+
+
 def archive_linux(target_platform: str, config: str = "Release", repo_root: Path = REPO_ROOT) -> None:
     build_root = repo_root / "build"
     archive_path = build_root / f"onnxruntime-tests-{target_platform}.tar.bz2"
@@ -215,6 +239,7 @@ def archive_linux(target_platform: str, config: str = "Release", repo_root: Path
     archive_path.unlink(missing_ok=True)
     logging.info(f"Creating per-arch archive at {archive_path}")
     with tarfile.open(archive_path, "w:bz2") as tf:
+        _add_runtime_version(tf, release_dir, config, repo_root)
         for fs, arc in _select_release_entries(release_dir, rules, repo_root):
             tf.add(fs, str(arc))
         for p in _iter_qcom_scripts(repo_root):
@@ -241,6 +266,7 @@ def archive_windows(
         archive_path.unlink(missing_ok=True)
         logging.info(f"Creating per-arch archive at {archive_path}")
         with zipfile.ZipFile(archive_path, "x", compression=zipfile.ZIP_DEFLATED) as zf:
+            _add_runtime_version(zf, release_dir, config, repo_root)
             for name in outer_keep:
                 src = release_dir / name
                 if src.exists():
@@ -261,6 +287,7 @@ def archive_windows(
     archive_path.unlink(missing_ok=True)
     logging.info(f"Creating per-arch archive at {archive_path}")
     with zipfile.ZipFile(archive_path, "x", compression=zipfile.ZIP_DEFLATED) as zf:
+        _add_runtime_version(zf, release_dir, config, repo_root)
         for fs, arc in _select_release_entries(release_dir, rules, repo_root):
             zf.write(fs, str(arc))
         for p in _iter_qcom_scripts(repo_root):
@@ -279,6 +306,7 @@ def archive_android(target_platform: str, config: str, qairt_sdk_root: Path, rep
     archive_path.unlink(missing_ok=True)
     logging.info(f"Creating per-arch archive at {archive_path}")
     with zipfile.ZipFile(archive_path, "x", compression=zipfile.ZIP_DEFLATED) as zf:
+        _add_runtime_version(zf, release_dir, config, repo_root)
         for fs, arc in _select_release_entries(release_dir, rules, repo_root):
             zf.write(fs, str(arc))
         for p in _iter_qcom_scripts(repo_root):

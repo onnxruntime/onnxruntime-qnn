@@ -13,6 +13,7 @@ from xml.etree import ElementTree
 
 import yaml
 from extract_testdata import MAPPING, extract_to_staging
+from ort_build_identity import RUNTIME_VERSION_FILE
 from package_manager import PACKAGE_CONFIG, FileCache, PackageManager
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -201,7 +202,9 @@ def prepare_windows_payload(
 
         with tempfile.TemporaryDirectory(prefix="QdcMergeTestdata-", dir=output_dir) as tmp:
             staging = Path(tmp)
-            extract_to_staging(testdata_archive, staging)
+            version_name = f"{test_root}/{RUNTIME_VERSION_FILE}"
+            runtime_version = payload.read(version_name).decode("utf-8").strip() if version_name in entries else None
+            extract_to_staging(testdata_archive, staging, runtime_version)
             for handle, mapping in MAPPING.items():
                 source_dir = staging / handle
                 if not source_dir.is_dir():

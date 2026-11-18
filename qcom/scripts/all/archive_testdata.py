@@ -222,7 +222,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    identity = testdata_identity(args.ort_prebuilt, args.ort_test_assets)
+    identity = testdata_identity(args.ort_prebuilt, args.ort_test_assets) if args.ort_prebuilt else None
     if args.ort_prebuilt:
         ort_core_src = Path(args.ort_test_assets)
     else:

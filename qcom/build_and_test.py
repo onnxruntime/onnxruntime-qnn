@@ -64,6 +64,7 @@ from ep_build.util import (
     is_host_windows,
     is_host_x86_64,
 )
+from scripts.all.ort_build_identity import validate_test_inputs
 
 DOCKER_CCACHE_ROOT_ENV_VAR = "ORT_BUILD_DOCKER_CCACHE_ROOT"
 ORT_PREBUILT_ROOT_ENV_VAR = "ORT_PREBUILT_ROOT"
@@ -1693,17 +1694,6 @@ def get_ort_prebuilt_root(root_from_args: Path | None) -> Path | None:
     return ort_prebuilt
 
 
-def _read_ort_version(root: Path, description: str) -> str:
-    version_file = root / "VERSION_NUMBER"
-    if not version_file.is_file():
-        raise FileNotFoundError(f"{description} version file does not exist: {version_file}")
-
-    version = version_file.read_text(encoding="utf-8").strip()
-    if not version:
-        raise ValueError(f"{description} version file is empty: {version_file}")
-    return version
-
-
 def _tasks_require_ort_test_assets(tasks: list[str], build_aar: bool) -> bool:
     test_execution_tasks = {
         "asan_linux_x86_64",
@@ -1742,9 +1732,7 @@ def get_ort_test_assets_root(
     if not root.is_dir():
         raise FileNotFoundError(f"ORT test-assets root does not exist: {root}")
 
-    provider_testdata = root / "onnxruntime" / "test" / "testdata"
-    if not provider_testdata.is_dir():
-        raise FileNotFoundError(f"ORT provider testdata does not exist: {provider_testdata}")
+    validate_test_inputs(str(ort_prebuilt_root) if ort_prebuilt_root is not None else "", str(root))
 
     if build_aar:
         sigmoid = root / "java" / "src" / "test" / "android" / "app" / "src" / "androidTest" / "assets" / "sigmoid.ort"
@@ -1752,13 +1740,6 @@ def get_ort_test_assets_root(
             raise FileNotFoundError(f"ORT Android test asset does not exist: {sigmoid}")
 
     if ort_prebuilt_root is not None:
-        prebuilt_version = _read_ort_version(ort_prebuilt_root, "Prebuilt ORT")
-        assets_version = _read_ort_version(root, "ORT test-assets")
-        if assets_version != prebuilt_version:
-            raise ValueError(
-                f"ORT test-assets version {assets_version} does not match prebuilt ORT {prebuilt_version}."
-            )
-
         if assets_required:
             windows_target = any("windows" in task for task in tasks) or (
                 is_host_windows() and not any("linux" in task or "android" in task for task in tasks)

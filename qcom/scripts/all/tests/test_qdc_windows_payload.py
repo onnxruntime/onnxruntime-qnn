@@ -9,7 +9,8 @@ import zipfile
 
 import pytest
 import qdc_windows_payload
-from ort_build_identity import TESTDATA_IDENTITY_FILE, build_identity
+from ort_build_identity import RUNTIME_VERSION_FILE, TESTDATA_IDENTITY_FILE
+from ort_build_identity import testdata_identity as make_testdata_identity
 from qdc_windows_payload import DEFAULT_WINDOWS_HTP_ARCH, prepare_windows_payload, validate_windows_results
 
 
@@ -121,12 +122,13 @@ def test_prebuilt_payload_requires_selected_testdata(tmp_path, payload_inputs, m
         root.mkdir()
         (root / "VERSION_NUMBER").write_text("1.25.0")
     (assets / "onnxruntime/test/testdata").mkdir(parents=True)
+    (assets / "onnxruntime/test/testdata/sentinel.txt").write_text("testdata")
     monkeypatch.setenv("ORT_PREBUILT_ROOT", str(sdk))
     monkeypatch.setenv("ORT_TEST_ASSETS_ROOT", str(assets))
     if archive_identity != "missing":
-        identity = json.loads(build_identity(str(sdk), str(assets)))
+        identity = json.loads(make_testdata_identity(str(sdk), str(assets)))
         if archive_identity == "mismatch":
-            identity["assets"]["version"] = "1.24.0"
+            identity["version"] = "1.24.0"
         with zipfile.ZipFile(payload_inputs["testdata_archive"], "a") as archive:
             archive.writestr(TESTDATA_IDENTITY_FILE, json.dumps(identity))
     source = tmp_path / "tests.zip"
@@ -142,6 +144,40 @@ def test_prebuilt_payload_requires_selected_testdata(tmp_path, payload_inputs, m
         with zipfile.ZipFile(tmp_path / "output" / source.name) as payload:
             assert "build/windows-arm64/Release/testdata/sentinel.txt" not in payload.namelist()
     assert source.read_bytes() == original_zip
+
+
+@pytest.mark.parametrize("version", ("1.25.0", "1.24.0", None))
+@pytest.mark.parametrize("multi_config", (False, True))
+def test_archive_only_payload_checks_binary_runtime_version(
+    tmp_path, payload_inputs, monkeypatch, version, multi_config
+):
+    sdk = tmp_path / "sdk"
+    assets = tmp_path / "assets"
+    for root in (sdk, assets):
+        root.mkdir()
+        (root / "VERSION_NUMBER").write_text("1.25.0", encoding="utf-8")
+    testdata = assets / "onnxruntime/test/testdata"
+    testdata.mkdir(parents=True)
+    (testdata / "sentinel.txt").write_text("testdata", encoding="utf-8")
+    with zipfile.ZipFile(payload_inputs["testdata_archive"], "a") as archive:
+        archive.writestr(TESTDATA_IDENTITY_FILE, make_testdata_identity(str(sdk), str(assets)))
+    monkeypatch.delenv("ORT_PREBUILT_ROOT", raising=False)
+    monkeypatch.delenv("ORT_TEST_ASSETS_ROOT", raising=False)
+    source = tmp_path / "tests.zip"
+    write_archive(source, config="Debug", multi_config=multi_config, htp_arch=payload_inputs["htp_arch"])
+    if version is not None:
+        with zipfile.ZipFile(source, "a") as archive:
+            archive.writestr(f"build/windows-arm64/Debug/{RUNTIME_VERSION_FILE}", version)
+    original = source.read_bytes()
+    if version == "1.25.0":
+        result = prepare_windows_payload(source, tmp_path / "output", config="Debug", **payload_inputs)
+        config_dir = "Debug/Debug" if multi_config else "Debug"
+        with zipfile.ZipFile(result) as payload:
+            assert payload.read(f"build/windows-arm64/{config_dir}/testdata/sentinel.txt") == b"testdata"
+    else:
+        with pytest.raises(ValueError):
+            prepare_windows_payload(source, tmp_path / "output", config="Debug", **payload_inputs)
+    assert source.read_bytes() == original
 
 
 @pytest.mark.parametrize("runtime", ("QnnHtpV{arch}Stub.dll", "libQnnHtpV{arch}Skel.so", "libqnnhtpv{arch}.cat"))

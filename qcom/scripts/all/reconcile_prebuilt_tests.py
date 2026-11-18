@@ -10,13 +10,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ort_build_identity import testdata_identity
+from ort_build_identity import build_identity, validate_test_inputs
 
 
 def reconcile(build_dir: Path, config: str, sdk: str, assets: str) -> None:
     if not sdk:
         return
-    selected = json.loads(testdata_identity(sdk, assets))
+    validate_test_inputs(sdk, assets)
+    selected = json.loads(build_identity(sdk, assets))
     marker = build_dir / f"ort-build-identity-{config}.txt"
     if not marker.is_file() or json.loads(marker.read_text(encoding="utf-8"))["sdk"] != selected["sdk"]:
         raise ValueError(

@@ -108,7 +108,13 @@ directory or switching asset trees regenerates the build and stages testdata eve
 test executable does not need relinking. `--only` test tasks also regenerate a stale build before testing.
 Library and runner staging compares contents on each build, including SDK updates whose archive timestamps
 are older than the installed files. Device testdata archives use the selected assets in prebuilt mode,
-and extraction rejects an archive prepared for different SDK/assets paths or versions.
+and record the ORT version plus a SHA-256 digest of relative ORT testdata file names and contents.
+Extraction accepts identical SDK/assets installed at different paths, but rejects different versions,
+different selected models, or testdata whose contents no longer match the archive's digest before replacing models.
+Per-architecture binary archives carry `ort-runtime-version.txt` from the successful build's SDK snapshot.
+Consumers without local SDK/assets use this version to validate shared testdata; when local assets are selected,
+their content digest is also checked. Prebuilt archives without either version context are rejected.
+Existing source-mode archives continue to work without prebuilt metadata.
 
 Coverage report tasks preserve the existing instrumented binary: they reject a different SDK identity
 and configure/stage the selected compatible assets before running tests. Rebuild with
