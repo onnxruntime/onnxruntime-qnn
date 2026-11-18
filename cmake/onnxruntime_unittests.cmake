@@ -350,8 +350,8 @@ block()
   # Accuracy tests are run by the dedicated accuracy validation flow.
   set(onnxruntime_provider_test_filter "-QnnAcc_*")
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND onnxruntime_target_platform STREQUAL "aarch64")
-    # Linux ARM64 has no snapshot golden producer yet.
-    string(APPEND onnxruntime_provider_test_filter ":QnnSnapshot_*")
+    # Linux ARM64 has no snapshot golden producer or dedicated accuracy flow yet.
+    set(onnxruntime_provider_test_filter "-QnnSnapshot_*")
   endif()
 
   AddTest(
