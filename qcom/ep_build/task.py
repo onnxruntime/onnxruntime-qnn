@@ -382,7 +382,7 @@ class PyTestTask(RunExecutablesWithVenvTask):
         env: Mapping[str, str] | None = None,
         cwd: Path | None = None,
     ):
-        cmd = [["pytest", *files_or_dirs]]
+        cmd = [["python", "-m", "pytest", *files_or_dirs]]
         super().__init__(group_name, venv, cmd, env, cwd)
 
 
