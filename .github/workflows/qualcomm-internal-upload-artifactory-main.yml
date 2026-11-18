@@ -20,7 +20,7 @@ on:
         type: boolean
         default: false
       maven_only:
-        description: "If true, only build and publish the Android Maven artifact."
+        description: "If true, build and test Android, then publish only the Maven artifact."
         type: boolean
         default: false
 

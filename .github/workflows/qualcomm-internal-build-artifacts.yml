@@ -51,7 +51,7 @@ on:
         type: boolean
         default: false
       maven_only:
-        description: "If true, only build the Android Maven inputs."
+        description: "If true, only build and test the Android Maven inputs."
         type: boolean
         default: false
 
@@ -60,12 +60,11 @@ on:
 
 jobs:
   archive-testdata:
-    if: ${{ !inputs.maven_only }}
     uses: ./.github/workflows/qualcomm-internal-archive-testdata.yml
     secrets: inherit
 
   build-android-aarch64:
-    if: ${{ always() && (inputs.maven_only || inputs.build_android_aarch64 || inputs.build_android_aarch64_aar) && (inputs.maven_only || needs.archive-testdata.result == 'success') }}
+    if: ${{ inputs.maven_only || inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
     needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -78,19 +77,20 @@ jobs:
       testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: None
       run_tests: false
-      upload_test_archive: ${{ !inputs.maven_only }}
+      upload_test_archive: true
       upload_wheel: false
       build_aar: ${{ inputs.maven_only || inputs.build_android_aarch64_aar }}
       upload_aar: ${{ inputs.maven_only || inputs.build_android_aarch64_aar }}
 
   test-android-aarch64:
-    if: ${{ !inputs.maven_only && (inputs.build_android_aarch64 || inputs.build_android_aarch64_aar) }}
+    if: ${{ inputs.maven_only || inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
     needs: [build-android-aarch64]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
     with:
       target_os: android
       target_arch: aarch64
+      testdata_archive_artifact_name: testdata-zip
 
   build-linux-aarch64-manylinux_2_34:
     if: ${{ !inputs.maven_only && toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
