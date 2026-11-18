@@ -1469,16 +1469,23 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
               (std::string(kHtpReusedIoLimitMb) + ": " + std::to_string(reused_io_limit_mb)).c_str());
 
-  bool htp_context_init_acceleration = ParseBoolOption(ort_api,
-                                                       session_options_,
-                                                       FormatEPConfigKey("htp_context_init_acceleration"),
-                                                       false,
-                                                       logger_);
+  std::string init_acceleration_value;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_,
+                                 FormatEPConfigKey("htp_context_init_acceleration"),
+                                 "0", init_acceleration_value);
+  if (init_acceleration_value != "0" && init_acceleration_value != "1") {
+    LOG_AND_THROW_ERROR(logger_, "htp_context_init_acceleration must be 0 or 1.");
+  }
+  bool htp_context_init_acceleration = init_acceleration_value == "1";
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
+              ("User specified " + FormatEPConfigKey("htp_context_init_acceleration") + ": " +
+               init_acceleration_value)
+                  .c_str());
 #ifndef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
   if (htp_context_init_acceleration) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
-                "htp_context_init_acceleration=1 was set but this build was compiled against QAIRT SDK < 2.47. "
-                "Context initialization acceleration is not available and the option will be ignored.");
+                "htp_context_init_acceleration is not supported with QAIRT SDK < 2.47. "
+                "Ignoring the option.");
     htp_context_init_acceleration = false;
   }
 #endif

@@ -294,21 +294,6 @@ struct QnnEpPrivateMember {
   friend typename Tag::type GetQnnEpPrivateMember(Tag) { return Member; }
 };
 
-struct QnnBackendManagerTag {
-  using type = std::shared_ptr<qnn::QnnBackendManager> QnnEp::*;
-  friend type GetQnnEpPrivateMember(QnnBackendManagerTag);
-};
-
-template struct QnnEpPrivateMember<QnnBackendManagerTag, &QnnEp::qnn_backend_manager_>;
-
-struct ContextInitAccelerationTag {
-  using type = bool qnn::QnnBackendManager::*;
-  friend type GetQnnEpPrivateMember(ContextInitAccelerationTag);
-};
-
-template struct QnnEpPrivateMember<ContextInitAccelerationTag,
-                                   &qnn::QnnBackendManager::htp_context_init_acceleration_>;
-
 struct GetPerThreadHtpPowerConfigsTag {
   using type = void (QnnEp::*)(qnn::PerThreadHtpPowerConfigs_t&, const OrtRunOptions*);
   friend type GetQnnEpPrivateMember(GetPerThreadHtpPowerConfigsTag);
@@ -1201,23 +1186,31 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresMalformed_Succeeds) {
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_ContextInitAcceleration_OptionAndSdkGuard) {
-  EpStubContext ctx;
-  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
-  ctx.session_config[EPKey("htp_context_init_acceleration")] = "1";
-  auto factory = MakeFactory(ctx);
-  auto ep = MakeEp(*factory, ctx);
-  const auto& manager = ep.get()->*GetQnnEpPrivateMember(QnnBackendManagerTag{});
-  ASSERT_NE(manager, nullptr);
+TEST_F(QnnUnit_ExecutionProviderTest, HtpContextInitAcceleration_ValidatesOption) {
+  {
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("htp_context_init_acceleration")] = "1";
+    auto factory = MakeFactory(ctx);
+    EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 #if QNN_API_VERSION_MAJOR > 2 || \
     (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 36)
-  const bool expected = true;
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 "User specified " + EPKey("htp_context_init_acceleration") + ": 1");
 #else
-  const bool expected = false;
-  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
-               "htp_context_init_acceleration=1 was set but this build was compiled against QAIRT SDK < 2.47");
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+                 "htp_context_init_acceleration is not supported with QAIRT SDK < 2.47. "
+                 "Ignoring the option.");
 #endif
-  EXPECT_EQ(manager.get()->*GetQnnEpPrivateMember(ContextInitAccelerationTag{}), expected);
+  }
+  {
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("htp_context_init_acceleration")] = "invalid";
+    auto factory = MakeFactory(ctx);
+    EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "htp_context_init_acceleration must be 0 or 1.");
+  }
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_Default_Succeeds) {

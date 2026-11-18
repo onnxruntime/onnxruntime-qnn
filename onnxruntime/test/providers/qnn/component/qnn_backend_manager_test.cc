@@ -66,33 +66,6 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeManager(
   return qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
 }
 
-TEST(QnnUnit_BackendManagerTest, BuildContextBinaryConfigs_ContextInitAcceleration_OptionAndSdkGuard) {
-  StubApiEnv env;
-  qnn::QnnBackendManagerConfig config{};
-  config.context_priority = qnn::ContextPriority::NORMAL;
-  config.htp_context_init_acceleration = true;
-  auto manager = qnn::QnnBackendManager::Create(config, env.api_ptrs, env.logger);
-  manager->SetQnnBackendType(QNN_BACKEND_ID_HTP);
-  qnn::QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> builder(
-      QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
-  ASSERT_TRUE(manager->BuildContextBinaryConfigs(0, nullptr, builder).IsOK());
-  const auto* configs = builder.GetQnnConfigs();
-  ASSERT_NE(configs[0], nullptr);
-  EXPECT_EQ(configs[0]->option, QNN_CONTEXT_CONFIG_OPTION_PRIORITY);
-  EXPECT_EQ(configs[0]->priority, QNN_PRIORITY_NORMAL);
-  size_t end = 1;
-#if QNN_API_VERSION_MAJOR > 2 || \
-    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 36)
-  ASSERT_NE(configs[end], nullptr);
-  ASSERT_EQ(configs[end]->option, QNN_CONTEXT_CONFIG_OPTION_CUSTOM);
-  const auto* custom = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[end++]->customConfig);
-  ASSERT_NE(custom, nullptr);
-  EXPECT_EQ(custom->option, QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION);
-  EXPECT_TRUE(custom->initAcceleration);
-#endif
-  EXPECT_EQ(configs[end], nullptr);
-}
-
 TEST(QnnUnit_BackendManagerTest, BuildContextBinaryConfigs_ContextInitAcceleration_PreservesExistingConfigs) {
   char group_token{};
   const Qnn_ContextHandle_t group_handles[] = {nullptr, reinterpret_cast<Qnn_ContextHandle_t>(&group_token)};

@@ -155,12 +155,12 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"htp_context_init_acceleration"`|Description|
 |---|---|
-|'0'|Default. Do not request initialization acceleration for binary loads.|
-|'1'|Enable QAIRT initialization acceleration for HTP cached-context binary loads (external, embedded/in-memory, multi-SoC, and prepare-and-load) and existing SSR reloads. Requires a build with QAIRT SDK 2.47+; older builds warn and ignore the option. Applies independently of read/decrypt callbacks and source mapping.|
+|'0'|Default. Do not request initialization acceleration.|
+|'1'|Accelerate HTP cached-context initialization. Requires a build with QAIRT SDK 2.47 or later.|
 
-Acceleration uses all DSP hardware threads during deserialization and may affect other graphs running concurrently. Small graphs may see little benefit. Invalid values are logged and use the default (`"0"`). If QAIRT rejects the acceleration config, the existing load error is returned.
+Acceleration uses all DSP hardware threads during deserialization and can significantly reduce the performance of graphs running concurrently. Small graphs may see little benefit. Invalid values are rejected. Older SDK builds log a warning and ignore "1".
 
-Resource-sharing list loads use `contextCreateFromBinaryListAsync`, which already optimizes initialization and does not need this flag. Setting the option to `"0"` does not disable that API's own optimization. This is an HTP-specific option.
+With `htp_share_resource_optimization="1"`, context loading already uses initialization optimizations; `htp_context_init_acceleration` is not required to enable them. The two options control separate features.
 
 |`"htp_performance_mode"`|Description|
 |---|---|
