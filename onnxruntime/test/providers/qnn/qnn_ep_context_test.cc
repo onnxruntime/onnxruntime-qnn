@@ -1692,6 +1692,9 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
 
 #ifdef QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
 TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpInitAcceleration_LoadsSucceeds) {
+#if defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "htp_context_init_acceleration is not supported by the x86_64 HTP emulator.";
+#endif
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ProviderOptions provider_options = {{"backend_type", "htp"},
                                             {"offload_graph_io_quantization", "0"},
