@@ -257,7 +257,7 @@ jobs:
         if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && inputs.run_tests && inputs.build_test_same_runner }}
         run: >
           bash qcom/scripts/all/run_snapshot_accuracy.sh
-          --build-dir="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}"
+          --build-dir="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/${BUILD_CONFIG_DIR}"
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
