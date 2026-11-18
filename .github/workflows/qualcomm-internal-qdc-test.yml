@@ -41,6 +41,10 @@ on:
         description: "Use smoke to validate Python installation and HTP inference, or full for the CI suite."
         default: full
         type: string
+      qnn_internal_test_symbols:
+        description: "Use the temporary Windows ARM64 internal-symbol test archive and two provider processes."
+        default: false
+        type: boolean
       testdata_archive_artifact_name:
         description: |
           Artifact name to download as the testdata archive before running QDC tests.
@@ -73,6 +77,10 @@ on:
         default: full
         type: choice
         options: [smoke, full]
+      qnn_internal_test_symbols:
+        description: "Use the temporary Windows ARM64 internal-symbol test archive and two provider processes."
+        default: false
+        type: boolean
       testdata_archive_artifact_name:
         description: |
           Artifact name to download as the testdata archive before running QDC tests.
@@ -83,12 +91,12 @@ on:
 env:
   # The QDC results folder is a bit odd
   QDC_RESULTS_ARCH: "${{ inputs.target_os == 'windows' && 'windows' || (inputs.target_os == 'linux' && 'qualcomm_linux' || 'android') }}"
-  QDC_TEST_LABEL: "${{ inputs.target_os == 'windows' && 'qdc' || 'pynone' }}"
+  QDC_TEST_LABEL: "${{ inputs.target_os == 'windows' && (inputs.qnn_internal_test_symbols && 'internal-symbols-qdc' || 'qdc') || 'pynone' }}"
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
   test:
-    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-${{ inputs.target_os == 'windows' && 'qdc' || 'pynone' }}"
+    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-${{ inputs.target_os == 'windows' && (inputs.qnn_internal_test_symbols && 'internal-symbols-qdc' || 'qdc') || 'pynone' }}"
     # Fork PRs cannot access the required credentials. They remain blocked until
     # a maintainer dispatches the reviewed SHA through /approve-ci.
     if: ${{ github.event.pull_request.head.repo.fork != true }}
@@ -109,6 +117,12 @@ jobs:
           echo "::error::Windows QDC testing requires testdata_archive_artifact_name (normally testdata-zip)."
           exit 1
 
+      - name: Validate internal-symbol platform
+        if: ${{ inputs.has_code_changes && inputs.qnn_internal_test_symbols && (inputs.target_os != 'windows' || inputs.target_arch != 'arm64') }}
+        run: |
+          echo "::error::QDC internal-symbol testing requires Windows ARM64."
+          exit 1
+
       - name: Clear previous QDC results
         if: ${{ inputs.has_code_changes }}
         run: rm -rf "build/qdc-${{ env.QDC_RESULTS_ARCH }}"
@@ -124,10 +138,17 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Download Tests from Artifactory
-        if: ${{ inputs.has_code_changes }}
+        if: ${{ inputs.has_code_changes && !inputs.qnn_internal_test_symbols }}
         uses: ./.github/actions/download-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-tests"
+
+      - name: Download Windows ARM64 internal-symbol test inputs
+        if: ${{ inputs.has_code_changes && inputs.qnn_internal_test_symbols }}
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-windows-arm64-test-inputs
+          path: ${{ github.workspace }}/build/
 
       - name: Download testdata from Artifactory
         if: ${{ inputs.has_code_changes && inputs.testdata_archive_artifact_name != '' }}
@@ -148,7 +169,7 @@ jobs:
           exec python3 qcom/build_and_test.py
           --config ${{ inputs.build_config }}
           create_qdc_venv
-          test_ort_qdc_${{inputs.target_os}}_${{inputs.target_arch}} --only
+          test_ort_qdc_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }} --only
 
       - name: Cleanup QDC Runner tmp files
         if: ${{ always() && inputs.has_code_changes }}

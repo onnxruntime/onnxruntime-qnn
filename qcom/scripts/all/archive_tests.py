@@ -142,7 +142,7 @@ def _iter_msvc_redist(vc_redist_dir: Path, target_platform: str):
     'C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Redist/MSVC/14.40.33807'.
     Under it, each arch has a 'Microsoft.VC<NNN>.CRT' folder holding the runtime DLLs.
     """
-    arch_subdir = _MSVC_REDIST_ARCH_SUBDIR.get(target_platform)
+    arch_subdir = _MSVC_REDIST_ARCH_SUBDIR.get(target_platform.removesuffix("-internal-symbols"))
     if arch_subdir is None:
         logging.warning("No MSVC redist arch mapping for %s; no redist DLLs found.", target_platform)
         return
@@ -181,7 +181,7 @@ def _add_msvc_redist(zf: zipfile.ZipFile, vc_redist_dir: Path | None, target_pla
     for p in _iter_msvc_redist(vc_redist_dir, target_platform):
         zf.write(p, str(arc_root / p.name))
         bundled.add(p.name.lower())
-    required = _MSVC_REDIST_REQUIRED.get(target_platform, ())
+    required = _MSVC_REDIST_REQUIRED.get(target_platform.removesuffix("-internal-symbols"), ())
     missing = {n.lower() for n in required} - bundled
     if missing:
         raise RuntimeError(
@@ -305,9 +305,11 @@ if __name__ == "__main__":
             "linux-aarch64_manylinux_2_34",
             "linux-aarch64_oe_gcc11_2",
             "windows-arm64",
+            "windows-arm64-internal-symbols",
             "windows-arm64ec",
             "windows-arm64x",
             "windows-x86_64",
+            "windows-x86_64-internal-symbols",
         ],
     )
     parser.add_argument("--qairt-sdk-root", type=Path, required=True)

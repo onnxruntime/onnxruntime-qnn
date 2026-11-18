@@ -889,6 +889,7 @@ class RunnerCli:
         parser = argparse.ArgumentParser(description="Device Farm test runner.")
         parser.add_argument("--config", choices=("Release", "Debug", "RelWithDebInfo"), default="Release")
         parser.add_argument("--windows-test-mode", choices=("smoke", "full"), default="full")
+        parser.add_argument("--windows-internal-symbols", action="store_true")
         parser.add_argument(
             "--windows-archive", type=Path, help="Override the Windows build artifact for a local QDC run."
         )
@@ -982,6 +983,7 @@ class RunnerCli:
             parser.error("QDC timeouts must be positive.")
         self.config = args.config
         self.windows_test_mode = args.windows_test_mode
+        self.windows_internal_symbols = args.windows_internal_symbols
         self.windows_archive = args.windows_archive
         self.job_timeout_minutes = args.job_timeout_minutes
         self.queue_timeout_minutes = args.queue_timeout_minutes
@@ -1041,8 +1043,10 @@ class RunnerCli:
         android_archive = ORT_ANDROID_ARCHIVE
         qli_archive = ORT_QLI_ARCHIVE
         windows_archive = ORT_TEST_WIN_ARM64
-        if self.config != "Release":
-            windows_archive = REPO_ROOT / "build" / f"onnxruntime-tests-{self.config}-windows-arm64.zip"
+        if self.windows_internal_symbols or self.config != "Release":
+            platform = "windows-arm64-internal-symbols" if self.windows_internal_symbols else "windows-arm64"
+            config_prefix = "" if self.config == "Release" else f"{self.config}-"
+            windows_archive = REPO_ROOT / "build" / f"onnxruntime-tests-{config_prefix}{platform}.zip"
         if self.windows_archive is not None:
             windows_archive = self.windows_archive
 
@@ -1084,6 +1088,7 @@ class RunnerCli:
                     testdata_archive,
                     config=self.config,
                     test_mode=self.windows_test_mode,
+                    internal_symbols=self.windows_internal_symbols,
                 )
 
             def cancel(sig: int, frame: FrameType | None) -> None:
