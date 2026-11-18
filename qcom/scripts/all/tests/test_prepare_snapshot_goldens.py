@@ -1,13 +1,14 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-"""Hermetic contract tests for snapshot-golden preflight."""
+"""Hermetic contract tests for the platform-neutral snapshot-golden preflight."""
 
 import json
 import os
 import shutil
 import stat
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -74,8 +75,10 @@ def run_preflight(
         'if [ "${FAKE_JF_FAIL:-}" = "1" ]; then exit 1; fi\n'
         'cp "${FAKE_GOLDENS_ZIP}" "${@: -1}/goldens.zip"\n',
     )
+    fake_unzip_path = None
     if fake_unzip is not None:
-        write_executable(fake_bin / "unzip", fake_unzip)
+        fake_unzip_path = fake_bin / "unzip"
+        write_executable(fake_unzip_path, fake_unzip)
 
     if golden_dir is None:
         golden_dir = tmp_path / "goldens"
@@ -87,6 +90,7 @@ def run_preflight(
             "BUILD_ARTIFACTORY_REPO": "test-repo",
             "GITHUB_ENV": str(github_env),
             "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "PYTHON_BIN": Path(sys.executable).as_posix(),
         }
     )
     env.pop("QNN_UT_SNAPSHOT_GOLDEN_DIR", None)
@@ -94,6 +98,8 @@ def run_preflight(
         env["FAKE_GOLDENS_ZIP"] = str(source_zip)
     if download_fails:
         env["FAKE_JF_FAIL"] = "1"
+    if fake_unzip_path is not None:
+        env["UNZIP_BIN"] = fake_unzip_path.as_posix()
 
     result = subprocess.run(
         [
@@ -148,6 +154,12 @@ def test_extract_failure_never_enables_golden_store(tmp_path: Path, build_dir: P
     source_zip = tmp_path / "goldens.zip"
     create_zip(source_zip, {"qairt_version": QAIRT_VERSION, "ort_version": ORT_VERSION})
     real_unzip = shutil.which("unzip")
+    if real_unzip is None and os.name == "nt":
+        bash = shutil.which("bash")
+        if bash is not None:
+            git_unzip = Path(bash).resolve().parent.parent / "usr/bin/unzip.exe"
+            if git_unzip.is_file():
+                real_unzip = str(git_unzip)
     assert real_unzip is not None
     fake_unzip = (
         "#!/usr/bin/env bash\n"

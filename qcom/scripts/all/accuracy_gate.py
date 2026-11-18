@@ -2,9 +2,9 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 #
-# Accuracy-routing gate for QNN EP unit tests (PR4).
+# Platform-neutral accuracy-routing gate for QNN EP unit tests.
 #
-# Decides which QnnAcc_* cases the coverage run must execute, given
+# Decides which QnnAcc_* cases a snapshot validation run must execute, given
 # the snapshot-phase results and the golden store's version manifest. The core
 # invariant: a FIXED QNN backend version means an unchanged graph structure
 # means unchanged numerics -- so accuracy may be skipped for a case ONLY when
@@ -62,6 +62,10 @@ R_DRIFT = "drift"
 R_ABSENT = "absent"  # paired snapshot skipped (golden absent / backend down)
 R_UNMAPPED = "unmapped"  # no paired snapshot case exists
 R_VERSION = "version-mismatch"  # Level-0 global override
+
+
+class SnapshotInputError(ValueError):
+    """The snapshot report cannot be trusted as routing evidence."""
 
 
 @dataclass
@@ -139,13 +143,28 @@ def load_snapshot_results(json_path: str) -> dict[tuple[str, str], str]:
     Keys use the snapshot suite name as-emitted; mapping to accuracy suites
     happens in compute_run_set via derive_accuracy_suite.
     """
-    with open(json_path) as f:
-        data = json.load(f)
+    try:
+        with open(json_path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SnapshotInputError(f"cannot read snapshot results {json_path}: {exc}") from exc
+
+    if not isinstance(data, dict) or not isinstance(data.get("testsuites"), list):
+        raise SnapshotInputError(f"snapshot results {json_path} did not contain a valid testsuites array")
+
     out: dict[tuple[str, str], str] = {}
-    for suite in data.get("testsuites", []):
+    for suite in data["testsuites"]:
+        if not isinstance(suite, dict) or not isinstance(suite.get("testsuite", []), list):
+            raise SnapshotInputError(f"snapshot results {json_path} contained an invalid test suite")
         suite_name = suite.get("name", "")
+        if not isinstance(suite_name, str) or not suite_name:
+            raise SnapshotInputError(f"snapshot results {json_path} contained an invalid suite name")
         for tc in suite.get("testsuite", []):
+            if not isinstance(tc, dict):
+                raise SnapshotInputError(f"snapshot results {json_path} contained an invalid testcase")
             name = tc.get("name", "")
+            if not isinstance(name, str) or not name:
+                raise SnapshotInputError(f"snapshot results {json_path} contained an invalid testcase name")
             out[(suite_name, name)] = classify_testcase(tc)
     return out
 
@@ -219,62 +238,15 @@ def load_manifest_versions(golden_root: str | None) -> ToolVersions:
 
 
 def detect_qairt_version() -> str | None:
-    """Current QAIRT version. Env override first (CI/tests inject it); else fall
-    back to the QAIRT SDK's sdk.yaml. Returns None if undeterminable -- callers
-    treat None like no-manifest (safe: full accuracy run).
-
-    NOTE: the real shared version-getter is PR2/PR3's resolve_tool_versions.sh
-    (resolve_qairt_version); until this rebases onto it, this mirrors its
-    env-first + sdk.yaml fallback independently so both sides agree on the
-    resolved string."""
+    """Current QAIRT version injected by the shared tool-version resolver."""
     env = os.environ.get("QNN_UT_QAIRT_VERSION")
-    if env:
-        return env.strip()
-    for var in ("QAIRT_SDK_ROOT", "QNN_SDK_ROOT", "SNPE_ROOT"):
-        root = os.environ.get(var)
-        if not root:
-            continue
-        sdk_yaml = os.path.join(root, "sdk.yaml")
-        if os.path.isfile(sdk_yaml):
-            try:
-                with open(sdk_yaml) as f:
-                    for line in f:
-                        # sdk.yaml is a flat "key: value" file; the QAIRT product
-                        # version is under a version-ish key. Kept intentionally
-                        # loose -- pinned when a real SDK is available on CI.
-                        m = re.match(r"\s*(?:version|Version)\s*:\s*(.+?)\s*$", line)
-                        if m:
-                            return m.group(1).strip().strip("'\"")
-            except OSError:
-                pass
-    return None
+    return env.strip() if env else None
 
 
 def detect_ort_version() -> str | None:
-    """Current ORT (runtime) version. Env override first (CI/tests inject it);
-    else read the ORT prebuilt's VERSION_NUMBER. Returns None if undeterminable
-    -- treated like a version-mismatch (safe: full accuracy run).
-
-    NOTE: the real shared version-getter is PR2/PR3's resolve_tool_versions.sh
-    (resolve_ort_version); until this rebases onto it, this mirrors
-    detect_qairt_version's env-first + loose-file fallback so both sides can
-    be sourced identically later."""
+    """Current ORT runtime version injected by the shared tool-version resolver."""
     env = os.environ.get("QNN_UT_ORT_VERSION")
-    if env:
-        return env.strip()
-    root = os.environ.get("ORT_PREBUILT_ROOT")
-    if root:
-        for rel in ("VERSION_NUMBER", "VERSION"):
-            vf = os.path.join(root, rel)
-            if os.path.isfile(vf):
-                try:
-                    with open(vf) as f:
-                        v = f.readline().strip()
-                    if v:
-                        return v
-                except OSError:
-                    pass
-    return None
+    return env.strip() if env else None
 
 
 def detect_current_versions() -> ToolVersions:
@@ -346,7 +318,10 @@ def run_gate(
     """End-to-end gate: load inputs, resolve versions, compute decisions."""
     snapshot_map: dict[tuple[str, str], str] = {}
     if snapshot_json and os.path.isfile(snapshot_json):
-        snapshot_map = load_snapshot_results(snapshot_json)
+        try:
+            snapshot_map = load_snapshot_results(snapshot_json)
+        except SnapshotInputError as exc:
+            print(f"WARNING: {exc}; running accuracy for every unverified case.", file=sys.stderr)
 
     if current is None:
         current = detect_current_versions()

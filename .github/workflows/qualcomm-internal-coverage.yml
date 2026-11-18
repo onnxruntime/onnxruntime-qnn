@@ -107,7 +107,7 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         run: |
           rm -rf "${SNAPSHOT_GOLDEN_DIR}"
-          bash qcom/scripts/linux/prepare_snapshot_goldens.sh \
+          bash qcom/scripts/all/prepare_snapshot_goldens.sh \
             --build-dir=build/linux-x86_64/RelWithDebInfo \
             --golden-dir="${SNAPSHOT_GOLDEN_DIR}" \
             --golden-profile="${SNAPSHOT_GOLDEN_PROFILE}"

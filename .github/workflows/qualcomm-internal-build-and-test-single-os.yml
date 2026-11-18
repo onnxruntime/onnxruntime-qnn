@@ -135,6 +135,7 @@ env:
   TEST_ARCHIVE_EXT: "${{ inputs.target_os == 'linux' && 'tar.bz2' || 'zip' }}"
 
   ORT_VERSION_SUFFIX: "${{ inputs.version_suffix != '' && inputs.version_suffix || '' }}"
+  SNAPSHOT_GOLDEN_PROFILE: "${{ inputs.target_os == 'windows' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && 'windows-x86_64-htp-simulator' || '' }}"
   # Materialize for step-level `if` checks: GitHub Actions does not allow `env`/`secrets`
   # contexts in job-level `if`, so jobs gate on `github.event.pull_request.head.repo.fork`
   # while steps gate on `env.BUILD_ARTIFACTORY_REPO != ''`. Both signals skip Artifactory
@@ -199,6 +200,36 @@ jobs:
           path: ${{ github.workspace }}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}linux-${{ env.BUILD_DIR_ARCH }}.tar.bz2
           if-no-files-found: error
 
+      - name: Setup JFrog CLI
+        if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' && (env.SNAPSHOT_GOLDEN_PROFILE == '' || (inputs.run_tests && inputs.build_test_same_runner)) }}
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Enable aligned snapshot goldens
+        if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner && env.SNAPSHOT_GOLDEN_PROFILE != '' && env.BUILD_ARTIFACTORY_REPO != '' }}
+        shell: powershell
+        run: |
+          $gitBash = Join-Path $env:ProgramW6432 "Git\bin\bash.exe"
+          if (-not (Test-Path -LiteralPath $gitBash)) {
+            throw "Git Bash was not found under $gitBash"
+          }
+
+          $buildDir = "build/windows-$env:BUILD_DIR_ARCH/$env:BUILD_CONFIG_DIR"
+          $goldenDir = "build/windows-$env:BUILD_DIR_ARCH/snapshot-goldens"
+          $env:PYTHON_BIN = "python.exe"
+          & $gitBash qcom/scripts/all/prepare_snapshot_goldens.sh `
+            "--build-dir=$buildDir" `
+            "--golden-dir=$goldenDir" `
+            "--golden-profile=$env:SNAPSHOT_GOLDEN_PROFILE"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Snapshot-golden preflight failed (exit $LASTEXITCODE)."
+          }
+
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }}
         run: >
@@ -207,6 +238,28 @@ jobs:
           --target-py-version ${{inputs.target_py_vsn}}
           --config ${{ inputs.build_config }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }} --only
+
+      - name: Verify snapshot-golden accuracy routing
+        if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner && env.SNAPSHOT_GOLDEN_PROFILE != '' && env.BUILD_ARTIFACTORY_REPO != '' }}
+        shell: powershell
+        run: |
+          $usingFullAccuracyFallback = -not $env:QNN_UT_SNAPSHOT_GOLDEN_DIR
+          if ($usingFullAccuracyFallback) {
+            Write-Warning "Aligned snapshot goldens were unavailable; verifying the full-accuracy fallback."
+          }
+
+          $summary = Join-Path `
+            "build/windows-$env:BUILD_DIR_ARCH/$env:BUILD_CONFIG_DIR" `
+            "snapshot_accuracy_results/accuracy_gate_summary.txt"
+          $accuracyResults = Join-Path `
+            "build/windows-$env:BUILD_DIR_ARCH/$env:BUILD_CONFIG_DIR" `
+            "snapshot_accuracy_results/accuracy_results.json"
+          & python.exe qcom/scripts/all/verify_accuracy_routing.py `
+            "--summary=$summary" `
+            "--accuracy-results=$accuracyResults"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Snapshot/accuracy routing verification failed (exit $LASTEXITCODE)."
+          }
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
@@ -231,16 +284,6 @@ jobs:
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
       # Artifactory steps are no-ops on fork PRs (secrets unavailable); the build still compiles the change.
-      - name: Setup JFrog CLI
-        if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' }}
-        uses: jfrog/setup-jfrog-cli@v5
-        with:
-          disable-auto-build-publish: true
-          disable-job-summary: true
-        env:
-          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
-          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
-
       - name: Upload Test Archive to Artifactory
         if: ${{ inputs.has_code_changes && inputs.upload_test_archive && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
