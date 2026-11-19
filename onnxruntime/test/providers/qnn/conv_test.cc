@@ -622,8 +622,8 @@ static GetTestQDQModelFn<OutputQType> BuildQDQConvMixedDtypeTestCase(
   };
 }
 
-template <typename ActivationQType, typename WeightQType>
-static GetTestQDQModelFn<ActivationQType> BuildQDQPerChannelConvTestCase(
+template <typename ActivationQType, typename WeightQType, typename OutputQType = ActivationQType>
+static GetTestQDQModelFn<OutputQType> BuildQDQPerChannelConvTestCase(
     const std::string& conv_op_type,
     const TestInputDef<float>& input_def,
     const TestInputDef<float>& weights_def,
@@ -640,7 +640,7 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQPerChannelConvTestCase(
   return [conv_op_type, input_def, weights_def, bias_def, strides, pads,
           dilations, group, auto_pad, use_contrib_qdq, use_float_bias,
           weight_quant_axis, output_activation](ModelTestBuilder& builder,
-                                                std::vector<QuantParams<ActivationQType>>& output_qparams) {
+                                                std::vector<QuantParams<OutputQType>>& output_qparams) {
     std::vector<std::string> conv_input_names;
 
     // input -> Q/DQ ->
@@ -772,7 +772,7 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQPerChannelConvTestCase(
       q_input_name = "act_out";
     }
 
-    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(
         builder, "qdq_out", q_input_name, output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
@@ -1804,6 +1804,149 @@ TEST_F(QnnHTPBackendTests, Conv2D_U16Act_U16Weight_AcceptedOnV73) {
       BuildQDQConvMixedDtypeTestCase<uint16_t, uint16_t, uint16_t>(
           "Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
       provider_options, 21, ExpectedEPNodeAssignment::All);
+}
+
+// A Conv with a u8 activation and a u16 output has its activation widened to u16, which makes the activation scale 257x
+// finer. The int32 bias is requantized to that finer scale, so a bias of `bias_magnitude` needs about
+// bias_magnitude / (activation_scale * weight_scale) * 257 steps and overflows int32 once that passes 2^31.
+// With the input in [0, 1] and the weights in [-0.5, 0.5], the widened bias is about bias_magnitude / 2.3e-10 for an s16
+// weight (any bias of 0.01 or more overflows) and about bias_magnitude / 6.0e-8 for an s8 weight (it overflows from
+// about 130, and a bias of 1 needs only 1.7e7).
+template <typename WeightQType>
+static void RunU8ToU16ConvBiasTest(const std::vector<int64_t>& input_shape,
+                                   const std::vector<int64_t>& weight_shape,
+                                   bool weight_is_initializer,
+                                   float bias_magnitude,
+                                   ExpectedEPNodeAssignment expected_ep_assignment,
+                                   const std::optional<std::filesystem::path>& json_dir = std::nullopt) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+  if (json_dir.has_value()) {
+    provider_options["dump_json_qnn_graph"] = "1";
+    provider_options["json_qnn_graph_dir"] = json_dir->string();
+  }
+
+  const size_t spatial_rank = input_shape.size() - 2;
+  const std::vector<int64_t> strides(spatial_rank, 1);
+  const std::vector<int64_t> pads(2 * spatial_rank, 0);
+  const std::vector<int64_t> dilations(spatial_rank, 1);
+
+  const size_t out_channels = static_cast<size_t>(weight_shape[0]);
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, weight_is_initializer,
+                                 GetFloatDataInRange(-0.5f, 0.5f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def({static_cast<int64_t>(out_channels)}, true,
+                               GetFloatDataInRange(-bias_magnitude, bias_magnitude, out_channels));
+
+  TestQDQModelAccuracy(
+      BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, strides, pads, dilations, 1, "NOTSET"),
+      BuildQDQConvMixedDtypeTestCase<uint8_t, WeightQType, uint16_t>(
+          "Conv", input_def, weight_def, bias_def, strides, pads, dilations, 1, "NOTSET"),
+      provider_options, 21, expected_ep_assignment);
+}
+
+// The widened bias does not fit int32, so the Conv runs in FP16 (Dequantize -> Conv -> Quantize) instead of
+// widening the activation with a Convert and clamping the bias.
+TEST_F(QnnHTPBackendTests, Conv2D_U8In_S16Weight_U16Out_BiasOverflow_RunsInFp16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_dir = "Conv2D_U8In_S16Weight_U16Out_BiasOverflow_RunsInFp16";
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  RunU8ToU16ConvBiasTest<int16_t>({1, 2, 4, 4}, {3, 2, 2, 2}, /*weight_is_initializer=*/true,
+                                  /*bias_magnitude=*/3.0f, ExpectedEPNodeAssignment::All, json_dir);
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(json_dir, "Conv2d", 1);
+  AssertOpInQnnGraph(json_dir, "Convert", 0);
+  AssertOpOutputInQnnGraph(json_dir, "Conv2d", QNN_DATATYPE_FLOAT_16);
+}
+
+// There is no FP16 fallback for a 5D Conv, so an overflowing bias leaves the node on CPU. The same Conv with a small
+// bias is still assigned to QNN, which shows the bias is what makes it fall back.
+TEST_F(QnnHTPBackendTests, Conv3D_U8In_S8Weight_U16Out_BiasOverflow_StaysOnCpu) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  {
+    SCOPED_TRACE("small bias");
+    RunU8ToU16ConvBiasTest<int8_t>({1, 2, 4, 4, 4}, {3, 2, 2, 2, 2}, /*weight_is_initializer=*/true,
+                                   /*bias_magnitude=*/1.0f, ExpectedEPNodeAssignment::All);
+  }
+  {
+    SCOPED_TRACE("overflowing bias");
+    RunU8ToU16ConvBiasTest<int8_t>({1, 2, 4, 4, 4}, {3, 2, 2, 2, 2}, /*weight_is_initializer=*/true,
+                                   /*bias_magnitude=*/400.0f, ExpectedEPNodeAssignment::None);
+  }
+}
+
+// The FP16 fallback dequantizes the weight when the graph is built, so it needs a constant weight. A weight that
+// is a graph input with an overflowing bias leaves the Conv on CPU. The weight's standalone Q/DQ pair can still be
+// assigned to QNN, so the assertion is that the QNN graph holds no Conv, not that nothing is assigned.
+TEST_F(QnnHTPBackendTests, Conv2D_U8In_S8DynamicWeight_U16Out_BiasOverflow_StaysOnCpu) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  {
+    SCOPED_TRACE("small bias");
+    RunU8ToU16ConvBiasTest<int8_t>({1, 2, 4, 4}, {3, 2, 2, 2}, /*weight_is_initializer=*/false,
+                                   /*bias_magnitude=*/1.0f, ExpectedEPNodeAssignment::All);
+  }
+
+  const std::filesystem::path json_dir = "Conv2D_U8In_S8DynamicWeight_U16Out_BiasOverflow_StaysOnCpu";
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  {
+    SCOPED_TRACE("overflowing bias");
+    RunU8ToU16ConvBiasTest<int8_t>({1, 2, 4, 4}, {3, 2, 2, 2}, /*weight_is_initializer=*/false,
+                                   /*bias_magnitude=*/400.0f, ExpectedEPNodeAssignment::Some, json_dir);
+  }
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(json_dir, "Conv2d", 0);
+}
+
+// The FP16 fallback only handles 8/16-bit weights, so a per-channel 4-bit weight with an overflowing bias leaves the
+// node on CPU. The input is in [0, 1] and the weights in [-0.5, 0.5], so a bias of 10000 overflows at the 4-bit
+// weight scales and 1 does not.
+TEST_F(QnnHTPBackendTests, Conv2D_U8In_Int4Weight_U16Out_BiasOverflow_StaysOnCpu) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8550);
+#endif
+
+  const std::vector<int64_t> input_shape = {1, 2, 4, 4};
+  const std::vector<int64_t> weight_shape = {3, 2, 2, 2};
+  TestInputDef<float> input_def(input_shape, false, GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true, GetFloatDataInRange(-0.5f, 0.5f, SizeOfShape(weight_shape)));
+
+  const auto run = [&](float bias_magnitude, ExpectedEPNodeAssignment expected_ep_assignment) {
+    TestInputDef<float> bias_def({3}, true, GetFloatDataInRange(-bias_magnitude, bias_magnitude, 3));
+    TestQDQModelAccuracy(
+        BuildF32ConvTestCase("Conv", input_def, weight_def, bias_def, {1, 1}, {0, 0, 0, 0}, {1, 1}, 1, "NOTSET"),
+        BuildQDQPerChannelConvTestCase<uint8_t, Int4x2, uint16_t>("Conv", input_def, weight_def, bias_def,
+                                                                  /*weight_quant_axis=*/0, {1, 1}, {0, 0, 0, 0},
+                                                                  {1, 1}, 1, "NOTSET"),
+        provider_options, 21, expected_ep_assignment);
+  };
+
+  {
+    SCOPED_TRACE("small bias");
+    run(1.0f, ExpectedEPNodeAssignment::All);
+  }
+  {
+    SCOPED_TRACE("overflowing bias");
+    run(10000.0f, ExpectedEPNodeAssignment::None);
+  }
 }
 
 // Tests QDQ Conv where activation and weight are per-tensor quantized but bias is a plain float
