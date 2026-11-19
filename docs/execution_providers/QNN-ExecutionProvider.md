@@ -256,7 +256,7 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 
 For `onnxruntime_perf_test`, to use HTP shared-memory zero-copy, enable `enable_htp_shared_memory_allocator=1` and select a single QNN NPU device with `--select_ep_devices 1` (replace `1` with the appropriate device index).
 
-With `enable_htp_shared_memory_allocator=1`, ORT also places in `QnnHtpShared` memory the tensors that QNN partitions exchange with CPU EP nodes (for example, when part of a model falls back to CPU) and QNN-produced graph outputs that the application does not bind from `QnnHtpShared`, so those tensors are bound without a copy. Graph inputs and outputs that the application provides in ordinary CPU memory are passed to QNN unchanged and bound with a copy (clientBuf); allocate them from `QnnHtpShared` to make them zero-copy. Routing CPU-produced tensors into QNN partitions requires the ORT build that QNN EP ships with (it applies `cmake/patches/ort_core/0005-plugin-ep-memory-device-by-mem-type.patch`); with an unpatched ORT those tensors stay in CPU memory.
+With `enable_htp_shared_memory_allocator=1`, ORT also allocates in `QnnHtpShared` memory the outputs of QNN partitions, both those consumed by CPU EP nodes (for example, when part of a model falls back to CPU) and graph outputs that the application does not bind, so they are bound without a copy. Outputs of CPU EP nodes that feed a QNN partition, and graph inputs and outputs that the application provides in ordinary CPU memory, are bound with a copy (clientBuf); allocate application I/O from `QnnHtpShared` to make it zero-copy.
 
 |`"enable_dx12_shared_memory_allocator"`|Description|
 |---|---|
