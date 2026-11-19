@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <cstring>
 #include <numeric>
 #include <stdexcept>
@@ -66,11 +67,20 @@ static std::vector<float> make_input() {
   return v;
 }
 
-static void run_htp(const std::string& model_path, const std::string& pkg_path) {
+static void run_htp(const std::string& model_path, const std::string& pkg_path,
+                    const std::string& context_output = "") {
   printf("\n=== QNN HTP backend ===\n");
 
   Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "UDOSampleHTP");
   Ort::SessionOptions so;
+
+  if (!context_output.empty()) {
+    const auto directory = std::filesystem::path(context_output).parent_path();
+    if (!directory.empty()) std::filesystem::create_directories(directory);
+    so.AddConfigEntry("ep.context_enable", "1");
+    so.AddConfigEntry("ep.context_embed_mode", "0");
+    so.AddConfigEntry("ep.context_file_path", context_output.c_str());
+  }
 
   // Register QNN HTP EP.
   // ORT_QNN_CUSTOM_OP_DOMAINS handles schema registration automatically.
@@ -110,7 +120,7 @@ int main(int argc, char* argv[]) {
     fprintf(stderr,
             "Usage:\n"
             "  export ORT_QNN_CUSTOM_OP_DOMAINS=\"example:MyAdd\"\n"
-            "  %s htp  <model.onnx> <libMyAddOpPackage_htp.so>\n",
+            "  %s htp  <model.onnx> <libMyAddOpPackage_htp.so> [context_output.onnx]\n",
             argv[0]);
     return 1;
   }
@@ -121,7 +131,7 @@ int main(int argc, char* argv[]) {
 
   try {
     if (backend == "htp")
-      run_htp(model, pkg);
+      run_htp(model, pkg, argc > 4 ? argv[4] : "");
     else {
       fprintf(stderr, "Unknown backend '%s'. Use 'htp'.\n", backend.c_str());
       return 1;

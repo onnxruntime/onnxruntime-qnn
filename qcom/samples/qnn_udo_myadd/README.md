@@ -12,9 +12,9 @@ User-Defined Operation (UDO) through the ORT QNN Execution Provider.
 
 | File | Purpose |
 |------|---------|
-| `gen_myadd_model.py` | Generate `myadd_fp32.onnx` reference graph and `myadd_qdq.onnx` (HTP) |
+| `gen_myadd_model.py` | Generate `myadd_qdq.onnx` (HTP) |
 | `gen_myadd_test_data.py` | Generate `onnxruntime_plugin_ep_onnx_test` protobuf inputs and references for on-device HTP |
-| `run_udo_sample.cc` | C++ standalone sample — HTP mode |
+| `run_udo_sample.cc` | C++ standalone sample — HTP inference and context generation |
 | `run_udo_sample.py` | Python sample — HTP mode |
 | `build_op_package.sh` | Build `libMyAddOpPackage_htp.so` |
 
@@ -40,12 +40,12 @@ those inputs.
 
 ---
 
-## Step 1 — Generate ONNX models
+## Step 1 — Generate the ONNX model
 
 ```bash
 cd qcom/samples/qnn_udo_myadd/
 python3 gen_myadd_model.py --constant 2.0 --outdir .
-# Produces: myadd_fp32.onnx, myadd_qdq.onnx
+# Produces: myadd_qdq.onnx
 ```
 
 ---
@@ -118,16 +118,41 @@ ${ORT_BUILD}/onnxruntime_provider_test --gtest_filter="*UDO_Op_MyAdd*"
 The HTP fixture tests cover manual and automatic domains, invalid package paths,
 missing domains, context generation/loading, and mixed graphs. Package lookup
 checks `ORT_QNN_UDO_OP_PACKAGE_DIR`, `custom_op/op_packages/htp` beside the test
-executable, then the executable directory. Missing packages skip unless
-`ORT_QNN_UDO_REQUIRED_BACKENDS=htp` is set.
+executable, then the executable directory. Missing packages fail when the fixture
+was built by CMake or when
+`ORT_QNN_UDO_REQUIRED_BACKENDS=htp` is set; otherwise they skip. Linux x86_64 CI
+sets that flag so a skipped generator cannot hide missing coverage.
+
+The Linux CMake build produces
+`custom_op/op_packages/htp/libQnnMyAddOpPackage.so` beside the executable. The
+standalone build script produces `artifacts/libMyAddOpPackage_htp.so`, which
+can be selected with the package-directory override.
+
+The C++ sample's optional fourth argument generates a simulator context fixture:
+
+```bash
+ORT_QNN_CUSTOM_OP_DOMAINS=example:MyAdd \
+LD_LIBRARY_PATH=${ORT_BUILD}:${ORT_LIB}:${LD_LIBRARY_PATH} \
+./run_udo_sample htp myadd_qdq.onnx \
+    ${ORT_BUILD}/custom_op/op_packages/htp/libQnnMyAddOpPackage.so \
+    ${ORT_BUILD}/custom_op/contexts/sim/myadd_ctx.onnx
+
+ORT_QNN_UDO_CONTEXT_ARCH=sim \
+ORT_QNN_UDO_CONTEXT_OP_PACKAGES="MyAdd:${ORT_BUILD}/custom_op/op_packages/htp/libQnnMyAddOpPackage.so:MyAddOpPackageInterfaceProvider:CPU" \
+${ORT_BUILD}/onnxruntime_provider_test --gtest_filter="*UDO_Op_MyAdd_LoadPregenerated"
+```
+
+This fixture validates the host simulator only. CI artifact transfer and
+architecture-specific device context generation are separate work.
 
 For `UDO_Op_MyAdd_LoadPregenerated`, place the model and external binary under
 `custom_op/contexts/<arch>/` beside the executable (model name `myadd_ctx.onnx`).
 Set `ORT_QNN_UDO_CONTEXT_ARCH=<arch>` and
 `ORT_QNN_UDO_CONTEXT_OP_PACKAGES` to the target's registration entries. A device
 context load uses the matching skel by bare filename with `:HTP`, and requires
-the platform DSP search path. On Windows native ARM64, signing and device
-validation are prerequisites; x64 and ARM64EC/X are unsupported. Pure EPContext
+the platform DSP search path. Windows builds and device execution remain
+unvalidated; signing and matching
+DSP skels must be verified before using the Windows ARM64 context path. Pure EPContext
 loads require no `ORT_QNN_CUSTOM_OP_DOMAINS` variable.
 
 ---

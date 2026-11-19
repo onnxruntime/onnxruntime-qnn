@@ -1945,17 +1945,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                      bool verify_outputs = true,
                      Ort::CustomOpDomain* custom_op_domain = nullptr);
 
-// Runs QNN without creating a CPU reference session. Expected float outputs are supplied
-// by the caller for the first output, so placeholder custom ops can still be checked.
-void RunQnnModelTestWithoutCpuReference(ModelTestBuilder& builder,
-                                        const ProviderOptions& provider_options,
-                                        gsl::span<const float> expected_output,
-                                        gsl::span<const int64_t> expected_shape,
-                                        float absolute_tolerance,
-                                        ExpectedEPNodeAssignment assignment = ExpectedEPNodeAssignment::All,
-                                        const std::unordered_map<std::string, std::string>& session_configs = {},
-                                        const std::filesystem::path& model_path = {});
-
 enum class BackendSupport {
   SUPPORT_UNKNOWN,
   UNSUPPORTED,

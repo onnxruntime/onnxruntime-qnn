@@ -1797,20 +1797,19 @@ commands, see the [QNN UDO sample](../../qcom/samples/qnn_udo_myadd/README.md).
 ORT QNN EP Custom Op examples and tests target the HTP backend. The `:CPU`
 op-package target denotes the host registration library of an HTP package; it
 does not select the QNN CPU backend. A manual ORT CPU EP kernel can still be
-registered for accuracy comparisons.
+registered for accuracy comparisons. This change removes QNN CPU backend UDO
+examples and test coverage; it does not disable runtime op-package registration
+on the QNN CPU backend or introduce a runtime deprecation. QNN CPU UDO is no
+longer covered by the supplied sample or tests.
 
 #### Limitations
 
-Graph preparation is supported on Linux x86_64 and Android. Windows native
-ARM64 can consume a compatible pregenerated EPContext only after the matching
-DSP op-package skel has been signed and validated on the device. Windows x64
-and ARM64EC/X do not support this path.
-
-The Custom Op tests compile on all platforms and skip when the platform or
-artifacts are unavailable. Package lookup checks `ORT_QNN_UDO_OP_PACKAGE_DIR`,
-`custom_op/op_packages/htp` beside the executable, then the executable directory.
-Set `ORT_QNN_UDO_REQUIRED_BACKENDS=htp` to fail when a required package is missing.
-Parsing tests reside in `component/qnn_custom_op_test.cc`.
+Linux x86_64 HTP simulator builds and tests are validated. Android and Linux
+ARM64 device execution, Windows builds, and signed DSP skel EPContext loading on
+Windows ARM64 are not validated by these tests. The supplied HTP host-package
+build target is Linux x86_64; other targets skip its graph-preparation tests.
+Parsing tests reside in `component/qnn_custom_op_test.cc`. Test fixture settings
+and pregenerated-context instructions are in the sample README.
 
 ### UDO Workflow
 
@@ -1910,7 +1909,7 @@ export ORT_QNN_CUSTOM_OP_DOMAINS="udo_domain:MyAdd;other_domain:OpA,OpB"
 ./onnxruntime_plugin_ep_onnx_test -v -j 1 \
   --plugin_ep_libs "QNNExecutionProvider|libonnxruntime_providers_qnn.so" \
   --plugin_eps "QNNExecutionProvider" \
-  --plugin_ep_options "backend_path|libQnnCpu.so op_packages|<op_type>:<op_package_path>:<interface_symbol_name>[:<target>],<op_type2>:<op_package_path2>:<interface_symbol_name2>[:<target2>]" \
+  --plugin_ep_options "backend_type|htp offload_graph_io_quantization|0 op_packages|MyAdd:<htp_host_op_package_path>:MyAddOpPackageInterfaceProvider:CPU" \
   <model>
 ```
 

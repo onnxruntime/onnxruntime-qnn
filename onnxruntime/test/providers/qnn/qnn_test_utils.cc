@@ -357,38 +357,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                             custom_op_domain);
 }
 
-void RunQnnModelTestWithoutCpuReference(ModelTestBuilder& builder,
-                                        const ProviderOptions& provider_options,
-                                        gsl::span<const float> expected_output,
-                                        gsl::span<const int64_t> expected_shape,
-                                        float absolute_tolerance,
-                                        ExpectedEPNodeAssignment assignment,
-                                        const std::unordered_map<std::string, std::string>& session_configs,
-                                        const std::filesystem::path& model_path) {
-  RegisteredEpDeviceUniquePtr ep_device;
-  Ort::SessionOptions options;
-  options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-  for (const auto& [key, value] : session_configs) options.AddConfigEntry(key.c_str(), value.c_str());
-  RegisterQnnEpLibrary(ep_device, options, "QNNExecutionProvider", provider_options);
-  const auto model_data = builder.model_.SerializeAsString();
-  ScopedOrtSession scoped(std::move(ep_device),
-                          model_path.empty()
-                              ? Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), options)
-                              : Ort::Session(*GetOrtEnv(), model_path.c_str(), options));
-  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), "QNNExecutionProvider", assignment));
-  std::vector<Ort::Value> outputs;
-  RunWithEP(scoped.session(), Ort::RunOptions{nullptr}, builder.feeds_, outputs);
-  ASSERT_FALSE(outputs.empty());
-  ASSERT_EQ(outputs[0].GetTensorTypeAndShapeInfo().GetElementType(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
-  const auto shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
-  ASSERT_EQ(shape, std::vector<int64_t>(expected_shape.begin(), expected_shape.end()));
-  ASSERT_EQ(outputs[0].GetTensorTypeAndShapeInfo().GetElementCount(), expected_output.size());
-  const auto* data = outputs[0].GetTensorData<float>();
-  for (size_t i = 0; i < expected_output.size(); ++i) {
-    EXPECT_NEAR(data[i], expected_output[i], absolute_tolerance) << "element " << i;
-  }
-}
-
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        std::unordered_map<std::string, Ort::Value>& feeds,

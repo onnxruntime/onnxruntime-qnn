@@ -42,7 +42,7 @@ if(UNIX)
             BASE_DIR "${_TOOLS_DIR}"
         )
         add_custom_command(
-            OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libMyAddOpPackage_htp.so
+            OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/libQnnMyAddOpPackage.so
 
             # clean stale build dir before rebuilding
             COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp
@@ -65,21 +65,22 @@ if(UNIX)
                                "X86_CXX=${LLVM_TOOL_DIR}/bin/clang++ -stdlib=libc++"
                                htp_x86
 
-            # copy built op package
+            # Produce the packaged lookup directory with the SDK library name.
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp
             COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/MyAddOpPackage/build/x86_64-linux-clang/libQnnMyAddOpPackage.so
-                                             ${CMAKE_CURRENT_BINARY_DIR}/libMyAddOpPackage_htp.so
+                                             ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/libQnnMyAddOpPackage.so
             DEPENDS
                 ${TEST_SRC_DIR}/providers/qnn/udo/MyAddOpPackageHtp.xml
                 ${TEST_SRC_DIR}/providers/qnn/udo/MyAddHTP.cpp
                 ${TEST_SRC_DIR}/providers/qnn/udo/HTP_Makefile
         )
         add_custom_target(QnnUDO_MyAdd_HTP
-          DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libMyAddOpPackage_htp.so
+          DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/libQnnMyAddOpPackage.so
         )
         list(APPEND onnxruntime_test_providers_dependencies QnnUDO_MyAdd_HTP)
 
         # Signal to the rest of the unit-test CMake (and the test source files)
-        # that the UDO library will actually be built and is available at runtime.
+        # that the fixture is required at runtime; a missing library is a failure.
         set(onnxruntime_BUILD_QNN_UDO_TEST ON)
     endif()
 endif()
