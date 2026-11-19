@@ -1028,6 +1028,72 @@ TEST_F(QnnHTPBackendTests, QnnIr_HtpValidator_OutputFiles) {
   EXPECT_EQ(file_count, 1);
 }
 
+// Inputs that no node reads must stay in the DLC signature.
+TEST_F(QnnHTPBackendTests, QnnIrKeepsUnconsumedGraphInputs) {
+  BackendSupport ir_backend_support = IsIRBackendSupported();
+  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
+  }
+  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  const std::filesystem::path qnn_dlc_dir = "dlc_output_unconsumed_inputs";
+  std::filesystem::remove_all(qnn_dlc_dir);
+
+  ModelTestBuilder helper;
+  helper.MakeInput<float>("x", {1, 4}, {1.0f, -2.0f, 3.0f, -4.0f});
+  helper.MakeInput<float>("unused_a", {1}, {0.5f});
+  helper.MakeInput<float>("unused_b", {1}, {0.8f});
+  helper.AddNode("relu", "Relu", {"x"}, {"y"});
+  helper.MakeOutput("y");
+
+  const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+  opset_id_proto->set_domain(kOnnxDomain);
+  opset_id_proto->set_version(18);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  ProviderOptions options;
+#if defined(_WIN32)
+  options["backend_path"] = "QnnHtp.dll";
+  options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+  options["backend_path"] = "libQnnHtp.so";
+  options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif
+  options["offload_graph_io_quantization"] = "0";
+  options["dump_qnn_ir_dlc"] = "1";
+  options["dump_qnn_ir_dlc_dir"] = qnn_dlc_dir.string();
+
+  Ort::SessionOptions so;
+  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*ort_env, model_data.data(), model_data.size(), so));
+
+  EXPECT_EQ(scoped.session().GetInputCount(), 3u);
+
+  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
+  std::string dlc_bytes;
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".dlc") {
+      std::ifstream in(entry.path(), std::ios::binary);
+      dlc_bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+      ++file_count;
+    }
+  }
+  ASSERT_EQ(file_count, 1);
+
+  // Tensor names are plain strings in the DLC.
+  EXPECT_THAT(dlc_bytes, ::testing::HasSubstr("unused_a"));
+  EXPECT_THAT(dlc_bytes, ::testing::HasSubstr("unused_b"));
+}
+
 #if defined(__linux__) && !defined(__aarch64__)
 // Dumps a single ScatterElements(reduction=max) model -- a v73+ op the device-less HTP validator
 // rejects -- to DLC. Rejection is silent (the op drops to CPU, no throw), so the .dlc count is the
