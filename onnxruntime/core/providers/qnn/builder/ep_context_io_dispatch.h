@@ -31,7 +31,7 @@ class EpContextBuffer {
   size_t size_ = 0;
 };
 
-// Owns the App-provided EPContext callbacks and the session's file-mapping setting.
+// Owns the App-provided EPContext read/write callbacks resolved from a session options object.
 // Constructed once per session by QnnEp; not thread-safe (callers must serialize concurrent
 // Read/Write calls).
 //
@@ -62,15 +62,13 @@ class EpContextIoDispatch {
   // simply not registering anything.
   explicit EpContextIoDispatch(const OrtSessionOptions& session_options,
                                const OrtApiRuntimeCapabilities& runtime_capabilities,
-                               const Ort::Logger* logger = nullptr,
-                               bool enable_file_mapped_weights = true) noexcept;
+                               const Ort::Logger* logger = nullptr) noexcept;
   ~EpContextIoDispatch() = default;
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(EpContextIoDispatch);
 
   bool HasReadCallback() const noexcept;
   bool HasWriteCallback() const noexcept;
-  bool IsFileMappingEnabled() const noexcept { return file_mapping_enabled_; }
 
   // Precondition: HasReadCallback(). Adopts valid successful output without copying.
   // On callback error, the callback cleans up and the previous output is preserved.
@@ -90,7 +88,6 @@ class EpContextIoDispatch {
   OrtWriteNamedBufferFunc write_fn_ = nullptr;
   void* write_state_ = nullptr;
 #endif
-  bool file_mapping_enabled_ = true;
 };
 
 }  // namespace qnn

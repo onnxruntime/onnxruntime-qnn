@@ -155,6 +155,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      QnnBackendManager* qnn_backend_manager,
                                      QnnModelLookupTable& qnn_models,
                                      int64_t max_spill_fill_size,
+                                     bool enable_file_mapped_weights,
                                      const qnn::EpContextIoDispatch& io_dispatch,
                                      const Ort::Logger* logger) {
   const char* op_type = nullptr;
@@ -233,7 +234,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  if (io_dispatch.IsFileMappingEnabled() && qnn_backend_manager->FileMappingIsEnabled()) {
+  if (enable_file_mapped_weights && qnn_backend_manager->FileMappingIsEnabled()) {
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(nullptr,
                                                                0,
                                                                context_binary_path_str,
@@ -243,6 +244,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                io_dispatch,
                                                                is_multi_soc_ep_context);
   }
+#else
+  ORT_UNUSED_PARAMETER(enable_file_mapped_weights);
 #endif
 
   size_t buffer_size{0};
@@ -322,6 +325,7 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                     QnnModelLookupTable& qnn_models,
                                     const Ort::Logger& logger,
                                     int64_t max_spill_fill_size,
+                                    bool enable_file_mapped_weights,
                                     const qnn::EpContextIoDispatch& io_dispatch) {
   size_t num_nodes = 0;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graph, &num_nodes));
@@ -337,6 +341,7 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                                      qnn_backend_manager,
                                                      qnn_models,
                                                      max_spill_fill_size,
+                                                     enable_file_mapped_weights,
                                                      io_dispatch,
                                                      &logger);
 

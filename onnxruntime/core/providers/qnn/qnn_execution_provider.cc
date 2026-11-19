@@ -1727,8 +1727,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
   io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
                                                             runtime_capabilities,
-                                                            &logger_,
-                                                            enable_file_mapped_weights_);
+                                                            &logger_);
 
   // A callback session may initialize a manager later reused by native sessions.
   // Preserve the setup option; the manager decides mapping per load.
@@ -2954,6 +2953,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
                                                   qnn_models,
                                                   logger_,
                                                   max_spill_fill_size,
+                                                  enable_file_mapped_weights_,
                                                   *io_dispatch_));
   }
 

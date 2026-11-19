@@ -67,6 +67,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      QnnBackendManager* qnn_backend_manager,
                                      QnnModelLookupTable& qnn_models,
                                      int64_t max_spill_fill_size,
+                                     bool enable_file_mapped_weights,
                                      const qnn::EpContextIoDispatch& io_dispatch,
                                      const Ort::Logger* logger = nullptr);
 
@@ -83,6 +84,7 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                     QnnModelLookupTable& qnn_models,
                                     const Ort::Logger& logger,
                                     int64_t max_spill_fill_size,
+                                    bool enable_file_mapped_weights,
                                     const qnn::EpContextIoDispatch& io_dispatch);
 
 Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,

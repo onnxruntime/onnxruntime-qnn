@@ -509,6 +509,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+                                                          bool enable_file_mapped_weights,
                                                           const qnn::EpContextIoDispatch& io_dispatch);
 
   Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,

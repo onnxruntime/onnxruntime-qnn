@@ -70,9 +70,8 @@ TEST(QnnUnit_EpContextIoDispatchTest, EpContextEncryptionUnsupported_NeverTouche
     const OrtApiRuntimeCapabilities runtime_capabilities{
         OrtApiRuntimeCapabilities::kEpContextEncryptionMinApiVersion - 1};
 
-    qnn::EpContextIoDispatch dispatch(*session_options, runtime_capabilities, nullptr, false);
+    qnn::EpContextIoDispatch dispatch(*session_options, runtime_capabilities);
 
-    EXPECT_FALSE(dispatch.IsFileMappingEnabled());
     EXPECT_EQ(env.get_experimental_function_calls, 0);
     EXPECT_FALSE(dispatch.HasReadCallback());
     EXPECT_FALSE(dispatch.HasWriteCallback());
@@ -130,7 +129,7 @@ TEST(QnnUnit_EpContextIoDispatchTest, EpContextEncryptionSupported_AttemptsExper
 struct CallbackListMethodTag {
   using type = Ort::Status (qnn::QnnBackendManager::*)(
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>&,
-      const qnn::EpContextIoDispatch&);
+      bool, const qnn::EpContextIoDispatch&);
   friend type GetCallbackBackendMember(CallbackListMethodTag);
 };
 struct CallbackBackendSetupTag {
@@ -423,7 +422,8 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
     };
   }
 
-  Ort::Status NativeInitialLoad(const std::string& filename, const qnn::EpContextIoDispatch& io_dispatch) {
+  Ort::Status NativeInitialLoad(const std::string& filename, bool enable_file_mapped_weights,
+                                const qnn::EpContextIoDispatch& io_dispatch) {
     const auto path = std::filesystem::path(filename);
     FakeOpAttr embed = FakeOpAttr::MakeInt64(qnn::EMBED_MODE, 0);
     FakeOpAttr context_path = FakeOpAttr::MakeString(qnn::EP_CACHE_CONTEXT, path.filename().string());
@@ -432,7 +432,7 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
     node.attrs[qnn::EP_CACHE_CONTEXT] = &context_path;
     const auto model_path = (path.parent_path() / "model.onnx").native();
     return qnn::GetEpContextFromMainNode(node.AsNode(), api_, model_path,
-                                         backend_->GetMutable(), models_, 0, io_dispatch, &logger_);
+                                         backend_->GetMutable(), models_, 0, enable_file_mapped_weights, io_dispatch, &logger_);
   }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -462,7 +462,7 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
     node.attrs[qnn::EMBED_MODE] = &embed;
     node.attrs[qnn::EP_CACHE_CONTEXT] = &path;
     return qnn::GetEpContextFromMainNode(node.AsNode(), api_, ORT_TSTR("not-existing/model.onnx"),
-                                         backend_->GetMutable(), models_, 0, *dispatch_, &logger_);
+                                         backend_->GetMutable(), models_, 0, true, *dispatch_, &logger_);
   }
 
   Ort::Status ListLoad() {
@@ -471,7 +471,7 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
       binaries.emplace(std::string("not-existing/") + name + ".bin",
                        std::make_unique<std::vector<std::string>>(1, name));
     }
-    return (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, *dispatch_);
+    return (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, true, *dispatch_);
   }
 
   static thread_local QnnUnit_CallbackBufferTest* current_;
@@ -680,7 +680,7 @@ TEST_F(QnnUnit_CallbackBufferTest, NativeListBuffersSurviveNotificationsAndReadF
   const Qnn_ErrorHandle_t results[] = {QNN_SUCCESS, QNN_CONTEXT_ERROR_INVALID_ARGUMENT};
   for (auto result : results) {
     sdk_result_ = result;
-    auto status = (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, native_dispatch);
+    auto status = (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, true, native_dispatch);
     EXPECT_EQ(status.IsOK(), result == QNN_SUCCESS);
     if (result != QNN_SUCCESS) EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
   }
@@ -688,7 +688,7 @@ TEST_F(QnnUnit_CallbackBufferTest, NativeListBuffersSurviveNotificationsAndReadF
   auto missing = binaries.begin();
   ++missing;  // Fail the second read after the first native buffer has been loaded.
   EXPECT_TRUE(std::filesystem::remove(missing->first));
-  auto status = (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, native_dispatch);
+  auto status = (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, true, native_dispatch);
   EXPECT_FALSE(status.IsOK());
   EXPECT_EQ(list_calls_, 2u);
   EXPECT_EQ(read_calls_, 0u);
@@ -714,7 +714,7 @@ TEST_F(QnnUnit_CallbackBufferTest, SharedManagerCallbackDoesNotClearMappingFlag)
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
-TEST_F(QnnUnit_CallbackBufferTest, LateMappingPreservesDisabledNativeInitialSsrAndList) {
+TEST_F(QnnUnit_CallbackBufferTest, LateMappingPreservesDisabledNativeInitialAndList) {
   std::string error;
   auto rpcmem = qnn::RpcMemLibraryManager::GetOrCreate(error);
   if (!rpcmem) GTEST_SKIP() << error;
@@ -724,7 +724,7 @@ TEST_F(QnnUnit_CallbackBufferTest, LateMappingPreservesDisabledNativeInitialSsrA
   const auto backend_handle = backend_->BackendHandle();
   Ort::SessionOptions native_options;
   const OrtApiRuntimeCapabilities capabilities{ORT_API_VERSION};
-  const qnn::EpContextIoDispatch disabled(*native_options, capabilities, nullptr, false);
+  const qnn::EpContextIoDispatch disabled(*native_options, capabilities);
   const qnn::EpContextIoDispatch enabled(*native_options, capabilities);
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
 
@@ -739,20 +739,12 @@ TEST_F(QnnUnit_CallbackBufferTest, LateMappingPreservesDisabledNativeInitialSsrA
 
   UseNativeMappingSdk();
   const auto path = WriteNativeBinary("late_native");
-  ASSERT_TRUE(NativeInitialLoad(path, disabled).IsOK());
-  Qnn_ContextHandle_t context = nullptr;
-  ASSERT_TRUE(manager->ReloadContextForSSR(path, 0, context, disabled).IsOK());
+  ASSERT_TRUE(NativeInitialLoad(path, false, disabled).IsOK());
   binaries.emplace(path, std::make_unique<std::vector<std::string>>(1, "native_node"));
-  ASSERT_TRUE((manager->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, disabled).IsOK());
-  EXPECT_EQ(ordinary_calls_, 2u);
+  ASSERT_TRUE((manager->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, false, disabled).IsOK());
+  EXPECT_EQ(ordinary_calls_, 1u);
   EXPECT_EQ(mapped_calls_, 0u);
   EXPECT_EQ(mapped_list_calls_, 0u);
-
-  ASSERT_TRUE(manager->ReloadContextForSSR(path, 0, context, enabled).IsOK());
-  EXPECT_EQ(mapped_calls_, 1u);
-  ASSERT_TRUE(manager->ReloadContextForSSR(path, 0, context, disabled).IsOK());
-  EXPECT_EQ(ordinary_calls_, 3u);
-  EXPECT_EQ(mapped_calls_, 1u);
 }
 
 TEST_F(QnnUnit_CallbackBufferTest, LateMappingKeepsCallbackInitialSsrAndListOrdinary) {
@@ -763,7 +755,7 @@ TEST_F(QnnUnit_CallbackBufferTest, LateMappingKeepsCallbackInitialSsrAndListOrdi
   backend_->BackendType() = qnn::QnnBackendType::HTP;
   manager->*GetCallbackBackendMember(CallbackBackendSetupTag{}) = true;
   const OrtApiRuntimeCapabilities capabilities{ORT_API_VERSION};
-  const qnn::EpContextIoDispatch disabled_callback(*options_, capabilities, nullptr, false);
+  const qnn::EpContextIoDispatch disabled_callback(*options_, capabilities);
   const qnn::EpContextIoDispatch native_dispatch;
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
   ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, false, nullptr, binaries, disabled_callback).IsOK());
@@ -808,7 +800,7 @@ TEST_F(QnnUnit_CallbackBufferTest, LateMapperIsCreatedBeforeVtcmListLoading) {
   manager->*GetCallbackBackendMember(CallbackSharingModeTag{}) = 1;
   Ort::SessionOptions native_options;
   const OrtApiRuntimeCapabilities capabilities{ORT_API_VERSION};
-  const qnn::EpContextIoDispatch disabled(*native_options, capabilities, nullptr, false);
+  const qnn::EpContextIoDispatch disabled(*native_options, capabilities);
   const qnn::EpContextIoDispatch enabled(*native_options, capabilities);
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> first, second;
   first.emplace(WriteNativeBinary("first"), std::make_unique<std::vector<std::string>>(1, "first"));

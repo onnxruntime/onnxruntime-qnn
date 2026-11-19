@@ -12,9 +12,8 @@ EpContextIoDispatch::EpContextIoDispatch() noexcept : config_{nullptr} {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& session_options,
                                          const OrtApiRuntimeCapabilities& runtime_capabilities,
-                                         const Ort::Logger* logger,
-                                         bool enable_file_mapped_weights) noexcept
-    : config_{nullptr}, file_mapping_enabled_(enable_file_mapped_weights) {
+                                         const Ort::Logger* logger) noexcept
+    : config_{nullptr} {
   // The named capability is negotiated with the actual runtime, not inferred from the
   // compile-time ORT_API_VERSION. Skip APIs absent from an older runtime's OrtApi struct.
   if (!runtime_capabilities.SupportsEpContextEncryption()) {
@@ -112,9 +111,7 @@ EpContextIoDispatch::EpContextIoDispatch() noexcept {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& /*session_options*/,
                                          const OrtApiRuntimeCapabilities& /*runtime_capabilities*/,
-                                         const Ort::Logger* /*logger*/,
-                                         bool enable_file_mapped_weights) noexcept
-    : file_mapping_enabled_(enable_file_mapped_weights) {}
+                                         const Ort::Logger* /*logger*/) noexcept {}
 
 bool EpContextIoDispatch::HasReadCallback() const noexcept { return false; }
 bool EpContextIoDispatch::HasWriteCallback() const noexcept { return false; }

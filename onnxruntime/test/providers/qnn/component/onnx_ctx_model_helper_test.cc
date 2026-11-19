@@ -659,7 +659,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_WrongOpType_Return
   CtxHelperTestContext ctx;
   FakeNode node{"relu", "Relu", "", 13, {}, {}};
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0, false,
                                          qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
 }
@@ -671,7 +671,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedEmptyPath_
   FakeNode node{"ep", "EPContext", "", 1, {}, {}};
   node.attrs[EMBED_MODE] = &embed_mode;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0, false,
                                          qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
   // Pin the specific guard: without this the terminal is_regular_file() check
@@ -694,7 +694,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedAbsolutePa
   node.attrs[EMBED_MODE] = &embed_mode;
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0, false,
                                          qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
   // Pin the absolute-path (directory-traversal) guard: removing it lets the
@@ -713,7 +713,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedDotDotPath
   node.attrs[EMBED_MODE] = &embed_mode;
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0, false,
                                          qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
   // Pin the ".." guard by both code and message. Removing it lets the path
@@ -735,7 +735,7 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextFromMainNode_NonEmbedFileNotFou
   node.attrs[EMBED_MODE] = &embed_mode;
   node.attrs[EP_CACHE_CONTEXT] = &cache_ctx;
   QnnModelLookupTable models;
-  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0,
+  auto status = GetEpContextFromMainNode(node.AsNode(), ctx.api, ORT_TSTR("/model.onnx"), nullptr, models, 0, false,
                                          qnn::EpContextIoDispatch());
   EXPECT_FALSE(status.IsOK());
 }
