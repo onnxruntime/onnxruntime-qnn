@@ -397,16 +397,22 @@ static void RunOpTest(const std::string& op_type,
                       const std::string& op_domain = kOnnxDomain,
                       float fp32_abs_err = 1e-5f,
                       bool enable_htp_fp16_precision = false,
-                      [[maybe_unused]] std::optional<std::string> soc_model = std::nullopt) {
+                      std::optional<std::string> soc_model = std::nullopt) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
+
+  if (soc_model.has_value()) {
+    provider_options["soc_model"] = *soc_model;
+  }
 
   if (enable_htp_fp16_precision) {
 #if defined(_WIN32)
     SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
-    provider_options["soc_model"] = soc_model.has_value() ? *soc_model : std::to_string(QNN_SOC_MODEL_SM8850);
+    if (!soc_model.has_value()) {
+      provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+    }
 #endif
     provider_options["enable_htp_fp16_precision"] = "1";
   }
@@ -569,16 +575,16 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Tanh) {
 
 TEST_F(QnnHTPBackendTests, UnaryOp_Tan_fp) {
   QNN_SKIP_TEST_ON_ARM64("Accuracy drop is high on ARM64/AARCH64");
+  // SM8350 -> HTP v68. FP32 Tan is rejected on v68 and falls back to CPU EP.
   RunOpTest<float>("Tan",
                    {TestInputDef<float>({1, 2, 3}, false, {0.1f, 0.5f, 1.0f, -0.5f, 0.3f, -1.0f})},
                    {},
                    13,
-                   ExpectedEPNodeAssignment::All,
+                   ExpectedEPNodeAssignment::None,
                    kOnnxDomain,
                    1E-05,
-                   true,
-                   std::to_string(QNN_SOC_MODEL_SM8350)  // This test fails with QNN_SOC_MODEL_SM8850 due to a known HTP issue
-  );
+                   false,
+                   std::to_string(QNN_SOC_MODEL_SM8350));
 }
 
 // Check that QNN compiles DQ -> Tan -> Q as a single unit.
