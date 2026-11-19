@@ -224,14 +224,24 @@ foreach(_file IN LISTS ORT_BINARY_FILES)
     list(APPEND ORT_BUILD_BYPRODUCTS "${ORT_PREBUILT_DEST}/${_file}")
 endforeach()
 
+# Patch 0003 only touches ORT core's own unit test cmake, which is only used when
+# ORT core is built from source. With a prebuilt ORT (onnxruntime_ORT_HOME) the
+# ORT core source tree may not be populated at all (e.g. FETCHCONTENT_FULLY_DISCONNECTED),
+# so skip the patch step in that case.
+if(onnxruntime_ORT_HOME)
+    set(ORT_PATCH_COMMAND "")
+else()
+    set(ORT_PATCH_COMMAND ${Patch_EXECUTABLE} --ignore-whitespace -p1
+        -i "${CMAKE_SOURCE_DIR}/patches/ort_core/0003-Guard-QNN_LIB_FILES-copy-in-onnxruntime-unittests.patch")
+endif()
+
 message(STATUS "ORT_BUILD_COMMAND for ExternalProject: ${ORT_BUILD_COMMAND}")
 ExternalProject_Add(
     ort_core_target
     SOURCE_DIR ${ORT_SOURCE_DIR}
     BINARY_DIR ${ORT_BUILD_DIR}
     DOWNLOAD_COMMAND ""
-    PATCH_COMMAND ${Patch_EXECUTABLE} --ignore-whitespace -p1
-                  -i "${CMAKE_SOURCE_DIR}/patches/ort_core/0003-Guard-QNN_LIB_FILES-copy-in-onnxruntime-unittests.patch"
+    PATCH_COMMAND ${ORT_PATCH_COMMAND}
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${ORT_BUILD_COMMAND}
     BUILD_ALWAYS ON
