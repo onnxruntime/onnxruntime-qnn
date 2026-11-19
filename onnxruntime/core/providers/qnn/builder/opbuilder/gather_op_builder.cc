@@ -398,7 +398,7 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // type used for input0 in ProcessInputs, instead of the plain integer type. (Computed above,
   // shared with the GatherElements branch.)
   if (raw_narrow_int_identity_type.has_value()) {
-    qnn_data_type = *raw_narrow_int_identity_type;
+    qnn_data_type = raw_narrow_int_identity_type.value_or(qnn_data_type);
     quantize_param = QnnQuantParamsWrapper::PerTensor(1.0f, 0);
   }
 
