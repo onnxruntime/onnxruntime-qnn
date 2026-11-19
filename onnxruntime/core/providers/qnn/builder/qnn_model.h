@@ -237,10 +237,6 @@ class QnnModel {
   // Runtime graph configs recorded by ApplyRuntimeGraphConfigs for re-application after an SSR
   // re-retrieves the graph handle. See the single-call contract in the .cc.
   HtpGraphConfigs_t runtime_graph_configs_;
-
-  // BindAndExecuteGraph is serialized by graph_exec_mutex_, so one boolean is
-  // sufficient to emit a single fallback warning for this model/session.
-  bool zero_copy_fallback_warned_ = false;
 };
 
 }  // namespace qnn

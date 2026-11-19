@@ -75,7 +75,7 @@ void AttachLogCapture(Ort::SessionOptions& so, LogCapture& capture) {
 constexpr std::string_view kLogSubstrMemHandle = "Setting Qnn_Tensor_t memHandle";
 constexpr std::string_view kLogSubstrClientBuf = "Setting Qnn_Tensor_t clientBuf";
 
-// One-shot WARNING emitted when QNN zero-copy binding falls back to clientBuf.
+// WARNING emitted for every tensor binding that falls back to clientBuf; it names the tensor.
 constexpr std::string_view kLogSubstrFallbackWarning =
     "QNN zero-copy memory binding was not used; falling back to clientBuf";
 
@@ -769,7 +769,9 @@ TEST_F(QnnHTPBackendTests, untracked_host_accessible_memory_falls_back_to_client
   }
   EXPECT_GE(capture.CountContaining(kLogSubstrClientBuf), 2u);
   EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 0u);
-  EXPECT_EQ(capture.CountContaining(kLogSubstrFallbackWarning), 1u);
+  // One WARNING per fallback binding: X and Y in a single Run.
+  EXPECT_EQ(capture.CountContaining(kLogSubstrFallbackWarning), 2u);
+  EXPECT_EQ(capture.CountContaining("HOST_ACCESSIBLE memory was not allocated by QnnHtpShared"), 2u);
 }
 
 // With shared-memory binding enabled, ORT places the tensors at real
@@ -1077,8 +1079,8 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_zero_copy) {
 //                                                Verifies MEMHANDLE and clientBuf co-exist within
 //                                                a single Run and the WARNING fires only for the
 //                                                CPU-backed tensor.
-//   htp_shared_memory_fallback_warning_once    — the WARNING is one-shot per model/session
-//                                                across multiple Runs.
+//   htp_shared_memory_fallback_warning_per_tensor — the WARNING names each CPU-backed
+//                                                tensor and is emitted in every Run.
 //   htp_shared_memory_concurrent_run           — same session, multiple threads calling Run()
 //                                                concurrently with per-thread shared-memory I/O.
 //                                                Verifies thread safety of graph_exec_mutex_ and
@@ -1161,12 +1163,10 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_multi_io) {
 //   (2) The zero-copy fallback WARNING fires selectively — only for the tensor
 //       that opted in via the session option but is bound to CPU memory.
 //
-// Note: when default_device_ = HOST_ACCESSIBLE, ORT Core transparently copies
-// CPU-backed *inputs* into HOST_ACCESSIBLE memory before the kernel runs, so a
-// CPU input never reaches BindQnnTensorMemoryToOrtValueMemory with CPU memory
-// info. Only CPU-backed *outputs* still hit the RAW/clientBuf branch (outputs
-// are written directly to the user's bound buffer). This test therefore mixes
-// shared inputs with a CPU output to exercise the fallback path.
+// Note: CPU-backed inputs and outputs bound by the application reach
+// BindQnnTensorMemoryToOrtValueMemory unchanged. QnnHtpShared declares alignment 0,
+// so ORT treats CPU memory as satisfying it and does not stage a copy. This test
+// mixes shared inputs with a CPU output to exercise the fallback path.
 TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
@@ -1224,20 +1224,15 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
       << "Expected MEMHANDLE for the 3 tensors bound to shared memory.";
   EXPECT_GE(capture.CountContaining(kLogSubstrClientBuf), 1u)
       << "Expected clientBuf for the 1 tensor (outp1) bound to CPU memory.";
-  // The WARNING should fire once for the CPU-backed output.
-  EXPECT_GE(capture.CountContaining(kLogSubstrFallbackWarning), 1u)
-      << "Expected the zero-copy fallback WARNING for the CPU-backed tensor.";
+  // The WARNING names the CPU-backed output.
+  EXPECT_EQ(capture.CountContaining(kLogSubstrFallbackWarning), 1u)
+      << "Expected the zero-copy fallback WARNING only for the CPU-backed tensor.";
+  EXPECT_EQ(capture.CountContaining("Tensor: outp1,"), 1u);
 }
 
-// The fallback WARNING is a one-shot per model/session. Running the same
-// session multiple times with CPU-backed bindings must produce exactly one
-// WARNING across all Runs — not one per tensor or Run.
-//
-// Note: when default_device_ = HOST_ACCESSIBLE, only CPU *outputs* trigger the
-// fallback; CPU inputs are transparently promoted to HOST_ACCESSIBLE by ORT
-// Core's memory planner. mul_1 has one output (Y), so exactly one WARNING is
-// expected regardless of the number of Runs.
-TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
+// The fallback WARNING is emitted for every CPU-backed binding in every Run and
+// names the tensor, so each tensor that misses zero-copy can be identified.
+TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_per_tensor) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
 
@@ -1272,15 +1267,15 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
     session.Run(Ort::RunOptions{}, binding);
   }
 
-  // mul_1 has one input (X) and one output (Y). X is transparently promoted
-  // from CPU to HOST_ACCESSIBLE by ORT Core, so its Bind takes the MEMHANDLE
-  // branch with no WARNING. Only Y stays CPU and triggers the
-  // WARNING — exactly ONCE across all kRuns (not once per Run).
-  // If the one-shot guard is broken it would fire kRuns times.
+  // mul_1 has one input (X) and one output (Y). Both are plain CPU memory, which
+  // ORT passes through unchanged (QnnHtpShared declares alignment 0), so each
+  // binding falls back and is reported in every Run.
   const size_t warn_count = capture.CountContaining(kLogSubstrFallbackWarning);
-  EXPECT_EQ(warn_count, 1u)
-      << "Expected exactly 1 WARNING (for CPU-backed output Y) across " << kRuns
-      << " Runs, but got " << warn_count << ". One-shot semantics broken?";
+  EXPECT_EQ(warn_count, capture.CountContaining(kLogSubstrClientBuf))
+      << "Every clientBuf fallback must emit a WARNING.";
+  EXPECT_EQ(capture.CountContaining("Tensor: X,"), static_cast<size_t>(kRuns));
+  EXPECT_EQ(capture.CountContaining("Tensor: Y,"), static_cast<size_t>(kRuns));
+  EXPECT_EQ(capture.CountContaining("reason: memory is not HOST_ACCESSIBLE"), 2u * kRuns);
 }
 
 // Exercises the mem-handle manager's address-keyed cache and the graph_exec_mutex_
