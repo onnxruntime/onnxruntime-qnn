@@ -1597,11 +1597,10 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
   context_params_ptr_list.reserve(context_bin_map.size() + 1);
   callback_infos.reserve(context_bin_map.size());
 
-  // Keep the selected buffers alive through all notifications and the SDK return.
-  std::vector<qnn::EpContextBuffer> callback_buffers;
-  std::vector<std::vector<char>> buffer_list;
+  Qnn_ErrorHandle_t result = QNN_CONTEXT_NO_ERROR;
+  // Each branch owns its binaries through all notifications and the SDK return.
   if (io_dispatch.HasReadCallback()) {
-    callback_buffers.resize(context_bin_map.size());
+    std::vector<qnn::EpContextBuffer> callback_buffers(context_bin_map.size());
     size_t index = 0;
     for (const auto& it : context_bin_map) {
       auto& buffer = callback_buffers[index++];
@@ -1612,8 +1611,14 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
       context_params_list.push_back({QNN_CONTEXT_PARAMS_VERSION_1, {params}});
       context_params_ptr_list.push_back(&context_params_list.back());
     }
+    context_params_ptr_list.push_back(nullptr);
+    result = qnn_interface_.contextCreateFromBinaryListAsync(backend_handle_,
+                                                             device_handle_,
+                                                             context_params_ptr_list.data(),
+                                                             configs,
+                                                             nullptr);
   } else {
-    buffer_list.resize(context_bin_map.size());
+    std::vector<std::vector<char>> buffer_list(context_bin_map.size());
     size_t index = 0;
     for (const auto& it : context_bin_map) {
       auto& buffer = buffer_list[index++];
@@ -1624,14 +1629,14 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
       context_params_list.push_back({QNN_CONTEXT_PARAMS_VERSION_1, {params}});
       context_params_ptr_list.push_back(&context_params_list.back());
     }
+    context_params_ptr_list.push_back(nullptr);
+    result = qnn_interface_.contextCreateFromBinaryListAsync(backend_handle_,
+                                                             device_handle_,
+                                                             context_params_ptr_list.data(),
+                                                             configs,
+                                                             nullptr);
   }
 
-  context_params_ptr_list.push_back(nullptr);
-  auto result = qnn_interface_.contextCreateFromBinaryListAsync(backend_handle_,
-                                                                device_handle_,
-                                                                context_params_ptr_list.data(),
-                                                                configs,
-                                                                nullptr);
   RETURN_IF(QNN_CONTEXT_NO_ERROR != result, ("Failed to create context. Error: " + QnnErrorHandleToString(result) + ", Code:" + std::to_string(result)).c_str());
   return Ort::Status();
 }
