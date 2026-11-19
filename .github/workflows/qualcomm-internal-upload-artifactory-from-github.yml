@@ -43,6 +43,10 @@ on:
         description: "If true, build and test Android, then publish only the Maven artifact."
         type: boolean
         default: false
+      source_sha:
+        description: "Commit SHA to build, test, and publish. Empty uses the workflow revision."
+        type: string
+        default: ""
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
@@ -55,6 +59,7 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       maven_only: ${{ inputs.maven_only }}
+      source_sha: ${{ inputs.source_sha }}
       build_android_aarch64: false
       build_android_aarch64_aar: ${{ inputs.maven_only || !inputs.skip_android_builds }}
       build_linux_aarch64_oe_gcc11_2: false
@@ -70,6 +75,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
 
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v5
@@ -263,6 +270,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
 
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v5
@@ -378,6 +387,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
 
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v5
@@ -635,6 +646,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
 
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v5

@@ -18,6 +18,10 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: ""
+      source_sha:
+        description: "Commit SHA to build and test. Empty uses the workflow revision."
+        type: string
+        default: ""
       build_android_aarch64:
         description: "If true, build for Android"
         type: boolean
@@ -62,6 +66,8 @@ jobs:
   archive-testdata:
     uses: ./.github/workflows/qualcomm-internal-archive-testdata.yml
     secrets: inherit
+    with:
+      source_sha: ${{ inputs.source_sha }}
 
   build-android-aarch64:
     if: ${{ inputs.maven_only || inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
@@ -69,6 +75,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
+      source_sha: ${{ inputs.source_sha }}
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       build_runner_os: linux
@@ -88,6 +95,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
     with:
+      source_sha: ${{ inputs.source_sha }}
       target_os: android
       target_arch: aarch64
       testdata_archive_artifact_name: testdata-zip
@@ -101,6 +109,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
+      source_sha: ${{ inputs.source_sha }}
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       target_os: linux
@@ -120,6 +129,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
+      source_sha: ${{ inputs.source_sha }}
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: aarch64_oe_gcc11_2
@@ -138,6 +148,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
+      source_sha: ${{ inputs.source_sha }}
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       target_os: linux
@@ -161,6 +172,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
+      source_sha: ${{ inputs.source_sha }}
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       target_os: windows
@@ -192,6 +204,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
+      source_sha: ${{ inputs.source_sha }}
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       target_arch: arm64x
@@ -234,6 +247,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
+      source_sha: ${{ inputs.source_sha }}
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       target_arch: arm64

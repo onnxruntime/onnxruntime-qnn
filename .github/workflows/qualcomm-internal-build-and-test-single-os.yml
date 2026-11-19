@@ -10,6 +10,10 @@ permissions:
 on:
   workflow_call:
     inputs: &common_inputs
+      source_sha:
+        description: "Commit SHA to build and test. Empty uses the workflow revision."
+        type: string
+        default: ""
       has_code_changes:
         description: |
           If false, the job runs checkout + (skipped) steps only and skips ALL heavy work
@@ -142,7 +146,7 @@ env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
   BUILD_SOURCEBRANCH: "${{ github.ref }}"
-  BUILD_SOURCEVERSION: "${{ github.sha }}"
+  BUILD_SOURCEVERSION: "${{ inputs.source_sha || github.sha }}"
   BUILD_BUILDID: "${{ github.run_id }}"
 
 jobs:
@@ -154,6 +158,8 @@ jobs:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
         # Submodules omitted here; initialized below only when a heavy build is needed, so
         # has_code_changes=false jobs skip the expensive recursive fetch while still reporting green.
       - name: Validate internal-symbol artifact settings
@@ -340,6 +346,8 @@ jobs:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
         # Submodules omitted here; initialized below only when a heavy test run is needed.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}
@@ -454,6 +462,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
     with:
+      source_sha: ${{ inputs.source_sha }}
       has_code_changes: ${{ inputs.has_code_changes }}
       target_os: windows
       target_arch: arm64
@@ -491,6 +500,8 @@ jobs:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
         # Submodules omitted here; initialized below only when a heavy wheel smoke test is needed.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}

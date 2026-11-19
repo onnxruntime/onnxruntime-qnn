@@ -10,6 +10,10 @@ permissions:
 on:
   workflow_call:
     inputs:
+      source_sha:
+        description: "Commit SHA to test. Empty uses the workflow revision."
+        type: string
+        default: ""
       has_code_changes:
         description: |
           If false, the job runs checkout only and skips ALL heavy work (submodule init,
@@ -106,6 +110,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
         # Submodules omitted here; initialized below only when a heavy QDC run is needed.
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}
