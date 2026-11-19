@@ -446,7 +446,9 @@ jobs:
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
   test-windows-arm64-qdc:
-    # Glymur QDC testing is disabled in CI.
+    # A WoS QDC test takes around 2 hours, tying up Linux CI resources.
+    # Disable WoS QDC testing for now until we find a solution or a better way to test it.
+    # TODO: Restore the job condition once that solution or testing approach is available.
     if: ${{ false }}
     needs: [build]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
