@@ -162,7 +162,7 @@ try {
     $ProbeExitCodeFile = Join-Path $LogDir "htp-smoke.exitcode.txt"
     $ProbeWrapper = Join-Path $LogDir "run-htp-smoke.cmd"
     $ProbeExecutable = Join-Path $BinaryRoot "onnxruntime_provider_test.exe"
-    $env:ORT_UNIT_TEST_MAIN_LOG_LEVEL = "1"
+    $env:ORT_UNIT_TEST_MAIN_LOG_LEVEL = "2" # WARNING for the smoke test and full suite.
     @"
 @echo off
 "$ProbeExecutable" --gtest_filter=QnnHTPBackendTests.$ProbeTest "--gtest_output=xml:$ProbeXml"
