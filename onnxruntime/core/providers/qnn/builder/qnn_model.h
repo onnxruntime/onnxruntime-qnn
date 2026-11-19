@@ -159,6 +159,8 @@ class QnnModel {
 
   const std::string& Name() const { return graph_info_->Name(); }
 
+  bool FileMappingIsEnabled() const { return qnn_backend_manager_->FileMappingIsEnabled(); }
+
   // Store info needed to reload the QNN context from disk after an SSR.
   // Only applicable to embed_mode=0 (external context binary file); the filepath is empty
   // for embed_mode=1, which disables SSR recovery for that model.

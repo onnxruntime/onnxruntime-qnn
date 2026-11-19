@@ -1509,7 +1509,6 @@ Ort::Status QnnBackendManager::ReloadContextForSSR(const std::string& context_bi
 
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
-    bool enable_file_mapped_weights,
     const qnn::EpContextIoDispatch& io_dispatch) {
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
   QnnContext_Config_t context_config_resource_sharing = QNN_CONTEXT_CONFIG_INIT;
@@ -1569,7 +1568,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   configs_vec.push_back(nullptr);
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  if (enable_file_mapped_weights && !io_dispatch.HasReadCallback() && file_mapped_weights_enabled_ && file_mapper_) {
+  if (!io_dispatch.HasReadCallback() && file_mapped_weights_enabled_ && file_mapper_) {
     // Retry logic -- if context creation failed with file mapped weights, then retry with feature disabled
     auto res = CreateContextFromListAsyncWithCallback(configs_vec.data(), context_bin_map);
     if (!res.IsOK()) {
@@ -1580,8 +1579,6 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
       return Ort::Status();
     }
   }
-#else
-  ORT_UNUSED_PARAMETER(enable_file_mapped_weights);
 #endif
   return CreateContextFromListAsync(configs_vec.data(), context_bin_map, io_dispatch);
 }
@@ -2179,16 +2176,9 @@ Ort::Status QnnBackendManager::SetupBackend(
     uint32_t htp_graph_splitting_num_prepare_threads) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
+    RETURN_IF(enable_file_mapped_weights != file_mapped_weights_enabled_,
+              "Cannot reuse QNN backend manager with a different file-mapped weights setting.");
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
-
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-    if (enable_file_mapped_weights && !file_mapper_ && GetQnnBackendType() == QnnBackendType::HTP) {
-      RETURN_IF(!rpcmem_library, "RPCMem Library is required for file mapping but is uninitialized.");
-      rpcmem_library_ = rpcmem_library;
-      file_mapped_weights_enabled_ = true;
-      file_mapper_ = std::make_unique<WindowsFileMapper>(*logger_ptr_);
-    }
-#endif
 
     if (htp_share_resource_optimization_ == 1) {
       // If a context bin filepath has not been processed yet,
@@ -2202,7 +2192,6 @@ Ort::Status QnnBackendManager::SetupBackend(
       if (!context_exists) {
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
         return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                           enable_file_mapped_weights,
                                                            io_dispatch);
       }
 
@@ -2238,7 +2227,6 @@ Ort::Status QnnBackendManager::SetupBackend(
   if (enable_file_mapped_weights && !file_mapper_ && GetQnnBackendType() == QnnBackendType::HTP) {
     RETURN_IF(!rpcmem_library, "RPCMem Library is required for file mapping but is uninitialized.");
     rpcmem_library_ = rpcmem_library;
-    file_mapped_weights_enabled_ = true;
     file_mapper_ = std::make_unique<WindowsFileMapper>(*logger_ptr_);
   }
 #else
@@ -2368,7 +2356,6 @@ Ort::Status QnnBackendManager::SetupBackend(
     }
     status = htp_share_resource_optimization_ == 1
                  ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
-                                                               enable_file_mapped_weights,
                                                                io_dispatch)
                  : CreateContext(enable_htp_weight_sharing,
                                  enable_htp_extended_udma_mode,
