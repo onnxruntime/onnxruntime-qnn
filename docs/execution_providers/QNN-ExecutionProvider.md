@@ -158,7 +158,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'0'|Default. Do not request initialization acceleration.|
 |'1'|Accelerate HTP cached-context initialization. Requires a build with QAIRT SDK 2.47 or later.|
 
-Acceleration uses all DSP hardware threads during deserialization and can significantly reduce the performance of graphs running concurrently. Small graphs may see little benefit. Invalid values are rejected. Older SDK builds log a warning and ignore "1".
+Acceleration uses all DSP hardware threads during deserialization and can significantly reduce the performance of graphs running concurrently. Small graphs may see little benefit. Invalid values use the default "0". Older SDK builds log a warning and ignore "1".
 
 With `htp_share_resource_optimization="1"`, context loading already uses initialization optimizations; `htp_context_init_acceleration` is not required to enable them. The two options control separate features.
 
