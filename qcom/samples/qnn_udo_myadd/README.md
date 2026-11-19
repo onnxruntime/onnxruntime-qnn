@@ -4,7 +4,7 @@ End-to-end reference showing how to run an ONNX model with a QNN
 User-Defined Operation (UDO) through the ORT QNN Execution Provider.
 
 **Op**: `MyAdd` (`domain="example"`) — computes `output = input + constant`.
-**Backends demonstrated**: QNN CPU (float32), QNN HTP x86 simulator (QDQ uint8), and on-device HTP (arm64).
+**Backends demonstrated**: QNN HTP x86 simulator (QDQ uint8), and on-device HTP (arm64).
 
 ---
 
@@ -12,15 +12,14 @@ User-Defined Operation (UDO) through the ORT QNN Execution Provider.
 
 | File | Purpose |
 |------|---------|
-| `gen_myadd_model.py` | Generate `myadd_fp32.onnx` (CPU) and `myadd_qdq.onnx` (HTP) |
+| `gen_myadd_model.py` | Generate `myadd_fp32.onnx` reference graph and `myadd_qdq.onnx` (HTP) |
 | `gen_myadd_test_data.py` | Generate `onnxruntime_plugin_ep_onnx_test` protobuf inputs and references for on-device HTP |
-| `run_udo_sample.cc` | C++ standalone sample — CPU and HTP modes |
-| `run_udo_sample.py` | Python sample — CPU and HTP modes |
-| `build_op_package.sh` | Build `libMyAddOpPackage_cpu.so` / `libMyAddOpPackage_htp.so` |
+| `run_udo_sample.cc` | C++ standalone sample — HTP mode |
+| `run_udo_sample.py` | Python sample — HTP mode |
+| `build_op_package.sh` | Build `libMyAddOpPackage_htp.so` |
 
 The sample uses the canonical MyAdd op-package source shared with the UDO unit
-tests: `onnxruntime/test/providers/qnn/udo/` (`MyAddOpPackageCpu.xml`,
-`MyAddOpPackageHtp.xml`, `MyAddCPU.cpp`, `MyAddHTP.cpp`, and `HTP_Makefile`).
+tests: `onnxruntime/test/providers/qnn/udo/` (`MyAddOpPackageHtp.xml`, `MyAddHTP.cpp`, and `HTP_Makefile`).
 Run the commands from a repository checkout so `build_op_package.sh` can locate
 those inputs.
 
@@ -58,13 +57,12 @@ export QNN_SDK_ROOT=/path/to/qairt/<version>
 export LLVM_TOOL_DIR=/path/to/LLVM-21.1.8-Linux-X64
 export HEXAGON_SDK_ROOT=/path/to/Hexagon_SDK/6.5.0.0   # HTP only
 
-./build_op_package.sh all
+./build_op_package.sh htp
 # Produces:
-#   artifacts/libMyAddOpPackage_cpu.so   (QNN CPU op package)
 #   artifacts/libMyAddOpPackage_htp.so   (QNN HTP op package)
 ```
 
-Individual targets: `./build_op_package.sh cpu` or `htp`.
+The sample supports the HTP backend only.
 
 ---
 
@@ -96,20 +94,9 @@ g++ -std=c++17 run_udo_sample.cc \
 # Set env var so the QNN EP factory registers the custom-op domain automatically
 export ORT_QNN_CUSTOM_OP_DOMAINS="example:MyAdd"
 
-# CPU backend (libQnnCpu.so must be on LD_LIBRARY_PATH)
-LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_LIB}:${LD_LIBRARY_PATH} \
-    ./run_udo_sample cpu myadd_fp32.onnx artifacts/libMyAddOpPackage_cpu.so
-
 # HTP backend (libQnnHtp.so must be on LD_LIBRARY_PATH)
 LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_LIB}:${LD_LIBRARY_PATH} \
     ./run_udo_sample htp myadd_qdq.onnx artifacts/libMyAddOpPackage_htp.so
-```
-
-Expected output (CPU):
-```
-=== QNN CPU backend ===
-Max absolute error vs (input + 2.0): 0.00e+00
-PASS
 ```
 
 Expected output (HTP):
@@ -122,26 +109,26 @@ PASS
 The HTP sample permits two output-quantization steps over `[0, 4]`, so its
 tolerance is `2 × (4/255) ≈ 0.0314`.
 
-### Host verification cross-checks
-
-Confirm that the CPU model is assigned to QNN rather than falling back to the
-CPU EP:
+### Unit tests
 
 ```bash
-LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_LIB}:${LD_LIBRARY_PATH} \
-ORT_LOG_LEVEL=1 ./run_udo_sample cpu myadd_fp32.onnx artifacts/libMyAddOpPackage_cpu.so 2>&1 \
-    | grep -i "node.*assign\|partition\|MyAdd"
+${ORT_BUILD}/onnxruntime_provider_test --gtest_filter="*UDO_Op_MyAdd*"
 ```
 
-The corresponding gtests in the same QNN EP build output validate the CPU and
-HTP paths:
+The HTP fixture tests cover manual and automatic domains, invalid package paths,
+missing domains, context generation/loading, and mixed graphs. Package lookup
+checks `ORT_QNN_UDO_OP_PACKAGE_DIR`, `custom_op/op_packages/htp` beside the test
+executable, then the executable directory. Missing packages skip unless
+`ORT_QNN_UDO_REQUIRED_BACKENDS=htp` is set.
 
-```bash
-${ORT_BUILD}/onnxruntime_provider_test \
-    --gtest_filter="QnnCPUBackendTests.UDO_Op_MyAdd_AutoDomainOnly"
-${ORT_BUILD}/onnxruntime_provider_test \
-    --gtest_filter="QnnHTPBackendTests.UDO_Op_MyAdd"
-```
+For `UDO_Op_MyAdd_LoadPregenerated`, place the model and external binary under
+`custom_op/contexts/<arch>/` beside the executable (model name `myadd_ctx.onnx`).
+Set `ORT_QNN_UDO_CONTEXT_ARCH=<arch>` and
+`ORT_QNN_UDO_CONTEXT_OP_PACKAGES` to the target's registration entries. A device
+context load uses the matching skel by bare filename with `:HTP`, and requires
+the platform DSP search path. On Windows native ARM64, signing and device
+validation are prerequisites; x64 and ARM64EC/X are unsupported. Pure EPContext
+loads require no `ORT_QNN_CUSTOM_OP_DOMAINS` variable.
 
 ---
 
@@ -155,12 +142,6 @@ ORT_LIB=$(python3 -c "import onnxruntime, os; print(os.path.join(os.path.dirname
 
 # Set env var so the QNN EP factory registers the custom-op domain automatically
 export ORT_QNN_CUSTOM_OP_DOMAINS="example:MyAdd"
-
-# CPU backend
-LD_LIBRARY_PATH=${QNN_PKG}:${ORT_LIB}:${LD_LIBRARY_PATH} \
-python3 run_udo_sample.py cpu myadd_fp32.onnx \
-    --op-package artifacts/libMyAddOpPackage_cpu.so \
-    --qnn-ep-lib ${QNN_PKG}/libonnxruntime_providers_qnn.so
 
 # HTP backend (libQnnHtp.so is bundled in QNN_PKG)
 LD_LIBRARY_PATH=${QNN_PKG}:${ORT_LIB}:${LD_LIBRARY_PATH} \
@@ -259,12 +240,12 @@ adb -s ${DEVICE_SERIAL} push "${TC}/model.onnx"               ${DEVICE_DIR}/
 adb -s ${DEVICE_SERIAL} push "${TC}/test_data_set_0/."        ${DEVICE_DIR}/test_data_set_0/
 ```
 
-### 4d — Run on device (dual CPU+HTP op-package registration)
+### 4d — Run on device (host and skel op-package registration)
 
 On-device HTP requires the op package registered for **both** processors in one
 comma-separated `op_packages` string:
 
-- **CPU entry** — absolute path to the aarch64-android lib, target `:CPU`
+- **Host entry (`:CPU`)** — absolute path to the aarch64-android lib, target `:CPU`
   (ARM-side graph prepare)
 - **HTP entry** — **bare filename** of the DSP skel, target `:HTP`
   (NSP kernel execution; resolved via `ADSP_LIBRARY_PATH`)

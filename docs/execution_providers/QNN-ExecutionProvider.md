@@ -1789,23 +1789,28 @@ To enable new operator support in EP, areas to visit:
 
 A **User-Defined Operation (UDO)** allows developers to extend the Qualcomm® Neural Network (QNN) runtimes with custom operators. UDO enables execution of operations that are not natively supported in the default QNN op set, while maintaining compatibility with model conversion, compilation, and runtime execution.
 
-For an end-to-end MyAdd UDO reference, including CPU, HTP, and on-device
+For an end-to-end MyAdd UDO reference, including HTP simulator and on-device
 commands, see the [QNN UDO sample](../../qcom/samples/qnn_udo_myadd/README.md).
 
 ### Overview
 
-A UDO lets you define and register custom operations—describing their inputs, outputs, parameters, data types, and backend behavior—so they can run on:
-
-- CPU
-- HTP
-
-Once registered, UDOs integrate transparently into model conversion and runtime execution.
+ORT QNN EP Custom Op examples and tests target the HTP backend. The `:CPU`
+op-package target denotes the host registration library of an HTP package; it
+does not select the QNN CPU backend. A manual ORT CPU EP kernel can still be
+registered for accuracy comparisons.
 
 #### Limitations
 
-**HTP UDO is not supported on Windows.** `qnn-op-package-generator` and the Hexagon toolchain only target HTP on Linux; the `x86_64-windows-msvc` host platform supports the CPU backend only. On Windows, CPU UDO must be generated with the `--gen_cmakelists` flag (see Step 2), which produces a `CMakeLists.txt`-based build instead of the Linux Makefile flow.
+Graph preparation is supported on Linux x86_64 and Android. Windows native
+ARM64 can consume a compatible pregenerated EPContext only after the matching
+DSP op-package skel has been signed and validated on the device. Windows x64
+and ARM64EC/X do not support this path.
 
-**The shipped UDO unit test runs on Linux x86_64 only.** The Linux x86_64 CI build uses Python 3.12, and `qnn-op-package-generator` supports Python 3.10 and 3.12 via version-tagged extensions in the QAIRT SDK. Windows is excluded because the Hexagon toolchain only targets HTP on Linux; Windows-side UDO support has separate CI coverage via `ParseOpPackages` parsing tests in `qnn_basic_test.cc`.
+The Custom Op tests compile on all platforms and skip when the platform or
+artifacts are unavailable. Package lookup checks `ORT_QNN_UDO_OP_PACKAGE_DIR`,
+`custom_op/op_packages/htp` beside the executable, then the executable directory.
+Set `ORT_QNN_UDO_REQUIRED_BACKENDS=htp` to fail when a required package is missing.
+Parsing tests reside in `component/qnn_custom_op_test.cc`.
 
 ### UDO Workflow
 
@@ -1818,8 +1823,7 @@ The configuration defines:
 - Backend information
 
 Schema references are available in the QNN SDK. You can also
-see [MyAddOpPackageCpu.xml](../../onnxruntime/test/providers/qnn/udo/MyAddOpPackageCpu.xml) for CPU backend
-and [MyAddOpPackageHtp.xml](../../onnxruntime/test/providers/qnn/udo/MyAddOpPackageHtp.xml) for HTP backend.
+see [MyAddOpPackageHtp.xml](../../onnxruntime/test/providers/qnn/udo/MyAddOpPackageHtp.xml) for HTP backend.
 
 #### **Step 2: Generate the UDO Package**
 
@@ -1834,21 +1838,12 @@ The generator creates:
 - Interface provider
 - Backend-specific template code
 
-**Windows (CPU only):** the generator must be invoked from a `Developer PowerShell for VS 2022` shell with `python` and the `--gen_cmakelists` flag, which emits a `CMakeLists.txt` instead of a `Makefile`:
-
-```powershell
-python qnn-op-package-generator -p <path\to\op.xml> -o <output_dir> --gen_cmakelists
-```
-
-HTP UDO generation is not available on Windows (see Limitations).
-
 #### **Step 3: Implement Custom Operation**
 
 Fill in the generated skeleton:
 
 Your custom logic goes into `src/ops/*.cpp`.
-see [MyAddCPU.cpp](../../onnxruntime/test/providers/qnn/udo/MyAddCPU.cpp) for CPU backend
-and [MyAddHTP.cpp](../../onnxruntime/test/providers/qnn/udo/MyAddHTP.cpp) for HTP backend.
+see [MyAddHTP.cpp](../../onnxruntime/test/providers/qnn/udo/MyAddHTP.cpp) for HTP backend.
 
 #### **Step 4: Compile the UDO Package**
 
@@ -1857,7 +1852,7 @@ Compile against the QNN SDK and backend toolchains to produce:
 - `lib<OpPackage>.so` — Implementation library
 - Registration library used by QNN runtime
 
-Note: To enable UDO compilation on CPU, you must prepare clang++:
+Note: To compile the HTP host registration library, you must prepare clang++:
 ```
 wget https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz
 tar -xvf LLVM-21.1.8-Linux-X64.tar.xz
@@ -1871,14 +1866,6 @@ export HEXAGON_SDK_ROOT=$(realpath Hexagon_SDK/6.5.0.0)
 ```
 
 After Step 2 generated `<output_dir>/MyAddOpPackage/`, drop the implementation from Step 3 into `src/ops/MyAdd.cpp` and run `make` from inside the package directory.
-
-**CPU backend (`all_x86` target):**
-
-```bash
-export QNN_SDK_ROOT=<path-to-qnn-sdk>
-make -C <output_dir>/MyAddOpPackage all_x86
-# Output: <output_dir>/MyAddOpPackage/libs/x86_64-linux-clang/libMyAddOpPackage.so
-```
 
 **HTP backend (`htp_x86` target):**
 

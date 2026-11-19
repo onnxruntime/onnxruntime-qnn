@@ -3,7 +3,13 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
-#include <limits.h>
+#include <chrono>
+#include <fstream>
+#include <sstream>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#endif
 
 #include <filesystem>
 #include <random>
@@ -21,10 +27,31 @@
 #include "gtest/gtest.h"
 namespace onnxruntime {
 namespace test {
-// qnn-op-package-generator supports Python 3.10 and 3.12 on Linux x86_64 (via version-tagged
-// SDK extensions). Windows is excluded by the platform guard below because the Hexagon toolchain
-// only targets HTP on Linux and the Windows CI environment uses Python 3.11+.
-#if defined(__linux__) && defined(__x86_64__) && defined(BUILD_QNN_UDO_TEST)
+// Restore the caller's domain setting even when session creation throws.
+class ScopedUdoDomain {
+ public:
+  explicit ScopedUdoDomain(const char* value) {
+    const char* old = std::getenv("ORT_QNN_CUSTOM_OP_DOMAINS");
+    if (old != nullptr) original_ = old;
+    Set(value);
+  }
+  ~ScopedUdoDomain() { Set(original_ ? original_->c_str() : nullptr); }
+  ScopedUdoDomain(const ScopedUdoDomain&) = delete;
+  ScopedUdoDomain& operator=(const ScopedUdoDomain&) = delete;
+
+ private:
+  static void Set(const char* value) {
+#ifdef _WIN32
+    const int result = _putenv_s("ORT_QNN_CUSTOM_OP_DOMAINS", value ? value : "");
+#else
+    const int result = value ? setenv("ORT_QNN_CUSTOM_OP_DOMAINS", value, 1)
+                             : unsetenv("ORT_QNN_CUSTOM_OP_DOMAINS");
+#endif
+    EXPECT_EQ(result, 0);
+  }
+  std::optional<std::string> original_;
+};
+
 constexpr std::string_view kUdoDomain = "udo_domain";
 /*
 The following is a custom op that registered in udo_domain for demo purpose.
@@ -102,48 +129,16 @@ static GetTestQDQModelFn<InputQType> BuildUDOQDQTestCase(const std::string& op_t
         {"output"},
         op_domain,
         attrs);
+    // The automatic domain uses an untyped variadic placeholder. Exporters provide
+    // value_info for custom-op outputs; retain it for model type and shape inference.
+    auto* value_info = builder.model_.mutable_graph()->add_value_info();
+    value_info->set_name("output");
+    auto* tensor_type = value_info->mutable_type()->mutable_tensor_type();
+    tensor_type->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+    for (const auto dim : input_def.GetShape()) tensor_type->mutable_shape()->add_dim()->set_dim_value(dim);
     AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, "output_qdq", "output", output_qparams[0].scale,
                                                       output_qparams[0].zero_point);
   };
-}
-
-// Runs a non-QDQ model on the QNN CPU backend and compares output to CPU EP.
-// When `register_domain_manually` is true (default), a real MyAdd kernel is registered in the
-// session so the CPU EP fallback path also works. When false, no manual Ort::CustomOpDomain is
-// registered — the test relies solely on the QNN EP factory having registered the domain via
-// ORT_QNN_CUSTOM_OP_DOMAINS. In that case the node must be fully assigned to QNN EP (no CPU
-// fallback) for the session to run correctly.
-static void RunOpTestOnCPU(const std::string& op_type,
-                           const TestInputDef<float>& input_def,
-                           const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                           const std::string& op_packages,
-                           int opset_version,
-                           ExpectedEPNodeAssignment expected_ep_assignment,
-                           bool register_domain_manually = true) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["op_packages"] = op_packages;
-
-  if (register_domain_manually) {
-    Ort::CustomOpDomain v2_domain{kUdoDomain.data()};
-    std::unique_ptr<Ort::Custom::OrtLiteCustomOp> my_add_op_ptr{Ort::Custom::CreateLiteCustomOp<MyAdd>("MyAdd", "CPUExecutionProvider")};
-    v2_domain.Add(my_add_op_ptr.get());
-    RunQnnModelTest(BuildUDOTestCase<float>(op_type, input_def, attrs, std::string(kUdoDomain)),
-                    provider_options,
-                    opset_version,
-                    EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-5f)},
-                    OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                    true,
-                    &v2_domain);
-  } else {
-    RunQnnModelTest(BuildUDOTestCase<float>(op_type, input_def, attrs, std::string(kUdoDomain)),
-                    provider_options,
-                    opset_version,
-                    EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(1e-5f)},
-                    OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                    /*verify_outputs=*/false,
-                    /*custom_op_domain=*/nullptr);
-  }
 }
 
 // Runs a QDQ model on the QNN HTP backend and compares output to CPU EP.
@@ -175,107 +170,279 @@ static void RunOpTestOnHTP(const std::string& op_type,
                                 /*custom_op_domain=*/&v2_domain);
 }
 
-std::string getLibPath(std::string backend) {
-  /*
-  Assume udo package lib is put with same directory with onnxruntime_provider_test.
-  We set the path of udo package to absolute path so we can execute onnxruntime_provider_test from any path.
-  */
-  char path[PATH_MAX];
-  ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
-  std::filesystem::path exePath(std::string(path, count));
-  return exePath.parent_path() / ("libMyAddOpPackage_" + backend + ".so");
+// Lookup is independent of the process working directory and the build toolchain.
+static std::filesystem::path ExecutableDirectory() {
+#ifdef _WIN32
+  std::wstring path(32768, L'\0');
+  const auto count = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+  if (count == 0 || count == path.size()) throw std::runtime_error("Cannot locate test executable");
+  path.resize(count);
+  return std::filesystem::path(path).parent_path();
+#else
+  return std::filesystem::canonical("/proc/self/exe").parent_path();
+#endif
 }
 
-TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd) {
-  auto input_def = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
-  std::filesystem::path path = getLibPath("cpu");
-  if (!std::filesystem::exists(path)) {
-    GTEST_SKIP() << "UDO CPU op package not found: " << path;
+struct UdoArtifact {
+  std::filesystem::path path;
+  std::string searched;
+};
+
+static UdoArtifact FindUdoArtifact(const std::filesystem::path& executable_dir,
+                                   const std::string& override_dir) {
+  std::vector<std::filesystem::path> dirs;
+  if (!override_dir.empty()) dirs.emplace_back(override_dir);
+  dirs.push_back(executable_dir / "custom_op/op_packages/htp");
+  dirs.push_back(executable_dir);
+  UdoArtifact result;
+  for (const auto& dir : dirs) {
+    for (const auto* name : {"libMyAddOpPackage_htp.so", "libQnnMyAddOpPackage.so"}) {
+      const auto path = dir / name;
+      result.searched += path.string() + "\n";
+      if (std::filesystem::is_regular_file(path)) {
+        result.path = std::filesystem::absolute(path);
+        return result;
+      }
+    }
   }
-  RunOpTestOnCPU("MyAdd",
-                 input_def,
-                 {onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))},
-                 "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider",
-                 11,
-                 ExpectedEPNodeAssignment::All);
+  return result;
 }
 
-// Verifies the full factory-level custom-op domain registration path with no manual
-// domain registration: ORT_QNN_CUSTOM_OP_DOMAINS env var → QnnEpFactory construction
-// → GetCustomOpDomains hook → ORT registers domain → model loads, node is assigned to
-// QNN EP, and inference runs.  verify_outputs is false (no CPU-side kernel for reference);
-// RunAndVerifyOutputsWithEP skips the CPU reference session when verify_outputs=false.
-TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd_AutoDomainOnly) {
-  auto input_def = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
-  std::filesystem::path path = getLibPath("cpu");
-  if (!std::filesystem::exists(path)) {
-    GTEST_SKIP() << "UDO CPU op package not found: " << path;
-  }
-
-  const int set_result = setenv("ORT_QNN_CUSTOM_OP_DOMAINS", "udo_domain:MyAdd", /*overwrite=*/1);
-  ASSERT_EQ(set_result, 0) << "setenv failed";
-  auto env_guard = std::unique_ptr<void, std::function<void(void*)>>(
-      reinterpret_cast<void*>(1),
-      [](void*) { unsetenv("ORT_QNN_CUSTOM_OP_DOMAINS"); });
-
-  RunOpTestOnCPU("MyAdd",
-                 input_def,
-                 {onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))},
-                 "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider",
-                 11,
-                 ExpectedEPNodeAssignment::All,
-                 /*register_domain_manually=*/false);
+static std::string EnvValue(const char* name) {
+  const auto* value = std::getenv(name);
+  return value == nullptr ? "" : value;
 }
 
-// Verifies that manual domain registration (CPU fallback kernel) and automatic domain
-// registration (ORT_QNN_CUSTOM_OP_DOMAINS factory hook) coexist safely.
-// ORT deduplicates the domain via ShouldAddDomain() — no double-registration error.
-// The manual CPU kernel enables full output comparison against the CPU EP reference.
-TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd_ManualPlusAutoDomain) {
-  auto input_def = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
-  std::filesystem::path path = getLibPath("cpu");
-  if (!std::filesystem::exists(path)) {
-    GTEST_SKIP() << "UDO CPU op package not found: " << path;
+static bool HtpArtifactRequired(const std::string& backends) {
+  std::istringstream stream(backends);
+  std::string backend;
+  while (std::getline(stream, backend, ',')) {
+    if (backend == "htp") return true;
+  }
+  return false;
+}
+
+// These tests prepare graphs; Windows and Linux arm64 use pregenerated contexts instead.
+#define REQUIRE_UDO_JIT_ARTIFACT()                                                                      \
+  if (!UdoJitSupported()) {                                                                             \
+    GTEST_SKIP() << "HTP Custom Op graph preparation requires Linux x86_64 or Android";                 \
+  }                                                                                                     \
+  const auto artifact = FindUdoArtifact(ExecutableDirectory(), EnvValue("ORT_QNN_UDO_OP_PACKAGE_DIR")); \
+  if (artifact.path.empty()) {                                                                          \
+    if (HtpArtifactRequired(EnvValue("ORT_QNN_UDO_REQUIRED_BACKENDS"))) {                               \
+      FAIL() << "Required HTP Custom Op artifact missing. Searched:\n"                                  \
+             << artifact.searched;                                                                      \
+    }                                                                                                   \
+    GTEST_SKIP() << "HTP Custom Op artifact missing. Searched:\n"                                       \
+                 << artifact.searched;                                                                  \
   }
 
-  const int set_result = setenv("ORT_QNN_CUSTOM_OP_DOMAINS", "udo_domain:MyAdd", /*overwrite=*/1);
-  ASSERT_EQ(set_result, 0) << "setenv failed";
-  auto env_guard = std::unique_ptr<void, std::function<void(void*)>>(
-      reinterpret_cast<void*>(1),
-      [](void*) { unsetenv("ORT_QNN_CUSTOM_OP_DOMAINS"); });
+static bool UdoJitSupported() {
+#if (defined(__linux__) && defined(__x86_64__)) || defined(__ANDROID__)
+  return true;
+#else
+  return false;
+#endif
+}
 
-  // Both automatic (factory) and manual (user-supplied) domains are active.
-  // The manual domain provides the CPU reference kernel; the factory placeholder
-  // op is deduplicated by ORT and the node is still compiled by QNN EP.
-  RunOpTestOnCPU("MyAdd",
-                 input_def,
-                 {onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))},
-                 "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider",
-                 11,
-                 ExpectedEPNodeAssignment::All,
-                 /*register_domain_manually=*/true);
+static ProviderOptions UdoProviderOptions(const std::filesystem::path& path) {
+  ProviderOptions options{{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"op_packages", "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider:CPU"}};
+#if defined(__ANDROID__)
+  // Same host/skel registration convention as qcom/samples/qnn_udo_myadd/README.md.
+  options["op_packages"] += ",MyAdd:libQnnMyAddOpPackage.so:MyAddOpPackageInterfaceProvider:HTP";
+#endif
+  return options;
+}
+
+static void MakeUdoModel(ModelTestBuilder& builder, bool mixed = false) {
+  const TestInputDef<float> input({1, 32}, false, -1.0f, 1.0f);
+  std::vector<QuantParams<uint8_t>> output_qparams{{4.0f / 255.0f, 0}};
+  BuildUDOQDQTestCase<uint8_t>("MyAdd", input, {MakeAttribute("constant", 2.0f)},
+                               std::string(kUdoDomain))(builder, output_qparams);
+  if (mixed) {
+    // QNN does not support double tensors; this branch must stay on the CPU EP.
+    builder.AddNode("double_cast", "Cast", {"output_qdq_dq_out"}, {"double_output"}, "",
+                    {MakeAttribute("to", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType_DOUBLE))});
+    builder.MakeOutput<double>("double_output", std::vector<int64_t>{1, 32});
+  }
+  for (const auto& [domain, version] : std::unordered_map<std::string, int>{{"", 11}, {kMSDomain, 1}}) {
+    auto* opset = builder.model_.add_opset_import();
+    opset->set_domain(domain);
+    opset->set_version(version);
+  }
+  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+}
+
+static std::string SerializeUdoModel(const ModelTestBuilder& builder) {
+  return builder.model_.SerializeAsString();
+}
+
+static void RunUdoWithoutCpuReference(ModelTestBuilder& builder, const ProviderOptions& options,
+                                      ExpectedEPNodeAssignment assignment = ExpectedEPNodeAssignment::All,
+                                      const std::unordered_map<std::string, std::string>& configs = {},
+                                      const std::filesystem::path& model_path = {}) {
+  const auto& input = builder.feeds_.at("input");
+  const auto count = input.GetTensorTypeAndShapeInfo().GetElementCount();
+  std::vector<float> expected(count);
+  for (size_t i = 0; i < count; ++i) expected[i] = input.GetTensorData<float>()[i] + 2.0f;
+  const auto shape = input.GetTensorTypeAndShapeInfo().GetShape();
+  RunQnnModelTestWithoutCpuReference(builder, options, expected, shape, 8.0f / 255.0f,
+                                     assignment, configs, model_path);
 }
 
 TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd) {
-  // Skip cleanly on hosts where the HTP backend / x86 simulator libs are not usable.
-  // QnnHTPBackendTests::SetUp() already gates on cached_htp_support_; this macro adds the
-  // arch-floor check that the rest of the HTP test suite uses (no-op on Linux x86_64 today,
-  // but keeps the test consistent with TestAddEpUsingPublicApi et al.).
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  auto input = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
-  std::filesystem::path path = getLibPath("htp");
-  if (!std::filesystem::exists(path)) {
-    GTEST_SKIP() << "UDO HTP op package not found: " << path;
-  }
-  RunOpTestOnHTP("MyAdd",
-                 {input},
-                 {onnxruntime::test::MakeAttribute("constant", static_cast<float>(2.0))},
-                 "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider:CPU",
-                 11,
-                 ExpectedEPNodeAssignment::All);
+  REQUIRE_UDO_JIT_ARTIFACT();
+  RunOpTestOnHTP("MyAdd", TestInputDef<float>({1, 32}, false, -1.0f, 1.0f),
+                 {MakeAttribute("constant", 2.0f)},
+                 UdoProviderOptions(artifact.path).at("op_packages"), 11, ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__linux__) && defined(__x86_64__) && defined(BUILD_QNN_UDO_TEST)
+TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_AutoDomainOnly) {
+  REQUIRE_UDO_JIT_ARTIFACT();
+  ScopedUdoDomain env("udo_domain:MyAdd");
+  ModelTestBuilder builder;
+  MakeUdoModel(builder);
+  RunUdoWithoutCpuReference(builder, UdoProviderOptions(artifact.path));
+}
+
+TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_ManualPlusAutoDomain) {
+  REQUIRE_UDO_JIT_ARTIFACT();
+  ScopedUdoDomain env("udo_domain:MyAdd");
+  RunOpTestOnHTP("MyAdd", TestInputDef<float>({1, 32}, false, -1.0f, 1.0f),
+                 {MakeAttribute("constant", 2.0f)},
+                 UdoProviderOptions(artifact.path).at("op_packages"), 11, ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_InvalidOpPackagePath) {
+  REQUIRE_UDO_JIT_ARTIFACT();
+  ScopedUdoDomain env("udo_domain:MyAdd");
+  ModelTestBuilder builder;
+  MakeUdoModel(builder);
+  std::vector<Ort::Value> outputs;
+  EXPECT_THROW(InferenceModel(SerializeUdoModel(builder), "UDOInvalidPath",
+                              UdoProviderOptions(artifact.path / "nonexistent.so"),
+                              ExpectedEPNodeAssignment::All, builder.feeds_, outputs),
+               Ort::Exception);
+}
+
+TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_EnvVarUnset) {
+  REQUIRE_UDO_JIT_ARTIFACT();
+  ScopedUdoDomain env(nullptr);
+  ModelTestBuilder builder;
+  MakeUdoModel(builder);
+  std::vector<Ort::Value> outputs;
+  try {
+    InferenceModel(SerializeUdoModel(builder), "UDONoDomain", UdoProviderOptions(artifact.path),
+                   ExpectedEPNodeAssignment::All, builder.feeds_, outputs);
+    FAIL() << "Model without a custom domain must fail to load";
+  } catch (const Ort::Exception& error) {
+    EXPECT_NE(std::string(error.what()).find("MyAdd"), std::string::npos);
+  }
+}
+
+static void TestUdoContextRoundTrip(const std::filesystem::path& package, bool mixed) {
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("qnn_udo_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(dir);
+  const auto cleanup = std::unique_ptr<void, std::function<void(void*)>>(
+      reinterpret_cast<void*>(1), [dir](void*) { std::error_code ec; std::filesystem::remove_all(dir, ec); });
+  const auto context_path = dir / "myadd_ctx.onnx";
+  ModelTestBuilder builder;
+  MakeUdoModel(builder, mixed);
+  const auto assignment = mixed ? ExpectedEPNodeAssignment::Some : ExpectedEPNodeAssignment::All;
+  {
+    ScopedUdoDomain env("udo_domain:MyAdd");
+    ASSERT_NO_FATAL_FAILURE(RunUdoWithoutCpuReference(builder, UdoProviderOptions(package), assignment,
+                                                      {{kOrtSessionOptionEpContextEnable, "1"}, {kOrtSessionOptionEpContextEmbedMode, "0"}, {kOrtSessionOptionEpContextFilePath, context_path.string()}}));
+  }
+  ONNX_NAMESPACE::ModelProto context;
+  std::ifstream stream(context_path, std::ios::binary);
+  ASSERT_TRUE(context.ParseFromIstream(&stream));
+  bool has_context = false;
+  bool has_cpu_cast = false;
+  bool has_binary = false;
+  for (const auto& node : context.graph().node()) {
+    EXPECT_NE(node.op_type(), "MyAdd");
+    has_context |= node.op_type() == "EPContext";
+    has_cpu_cast |= node.op_type() == "Cast";
+    if (node.op_type() == "EPContext") {
+      for (const auto& attr : node.attribute()) {
+        if (attr.name() == "ep_cache_context") {
+          has_binary |= std::filesystem::is_regular_file(dir / attr.s());
+        }
+      }
+    }
+  }
+  ASSERT_TRUE(has_context);
+  ASSERT_TRUE(has_binary);
+  EXPECT_EQ(has_cpu_cast, mixed);
+  ScopedUdoDomain env(nullptr);
+  RunUdoWithoutCpuReference(builder, UdoProviderOptions(package), assignment, {}, context_path);
+}
+
+TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_EPContext_GenAndLoad) {
+  REQUIRE_UDO_JIT_ARTIFACT();
+  TestUdoContextRoundTrip(artifact.path, false);
+}
+
+TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_MixedEPContext) {
+  REQUIRE_UDO_JIT_ARTIFACT();
+  TestUdoContextRoundTrip(artifact.path, true);
+}
+
+TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_LoadPregenerated) {
+#if defined(_WIN32) && !defined(_M_ARM64)
+  GTEST_SKIP() << "Pregenerated HTP Custom Op contexts require native ARM64 on Windows";
+#endif
+  const auto arch = EnvValue("ORT_QNN_UDO_CONTEXT_ARCH");
+  if (arch.empty()) GTEST_SKIP() << "Set ORT_QNN_UDO_CONTEXT_ARCH to the matching context architecture";
+  const auto context_path = ExecutableDirectory() / "custom_op/contexts" / arch / "myadd_ctx.onnx";
+  const auto packages = EnvValue("ORT_QNN_UDO_CONTEXT_OP_PACKAGES");
+  if (!std::filesystem::is_regular_file(context_path) || packages.empty()) {
+    if (HtpArtifactRequired(EnvValue("ORT_QNN_UDO_REQUIRED_BACKENDS"))) {
+      FAIL() << "Required pregenerated context or ORT_QNN_UDO_CONTEXT_OP_PACKAGES missing: " << context_path;
+    }
+    GTEST_SKIP() << "Pregenerated context or ORT_QNN_UDO_CONTEXT_OP_PACKAGES missing: " << context_path;
+  }
+  ScopedUdoDomain env(nullptr);
+  ModelTestBuilder builder;
+  MakeUdoModel(builder);
+  RunUdoWithoutCpuReference(builder,
+                            {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"op_packages", packages}},
+                            ExpectedEPNodeAssignment::All, {}, context_path);
+}
+
+TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_ArtifactLookupAndRequireFlag) {
+  const auto missing = std::filesystem::temp_directory_path() /
+                       ("udo_lookup_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const auto cleanup = std::unique_ptr<void, std::function<void(void*)>>(
+      reinterpret_cast<void*>(1), [missing](void*) { std::error_code ec; std::filesystem::remove_all(missing, ec); });
+  const auto override_dir = missing / "override";
+  const auto packaged_dir = missing / "custom_op/op_packages/htp";
+  const auto artifact = FindUdoArtifact(missing, override_dir.string());
+  EXPECT_TRUE(artifact.path.empty());
+  EXPECT_NE(artifact.searched.find("override"), std::string::npos);
+  EXPECT_NE(artifact.searched.find("custom_op/op_packages/htp"), std::string::npos);
+  std::filesystem::create_directories(override_dir);
+  std::filesystem::create_directories(packaged_dir);
+  const auto name = "libMyAddOpPackage_htp.so";
+  {
+    std::ofstream file(missing / name);
+  }
+  EXPECT_EQ(FindUdoArtifact(missing, override_dir.string()).path, missing / name);
+  {
+    std::ofstream file(packaged_dir / name);
+  }
+  EXPECT_EQ(FindUdoArtifact(missing, override_dir.string()).path, packaged_dir / name);
+  {
+    std::ofstream file(override_dir / name);
+  }
+  EXPECT_EQ(FindUdoArtifact(missing, override_dir.string()).path, override_dir / name);
+  EXPECT_TRUE(HtpArtifactRequired("htp"));
+  EXPECT_TRUE(HtpArtifactRequired("cpu,htp"));
+  EXPECT_FALSE(HtpArtifactRequired(""));
+  EXPECT_FALSE(HtpArtifactRequired("nothtp"));
+}
 
 }  // namespace test
 }  // namespace onnxruntime

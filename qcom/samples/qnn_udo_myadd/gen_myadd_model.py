@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 """
 Generate two ONNX models containing a single MyAdd UDO node:
-  - myadd_fp32.onnx  : float32 model (for QNN CPU backend)
+  - myadd_fp32.onnx  : float32 reference model
   - myadd_qdq.onnx   : uint8 QDQ model  (DQ -> MyAdd -> Q, for QNN HTP backend)
 
 MyAdd computes: output = input + constant

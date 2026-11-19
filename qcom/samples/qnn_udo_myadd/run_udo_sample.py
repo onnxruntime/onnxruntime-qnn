@@ -13,12 +13,6 @@ the schema automatically (no separate schema library needed):
   export ORT_QNN_CUSTOM_OP_DOMAINS="example:MyAdd"
 
 Usage:
-  # QNN CPU backend (fp32 model)
-  LD_LIBRARY_PATH=<qnn_sdk>/lib/x86_64-linux-clang:<ort_lib> \\
-  python run_udo_sample.py cpu myadd_fp32.onnx \\
-      --op-package artifacts/libMyAddOpPackage_cpu.so \\
-      --qnn-ep-lib <path/to/libonnxruntime_providers_qnn.so>
-
   # QNN HTP backend (QDQ model, x86 simulator or on-device)
   LD_LIBRARY_PATH=<qnn_sdk>/lib/x86_64-linux-clang:<ort_lib> \\
   python run_udo_sample.py htp myadd_qdq.onnx \\
@@ -65,25 +59,6 @@ def append_qnn_ep(so: ort.SessionOptions, qnn_ep_lib: str, ep_options: dict) -> 
     so.add_provider_for_devices(devices, ep_options)
 
 
-def run_cpu(model_path: str, op_package: str, qnn_ep_lib: str) -> None:
-    print("\n=== QNN CPU backend ===")
-    so = ort.SessionOptions()
-
-    op_packages_str = f"MyAdd:{op_package}:MyAddOpPackageInterfaceProvider"
-    append_qnn_ep(so, qnn_ep_lib, {"backend_type": "cpu", "op_packages": op_packages_str})
-
-    sess = ort.InferenceSession(model_path, sess_options=so)
-    x = build_input()
-    [output] = sess.run(["output"], {"input": x})
-
-    expected = x + CONSTANT
-    max_err = float(np.max(np.abs(output - expected)))
-    print(f"Max absolute error vs (input + {CONSTANT}): {max_err:.2e}")
-    if max_err > 1e-4:
-        raise RuntimeError("error exceeds threshold")
-    print("PASS")
-
-
 def run_htp(model_path: str, op_package: str, qnn_ep_lib: str) -> None:
     print("\n=== QNN HTP backend ===")
     so = ort.SessionOptions()
@@ -115,17 +90,14 @@ def run_htp(model_path: str, op_package: str, qnn_ep_lib: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run MyAdd UDO on QNN EP")
-    parser.add_argument("backend", choices=["cpu", "htp"], help="QNN backend to use")
-    parser.add_argument("model", help="Path to ONNX model (myadd_fp32.onnx or myadd_qdq.onnx)")
-    parser.add_argument("--op-package", required=True, help="Path to libMyAddOpPackage_<backend>.so")
+    parser.add_argument("backend", choices=["htp"], help="QNN backend to use")
+    parser.add_argument("model", help="Path to ONNX model (myadd_qdq.onnx)")
+    parser.add_argument("--op-package", required=True, help="Path to libMyAddOpPackage_htp.so")
     parser.add_argument("--qnn-ep-lib", required=True, help="Absolute path to libonnxruntime_providers_qnn.so")
     args = parser.parse_args()
 
     try:
-        if args.backend == "cpu":
-            run_cpu(args.model, args.op_package, args.qnn_ep_lib)
-        else:
-            run_htp(args.model, args.op_package, args.qnn_ep_lib)
+        run_htp(args.model, args.op_package, args.qnn_ep_lib)
     except RuntimeError as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
