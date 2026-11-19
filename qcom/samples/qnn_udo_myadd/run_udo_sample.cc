@@ -21,7 +21,7 @@
 // Usage:
 //   # HTP backend (x86 simulator or on-device)
 //   LD_LIBRARY_PATH=<qnn_sdk>/lib/x86_64-linux-clang:<ort_lib> \
-//   ./run_udo_sample htp myadd_qdq.onnx /path/to/libMyAddOpPackage_htp.so
+//   ./run_udo_sample htp myadd_qdq.onnx /path/to/libQnnMyAddOpPackage.so
 
 #include <algorithm>
 #include <cmath>
@@ -120,7 +120,7 @@ int main(int argc, char* argv[]) {
     fprintf(stderr,
             "Usage:\n"
             "  export ORT_QNN_CUSTOM_OP_DOMAINS=\"example:MyAdd\"\n"
-            "  %s htp  <model.onnx> <libMyAddOpPackage_htp.so> [context_output.onnx]\n",
+            "  %s htp  <model.onnx> <libQnnMyAddOpPackage.so> [context_output.onnx]\n",
             argv[0]);
     return 1;
   }

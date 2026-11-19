@@ -168,6 +168,10 @@ def test_archive_linux_excludes_testdata(tmp_path):
     rel = build_root / plat / "Release"
     _touch(rel / "libonnxruntime.so", "B")
     _touch(rel / "libQnnHtp.so", "B")
+    _touch(rel / "custom_op/op_packages/htp/libQnnMyAddOpPackage.so", "host")
+    _touch(rel / "custom_op/op_packages/htp/dsp/libQnnMyAddOpPackage.so", "dsp")
+    _touch(rel / "custom_op/contexts/v81/myadd_ctx.onnx", "context")
+    _touch(rel / "custom_op/contexts/v81/myadd_ctx_qnn.bin", "binary")
     _touch(rel / "onnxruntime_provider_test", "B")
     (rel / "onnxruntime_provider_test").chmod(0o755)
     _touch(rel / "CTestTestfile.cmake", "ctest")
@@ -198,6 +202,14 @@ def test_archive_linux_excludes_testdata(tmp_path):
     assert any(n.endswith("Release/onnxruntime_provider_test") for n in names)
     assert any(n.endswith("subdir/libonnxruntime_providers_qnn.so") for n in names)
     assert any(n.endswith("qcom/scripts/all/foo.py") for n in names)
+
+    for fixture in [
+        "op_packages/htp/libQnnMyAddOpPackage.so",
+        "op_packages/htp/dsp/libQnnMyAddOpPackage.so",
+        "contexts/v81/myadd_ctx.onnx",
+        "contexts/v81/myadd_ctx_qnn.bin",
+    ]:
+        assert any(n.endswith("Release/custom_op/" + fixture) for n in names)
 
     # CRUCIAL: testdata is NOT inside the archive
     assert not any("testdata/" in n for n in names), [n for n in names if "testdata" in n]

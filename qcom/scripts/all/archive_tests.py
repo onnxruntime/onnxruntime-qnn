@@ -27,6 +27,7 @@ _TOP_LEVEL_EXACT_NAMES = {
 }
 _TOP_LEVEL_PYTHON_TEST_RE = re.compile(r"^onnxruntime_test_python.*\.py$")
 _QCOM_SCRIPTS_RE = re.compile(r"^qcom/scripts/")
+_CUSTOM_OP_RE = re.compile(r"^custom_op/")
 _QUANTIZATION_RE = re.compile(r"^quantization/")
 _PROVIDERS_QNN_RE = re.compile(r".*onnxruntime_providers_qnn[^/]*\.(so|so\.[0-9.]+|dll)$")
 # AAR-build APKs consumed by qcom/scripts/linux/appium/tests/test_aar.py. These live under
@@ -103,6 +104,8 @@ class PerArchAcceptRules:
         The caller strips build/<plat>/Release/ prefix for subdir paths."""
         s = rel.as_posix()
         if _QCOM_SCRIPTS_RE.match(s):
+            return True
+        if _CUSTOM_OP_RE.match(s):
             return True
         if _QUANTIZATION_RE.match(s):
             return True

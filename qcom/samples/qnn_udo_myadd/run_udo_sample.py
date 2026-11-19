@@ -16,7 +16,7 @@ Usage:
   # QNN HTP backend (QDQ model, x86 simulator or on-device)
   LD_LIBRARY_PATH=<qnn_sdk>/lib/x86_64-linux-clang:<ort_lib> \\
   python run_udo_sample.py htp myadd_qdq.onnx \\
-      --op-package artifacts/libMyAddOpPackage_htp.so \\
+      --op-package artifacts/libQnnMyAddOpPackage.so \\
       --qnn-ep-lib <path/to/libonnxruntime_providers_qnn.so>
 
 Domain registration:
@@ -92,7 +92,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run MyAdd UDO on QNN EP")
     parser.add_argument("backend", choices=["htp"], help="QNN backend to use")
     parser.add_argument("model", help="Path to ONNX model (myadd_qdq.onnx)")
-    parser.add_argument("--op-package", required=True, help="Path to libMyAddOpPackage_htp.so")
+    parser.add_argument("--op-package", required=True, help="Path to libQnnMyAddOpPackage.so")
     parser.add_argument("--qnn-ep-lib", required=True, help="Absolute path to libonnxruntime_providers_qnn.so")
     args = parser.parse_args()
 

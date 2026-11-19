@@ -124,12 +124,6 @@ onnx_models_root="$(get_onnx_models_dir)"
 orig_build_dir=$(sed -n "s@# Build directory: @@p" CTestTestfile.cmake)
 sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
 
-# The Linux x86_64 CI build is expected to provide the HTP Custom Op fixture,
-# including when a generator/toolchain configuration accidentally skips its build.
-if [[ "$(uname -m)" == "x86_64" ]]; then
-  export ORT_QNN_UDO_REQUIRED_BACKENDS=htp
-fi
-
 log_info "-=-=-=- Running ctests -=-=-=-"
 exclude_args=()
 count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"

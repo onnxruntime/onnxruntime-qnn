@@ -1797,19 +1797,21 @@ commands, see the [QNN UDO sample](../../qcom/samples/qnn_udo_myadd/README.md).
 ORT QNN EP Custom Op examples and tests target the HTP backend. The `:CPU`
 op-package target denotes the host registration library of an HTP package; it
 does not select the QNN CPU backend. A manual ORT CPU EP kernel can still be
-registered for accuracy comparisons. This change removes QNN CPU backend UDO
-examples and test coverage; it does not disable runtime op-package registration
-on the QNN CPU backend or introduce a runtime deprecation. QNN CPU UDO is no
-longer covered by the supplied sample or tests.
+registered for accuracy comparisons. QNN CPU op packages remain supported at
+runtime; the supplied Custom Op examples and tests cover HTP.
 
 #### Limitations
 
-Linux x86_64 HTP simulator builds and tests are validated. Android and Linux
-ARM64 device execution, Windows builds, and signed DSP skel EPContext loading on
-Windows ARM64 are not validated by these tests. The supplied HTP host-package
-build target is Linux x86_64; other targets skip its graph-preparation tests.
-Parsing tests reside in `component/qnn_custom_op_test.cc`. Test fixture settings
-and pregenerated-context instructions are in the sample README.
+Op-package generation and the Hexagon toolchain require a Linux x86_64 build
+host and a Python 3.10 or 3.12 generator interpreter. The generator interpreter
+is selected independently of the wheel's target Python version.
+Linux x86_64 simulator tests and Android aarch64 JIT/context execution on HTP V81
+with QAIRT 2.52 are validated. Windows builds, Linux ARM64 device execution,
+and signed DSP skel EPContext loading on Windows ARM64 remain unvalidated.
+The graph-preparation fixture is built for Linux x86_64 and Android aarch64;
+other targets skip those tests. Parsing tests reside in
+`component/qnn_custom_op_test.cc`. Test fixture settings and pregenerated-context
+instructions are in the sample README.
 
 ### UDO Workflow
 

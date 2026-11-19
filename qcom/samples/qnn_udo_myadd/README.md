@@ -16,7 +16,7 @@ User-Defined Operation (UDO) through the ORT QNN Execution Provider.
 | `gen_myadd_test_data.py` | Generate `onnxruntime_plugin_ep_onnx_test` protobuf inputs and references for on-device HTP |
 | `run_udo_sample.cc` | C++ standalone sample — HTP inference and context generation |
 | `run_udo_sample.py` | Python sample — HTP mode |
-| `build_op_package.sh` | Build `libMyAddOpPackage_htp.so` |
+| `build_op_package.sh` | Build `libQnnMyAddOpPackage.so` |
 
 The sample uses the canonical MyAdd op-package source shared with the UDO unit
 tests: `onnxruntime/test/providers/qnn/udo/` (`MyAddOpPackageHtp.xml`, `MyAddHTP.cpp`, and `HTP_Makefile`).
@@ -59,7 +59,7 @@ export HEXAGON_SDK_ROOT=/path/to/Hexagon_SDK/6.5.0.0   # HTP only
 
 ./build_op_package.sh htp
 # Produces:
-#   artifacts/libMyAddOpPackage_htp.so   (QNN HTP op package)
+#   artifacts/libQnnMyAddOpPackage.so   (QNN HTP op package)
 ```
 
 The sample supports the HTP backend only.
@@ -96,7 +96,7 @@ export ORT_QNN_CUSTOM_OP_DOMAINS="example:MyAdd"
 
 # HTP backend (libQnnHtp.so must be on LD_LIBRARY_PATH)
 LD_LIBRARY_PATH=${QNN_SDK_ROOT}/lib/x86_64-linux-clang:${ORT_LIB}:${LD_LIBRARY_PATH} \
-    ./run_udo_sample htp myadd_qdq.onnx artifacts/libMyAddOpPackage_htp.so
+    ./run_udo_sample htp myadd_qdq.onnx artifacts/libQnnMyAddOpPackage.so
 ```
 
 Expected output (HTP):
@@ -118,14 +118,14 @@ ${ORT_BUILD}/onnxruntime_provider_test --gtest_filter="*UDO_Op_MyAdd*"
 The HTP fixture tests cover manual and automatic domains, invalid package paths,
 missing domains, context generation/loading, and mixed graphs. Package lookup
 checks `ORT_QNN_UDO_OP_PACKAGE_DIR`, `custom_op/op_packages/htp` beside the test
-executable, then the executable directory. Missing packages fail when the fixture
+executable. Both producers use `libQnnMyAddOpPackage.so`. Missing packages fail when the fixture
 was built by CMake or when
-`ORT_QNN_UDO_REQUIRED_BACKENDS=htp` is set; otherwise they skip. Linux x86_64 CI
-sets that flag so a skipped generator cannot hide missing coverage.
+`ORT_QNN_UDO_REQUIRED_BACKENDS=htp` is set; otherwise they skip. CMake selects a Python 3.10/3.12 generator independently of the wheel target
+and requires its fixture at runtime; test runners preserve an explicit caller override.
 
 The Linux CMake build produces
 `custom_op/op_packages/htp/libQnnMyAddOpPackage.so` beside the executable. The
-standalone build script produces `artifacts/libMyAddOpPackage_htp.so`, which
+standalone build script produces `artifacts/libQnnMyAddOpPackage.so`, which
 can be selected with the package-directory override.
 
 The C++ sample's optional fourth argument generates a simulator context fixture:
@@ -150,10 +150,36 @@ For `UDO_Op_MyAdd_LoadPregenerated`, place the model and external binary under
 Set `ORT_QNN_UDO_CONTEXT_ARCH=<arch>` and
 `ORT_QNN_UDO_CONTEXT_OP_PACKAGES` to the target's registration entries. A device
 context load uses the matching skel by bare filename with `:HTP`, and requires
-the platform DSP search path. Windows builds and device execution remain
-unvalidated; signing and matching
-DSP skels must be verified before using the Windows ARM64 context path. Pure EPContext
+the platform DSP search path. Windows builds and Windows device execution remain
+unvalidated; signing and matching DSP skels must be verified before using the Windows ARM64 context path. Pure EPContext
 loads require no `ORT_QNN_CUSTOM_OP_DOMAINS` variable.
+
+---
+
+## Android aarch64 JIT unit tests
+
+Build with `python qcom/build_and_test.py --config Release build_ort_android_aarch64`.
+CMake produces both halves of the HTP package beside the test executable:
+
+- `custom_op/op_packages/htp/libQnnMyAddOpPackage.so`: ARM64 preparation library (`:CPU`).
+- `custom_op/op_packages/htp/dsp/libQnnMyAddOpPackage.so`: Hexagon execution library (`:HTP`).
+
+The CMake cache setting `onnxruntime_QNN_UDO_HTP_ARCH` defaults to `81`.
+Select an architecture matching the device before building for another target.
+The tests register both libraries automatically; `ORT_QNN_UDO_HTP_OP_PACKAGE`
+can override the DSP library path. Both libraries belong to the `MyAdd` HTP package.
+
+Deploy the test executable, ORT/QNN EP libraries, and the entire `custom_op`
+directory. Also deploy the matching QAIRT Android `libQnnHtp.so`,
+`libQnnHtpPrepare.so`, `libQnnSystem.so`, architecture-specific stub, and DSP skel
+with its catalog. Add the Android libraries to `LD_LIBRARY_PATH` and the DSP
+library directories to `ADSP_LIBRARY_PATH`.
+
+Run `ORT_QNN_UDO_REQUIRED_BACKENDS=htp ./onnxruntime_provider_test --gtest_filter='*UDO_Op_MyAdd*'`.
+Supply the pregenerated context and environment variables described above to include
+`LoadPregenerated`; otherwise that test skips. The seven JIT tests cover graph
+preparation, inference, domain registration, negative cases, and context round trips.
+Android aarch64 JIT and V81 context execution were validated on SM8850 with QAIRT 2.52.
 
 ---
 
@@ -171,7 +197,7 @@ export ORT_QNN_CUSTOM_OP_DOMAINS="example:MyAdd"
 # HTP backend (libQnnHtp.so is bundled in QNN_PKG)
 LD_LIBRARY_PATH=${QNN_PKG}:${ORT_LIB}:${LD_LIBRARY_PATH} \
 python3 run_udo_sample.py htp myadd_qdq.onnx \
-    --op-package artifacts/libMyAddOpPackage_htp.so \
+    --op-package artifacts/libQnnMyAddOpPackage.so \
     --qnn-ep-lib ${QNN_PKG}/libonnxruntime_providers_qnn.so
 ```
 

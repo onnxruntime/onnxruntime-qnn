@@ -13,7 +13,7 @@
 #   HEXAGON_SDK_ROOT  – (HTP only) path to Hexagon SDK version dir (e.g. .../6.5.0.0)
 #
 # Outputs (under this sample's artifacts/ directory):
-#   artifacts/libMyAddOpPackage_htp.so   (HTP target)
+#   artifacts/libQnnMyAddOpPackage.so   (HTP target)
 
 set -euo pipefail
 
@@ -53,8 +53,8 @@ build_htp() {
 
     # Step 4: copy output
     /bin/cp "${htp_build}/MyAddOpPackage/build/x86_64-linux-clang/libQnnMyAddOpPackage.so" \
-       "${ARTIFACT_DIR}/libMyAddOpPackage_htp.so"
-    echo ">>> HTP package: ${ARTIFACT_DIR}/libMyAddOpPackage_htp.so"
+       "${ARTIFACT_DIR}/libQnnMyAddOpPackage.so"
+    echo ">>> HTP package: ${ARTIFACT_DIR}/libQnnMyAddOpPackage.so"
 }
 
 TARGET="${1:-htp}"
