@@ -149,6 +149,7 @@ jobs:
       run_tests: true
       test_wheel: false
       # Same-runner validation does not need an archive hand-off.
+      build_test_same_runner: true
       upload_test_archive: false
       upload_wheel: true
 
