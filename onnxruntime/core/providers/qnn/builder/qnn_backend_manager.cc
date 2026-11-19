@@ -3026,7 +3026,8 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
 #endif  // _WIN32
       if (IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
         RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(
-            memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
+            memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)},
+            std::weak_ptr<void>{context_handle_record}));
       } else {
         return MAKE_EP_FAIL("Cannot add allocation clean up function for unsupported backend.");
       }

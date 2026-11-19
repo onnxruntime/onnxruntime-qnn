@@ -75,6 +75,7 @@ struct RpcMemApi {
 class RpcMemLibrary {
  public:
   RpcMemLibrary();
+  explicit RpcMemLibrary(RpcMemApi api) : api_(api) {}
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(RpcMemLibrary);
 

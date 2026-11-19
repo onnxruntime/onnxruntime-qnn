@@ -126,6 +126,41 @@ bool TryCreateHtpSession(const ORTCHAR_T* model_path,
   }
 }
 
+bool TryCreateHtpSession(const std::string& model_data,
+                         Ort::SessionOptions& session_options,
+                         Ort::Session& session) {
+  try {
+    session = Ort::Session{*ort_env, model_data.data(), model_data.size(), session_options};
+
+    // Session creation degrades gracefully when RPCMEM is unavailable. Probe
+    // one real allocation so device tests skip for that condition as well.
+    Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+    Ort::Allocator allocator(session, info_shared);
+    auto probe = allocator.GetAllocation(64);
+    if (probe.get() == nullptr) {
+      return false;
+    }
+    return true;
+  } catch (const Ort::Exception& e) {
+    if (IsRpcMemUnavailable(e)) {
+      return false;
+    }
+    throw;
+  }
+}
+
+// Trilu is intentionally unsupported by QNN and remains on the CPU EP. Mul is
+// supported by QNN HTP, creating a real CPU EP -> intermediate -> QNN EP path.
+GetTestModelFn BuildCpuToQnnIntermediateModel() {
+  return [](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("X", {3, 2}, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    builder.AddNode("cpu_trilu", "Trilu", {"X"}, {"cpu_intermediate"});
+    builder.MakeInitializer<float>("W", {3, 2}, {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f});
+    builder.AddNode("qnn_mul", "Mul", {"cpu_intermediate", "W"}, {"Y"});
+    builder.MakeOutput<float>("Y", std::vector<int64_t>{3, 2});
+  };
+}
+
 }  // namespace
 
 // Regression guard: output tensor uses MEMHANDLE (zero-copy) when allocated
@@ -737,11 +772,13 @@ TEST_F(QnnHTPBackendTests, untracked_host_accessible_memory_falls_back_to_client
   EXPECT_EQ(capture.CountContaining(kLogSubstrFallbackWarning), 1u);
 }
 
-// With shared-memory binding enabled, automatic allocations must retain CPU
-// memory across real QNN -> CPU -> QNN boundaries. Explicit shared-I/O binding
-// is covered separately by htp_shared_memory_input_uses_memhandle_branch and
+// With shared-memory binding enabled, ORT places the tensors at real
+// QNN -> CPU -> QNN boundaries in QnnHtpShared, so both boundary directions bind
+// as MEMHANDLE. Pooled buffers keep their QNN registrations, so registrations
+// must not grow after the first run. Explicit shared-I/O binding is covered
+// separately by htp_shared_memory_input_uses_memhandle_branch and
 // htp_shared_memory_output_uses_memhandle_branch.
-TEST_F(QnnHTPBackendTests, htp_shared_memory_partition_automatic_allocations_use_cpu) {
+TEST_F(QnnHTPBackendTests, htp_shared_memory_partition_automatic_allocations_use_shared_memory) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
   options["enable_htp_fp16_precision"] = "1";
@@ -813,8 +850,9 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_partition_automatic_allocations_use
       cpu_info, input_values.data(), input_values.size(), shape.data(), shape.size());
   const std::array<float, 9> expected = {3, 5, 7, 1, 11, 13, 1, 1, 19};
   constexpr size_t kRuns = 3;
+  size_t registrations_after_first_run = 0;
   for (size_t run = 0; run < kRuns; ++run) {
-    // Do not bind a CPU output: ORT must choose the allocation location itself.
+    // Do not bind an output: ORT must choose the allocation location itself.
     auto outputs = session.Run(Ort::RunOptions{}, input_names.data(), &input, 1, output_names.data(), 1);
     ASSERT_EQ(outputs.size(), 1u);
     ASSERT_TRUE(outputs[0].IsTensor());
@@ -823,18 +861,92 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_partition_automatic_allocations_use
     ASSERT_EQ(output_info.GetElementType(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
     const auto memory_info = outputs[0].GetTensorMemoryInfo();
     EXPECT_EQ(memory_info.GetDeviceType(), OrtMemoryInfoDeviceType_CPU);
-    EXPECT_EQ(Ort::GetApi().MemoryInfoGetDeviceMemType(memory_info), OrtDeviceMemoryType_DEFAULT);
+    EXPECT_EQ(Ort::GetApi().MemoryInfoGetDeviceMemType(memory_info), OrtDeviceMemoryType_HOST_ACCESSIBLE);
     const float* actual = outputs[0].GetTensorData<float>();
     for (size_t i = 0; i < expected.size(); ++i) {
       EXPECT_NEAR(actual[i], expected[i], 1e-4f) << "run " << run << ", element " << i;
     }
+    if (run == 0) {
+      registrations_after_first_run = capture.CountContaining("Registering QNN mem handle");
+    }
   }
 
-  // Each QNN partition binds one input and one output. These checks cover the
-  // internal QNN-produced intermediate as well as the automatically allocated Y.
-  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 4u * kRuns);
-  EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 0u);
-  EXPECT_EQ(capture.CountContaining("Registering QNN mem handle"), 0u);
+  // Per run, the QNN partitions bind qnn_intermediate (QNN -> CPU), cpu_intermediate
+  // (CPU -> QNN) and Y from shared memory. X is a plain-CPU graph input, so it may
+  // bind as either MEMHANDLE (after ORT stages it) or clientBuf; it is not asserted.
+  EXPECT_GE(capture.CountContaining(kLogSubstrMemHandle), 3u * kRuns);
+  EXPECT_LE(capture.CountContaining(kLogSubstrClientBuf), kRuns);
+  EXPECT_GT(registrations_after_first_run, 0u);
+  EXPECT_EQ(capture.CountContaining("Registering QNN mem handle"), registrations_after_first_run)
+      << "Pooled shared buffers must reuse their QNN registrations after the first run.";
+}
+
+// Verifies that an intermediate produced by the CPU EP is allocated directly
+// from QnnHtpShared and consumed by the downstream QNN partition via MEMHANDLE.
+//
+// Graph: X -> Trilu (CPU EP) -> cpu_intermediate -> Mul (QNN EP) -> Y
+//
+// X intentionally uses ordinary CPU memory and never enters the QNN partition.
+// Y is explicitly backed by QnnHtpShared. Therefore, the two QNN tensor bindings
+// are the CPU-produced intermediate and Y. Both must take the MEMHANDLE path.
+// Requires the ORT Core patch 0005 (plugin EP OrtMemTypeCPUInput routing and the
+// allocation planner's HOST_ACCESSIBLE selection).
+TEST_F(QnnHTPBackendTests, htp_shared_memory_cpu_to_qnn_intermediate_uses_memhandle) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions options = MakeHtpOptions();
+  options["enable_htp_fp16_precision"] = "1";
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
+
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, BuildCpuToQnnIntermediateModel(), /*opset_version*/ 14);
+
+  Ort::Session session{nullptr};
+  if (!TryCreateHtpSession(model->model_data, so, session)) {
+    GTEST_SKIP() << "HTP shared memory allocator is unavailable.";
+  }
+
+  Ort::MemoryInfo info_cpu = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+  Ort::MemoryInfo info_shared("QnnHtpShared", OrtDeviceAllocator, 0, OrtMemTypeCPU);
+  Ort::Allocator shared_allocator(session, info_shared);
+
+  const std::array<int64_t, 2> shape = {3, 2};
+  std::array<float, 6> x_vals = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  const std::array<float, 6> expected = {2.0f, 4.0f, 0.0f, 8.0f, 0.0f, 0.0f};
+  const size_t nbytes = x_vals.size() * sizeof(float);
+
+  auto y_data = shared_allocator.GetAllocation(nbytes);
+  ASSERT_NE(y_data.get(), nullptr);
+
+  Ort::Value bound_x = Ort::Value::CreateTensor(
+      info_cpu, x_vals.data(), x_vals.size(),
+      shape.data(), shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(
+      info_shared, reinterpret_cast<float*>(y_data.get()), x_vals.size(),
+      shape.data(), shape.size());
+
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+  session.Run(Ort::RunOptions{}, binding);
+
+  // The QNN partition binds cpu_intermediate and Y. The graph input X is only
+  // consumed by the CPU EP and cannot contribute to these counts.
+  EXPECT_GE(capture.CountContaining(kLogSubstrMemHandle), 2u)
+      << "Expected MEMHANDLE for the CPU-produced intermediate and shared output.";
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u)
+      << "The CPU-to-QNN intermediate must not fall back to clientBuf/RAW.";
+
+  constexpr float kTol = 0.5f;
+  const float* y_out = reinterpret_cast<const float*>(y_data.get());
+  for (size_t i = 0; i < x_vals.size(); ++i) {
+    EXPECT_NEAR(y_out[i], expected[i], kTol) << " at index " << i;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1049,8 +1161,12 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_multi_io) {
 //   (2) The zero-copy fallback WARNING fires selectively — only for the tensor
 //       that opted in via the session option but is bound to CPU memory.
 //
-// This test mixes shared inputs with a CPU output to exercise the fallback
-// path while preserving MEMHANDLE binding for explicitly shared tensors.
+// Note: when default_device_ = HOST_ACCESSIBLE, ORT Core transparently copies
+// CPU-backed *inputs* into HOST_ACCESSIBLE memory before the kernel runs, so a
+// CPU input never reaches BindQnnTensorMemoryToOrtValueMemory with CPU memory
+// info. Only CPU-backed *outputs* still hit the RAW/clientBuf branch (outputs
+// are written directly to the user's bound buffer). This test therefore mixes
+// shared inputs with a CPU output to exercise the fallback path.
 TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
@@ -1117,9 +1233,10 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
 // session multiple times with CPU-backed bindings must produce exactly one
 // WARNING across all Runs — not one per tensor or Run.
 //
-// CPU inputs and outputs remain in regular CPU memory even when shared memory
-// is enabled. Both use clientBuf, with one WARNING regardless of the number of
-// tensors or Runs.
+// Note: when default_device_ = HOST_ACCESSIBLE, only CPU *outputs* trigger the
+// fallback; CPU inputs are transparently promoted to HOST_ACCESSIBLE by ORT
+// Core's memory planner. mul_1 has one output (Y), so exactly one WARNING is
+// expected regardless of the number of Runs.
 TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions options = MakeHtpOptions();
@@ -1155,15 +1272,14 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
     session.Run(Ort::RunOptions{}, binding);
   }
 
-  // mul_1 has one input (X) and one output (Y). Both stay CPU-backed rather
-  // than being automatically allocated in shared memory.
-  EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 0u);
-  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 2u * kRuns);
-  // The WARNING fires exactly ONCE across all kRuns (not once per tensor or Run).
+  // mul_1 has one input (X) and one output (Y). X is transparently promoted
+  // from CPU to HOST_ACCESSIBLE by ORT Core, so its Bind takes the MEMHANDLE
+  // branch with no WARNING. Only Y stays CPU and triggers the
+  // WARNING — exactly ONCE across all kRuns (not once per Run).
   // If the one-shot guard is broken it would fire kRuns times.
   const size_t warn_count = capture.CountContaining(kLogSubstrFallbackWarning);
   EXPECT_EQ(warn_count, 1u)
-      << "Expected exactly 1 WARNING (for CPU-backed I/O) across " << kRuns
+      << "Expected exactly 1 WARNING (for CPU-backed output Y) across " << kRuns
       << " Runs, but got " << warn_count << ". One-shot semantics broken?";
 }
 
