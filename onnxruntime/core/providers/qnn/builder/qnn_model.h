@@ -216,6 +216,14 @@ class QnnModel {
   }
 
  private:
+  Ort::Status PrepareRuntimeTensor(const QnnTensorInfo& qnn_info,
+                                   const OnnxTensorInfo& ort_info,
+                                   const OrtValue* ort_tensor,
+                                   uint32_t& batch_multiplier,
+                                   Qnn_Tensor_t& qnn_tensor,
+                                   std::vector<uint32_t>& dimensions,
+                                   uint32_t& tensor_byte_size) const;
+
   std::unique_ptr<GraphInfo> graph_info_;
   QnnBackendManager* qnn_backend_manager_ = nullptr;
   std::unique_ptr<QnnGraphEmitter> qnn_graph_emitter_;
