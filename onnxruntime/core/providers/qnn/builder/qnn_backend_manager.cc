@@ -2173,9 +2173,12 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool enable_htp_extended_udma_mode,
     bool enable_htp_prepare_only,
     bool enable_htp_graph_splitting,
-    uint32_t htp_graph_splitting_num_prepare_threads) {
+    uint32_t htp_graph_splitting_num_prepare_threads,
+    bool file_mapping_option_is_explicit) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
+    RETURN_IF(file_mapping_option_is_explicit && enable_file_mapped_weights != file_mapped_weights_enabled_,
+              "Cannot share QNN backend manager with a different file-mapping mode.");
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
 
     if (htp_share_resource_optimization_ == 1) {

@@ -2328,6 +2328,10 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   Ort::Status rt;
   if (!ep->enable_multi_soc_ep_context_) {
+    int file_mapping_option_is_explicit = 0;
+    RETURN_IF_NOT_NULL(ep->ort_api.HasSessionConfigEntry(
+        &ep->session_options_, ep->FormatEPConfigKey("disable_file_mapped_weights").c_str(),
+        &file_mapping_option_is_explicit));
     rt = ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
                                                 ep->context_cache_enabled_ || ep->prepare_and_load_,
                                                 ep->share_ep_contexts_,
@@ -2339,7 +2343,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 ep->enable_htp_extended_udma_mode_,
                                                 ep->prepare_only_,
                                                 ep->enable_htp_graph_splitting_,
-                                                ep->htp_graph_splitting_num_prepare_threads_);
+                                                ep->htp_graph_splitting_num_prepare_threads_,
+                                                file_mapping_option_is_explicit != 0);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
   }
