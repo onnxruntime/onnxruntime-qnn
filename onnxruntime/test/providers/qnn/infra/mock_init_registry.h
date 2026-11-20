@@ -248,6 +248,18 @@ struct MockInitRegistry {
     }
     return Add(name, std::move(s));
   }
+  const OrtValueInfo* AddTensorInt64(const std::string& name,
+                                     std::vector<int64_t> dims,
+                                     const std::vector<int64_t>& data) {
+    MockInitSpec s;
+    s.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64;
+    s.dims = std::move(dims);
+    s.raw_bytes.resize(data.size() * sizeof(int64_t));
+    if (!data.empty()) {
+      std::memcpy(s.raw_bytes.data(), data.data(), s.raw_bytes.size());
+    }
+    return Add(name, std::move(s));
+  }
   // INT4 / UINT4: caller supplies per-element values; helper packs two values
   // per byte (low nibble = even index, high = odd). The EP's CASE_UNPACK_INT4
   // expects packed Int4x2 layout — feeding it 1 byte per element would over-
