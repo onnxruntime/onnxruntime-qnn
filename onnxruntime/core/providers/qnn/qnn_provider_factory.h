@@ -84,9 +84,11 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   std::vector<OrtEpDevice*> ep_devices_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
-  // Synthesized NPU hardware device when ORT Core doesn't enumerate one.
-  // Real-but-undetected (WoS Makena, Linux/Android arm64) or virtual (x86 cross-compile).
-  HardwareDeviceUniquePtr synthesized_npu_hw_device_;
+  // Retain synthesized hardware devices for every successful discovery call.
+  // Returned OrtEpDevice objects reference factory-owned OrtHardwareDevice objects,
+  // so later discovery must not invalidate previously returned devices.
+  // Failed discovery rolls back only that call's additions.
+  std::vector<HardwareDeviceUniquePtr> synthesized_hw_devices_;
 
   // Custom op domains reported to ORT via GetCustomOpDomains. Holds both the qti_aisw block-op
   // domain (always registered) and any domains built from ORT_QNN_CUSTOM_OP_DOMAINS.
