@@ -30,9 +30,10 @@ namespace qnn {
 #define QNN_SYSTEM_DLC_API_ENABLED
 #endif  // QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 37
 
-// HTP MatMul LUT is currently enabled only on Windows with QAIRT SDK 2.51+.
+// HTP MatMul LUT is enabled on Windows and Linux x86_64 with QAIRT SDK 2.51+.
 // QNN_SDK_VERSION_MAJOR/MINOR are injected by CMake from the SDK version.
-#if defined(_WIN32) && defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
+#if (defined(_WIN32) || (defined(__linux__) && defined(__x86_64__))) && \
+    defined(QNN_SDK_VERSION_MAJOR) && defined(QNN_SDK_VERSION_MINOR) && \
     (QNN_SDK_VERSION_MAJOR > 2 || (QNN_SDK_VERSION_MAJOR == 2 && QNN_SDK_VERSION_MINOR >= 51))
 #define ORT_QNN_HTP_MATMUL_LUT_SUPPORTED 1
 #else
