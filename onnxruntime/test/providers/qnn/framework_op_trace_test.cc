@@ -33,38 +33,7 @@ namespace fs = std::filesystem;
 
 // ===================== Test Helpers =====================
 
-class ScopedTempDir {
- public:
-  ScopedTempDir() {
-    auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
-    auto sanitize = [](std::string s) {
-      for (char& c : s) {
-        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' ||
-            c == '"' || c == '<' || c == '>' || c == '|') {
-          c = '_';
-        }
-      }
-      return s;
-    };
-    path_ = fs::temp_directory_path() /
-            (sanitize(info->test_suite_name()) + "_" + sanitize(info->name()));
-    // Remove any stale state left by a previous crashed test run before
-    // creating a fresh directory.
-    std::error_code ec;
-    fs::remove_all(path_, ec);
-    fs::create_directories(path_);
-  }
-
-  ~ScopedTempDir() {
-    std::error_code ec;
-    fs::remove_all(path_, ec);
-  }
-
-  const fs::path& path() const { return path_; }
-
- private:
-  fs::path path_;
-};
+using ScopedTempDir = QnnScopedTempDir;
 
 static fs::path FindTraceFile(const fs::path& dir) {
   if (!fs::exists(dir)) return {};
