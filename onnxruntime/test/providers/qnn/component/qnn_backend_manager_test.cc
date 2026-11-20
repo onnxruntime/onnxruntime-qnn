@@ -25,6 +25,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -81,6 +82,38 @@ TEST(QnnUnit_BackendManagerTest, IsBackendHostMode_ConfigureHostModeTrue_Returns
                              /*skip_version_check=*/true, /*configure_host_mode=*/true);
   ASSERT_NE(manager, nullptr);
   EXPECT_TRUE(manager->IsBackendHostMode());
+}
+
+// ---------------------------------------------------------------------------
+// Context handle lease -- pure C++, no QNN lib needed
+// ---------------------------------------------------------------------------
+
+TEST(QnnUnit_BackendManagerTest, ContextHandleLease_KeepsRemovedRecordAlive) {
+  StubApiEnv env;
+  std::atomic<unsigned> context_free_calls{0};
+  StubBackendManager backend(env.api_ptrs, env.logger);
+  backend.QnnInterface().contextFree = [](Qnn_ContextHandle_t context,
+                                          Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+    ++*static_cast<std::atomic<unsigned>*>(context);
+    return QNN_SUCCESS;
+  };
+  auto* manager = backend.GetMutable();
+  Qnn_ContextHandle_t context = &context_free_calls;
+
+  ASSERT_TRUE(manager->AddQnnContextHandle(context).IsOK());
+  auto lease = manager->GetContextHandleLease(context);
+  ASSERT_TRUE(lease);
+
+  manager->ReleaseSpecificContextHandle(context);
+
+  EXPECT_FALSE(manager->HasContextHandle(context));
+  EXPECT_TRUE(lease);
+  EXPECT_EQ(context_free_calls.load(), 0u);
+
+  lease = {};
+  EXPECT_EQ(context_free_calls.load(), 1u);
+  manager->ReleaseSpecificContextHandle(context);
+  EXPECT_EQ(context_free_calls.load(), 1u);
 }
 
 // ---------------------------------------------------------------------------

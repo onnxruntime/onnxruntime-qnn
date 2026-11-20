@@ -5,11 +5,21 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <fstream>
+#include <future>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include <gsl/gsl>
 
 #include "gtest/gtest.h"
 
@@ -21,6 +31,7 @@
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/shared_context.h"
 
 #include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
@@ -49,7 +60,7 @@ struct BindQnnTensorMemoryTag {
                                               const OrtMemoryInfo*,
                                               void*,
                                               uint32_t,
-                                              Qnn_ContextHandle_t,
+                                              const qnn::QnnBackendManager::ContextHandleLease&,
                                               Qnn_Tensor_t&);
   friend type GetQnnModelPrivateMember(BindQnnTensorMemoryTag);
 };
@@ -63,24 +74,28 @@ struct GraphInfoTag {
 };
 template struct QnnModelPrivateMember<GraphInfoTag, &qnn::QnnModel::graph_info_>;
 
+void SetQnnModelNameForTest(qnn::QnnModel& model, const std::string& name) {
+  const auto graph_info = GetQnnModelPrivateMember(GraphInfoTag{});
+  model.*graph_info = std::make_unique<qnn::GraphInfo>(
+      nullptr, name, nullptr, std::vector<qnn::QnnTensorWrapper>{}, std::vector<qnn::QnnTensorWrapper>{});
+}
+
 struct GraphEmitterTag {
   using type = std::unique_ptr<qnn::QnnGraphEmitter> qnn::QnnModel::*;
   friend type GetQnnModelPrivateMember(GraphEmitterTag);
 };
 template struct QnnModelPrivateMember<GraphEmitterTag, &qnn::QnnModel::qnn_graph_emitter_>;
 
-struct BackendContextsTag {
-  using type = std::vector<Qnn_ContextHandle_t> qnn::QnnBackendManager::*;
-  friend type GetQnnModelPrivateMember(BackendContextsTag);
-};
-template struct QnnModelPrivateMember<BackendContextsTag, &qnn::QnnBackendManager::contexts_>;
-
 struct ModelGraphContextStub {
   Qnn_GraphHandle_t graph;
   Qnn_ErrorHandle_t result = QNN_SUCCESS;
+  std::atomic<unsigned> free_calls{0};
 };
 
 void InstallModelGraphStubs(QNN_INTERFACE_VER_TYPE& qnn_interface) {
+  qnn_interface.contextFree = [](Qnn_ContextHandle_t, Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+    return QNN_SUCCESS;
+  };
   qnn_interface.graphRetrieve = [](Qnn_ContextHandle_t context, const char*,
                                    Qnn_GraphHandle_t* graph) -> Qnn_ErrorHandle_t {
     const auto& stub = *static_cast<ModelGraphContextStub*>(context);
@@ -116,7 +131,7 @@ TEST(QnnUnit_ModelTest, DeserializeKeepsEmitterAndMetadataHandlesTogetherOnSucce
   StubApiEnv env;
   StubBackendManager backend(env.api_ptrs, env.logger);
   InstallModelGraphStubs(backend.QnnInterface());
-  qnn::QnnModel model(backend.GetMutable(), env.api_ptrs);
+  qnn::QnnModel model(backend.GetMutable()->shared_from_this(), env.api_ptrs);
   auto& graph_info = model.*GetQnnModelPrivateMember(GraphInfoTag{});
   auto& emitter = model.*GetQnnModelPrivateMember(GraphEmitterTag{});
 
@@ -154,7 +169,7 @@ TEST(QnnUnit_ModelTest, SsrRecoveryReusesNewContextAndReplacesBothHandlePairs) {
   StubBackendManager backend(env.api_ptrs, env.logger);
   backend.BackendType() = qnn::QnnBackendType::HTP;
   InstallModelGraphStubs(backend.QnnInterface());
-  qnn::QnnModel model(backend.GetMutable(), env.api_ptrs);
+  qnn::QnnModel model(backend.GetMutable()->shared_from_this(), env.api_ptrs);
   InstallFakeGraphApiStubs(env.stub_ort_api);
   OrtGlobalApiOverride api_override(&env.stub_ort_api);
 
@@ -182,8 +197,7 @@ TEST(QnnUnit_ModelTest, SsrRecoveryReusesNewContextAndReplacesBothHandlePairs) {
 
   // Simulate another model having recovered the shared context: the old context
   // is no longer tracked, and GetQnnContext(0) returns the replacement.
-  auto& contexts = (*backend.GetMutable()).*GetQnnModelPrivateMember(BackendContextsTag{});
-  contexts.push_back(&replacement_context);
+  ASSERT_TRUE(backend.GetMutable()->AddQnnContextHandle(&replacement_context).IsOK());
   ASSERT_FALSE(backend.Get()->HasContextHandle(&original_context));
   ASSERT_TRUE(model.RecoverFromSSR(env.logger, qnn::EpContextIoDispatch()).IsOK());
 
@@ -195,6 +209,266 @@ TEST(QnnUnit_ModelTest, SsrRecoveryReusesNewContextAndReplacesBothHandlePairs) {
   EXPECT_EQ(emitter->Graph(), graph_info->Graph());
   EXPECT_EQ(emitter->Context(), graph_info->GraphContext());
 }
+
+namespace {
+
+enum class SsrPausePoint {
+  BIND,
+  EXECUTE,
+};
+
+// A condition variable fixes the interleaving without sleeps. The test's scope
+// guard releases the worker even when an assertion fails before recovery.
+struct SsrExecutionGate {
+  explicit SsrExecutionGate(SsrPausePoint pause_point) : point(pause_point) {}
+
+  SsrPausePoint point;
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool entered = false;
+  bool released = false;
+
+  void Pause(SsrPausePoint current_point) {
+    if (point != current_point) return;
+    std::unique_lock<std::mutex> lock(mutex);
+    if (entered) return;
+    entered = true;
+    cv.notify_all();
+    cv.wait(lock, [&] { return released; });
+  }
+
+  bool WaitUntilPaused() {
+    std::unique_lock<std::mutex> lock(mutex);
+    return cv.wait_for(lock, std::chrono::seconds(5), [&] { return entered; });
+  }
+
+  void Release() {
+    std::lock_guard<std::mutex> lock(mutex);
+    released = true;
+    cv.notify_all();
+  }
+};
+
+struct SsrTensorStub {
+  std::array<float, 4> data{};
+  SsrExecutionGate* gate = nullptr;
+};
+
+struct SsrKernelContextStub {
+  SsrTensorStub input;
+  SsrTensorStub output;
+};
+
+struct SsrGraphStub {
+  ModelGraphContextStub* context = nullptr;
+  SsrExecutionGate* gate = nullptr;
+  const void* paused_input = nullptr;
+  Qnn_ErrorHandle_t result = QNN_SUCCESS;
+  std::atomic<unsigned> execute_calls{0};
+};
+
+struct SsrReloadStub {
+  ModelGraphContextStub* replacement;
+  unsigned calls = 0;
+};
+
+void InstallSsrExecutionApiStubs(OrtApi& api, QNN_INTERFACE_VER_TYPE& qnn_interface) {
+  api.KernelContext_GetInputCount = [](const OrtKernelContext*, size_t* count) noexcept -> OrtStatus* {
+    *count = 1;
+    return nullptr;
+  };
+  api.KernelContext_GetOutputCount = api.KernelContext_GetInputCount;
+  api.KernelContext_GetInput = [](const OrtKernelContext* context, size_t index,
+                                  const OrtValue** value) noexcept -> OrtStatus* {
+    EXPECT_EQ(index, 0u);
+    *value = reinterpret_cast<const OrtValue*>(&reinterpret_cast<const SsrKernelContextStub*>(context)->input);
+    return nullptr;
+  };
+  api.KernelContext_GetOutput = [](OrtKernelContext* context, size_t index, const int64_t* shape,
+                                   size_t rank, OrtValue** value) noexcept -> OrtStatus* {
+    EXPECT_EQ(index, 0u);
+    EXPECT_EQ(rank, 1u);
+    EXPECT_EQ(shape[0], 4);
+    *value = reinterpret_cast<OrtValue*>(&reinterpret_cast<SsrKernelContextStub*>(context)->output);
+    return nullptr;
+  };
+  api.GetTensorTypeAndShape = [](const OrtValue* value, OrtTensorTypeAndShapeInfo** info) noexcept -> OrtStatus* {
+    *info = reinterpret_cast<OrtTensorTypeAndShapeInfo*>(const_cast<OrtValue*>(value));
+    return nullptr;
+  };
+  api.GetTensorShapeElementCount = [](const OrtTensorTypeAndShapeInfo*, size_t* count) noexcept -> OrtStatus* {
+    *count = 4;
+    return nullptr;
+  };
+  api.GetTensorElementType = [](const OrtTensorTypeAndShapeInfo*,
+                                ONNXTensorElementDataType* type) noexcept -> OrtStatus* {
+    *type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+    return nullptr;
+  };
+  api.GetTensorMemoryInfo = [](const OrtValue* value, const OrtMemoryInfo** info) noexcept -> OrtStatus* {
+    *info = reinterpret_cast<const OrtMemoryInfo*>(value);
+    return nullptr;
+  };
+  api.GetTensorData = [](const OrtValue* value, const void** data) noexcept -> OrtStatus* {
+    *data = reinterpret_cast<const SsrTensorStub*>(value)->data.data();
+    return nullptr;
+  };
+  api.GetTensorMutableData = [](OrtValue* value, void** data) noexcept -> OrtStatus* {
+    *data = reinterpret_cast<SsrTensorStub*>(value)->data.data();
+    return nullptr;
+  };
+  api.MemoryInfoGetDeviceType = [](const OrtMemoryInfo* info, OrtMemoryInfoDeviceType* type) noexcept {
+    const auto& tensor = *reinterpret_cast<const SsrTensorStub*>(info);
+    if (tensor.gate) tensor.gate->Pause(SsrPausePoint::BIND);
+    *type = OrtMemoryInfoDeviceType_CPU;
+  };
+  api.MemoryInfoGetDeviceMemType = [](const OrtMemoryInfo*) noexcept {
+    return OrtDeviceMemoryType_DEFAULT;
+  };
+  qnn_interface.contextFree = [](Qnn_ContextHandle_t context, Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+    ++static_cast<ModelGraphContextStub*>(context)->free_calls;
+    return QNN_SUCCESS;
+  };
+  qnn_interface.contextCreateFromBinary = [](Qnn_BackendHandle_t backend, Qnn_DeviceHandle_t,
+                                             const QnnContext_Config_t**, const void* buffer,
+                                             Qnn_ContextBinarySize_t size, Qnn_ContextHandle_t* context,
+                                             Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+    auto& reload = *static_cast<SsrReloadStub*>(backend);
+    EXPECT_NE(buffer, nullptr);
+    EXPECT_GT(size, 0u);
+    ++reload.calls;
+    *context = reload.replacement;
+    return QNN_SUCCESS;
+  };
+  qnn_interface.graphExecute = [](Qnn_GraphHandle_t graph, const Qnn_Tensor_t* inputs, uint32_t num_inputs,
+                                  Qnn_Tensor_t* outputs, uint32_t num_outputs, Qnn_ProfileHandle_t,
+                                  Qnn_SignalHandle_t) -> Qnn_ErrorHandle_t {
+    auto& stub = *static_cast<SsrGraphStub*>(graph);
+    EXPECT_EQ(num_inputs, 1u);
+    EXPECT_EQ(num_outputs, 1u);
+    if (num_inputs != 1 || num_outputs != 1) return QNN_COMMON_ERROR_INVALID_ARGUMENT;
+    const auto input = qnn::GetQnnTensorClientBuf(inputs[0]);
+    const auto output = qnn::GetQnnTensorClientBuf(outputs[0]);
+    EXPECT_EQ(qnn::GetQnnTensorMemType(inputs[0]), QNN_TENSORMEMTYPE_RAW);
+    EXPECT_EQ(qnn::GetQnnTensorMemType(outputs[0]), QNN_TENSORMEMTYPE_RAW);
+    EXPECT_EQ(input.dataSize, sizeof(std::array<float, 4>));
+    EXPECT_EQ(output.dataSize, sizeof(std::array<float, 4>));
+    if (stub.gate && input.data == stub.paused_input) stub.gate->Pause(SsrPausePoint::EXECUTE);
+    EXPECT_EQ(stub.context->free_calls.load(), 0u) << "Context freed during bind/execute";
+    ++stub.execute_calls;
+    if (stub.result == QNN_SUCCESS) {
+      // Copy through the buffers bound for this invocation, so each model's
+      // distinct output proves that recovery re-bound its own ORT tensors.
+      std::copy_n(static_cast<const float*>(input.data), 4, static_cast<float*>(output.data));
+    }
+    return stub.result;
+  };
+}
+
+class QnnModelConcurrentSsrTest : public ::testing::TestWithParam<SsrPausePoint> {};
+
+TEST_P(QnnModelConcurrentSsrTest, ContextSurvivesBindAndExecuteWhilePeerReloads) {
+  StubApiEnv env;
+  InstallFakeGraphApiStubs(env.stub_ort_api);
+  OrtGlobalApiOverride api_override(&env.stub_ort_api);
+  SsrExecutionGate gate{GetParam()};
+  SsrGraphStub original_graph;
+  SsrGraphStub replacement_graph;
+  ModelGraphContextStub original_context{&original_graph};
+  ModelGraphContextStub replacement_context{&replacement_graph};
+  SsrReloadStub reload{&replacement_context};
+  StubBackendManager backend(env.api_ptrs, env.logger);
+  backend.BackendType() = qnn::QnnBackendType::HTP;
+  InstallModelGraphStubs(backend.QnnInterface());
+  InstallSsrExecutionApiStubs(env.stub_ort_api, backend.QnnInterface());
+  backend.BackendHandle() = &reload;
+  auto* manager = backend.GetMutable();
+  qnn::QnnModel model_a(manager->shared_from_this(), env.api_ptrs);
+  qnn::QnnModel model_b(manager->shared_from_this(), env.api_ptrs);
+  const qnn::EpContextIoDispatch io_dispatch;
+
+  const auto binary_path = std::filesystem::temp_directory_path() /
+                           (GetParam() == SsrPausePoint::BIND ? "qnn_ssr_bind.bin" : "qnn_ssr_execute.bin");
+  auto remove_binary = gsl::finally([&] { std::filesystem::remove(binary_path); });
+  {
+    std::ofstream binary(binary_path, std::ios::binary);
+    binary << "stub context binary";
+    ASSERT_TRUE(binary.good());
+  }
+
+  FakeValueInfo x{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {4}};
+  FakeValueInfo y{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {4}};
+  FakeGraph graph{{}, {&x}, {&y}, {}};
+  FakeNode fused{"fused", "QnnPartition_0", "", 13, {&x}, {&y}};
+  std::vector<std::string> input_names{"x"};
+  std::vector<std::string> output_names{"y"};
+  qnn::ModelSettings settings{};
+  qnn::QnnModelContext model_context{*graph.AsGraph(), *fused.AsNode(), env.logger,
+                                     &input_names, &output_names, &settings};
+  for (auto* model : {&model_a, &model_b}) {
+    ASSERT_TRUE(model->SetGraphInputOutputInfo(model_context).IsOK());
+    ASSERT_TRUE(DeserializeStubGraph(*model, original_context).IsOK());
+    ASSERT_TRUE(model->SetupQnnInputOutput(env.logger).IsOK());
+    model->SetContextRecoveryInfo(binary_path.string(), 0, qnn::ContextPriority::NORMAL);
+  }
+  ASSERT_TRUE(manager->AddQnnContextHandle(&original_context).IsOK());
+  original_graph.context = &original_context;
+  original_graph.gate = &gate;
+  original_graph.result = QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  replacement_graph.context = &replacement_context;
+  SsrKernelContextStub kernel_a{{{1, 2, 3, 4}, &gate}, {}};
+  SsrKernelContextStub kernel_b{{{5, 6, 7, 8}}, {}};
+  original_graph.paused_input = kernel_a.input.data.data();
+
+  auto execution_a = std::async(std::launch::async, [&] {
+    return model_a.ExecuteGraph(reinterpret_cast<OrtKernelContext*>(&kernel_a), env.logger, io_dispatch);
+  });
+  auto release_worker = gsl::finally([&] {
+    gate.Release();
+    if (execution_a.valid()) execution_a.wait();
+  });
+  ASSERT_TRUE(gate.WaitUntilPaused()) << "Model A did not enter the selected bind/execute pause";
+
+  // Model B sees SSR, removes the shared old context, reloads from the stub
+  // binary, then binds and executes the replacement while A is still paused.
+  auto status_b = model_b.ExecuteGraph(reinterpret_cast<OrtKernelContext*>(&kernel_b), env.logger, io_dispatch);
+  ASSERT_TRUE(status_b.IsOK()) << status_b.GetErrorMessage();
+  EXPECT_EQ(reload.calls, 1u);
+  EXPECT_FALSE(manager->HasContextHandle(&original_context));
+  EXPECT_TRUE(manager->HasContextHandle(&replacement_context));
+  EXPECT_EQ(original_context.free_calls.load(), 0u);
+  EXPECT_EQ(replacement_graph.execute_calls.load(), 1u);
+  EXPECT_EQ(kernel_b.output.data, kernel_b.input.data);
+
+  gate.Release();
+  auto status_a = execution_a.get();
+  ASSERT_TRUE(status_a.IsOK()) << status_a.GetErrorMessage();
+  EXPECT_EQ(original_context.free_calls.load(), 1u);
+  EXPECT_EQ(original_graph.execute_calls.load(), 2u);
+  EXPECT_EQ(reload.calls, 1u) << "Model A must reuse the context already recovered by B";
+  EXPECT_EQ(replacement_graph.execute_calls.load(), 2u);
+  EXPECT_EQ(kernel_a.output.data, kernel_a.input.data);
+  for (auto* model : {&model_a, &model_b}) {
+    const auto& info = model->*GetQnnModelPrivateMember(GraphInfoTag{});
+    const auto& emitter = model->*GetQnnModelPrivateMember(GraphEmitterTag{});
+    EXPECT_EQ(info->Graph(), &replacement_graph);
+    EXPECT_EQ(info->GraphContext(), &replacement_context);
+    EXPECT_EQ(emitter->Graph(), info->Graph());
+    EXPECT_EQ(emitter->Context(), info->GraphContext());
+  }
+  EXPECT_EQ(replacement_context.free_calls.load(), 0u);
+  manager->ReleaseSpecificContextHandle(&replacement_context);
+  EXPECT_EQ(replacement_context.free_calls.load(), 1u);
+  EXPECT_EQ(original_context.free_calls.load(), 1u);
+}
+
+INSTANTIATE_TEST_SUITE_P(BindAndExecute, QnnModelConcurrentSsrTest,
+                         ::testing::Values(SsrPausePoint::BIND, SsrPausePoint::EXECUTE),
+                         [](const ::testing::TestParamInfo<SsrPausePoint>& info) {
+                           return info.param == SsrPausePoint::BIND ? "DuringBind" : "DuringExecute";
+                         });
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // QnnModelMinimalTestContext
@@ -237,7 +511,7 @@ struct QnnModelMinimalTestContext {
     ApiPtrs api_ptrs{stub_ort_api, stub_ep_api, stub_editor_api};
     manager = qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
     if (!manager) return;
-    model = std::make_unique<qnn::QnnModel>(manager.get(), api_ptrs);
+    model = std::make_unique<qnn::QnnModel>(manager, api_ptrs);
   }
 
   bool IsValid() const { return model != nullptr; }
@@ -287,12 +561,61 @@ struct QnnModelHtpTestContext {
     auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map);
     if (!status.IsOK()) return;
 
-    model = std::make_unique<qnn::QnnModel>(manager.get(), api_ptrs);
+    model = std::make_unique<qnn::QnnModel>(manager, api_ptrs);
     valid = true;
   }
 
   bool IsValid() const { return valid; }
 };
+
+TEST(QnnUnit_ModelTest, KeepsBackendManagerAlive) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  std::weak_ptr<qnn::QnnBackendManager> weak_manager = ctx.manager;
+
+  // A model parked in SharedContext can outlive the QnnEp that created it.
+  ctx.manager.reset();
+  EXPECT_FALSE(weak_manager.expired());
+
+  ctx.model.reset();
+  EXPECT_TRUE(weak_manager.expired());
+}
+
+TEST(QnnUnit_ModelTest, SharedContextRemovalIsScopedToProducingSession) {
+  QnnModelMinimalTestContext ctx;
+  ASSERT_TRUE(ctx.IsValid());
+
+  ApiPtrs api_ptrs{ctx.stub_ort_api, ctx.stub_ep_api, ctx.stub_editor_api};
+  auto model_a = std::make_unique<qnn::QnnModel>(ctx.manager, api_ptrs);
+  auto model_b = std::make_unique<qnn::QnnModel>(ctx.manager, api_ptrs);
+  SetQnnModelNameForTest(*model_a, "session_a_graph");
+  SetQnnModelNameForTest(*model_b, "session_b_graph");
+
+  SharedContext::QnnModelOwnerToken owner_a = std::make_shared<char>();
+  SharedContext::QnnModelOwnerToken owner_b = std::make_shared<char>();
+  std::string duplicate_graph_names;
+  std::vector<std::unique_ptr<qnn::QnnModel>> session_a_models;
+  session_a_models.push_back(std::move(model_a));
+  EXPECT_FALSE(SharedContext::GetInstance().SetSharedQnnModel(
+      std::move(session_a_models), ctx.manager, owner_a, duplicate_graph_names));
+  std::vector<std::unique_ptr<qnn::QnnModel>> session_b_models;
+  session_b_models.push_back(std::move(model_b));
+  EXPECT_FALSE(SharedContext::GetInstance().SetSharedQnnModel(
+      std::move(session_b_models), ctx.manager, owner_b, duplicate_graph_names));
+
+  // Sessions A and B share one manager. Destroying A must leave B's parked model
+  // available for a later consumer session C.
+  SharedContext::GetInstance().RemoveSharedQnnModels(owner_a);
+  EXPECT_FALSE(SharedContext::GetInstance().HasSharedQnnModel("session_a_graph", ctx.manager));
+  EXPECT_TRUE(SharedContext::GetInstance().HasSharedQnnModel("session_b_graph", ctx.manager));
+  auto session_c_model =
+      SharedContext::GetInstance().GetSharedQnnModel("session_b_graph", ctx.manager);
+  ASSERT_NE(session_c_model, nullptr);
+  EXPECT_EQ(session_c_model->Name(), "session_b_graph");
+
+  SharedContext::GetInstance().RemoveSharedQnnModels(owner_b);
+}
 
 // ---------------------------------------------------------------------------
 // DeserializeGraphInfoFromBinaryInfo tests
@@ -508,8 +831,9 @@ TEST(QnnUnit_ModelTest, BindTensor_UnregisteredGpuDefaultMemory_ReturnsError) {
   const auto bind_tensor_memory = GetQnnModelPrivateMember(BindQnnTensorMemoryTag{});
   int data = 0;
   Qnn_Tensor_t qnn_tensor = QNN_TENSOR_INIT;
+  const qnn::QnnBackendManager::ContextHandleLease context_handle_lease;
   const auto status = ((*ctx.model).*bind_tensor_memory)(
-      ctx.logger, reinterpret_cast<const OrtMemoryInfo*>(1), &data, sizeof(data), nullptr, qnn_tensor);
+      ctx.logger, reinterpret_cast<const OrtMemoryInfo*>(1), &data, sizeof(data), context_handle_lease, qnn_tensor);
 
   EXPECT_FALSE(status.IsOK());
   EXPECT_EQ(status.GetErrorMessage(), "GPU DEFAULT memory is not a registered imported memory handle.");

@@ -49,10 +49,10 @@ struct QnnModelContext {
 
 class QnnModel {
  public:
-  QnnModel(QnnBackendManager* qnn_backend_manager,
+  QnnModel(std::shared_ptr<QnnBackendManager> qnn_backend_manager,
            const ApiPtrs& api_ptrs)
-      : qnn_backend_manager_(qnn_backend_manager),
-        qnn_graph_emitter_(std::make_unique<QnnGraphEmitter>(qnn_backend_manager->GetQnnInterface())),
+      : qnn_backend_manager_(std::move(qnn_backend_manager)),
+        qnn_graph_emitter_(std::make_unique<QnnGraphEmitter>(qnn_backend_manager_->GetQnnInterface())),
         api_ptrs_(api_ptrs) {
     qnn_backend_type_ = qnn_backend_manager_->GetQnnBackendType();
   }
@@ -187,6 +187,7 @@ class QnnModel {
   // QNN_GRAPH_NO_ERROR on success, or another error code on other failures.
   Ort::Status BindAndExecuteGraph(OrtKernelContext* context,
                                   const Ort::Logger& logger,
+                                  const QnnBackendManager::ContextHandleLease& context_handle_lease,
                                   Qnn_ErrorHandle_t& execute_status,
                                   QnnEpProfiler* ort_profiler);
 
@@ -194,7 +195,7 @@ class QnnModel {
                                                   const OrtMemoryInfo* ort_value_memory_info,
                                                   void* ort_value_data,
                                                   uint32_t ort_value_data_size,
-                                                  Qnn_ContextHandle_t qnn_context,
+                                                  const QnnBackendManager::ContextHandleLease& context_handle_lease,
                                                   Qnn_Tensor_t& qnn_tensor);
 
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
@@ -217,7 +218,7 @@ class QnnModel {
 
  private:
   std::unique_ptr<GraphInfo> graph_info_;
-  QnnBackendManager* qnn_backend_manager_ = nullptr;
+  std::shared_ptr<QnnBackendManager> qnn_backend_manager_;
   std::unique_ptr<QnnGraphEmitter> qnn_graph_emitter_;
   GraphInputOutputInfo graph_inputs_;
   GraphInputOutputInfo graph_outputs_;
