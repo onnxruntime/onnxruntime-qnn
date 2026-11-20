@@ -271,8 +271,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool enable_htp_extended_udma_mode = false,
       bool enable_htp_prepare_only = false,
       bool enable_htp_graph_splitting = false,
-      uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX,
-      bool file_mapping_option_is_explicit = true);
+      uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();

@@ -727,9 +727,6 @@ TEST_F(QnnUnit_CallbackBufferTest, SharedManagerKeepsDisabledMappingForNativeIni
   ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, false, nullptr, binaries, disabled).IsOK());
   EXPECT_FALSE(manager->FileMappingIsEnabled());
   EXPECT_FALSE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, enabled).IsOK());
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, enabled,
-                                    false, false, false, UINT32_MAX, false)
-                  .IsOK());
   EXPECT_FALSE(manager->FileMappingIsEnabled());
   EXPECT_EQ(backend_->BackendHandle(), backend_handle);
   EXPECT_EQ((manager->*GetCallbackBackendMember(CallbackFileMapperTag{})).get(), nullptr);
@@ -774,7 +771,7 @@ TEST_F(QnnUnit_CallbackBufferTest, SharedMappingKeepsCallbacksOrdinaryAndAllowsN
   EXPECT_TRUE(manager->FileMappingIsEnabled());
 }
 
-TEST_F(QnnUnit_CallbackBufferTest, ExplicitMappingMismatchPreservesExistingBackend) {
+TEST_F(QnnUnit_CallbackBufferTest, MappingMismatchPreservesExistingBackend) {
   auto* manager = backend_->GetMutable();
   backend_->BackendType() = qnn::QnnBackendType::HTP;
   manager->*GetCallbackBackendMember(CallbackBackendSetupTag{}) = true;
@@ -791,7 +788,7 @@ TEST_F(QnnUnit_CallbackBufferTest, ExplicitMappingMismatchPreservesExistingBacke
   EXPECT_EQ((manager->*GetCallbackBackendMember(CallbackFileMapperTag{})).get(), nullptr);
 }
 
-TEST_F(QnnUnit_CallbackBufferTest, DefaultMappingInheritsAndExplicitMismatchPreservesVtcmContexts) {
+TEST_F(QnnUnit_CallbackBufferTest, MappingMismatchPreservesVtcmContexts) {
   UseNativeReads();
   auto* manager = backend_->GetMutable();
   backend_->BackendType() = qnn::QnnBackendType::HTP;
@@ -812,9 +809,7 @@ TEST_F(QnnUnit_CallbackBufferTest, DefaultMappingInheritsAndExplicitMismatchPres
   EXPECT_FALSE(manager->SetupBackend(true, false, true, 1, false, nullptr, second, disabled).IsOK());
   EXPECT_EQ(manager->GetQnnContextSize(), 1u);
   ASSERT_TRUE(manager->SetupBackend(true, false, true, 1, true, nullptr, first, enabled).IsOK());
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, 1, false, nullptr, second, disabled,
-                                    false, false, false, UINT32_MAX, false)
-                  .IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, 1, true, nullptr, second, enabled).IsOK());
   EXPECT_TRUE(manager->FileMappingIsEnabled());
   EXPECT_EQ(list_calls_, 2u);
   EXPECT_EQ(mapped_list_calls_, 2u);
