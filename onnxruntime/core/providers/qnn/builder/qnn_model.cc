@@ -102,6 +102,16 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
     }
   }
 
+  unbound_graph_inputs_.clear();
+  if (context.unconsumed_inputs != nullptr) {
+    for (const auto& unconsumed : *context.unconsumed_inputs) {
+      if (fused_input_names.insert(unconsumed.name).second) {
+        fused_input_order.push_back(unconsumed.name);
+        unbound_graph_inputs_.push_back(unconsumed);
+      }
+    }
+  }
+
   std::unordered_map<std::string, std::string> tensor_name_overrides_reversed;
   if (context.tensor_name_overrides) {
     for (const auto& [internal, onnx] : *context.tensor_name_overrides) {
@@ -302,6 +312,34 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                                       context.tensor_name_overrides,
                                                       trace_collector.get(),
                                                       /*is_post_layout_transform=*/true);
+
+  for (const auto& unbound : unbound_graph_inputs_) {
+    const std::string& unconsumed = unbound.name;
+    Qnn_DataType_t qnn_data_type = QNN_DATATYPE_UNDEFINED;
+    RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized_tensor=*/false,
+                                          unbound.data_type,
+                                          qnn_data_type,
+                                          qnn_backend_manager_->GetQnnBackendType()));
+    std::vector<uint32_t> qnn_shape;
+    RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(std::optional<std::vector<int64_t>>(unbound.shape), qnn_shape),
+                  ("Unsupported shape for unconsumed graph input: " + unconsumed).c_str());
+    std::vector<uint32_t> sink_shape = qnn_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(QnnTensorWrapper(unconsumed,
+                                                                      QNN_TENSOR_TYPE_APP_WRITE,
+                                                                      qnn_data_type,
+                                                                      QnnQuantParamsWrapper(),
+                                                                      std::move(qnn_shape))),
+                  ("Failed to add unconsumed graph input: " + unconsumed).c_str());
+    // libQnnIr crashes on a graph input with no consumer; a Cast with an unread output gives it one.
+    RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(unconsumed + "_unconsumed_sink",
+                                                  unconsumed,
+                                                  unconsumed + "_unconsumed_sink_out",
+                                                  QNN_TENSOR_TYPE_NATIVE,
+                                                  qnn_data_type,
+                                                  QnnQuantParamsWrapper(),
+                                                  std::move(sink_shape),
+                                                  /*do_op_validation=*/false));
+  }
 
   qnn::profile::ProfilingInfo profiling_info;
   QnnProfilingScope profiling_scope;
@@ -898,6 +936,10 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
   }
 
   for (auto& tensor_wrapper : tensor_wrappers) {
+    if (is_input && std::any_of(unbound_graph_inputs_.begin(), unbound_graph_inputs_.end(),
+                                [&](const UnconsumedGraphInput& u) { return u.name == tensor_wrapper.GetName(); })) {
+      continue;  // No ORT input to bind.
+    }
     RETURN_IF(utils::QnnTensorHasDynamicShape(tensor_wrapper.GetQnnTensor()),
               ("QNN tensor (" + tensor_wrapper.GetName() + ") has dynamic shape. This is not supported yet.").c_str());
 

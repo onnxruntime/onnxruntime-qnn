@@ -2413,10 +2413,35 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     Ort::ConstGraph ort_graph{graph};
 
     std::vector<std::string> input_order;
+    std::vector<qnn::UnconsumedGraphInput> unconsumed_inputs;
     for (const auto& input : ort_graph.GetInputs()) {
       // Skip initializers - only track true model inputs
       if (!input.IsConstantInitializer()) {
         input_order.push_back(input.GetName());
+
+        if (input.GetConsumers().empty() && !input.IsGraphOutput()) {
+          auto type_info = input.TypeInfo();
+          bool representable = false;
+          std::vector<int64_t> shape;
+          ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+          if (type_info.GetONNXType() == ONNX_TYPE_TENSOR) {
+            auto shape_info = type_info.GetTensorTypeAndShapeInfo();
+            elem_type = shape_info.GetElementType();
+            shape = shape_info.GetShape();
+            Qnn_DataType_t qnn_data_type = QNN_DATATYPE_UNDEFINED;
+            representable = std::all_of(shape.begin(), shape.end(), [](int64_t d) { return d >= 0; }) &&
+                            qnn::utils::OnnxDataTypeToQnnDataType(elem_type, qnn_data_type, /*is_quantized=*/false,
+                                                                  ep->qnn_backend_manager_->GetQnnBackendType());
+          }
+          if (representable) {
+            unconsumed_inputs.push_back({input.GetName(), elem_type, std::move(shape)});
+          } else {
+            ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                        ("Unconsumed graph input '" + input.GetName() +
+                         "' has a dynamic shape or unsupported type and is omitted from the serialized signature.")
+                            .c_str());
+          }
+        }
       }
     }
 
@@ -2425,8 +2450,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
       output_order.push_back(output.GetName());
     }
 
-    if (!ep->onnx_graph_io_names_.has_value()) {
-      ep->onnx_graph_io_names_.emplace(std::move(input_order), std::move(output_order));
+    if (!ep->onnx_graph_io_.has_value()) {
+      ep->onnx_graph_io_.emplace(qnn::OnnxGraphIo{std::move(input_order), std::move(output_order),
+                                                  std::move(unconsumed_inputs)});
     }
   }
 
@@ -2618,12 +2644,12 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     }
 
     // Get original input/output order captured in GetCapability
-    if (!onnx_graph_io_names_.has_value()) {
+    if (!onnx_graph_io_.has_value()) {
       return ort_api.CreateStatus(ORT_EP_FAIL,
                                   "ONNX I/O names not found. GetCapability must be called before Compile.");
     }
-    const auto& onnx_input_names = onnx_graph_io_names_->first;
-    const auto& onnx_output_names = onnx_graph_io_names_->second;
+    const auto& onnx_input_names = onnx_graph_io_->inputs;
+    const auto& onnx_output_names = onnx_graph_io_->outputs;
 
     // Build context for graph composition
     qnn::QnnModelContext context{
@@ -2636,6 +2662,11 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
         /*graph_configs=*/all_graph_configs_ptr,
         /*tensor_name_overrides=*/&tensor_name_overrides_,
         /*json_qnn_graph_path=*/std::string{}};
+
+    // They belong to no partition, so only a single-partition serialized graph can carry them.
+    if (qnn_serializer_config != nullptr && count == 1) {
+      context.unconsumed_inputs = &onnx_graph_io_->unconsumed_inputs;
+    }
 
     // subgraph_traces are SoC-agnostic, so the FCB multi-SoC loop collects them
     // only on its first iteration (collect_subgraph_traces=false thereafter).
@@ -3260,7 +3291,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 
   RETURN_IF_NOT_NULL(compile_status);
 
-  // NOTE: onnx_graph_io_names_ cleanup is deferred to after the prepare_and_load reload block
+  // NOTE: onnx_graph_io_ cleanup is deferred to after the prepare_and_load reload block
   // (which needs the names for I/O mapping). tensor_name_overrides_ must NOT be cleared here;
   // it is read by CreateEPContextNodes below to serialize io_name_overrides into the EPContext model.
 
@@ -3296,8 +3327,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   }
 
   // Clean up transient GetCapability→Compile state.
-  // onnx_graph_io_names_ is deferred to here because ReloadCompiledContext needs it.
-  ep->onnx_graph_io_names_.reset();
+  // onnx_graph_io_ is deferred to here because ReloadCompiledContext needs it.
+  ep->onnx_graph_io_.reset();
 
   if (ep->prepare_only_) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
@@ -3403,8 +3434,8 @@ OrtStatus* QnnEp::ReloadCompiledContext(const OrtGraph** graphs,
     auto qnn_model = std::move(model_it->second);
     loaded_models.erase(model_it);
 
-    const auto& onnx_input_names = onnx_graph_io_names_->first;
-    const auto& onnx_output_names = onnx_graph_io_names_->second;
+    const auto& onnx_input_names = onnx_graph_io_->inputs;
+    const auto& onnx_output_names = onnx_graph_io_->outputs;
 
     RETURN_IF_NOT_OK(qnn_model->SetGraphInputOutputInfo(
         qnn::QnnModelContext{*graphs[graph_idx], *fused_nodes[graph_idx], logger_,
