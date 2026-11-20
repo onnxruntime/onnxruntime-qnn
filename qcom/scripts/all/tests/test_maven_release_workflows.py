@@ -27,8 +27,7 @@ def run_node(script):
 
 
 @pytest.mark.parametrize("publish_mode", ["non_maven", "maven", "all"])
-@pytest.mark.parametrize("skip_android", [False, True])
-def test_release_paths(publish_mode, skip_android):
+def test_release_paths(publish_mode):
     entry = workflow("qualcomm-internal-upload-artifactory-main.yml")
     upload = workflow("qualcomm-internal-upload-artifactory-from-github.yml")
     build = workflow("qualcomm-internal-build-artifacts.yml")
@@ -49,8 +48,7 @@ def test_release_paths(publish_mode, skip_android):
     result = run_node(
         f"""
         const expressions = {json.dumps(expressions)};
-        const inputs = {{publish_mode: {json.dumps(publish_mode)},
-            build_android_aarch64: false, skip_android_builds: {json.dumps(skip_android)}}};
+        const inputs = {{publish_mode: {json.dumps(publish_mode)}, build_android_aarch64: false}};
         const evaluate = key => new Function('inputs', 'return ' + expressions[key].slice(3, -2))(inputs);
         inputs.publish_mode = evaluate('upload_mode');
         inputs.publish_mode = evaluate('build_mode');
@@ -58,7 +56,7 @@ def test_release_paths(publish_mode, skip_android):
         console.log(JSON.stringify(Object.fromEntries(Object.keys(expressions).map(key => [key, evaluate(key)]))));
         """
     )
-    android = publish_mode == "maven" or (publish_mode == "all" and not skip_android)
+    android = publish_mode != "non_maven"
     assert result == {
         "upload_mode": publish_mode,
         "build_mode": publish_mode,

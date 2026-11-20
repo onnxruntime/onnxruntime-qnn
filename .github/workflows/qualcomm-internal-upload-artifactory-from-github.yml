@@ -35,12 +35,8 @@ on:
         description: "If true, skip publishing artifacts (dry run)."
         type: boolean
         default: false
-      skip_android_builds:
-        description: "If true, skip building and uploading Android AAR/Maven artifacts."
-        type: boolean
-        default: false
       publish_mode:
-        description: "Artifact mode: non_maven, maven, or all (uses the existing Android skip flag)."
+        description: "Artifact mode: non_maven excludes Android/Maven; maven builds, tests, and publishes only Maven; all includes every artifact."
         type: string
         default: all
 
@@ -56,7 +52,7 @@ jobs:
       version_suffix: ${{ inputs.version_suffix }}
       publish_mode: ${{ inputs.publish_mode }}
       build_android_aarch64: false
-      build_android_aarch64_aar: ${{ inputs.publish_mode != 'non_maven' && (inputs.publish_mode == 'maven' || !inputs.skip_android_builds) }}
+      build_android_aarch64_aar: ${{ inputs.publish_mode != 'non_maven' }}
       build_linux_aarch64_oe_gcc11_2: false
       linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
       windows_target_archs: ${{ inputs.windows_target_archs }}
@@ -631,7 +627,7 @@ jobs:
     name: "Upload Android Maven artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
-    if: ${{ inputs.publish_mode != 'non_maven' && (inputs.publish_mode == 'maven' || !inputs.skip_android_builds) }}
+    if: ${{ inputs.publish_mode != 'non_maven' }}
 
     steps:
       - uses: actions/checkout@v6
