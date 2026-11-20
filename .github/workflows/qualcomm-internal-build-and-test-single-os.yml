@@ -157,9 +157,9 @@ jobs:
         # Submodules omitted here; initialized below only when a heavy build is needed, so
         # has_code_changes=false jobs skip the expensive recursive fetch while still reporting green.
       - name: Validate internal-symbol artifact settings
-        if: ${{ inputs.qnn_internal_test_symbols && (inputs.build_nuget || inputs.upload_nuget || inputs.build_archive || inputs.upload_archive || inputs.build_pdb_archive || inputs.upload_pdb_archive || inputs.build_aar || inputs.upload_aar) }}
+        if: ${{ inputs.qnn_internal_test_symbols && (inputs.build_nuget || inputs.upload_nuget || inputs.build_archive || inputs.upload_archive || inputs.build_pdb_archive || inputs.upload_pdb_archive || inputs.build_aar || inputs.upload_aar || inputs.test_wheel || (inputs.target_os == 'windows' && inputs.target_arch == 'x86_64' && inputs.upload_test_archive)) }}
         run: |
-          echo "::error::Internal-symbol builds may publish wheels and test archives only."
+          echo "::error::Unsupported internal-symbol artifact/test combination."
           exit 1
 
       - name: Initialize submodules

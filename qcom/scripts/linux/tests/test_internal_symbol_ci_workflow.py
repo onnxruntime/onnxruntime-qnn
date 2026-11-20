@@ -9,6 +9,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/qualcomm-internal-build-and-test.yml"
+SINGLE_OS_WORKFLOW_PATH = REPO_ROOT / ".github/workflows/qualcomm-internal-build-and-test-single-os.yml"
 
 
 def test_linux_x86_internal_symbol_validation_runs_on_the_build_runner() -> None:
@@ -17,5 +18,16 @@ def test_linux_x86_internal_symbol_validation_runs_on_the_build_runner() -> None
 
     assert workflow_inputs["qnn_internal_test_symbols"] is True
     assert workflow_inputs["build_test_same_runner"] is True
-    assert workflow_inputs["upload_test_archive"] is False
+    assert workflow_inputs["upload_test_archive"] is True
     assert workflow_inputs["upload_wheel"] is True
+
+
+def test_internal_symbol_validation_rejects_unsupported_artifact_combinations() -> None:
+    workflow_contents = SINGLE_OS_WORKFLOW_PATH.read_text()
+    yaml.safe_load(workflow_contents)
+
+    assert "inputs.test_wheel" in workflow_contents
+    assert (
+        "inputs.target_os == 'windows' && inputs.target_arch == 'x86_64' && inputs.upload_test_archive"
+        in workflow_contents
+    )
