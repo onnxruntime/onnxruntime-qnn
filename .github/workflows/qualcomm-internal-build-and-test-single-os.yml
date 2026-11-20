@@ -42,7 +42,7 @@ on:
         default: "Release"
         type: string
       qnn_internal_test_symbols:
-        description: "Enable QNN EP internal test symbols for supported targets. Production artifacts are not supported in this mode."
+        description: "Enable QNN EP internal test symbols for supported targets."
         default: false
         type: boolean
       version_suffix:
@@ -147,7 +147,7 @@ env:
 
 jobs:
   build:
-    name: "build-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    name: "build-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && inputs.target_os != 'linux' && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     runs-on: ["self-hosted", "${{ inputs.build_runner_os != '' && inputs.build_runner_os || inputs.target_os }}", "${{ inputs.build_runner_arch }}", "Build"]
     defaults:
       run:
@@ -157,15 +157,17 @@ jobs:
         # Submodules omitted here; initialized below only when a heavy build is needed, so
         # has_code_changes=false jobs skip the expensive recursive fetch while still reporting green.
       - name: Validate internal-symbol artifact settings
-        if: ${{ inputs.qnn_internal_test_symbols && (inputs.upload_test_archive || inputs.upload_wheel || inputs.upload_nuget || inputs.upload_archive || inputs.build_pdb_archive || inputs.upload_pdb_archive || inputs.upload_aar) }}
+        if: ${{ inputs.qnn_internal_test_symbols && (inputs.build_nuget || inputs.upload_nuget || inputs.build_archive || inputs.upload_archive || inputs.build_pdb_archive || inputs.upload_pdb_archive || inputs.build_aar || inputs.upload_aar || inputs.test_wheel || (inputs.target_os == 'windows' && inputs.target_arch == 'x86_64' && inputs.upload_test_archive)) }}
         run: |
-          echo "::error::Internal-symbol builds must not publish test or production artifacts to Artifactory."
+          echo "::error::Unsupported internal-symbol artifact/test combination."
           exit 1
 
       - name: Initialize submodules
         if: ${{ inputs.has_code_changes }}
         run: git submodule update --init --recursive
 
+      # Internal-symbol cross-runner tests hand off this archive through GitHub Actions;
+      # upload_test_archive controls Artifactory publication, not that local hand-off.
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.has_code_changes }}
         run: >
@@ -176,19 +178,7 @@ jobs:
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
-          ${{ inputs.upload_test_archive && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
-
-      # Preserve executable modes and symlinks in the temporary cross-runner
-      # hand-off. The existing archive accept-list excludes build intermediates.
-      - name: Pack Linux internal-symbol test inputs
-        if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner }}
-        run: |
-          python3 - <<'PY'
-          import sys
-          sys.path.insert(0, 'qcom/scripts/all')
-          from archive_tests import archive_linux
-          archive_linux('linux-${{ env.BUILD_DIR_ARCH }}', '${{ inputs.build_config }}')
-          PY
+          ${{ (inputs.upload_test_archive || (inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner)) && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
 
       # Artifactory credentials are also used to obtain version-aligned snapshot
       # goldens before the Linux x86_64 internal-symbol shadow test runs.
@@ -264,7 +254,7 @@ jobs:
         # Skipped on fork PRs: the action creates a check run, which the fork-PR GITHUB_TOKEN cannot do.
         if: ${{ always() && inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
         with:
-          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
+          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && inputs.target_os != 'linux' && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
           group_reports: false
           include_passed: true
           detailed_summary: true
@@ -276,7 +266,7 @@ jobs:
         uses: actions/upload-artifact@v7
         if: ${{ always() && inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }} # always run even if the previous step fails
         with:
-          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
+          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && inputs.target_os != 'linux' && '-internal-symbols' || '' }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
@@ -287,14 +277,14 @@ jobs:
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
-          src_pattern: "onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}${{inputs.target_os}}-${{ inputs.target_arch }}.${{ env.TEST_ARCHIVE_EXT }}"
+          src_pattern: "onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}${{inputs.target_os}}-${{ env.BUILD_DIR_ARCH }}.${{ env.TEST_ARCHIVE_EXT }}"
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.has_code_changes && inputs.upload_wheel && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
-          src_pattern: "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
+          src_pattern: "${{ inputs.target_os }}-${{ env.BUILD_DIR_ARCH }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
 
       - name: Upload NuGet to Artifactory
         if: ${{ inputs.has_code_changes && inputs.upload_nuget && env.BUILD_ARTIFACTORY_REPO != '' }}
@@ -351,9 +341,22 @@ jobs:
           docker image prune -f
           docker builder prune -f --filter until=72h
 
+      - name: Clean Linux internal-symbol build outputs
+        if: ${{ always() && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols && (inputs.target_arch == 'x86_64_ubuntu_22_04' || inputs.target_arch == 'aarch64_manylinux_2_34') }}
+        continue-on-error: true
+        run: |
+          case "${BUILD_DIR_ARCH}" in
+            x86_64_ubuntu_22_04-internal-symbols|aarch64_manylinux_2_34-internal-symbols) ;;
+            *) echo "Refusing to clean unexpected build directory: ${BUILD_DIR_ARCH}" >&2; exit 1 ;;
+          esac
+          rm -rf -- "${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}"
+          rm -f -- \
+            "${GITHUB_WORKSPACE}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}linux-${BUILD_DIR_ARCH}.tar.bz2" \
+            "${GITHUB_WORKSPACE}/build/onnxruntime-testdata.tar.bz2"
+
   test:
-    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && '-self-hosted' || '' }}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
-    # Cross-runner test stage requires Artifactory hand-off from build; skip on fork PRs where secrets are unavailable.
+    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && '-self-hosted' || '' }}${{ inputs.qnn_internal_test_symbols && inputs.target_os != 'linux' && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    # Cross-runner tests also consume shared testdata from Artifactory; skip on fork PRs where secrets are unavailable.
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
     needs: [build]
     runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Test"]
@@ -450,7 +453,7 @@ jobs:
         uses: mikepenz/action-junit-report@v6
         if: ${{ always() && inputs.has_code_changes }} # always run even if the previous step fails
         with:
-          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
+          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && inputs.target_os != 'linux' && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
           group_reports: false
           include_passed: true
           detailed_summary: true
@@ -462,10 +465,23 @@ jobs:
         uses: actions/upload-artifact@v7
         if: ${{ always() && inputs.has_code_changes }} # always run even if the previous step fails
         with:
-          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
+          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && inputs.target_os != 'linux' && '-internal-symbols' || '' }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+
+      - name: Clean Linux internal-symbol test outputs
+        if: ${{ always() && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols && (inputs.target_arch == 'x86_64_ubuntu_22_04' || inputs.target_arch == 'aarch64_manylinux_2_34') }}
+        continue-on-error: true
+        run: |
+          case "${BUILD_DIR_ARCH}" in
+            x86_64_ubuntu_22_04-internal-symbols|aarch64_manylinux_2_34-internal-symbols) ;;
+            *) echo "Refusing to clean unexpected build directory: ${BUILD_DIR_ARCH}" >&2; exit 1 ;;
+          esac
+          rm -rf -- "${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}"
+          rm -f -- \
+            "${GITHUB_WORKSPACE}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}linux-${BUILD_DIR_ARCH}.tar.bz2" \
+            "${GITHUB_WORKSPACE}/build/onnxruntime-testdata.tar.bz2"
 
   test-windows-arm64-qdc:
     # A WoS QDC test takes around 2 hours, tying up Linux CI resources.
