@@ -52,12 +52,12 @@ GetTestQDQModelFn<uint8_t> BuildCumSumU8QDQ(const CumSumSpec& spec) {
     MakeTestInput(builder, "input", input);
     const QuantParams<uint8_t> qparams = GetTestInputQuantParams<uint8_t>(input);
     const std::string input_qdq = AddQDQNodePair<uint8_t>(builder, "qdq_in", "input", qparams.scale,
-                                                           qparams.zero_point);
+                                                          qparams.zero_point);
     builder.MakeScalarInitializer("axis", axis);
     builder.AddNode("cumsum", "CumSum", {input_qdq, "axis"}, {"cumsum_out"}, "", CumSumAttrs());
     output_qparams[0] = qparams;
     AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "cumsum_out", qparams.scale,
-                                                    qparams.zero_point);
+                                                   qparams.zero_point);
   };
 }
 
