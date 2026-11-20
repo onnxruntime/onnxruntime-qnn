@@ -9,7 +9,124 @@ permissions:
 
 on:
   workflow_call:
-    inputs: &common_inputs
+    inputs:
+      has_code_changes:
+        description: |
+          If false, the job runs checkout + (skipped) steps only and skips ALL heavy work
+          (submodule init, build, tests, uploads), reporting success so required status checks
+          stay green on PRs that don't touch code. Defaults to true so release callers
+          (build-artifacts.yml) and direct workflow_dispatch are unaffected.
+        default: true
+        type: boolean
+      target_os:
+        description: "The OS for which to build: windows or linux"
+        default: windows
+        type: string
+      target_arch:
+        description: |
+          The architecture for which to build.
+          [Linux] aarch64_manylinux_2_34, aarch64_oe_gcc11_2, x86_64, or x86_64_ubuntu_22_04.
+          [Windows] arm64, arm64ec, arm64x, or x86_64.
+        default: arm64
+        type: string
+      target_py_vsn:
+        description: "Build a wheel for this version of Python (3.11, 3.12, 3.13, 3.14, None)"
+        default: "3.12"
+        type: string
+      nightly_build:
+        description: "If true, include a verbose version string in wheel file names."
+        type: boolean
+        default: true
+      build_config:
+        description: "Specify the type of build: Debug, Release, or RelWithDebInfo."
+        default: "Release"
+        type: string
+      qnn_internal_test_symbols:
+        description: "Enable QNN EP internal test symbols for supported targets. Production artifacts are not supported in this mode."
+        default: false
+        type: boolean
+      version_suffix:
+        description: "Version suffix. If set, the specified suffix will be appended to the version string."
+        type: string
+        default: ""
+      build_runner_os:
+        description: "The OS of the build machine to use. Leave blank to use target_os."
+        type: string
+        default: ""
+      build_runner_arch:
+        description: "The architecture of the build machine to use. X64 Windows are faster, but ARM64 can produce ARM64 wheels."
+        default: "X64"
+        type: string
+      build_test_same_runner:
+        description: "If true, run tests on the same runner that built them."
+        default: true
+        type: boolean
+      test_runner_arch:
+        description: "The architecture of the test machine to use: X64 or (Windows only) ARM64."
+        default: "X64"
+        type: string
+      run_tests:
+        description: "If true, also run unit tests"
+        default: true
+        type: boolean
+      run_windows_arm64_qdc:
+        description: "If true, also validate the Windows ARM64 test archive on QDC."
+        default: false
+        type: boolean
+      test_wheel:
+        description: "If true, also run a smoke test on the wheel."
+        default: false
+        type: boolean
+      upload_test_archive:
+        description: "If true, build a test archive and include is as an artifact."
+        default: false
+        type: boolean
+      upload_wheel:
+        description: "If true, include the wheel as a workflow artifact."
+        default: true
+        type: boolean
+      build_nuget:
+        default: false
+        type: boolean
+      upload_nuget:
+        default: false
+        type: boolean
+      build_archive:
+        default: false
+        type: boolean
+      upload_archive:
+        default: false
+        type: boolean
+      build_pdb_archive:
+        description: "If true (Windows only), build an archive containing just the PDB debug symbols."
+        default: false
+        type: boolean
+      upload_pdb_archive:
+        description: "If true, upload the PDB archive as a CI artifact."
+        default: false
+        type: boolean
+      testdata_archive_artifact_name:
+        description: |
+          Artifact name to download as the testdata archive in the test step.
+          Empty disables the download.
+        type: string
+        default: ""
+      build_aar:
+        description: |
+          If true, also build the Android AAR during the Android build.
+          Must be set together with upload_aar (the two inputs are always coupled;
+          setting only one is a configuration error).
+        default: false
+        type: boolean
+      upload_aar:
+        description: |
+          If true, upload the Android AAR (and its POM sidecar) as CI artifacts.
+          Must be set together with build_aar (see build_aar's description).
+        default: false
+        type: boolean
+  workflow_dispatch:
+    # Keep the 25 dispatch inputs.
+    inputs:
       has_code_changes:
         description: |
           If false, the job runs checkout + (skipped) steps only and skips ALL heavy work
@@ -120,8 +237,6 @@ on:
           Must be set together with build_aar (see build_aar's description).
         default: false
         type: boolean
-  workflow_dispatch:
-    inputs: *common_inputs
 
 env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
@@ -446,10 +561,14 @@ jobs:
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
   test-windows-arm64-qdc:
-    # A WoS QDC test takes around 2 hours, tying up Linux CI resources.
-    # Disable WoS QDC testing for now until we find a solution or a better way to test it.
-    # TODO: Restore the job condition once that solution or testing approach is available.
-    if: ${{ false }}
+    # A WoS QDC test takes around 1 hour on a Linux runner, tying up Linux CI resources.
+    # Disable WoS QDC testing for per-PR CI, while nightly opts in explicitly.
+    # TODO: Bring back the per-PR CI test when it is stable enough in nightly.
+    if: >-
+      ${{ inputs.run_windows_arm64_qdc &&
+          inputs.target_os == 'windows' && inputs.target_arch == 'arm64' &&
+          inputs.run_tests && (inputs.upload_test_archive || inputs.qnn_internal_test_symbols) &&
+          !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
     needs: [build]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
@@ -463,20 +582,26 @@ jobs:
       testdata_archive_artifact_name: ${{ inputs.testdata_archive_artifact_name }}
 
   windows-arm64-validation:
-    # Preserve the existing Windows ARM64 test check name for self-hosted validation.
+    # Preserve the existing Windows ARM64 test check name; require QDC only when the caller opts in.
     name: "test-windows-arm64-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && !inputs.qnn_internal_test_symbols && github.event.pull_request.head.repo.fork != true }}
-    needs: [build, test]
+    needs: [build, test, test-windows-arm64-qdc]
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     timeout-minutes: 5
     steps:
-      - name: Require build and self-hosted Windows ARM64 tests
+      - name: Require configured Windows ARM64 validation
         env:
           BUILD_RESULT: ${{ needs.build.result }}
           SELF_HOSTED_RESULT: ${{ needs.test.result }}
+          QDC_ENABLED: ${{ inputs.run_windows_arm64_qdc }}
+          QDC_RESULT: ${{ needs.test-windows-arm64-qdc.result }}
         run: |
           if [ "$BUILD_RESULT" != "success" ] || [ "$SELF_HOSTED_RESULT" != "success" ]; then
             echo "::error::Windows ARM64 validation failed: build=$BUILD_RESULT self-hosted=$SELF_HOSTED_RESULT"
+            exit 1
+          fi
+          if [ "$QDC_ENABLED" = "true" ] && [ "$QDC_RESULT" != "success" ]; then
+            echo "::error::Windows ARM64 QDC validation failed: QDC=$QDC_RESULT"
             exit 1
           fi
 

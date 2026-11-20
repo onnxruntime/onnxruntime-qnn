@@ -32,6 +32,7 @@ jobs:
     secrets: inherit
     with:
       nightly_build: true
+      run_windows_arm64_qdc: true
       skip_publish_qa: false
       skip_publish_wheel: false
       build_windows_arm64_debug: true
