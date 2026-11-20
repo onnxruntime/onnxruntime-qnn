@@ -110,7 +110,7 @@ inline void AssertSessionSnapshotJson(
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
 

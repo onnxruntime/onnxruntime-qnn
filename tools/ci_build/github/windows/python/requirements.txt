@@ -15,4 +15,4 @@ markupsafe
 semver
 packaging
 coloredlogs
-onnx==1.21.0; python_version < "3.14"
+onnx==1.23.2; python_version < "3.14"

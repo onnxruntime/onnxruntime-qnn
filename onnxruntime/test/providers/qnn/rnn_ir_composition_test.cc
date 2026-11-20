@@ -76,7 +76,7 @@ static void RunIrLSTMCompositionTest(uint32_t seq_len, uint32_t batch_size,
   const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id{builder.model_.add_opset_import()};
   opset_id->set_domain("");
   opset_id->set_version(22);
-  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  builder.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   builder.model_.SerializeToString(&model_data);
@@ -137,7 +137,7 @@ static void RunIrGRUCompositionTest(uint32_t seq_len, uint32_t batch_size,
   const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id{builder.model_.add_opset_import()};
   opset_id->set_domain("");
   opset_id->set_version(22);
-  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  builder.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   builder.model_.SerializeToString(&model_data);
@@ -224,7 +224,7 @@ static void RunIrStatefulLSTMCompositionTest(uint32_t seq_len, uint32_t batch_si
   const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> qti_opset{builder.model_.add_opset_import()};
   qti_opset->set_domain(kQtiAiswDomain);
   qti_opset->set_version(1);
-  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  builder.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   builder.model_.SerializeToString(&model_data);
@@ -300,7 +300,7 @@ static void RunIrStatefulGRUCompositionTest(uint32_t seq_len, uint32_t batch_siz
   const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> qti_opset{builder.model_.add_opset_import()};
   qti_opset->set_domain(kQtiAiswDomain);
   qti_opset->set_version(1);
-  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  builder.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   builder.model_.SerializeToString(&model_data);

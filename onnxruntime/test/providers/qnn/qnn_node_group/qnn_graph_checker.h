@@ -6,9 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace onnxruntime {
@@ -29,15 +27,6 @@ void AssertOpWithNameInQnnGraph(const std::filesystem::path& dump_dir,
 // Checks the datatype of the tensor produced by the single Convert node.
 void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,
                                  uint32_t expected_data_type);
-
-// Checks the output tensor of a single node of type `op`, including per-tensor
-// scale/offset when supplied. QNN's offset is the negative ONNX zero point.
-// Supply an output name to select a node when multiple nodes have the same type.
-void AssertOpOutputInQnnGraph(const std::filesystem::path& dump_dir,
-                              const std::string& op,
-                              uint32_t expected_data_type,
-                              std::optional<std::pair<float, int32_t>> expected_scale_offset = std::nullopt,
-                              const std::string& expected_output_name = "");
 
 // Count APP_WRITE tensors to detect parameters left outside a QDQ group.
 void AssertQnnGraphInputCount(const std::filesystem::path& dump_dir, size_t expected_count);

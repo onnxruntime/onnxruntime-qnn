@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from archive_testdata import (
     OrtCoreDep,
+    _generate_onnx_node_tests,
     download_and_verify,
     ort_core_cache_path,
     parse_deps_txt,
@@ -176,6 +177,94 @@ def _make_tree(root: Path, files: dict[str, str]) -> None:
         p = root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
+
+
+def test_generate_onnx_node_tests_succeeds_when_onnx_installed(tmp_path, monkeypatch):
+    """When the onnx package is importable, _generate_onnx_node_tests writes model.onnx files."""
+
+    # Simulate a successful subprocess run that writes one test case directory.
+    def fake_run(cmd, check, capture_output, text):
+        output_dir = Path(cmd[-1])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        test_dir = output_dir / "test_abs"
+        test_dir.mkdir()
+        (test_dir / "model.onnx").write_bytes(b"fake")
+        ds_dir = test_dir / "test_data_set_0"
+        ds_dir.mkdir()
+        (ds_dir / "input_0.pb").write_bytes(b"inp")
+        (ds_dir / "output_0.pb").write_bytes(b"out")
+
+        class _Result:
+            returncode = 0
+            stdout = "Generated 1 ONNX node test cases"
+            stderr = ""
+
+        return _Result()
+
+    monkeypatch.setattr("archive_testdata.subprocess.run", fake_run)
+
+    out = tmp_path / "node_out"
+    assert _generate_onnx_node_tests(out) is True
+    assert (out / "test_abs" / "model.onnx").exists()
+    assert (out / "test_abs" / "test_data_set_0" / "input_0.pb").exists()
+
+
+def test_generate_onnx_node_tests_returns_false_when_onnx_missing(tmp_path, monkeypatch):
+    """When onnx is not installed the subprocess fails and _generate_onnx_node_tests returns False."""
+
+    def fake_run(cmd, check, capture_output, text):
+        class _Result:
+            returncode = 1
+            stdout = ""
+            stderr = "ERROR: No module named 'onnx'"
+
+        return _Result()
+
+    monkeypatch.setattr("archive_testdata.subprocess.run", fake_run)
+
+    out = tmp_path / "node_out"
+    assert _generate_onnx_node_tests(out) is False
+
+
+def test_stage_sources_generates_node_when_absent(tmp_path, monkeypatch):
+    """stage_sources calls _generate_onnx_node_tests when node/ is absent from onnx_src."""
+    ort_core_src = tmp_path / "ort_core"
+    onnx_src = tmp_path / "onnx"
+    _make_tree(ort_core_src / "onnxruntime/test/testdata", {"a.onnx": "TD-A"})
+    _make_tree(onnx_src / "backend/test/data/pytorch-converted", {"x.pb": "PC-X"})
+    _make_tree(onnx_src / "backend/test/data/pytorch-operator", {"y.pb": "PO-Y"})
+    # node/ is intentionally absent (ONNX >= 1.23.0 removed it)
+
+    def fake_generate(output_dir: Path) -> bool:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        test_dir = output_dir / "test_abs"
+        test_dir.mkdir()
+        (test_dir / "model.onnx").write_bytes(b"fake")
+        return True
+
+    monkeypatch.setattr("archive_testdata._generate_onnx_node_tests", fake_generate)
+
+    stage = tmp_path / "stage"
+    stage_sources(stage_root=stage, ort_core_src=ort_core_src, onnx_src=onnx_src)
+
+    assert (stage / "testdata" / "a.onnx").read_text() == "TD-A"
+    assert (stage / "node" / "test_abs" / "model.onnx").exists()
+
+
+def test_stage_sources_raises_when_node_absent_and_generation_fails(tmp_path, monkeypatch):
+    """stage_sources raises FileNotFoundError when node/ is absent and generation fails."""
+    ort_core_src = tmp_path / "ort_core"
+    onnx_src = tmp_path / "onnx"
+    _make_tree(ort_core_src / "onnxruntime/test/testdata", {"a.onnx": "TD-A"})
+    _make_tree(onnx_src / "backend/test/data/pytorch-converted", {"x.pb": "PC-X"})
+    _make_tree(onnx_src / "backend/test/data/pytorch-operator", {"y.pb": "PO-Y"})
+    # node/ absent and generation returns False
+
+    monkeypatch.setattr("archive_testdata._generate_onnx_node_tests", lambda _: False)
+
+    stage = tmp_path / "stage"
+    with pytest.raises(FileNotFoundError, match="node"):
+        stage_sources(stage_root=stage, ort_core_src=ort_core_src, onnx_src=onnx_src)
 
 
 def test_stage_sources_lays_out_four_handles(tmp_path):

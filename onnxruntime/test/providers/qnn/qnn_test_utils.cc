@@ -297,7 +297,7 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -515,7 +515,7 @@ void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
@@ -584,7 +584,7 @@ void VerifyQnnStatefulRnnNumerics(const GetTestModelFn& build_stateful_case,
       opset_id_proto->set_domain(domain);
       opset_id_proto->set_version(version);
     }
-    helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+    helper.model_.set_ir_version(kTestModelIRVersion);
 
     std::string model_data;
     helper.model_.SerializeToString(&model_data);
@@ -1064,7 +1064,7 @@ void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  result->builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  result->builder.model_.set_ir_version(kTestModelIRVersion);
   result->builder.model_.SerializeToString(&result->model_data);
 }
 
