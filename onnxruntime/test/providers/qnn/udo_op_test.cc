@@ -185,6 +185,7 @@ static std::filesystem::path ExecutableDirectory() {
 
 struct UdoArtifact {
   std::filesystem::path path;
+  std::filesystem::path dsp;
   std::string searched;
 };
 
@@ -195,34 +196,20 @@ static UdoArtifact FindUdoArtifact(const std::filesystem::path& executable_dir,
   dirs.push_back(executable_dir / "custom_op/op_packages/htp");
   UdoArtifact result;
   for (const auto& dir : dirs) {
-    for (const auto* name : {"libQnnMyAddOpPackage.so"}) {
-      const auto path = dir / name;
-      result.searched += path.string() + "\n";
-      if (std::filesystem::is_regular_file(path)) {
-        result.path = std::filesystem::absolute(path);
-        return result;
-      }
+    const auto host = dir / "libQnnMyAddOpPackage.so";
+    result.searched += host.string() + "\n";
+    std::filesystem::path dsp;
+#if defined(__ANDROID__) && defined(QNN_UDO_HTP_ARCH)
+    dsp = dir / ("hexagon-v" + std::to_string(QNN_UDO_HTP_ARCH)) / "libQnnMyAddOpPackage.so";
+    result.searched += dsp.string() + "\n";
+#endif
+    if (std::filesystem::is_regular_file(host) && (dsp.empty() || std::filesystem::is_regular_file(dsp))) {
+      result.path = std::filesystem::absolute(host);
+      if (!dsp.empty()) result.dsp = std::filesystem::absolute(dsp);
+      return result;
     }
   }
   return result;
-}
-
-static bool HtpArtifactRequired(const std::string& backends) {
-  std::istringstream stream(backends);
-  std::string backend;
-  while (std::getline(stream, backend, ',')) {
-    if (backend == "htp") return true;
-  }
-  return false;
-}
-
-static bool UdoArtifactRequired() {
-#ifdef BUILD_QNN_UDO_TEST
-  // CMake built this fixture; its absence must never become a passing skip.
-  return true;
-#else
-  return HtpArtifactRequired(ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_REQUIRED_BACKENDS", ""));
-#endif
 }
 
 class QnnHTPUdoTests : public QnnHTPBackendTests {
@@ -230,19 +217,22 @@ class QnnHTPUdoTests : public QnnHTPBackendTests {
   void SetUp() override {
     QnnHTPBackendTests::SetUp();
     if (HasFatalFailure() || IsSkipped()) return;
-#if (defined(__linux__) && defined(__x86_64__)) || (defined(__ANDROID__) && defined(__aarch64__))
+#ifdef BUILD_QNN_UDO_TEST
     SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#ifdef QNN_UDO_HTP_ARCH
+    const auto device_arch = GetPlatformAttributes().htp_arch;
+    if (device_arch != QNN_UDO_HTP_ARCH) {
+      FAIL() << "Custom Op skel V" << QNN_UDO_HTP_ARCH << " does not match device V" << device_arch;
+    }
+#endif
     const auto artifact = FindUdoArtifact(ExecutableDirectory(),
                                           ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_OP_PACKAGE_DIR", ""));
-    if (artifact.path.empty()) {
-      if (UdoArtifactRequired()) FAIL() << "Required HTP Custom Op artifact missing. Searched:\n"
+    ASSERT_FALSE(artifact.path.empty()) << "Required HTP Custom Op package pair missing. Searched:\n"
                                         << artifact.searched;
-      GTEST_SKIP() << "HTP Custom Op artifact missing. Searched:\n"
-                   << artifact.searched;
-    }
     package_path_ = artifact.path;
+    dsp_path_ = artifact.dsp;
 #else
-    // Keep MSVC from treating the following test body as unreachable.
+    // Follow the repository skip pattern for MSVC warning compatibility.
     if (::testing::internal::AlwaysTrue()) {
       GTEST_SKIP() << "No HTP Custom Op host package is built for this target";
     }
@@ -250,29 +240,28 @@ class QnnHTPUdoTests : public QnnHTPBackendTests {
   }
 
   const std::filesystem::path& package_path() const { return package_path_; }
+  const std::filesystem::path& dsp_path() const { return dsp_path_; }
 
  private:
   std::filesystem::path package_path_;
+  std::filesystem::path dsp_path_;
 };
 
-#if defined(__ANDROID__)
-static std::filesystem::path UdoDspPackagePath() {
-  const auto override_path = ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_HTP_OP_PACKAGE", "");
-  return override_path.empty() ? ExecutableDirectory() / "custom_op/op_packages/htp/dsp/libQnnMyAddOpPackage.so"
-                               : std::filesystem::path(override_path);
-}
+class QnnHTPUdoNegativeTests : public QnnHTPBackendTests {
+ protected:
+  void SetUp() override {
+    QnnHTPBackendTests::SetUp();
+    if (HasFatalFailure() || IsSkipped()) return;
+#if !((defined(__linux__) && defined(__x86_64__)) || (defined(__ANDROID__) && defined(__aarch64__)))
+    if (::testing::internal::AlwaysTrue()) GTEST_SKIP() << "Custom Op negative tests are not validated on this platform";
 #endif
-
-static ProviderOptions UdoProviderOptions(const std::filesystem::path& path) {
-  ProviderOptions options{{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"op_packages", "MyAdd:" + path.string() + ":MyAddOpPackageInterfaceProvider:CPU"}};
-#if defined(__ANDROID__)
-  if (!path.empty()) {
-    const auto dsp = UdoDspPackagePath();
-    if (!std::filesystem::is_regular_file(dsp)) throw std::runtime_error("Missing HTP Custom Op DSP package: " + dsp.string());
-    options["op_packages"] += ",MyAdd:" + dsp.string() + ":MyAddOpPackageInterfaceProvider:HTP";
   }
-#endif
-  return options;
+};
+
+static ProviderOptions UdoProviderOptions(const std::filesystem::path& host, const std::filesystem::path& dsp = {}) {
+  std::string packages = "MyAdd:" + host.string() + ":MyAddOpPackageInterfaceProvider:CPU";
+  if (!dsp.empty()) packages += ",MyAdd:" + dsp.string() + ":MyAddOpPackageInterfaceProvider:HTP";
+  return {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"op_packages", packages}};
 }
 
 static void MakeUdoModel(ModelTestBuilder& builder, bool mixed = false) {
@@ -316,15 +305,19 @@ static void RunUdoWithoutCpuReference(ModelTestBuilder& builder, const ProviderO
     session_configs[kOrtSessionOptionEpContextFilePath] = model_path.string();
   }
   std::vector<Ort::Value> outputs;
+  std::vector<std::string> output_names;
+  std::function<void(const Ort::Session&)> capture_output_names = [&output_names](const Ort::Session& session) {
+    output_names = session.GetOutputNames();
+  };
   ASSERT_NO_FATAL_FAILURE(InferenceModel(model_data, "UDONoCpuReference", provider_options, assignment,
-                                         builder.feeds_, outputs, ORT_LOGGING_LEVEL_ERROR, session_configs));
+                                         builder.feeds_, outputs, ORT_LOGGING_LEVEL_ERROR, session_configs, std::nullopt, &capture_output_names));
   ASSERT_EQ(outputs.size(), builder.model_.graph().output_size());
   for (int output_index = 0; output_index < builder.model_.graph().output_size(); ++output_index) {
-    const auto& output_name = builder.model_.graph().output(output_index).name();
+    const auto& output_name = output_names.at(output_index);
     const auto& output = outputs[output_index];
     ASSERT_EQ(output.GetTensorTypeAndShapeInfo().GetShape(), shape);
     ASSERT_EQ(output.GetTensorTypeAndShapeInfo().GetElementCount(), count);
-    if (output_name == "output_qdq_dq_out") {
+    if ((output_name == "output_qdq_dq_out" || output_name == "output")) {
       ASSERT_EQ(output.GetTensorTypeAndShapeInfo().GetElementType(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
       for (size_t i = 0; i < count; ++i) EXPECT_NEAR(output.GetTensorData<float>()[i], expected[i], kOutputTolerance);
     } else if (output_name == "double_output") {
@@ -339,41 +332,33 @@ static void RunUdoWithoutCpuReference(ModelTestBuilder& builder, const ProviderO
 TEST_F(QnnHTPUdoTests, UDO_Op_MyAdd) {
   RunOpTestOnHTP("MyAdd", TestInputDef<float>({1, 32}, false, -1.0f, 1.0f),
                  {MakeAttribute("constant", kMyAddConstant)},
-                 UdoProviderOptions(package_path()), 11, ExpectedEPNodeAssignment::All);
+                 UdoProviderOptions(package_path(), dsp_path()), 11, ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPUdoTests, UDO_Op_MyAdd_AutoDomainOnly) {
   ScopedUdoDomain env("udo_domain:MyAdd");
   ModelTestBuilder builder;
   MakeUdoModel(builder);
-  RunUdoWithoutCpuReference(builder, UdoProviderOptions(package_path()));
+  RunUdoWithoutCpuReference(builder, UdoProviderOptions(package_path(), dsp_path()));
 }
 
 TEST_F(QnnHTPUdoTests, UDO_Op_MyAdd_ManualPlusAutoDomain) {
   ScopedUdoDomain env("udo_domain:MyAdd");
   RunOpTestOnHTP("MyAdd", TestInputDef<float>({1, 32}, false, -1.0f, 1.0f),
                  {MakeAttribute("constant", kMyAddConstant)},
-                 UdoProviderOptions(package_path()), 11, ExpectedEPNodeAssignment::All);
+                 UdoProviderOptions(package_path(), dsp_path()), 11, ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_InvalidOpPackagePath) {
+TEST_F(QnnHTPUdoNegativeTests, UDO_Op_MyAdd_InvalidOpPackagePath) {
   ScopedUdoDomain env("udo_domain:MyAdd");
   ModelTestBuilder builder;
   MakeUdoModel(builder);
   const auto missing = ExecutableDirectory() / "nonexistent_custom_op.so";
   const ProviderOptions options{{"backend_type", "htp"},
                                 {"op_packages", "MyAdd:" + missing.string() + ":MyAddOpPackageInterfaceProvider:CPU"}};
-  struct LogCapture {
-    std::mutex mutex;
-    std::string messages;
-    static void ORT_API_CALL Log(void* param, OrtLoggingLevel, const char*, const char*, const char*, const char* message) {
-      auto& capture = *static_cast<LogCapture*>(param);
-      std::lock_guard<std::mutex> lock(capture.mutex);
-      capture.messages += std::string(message) + "\n";
-    }
-  } diagnostics;
+  QnnTestLogCapture diagnostics;
   Ort::SessionOptions session_options;
-  Ort::ThrowOnError(Ort::GetApi().SetUserLoggingFunction(session_options, LogCapture::Log, &diagnostics));
+  AttachQnnTestLogCapture(session_options, diagnostics);
   session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_ERROR);
   RegisteredEpDeviceUniquePtr registered_ep;
   ASSERT_NO_FATAL_FAILURE(RegisterQnnEpLibrary(registered_ep, session_options, "UDOInvalidPath", options));
@@ -382,13 +367,12 @@ TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_InvalidOpPackagePath) {
   // node as the session exception. A session logger also works on Android,
   // where the default logger writes to logcat rather than stderr.
   EXPECT_THROW(Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options), Ort::Exception);
-  std::lock_guard<std::mutex> lock(diagnostics.mutex);
-  EXPECT_NE(diagnostics.messages.find("Failed to register op package"), std::string::npos) << diagnostics.messages;
-  EXPECT_NE(diagnostics.messages.find("QNN_BACKEND_ERROR_OP_PACKAGE_NOT_FOUND"), std::string::npos) << diagnostics.messages;
-  EXPECT_NE(diagnostics.messages.find(missing.string()), std::string::npos) << diagnostics.messages;
+  EXPECT_GT(diagnostics.CountContaining("Failed to register op package"), 0u);
+  EXPECT_GT(diagnostics.CountContaining("Could not open op package path"), 0u);
+  EXPECT_GT(diagnostics.CountContaining(missing.string()), 0u);
 }
 
-TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_EnvVarUnset) {
+TEST_F(QnnHTPUdoNegativeTests, UDO_Op_MyAdd_EnvVarUnset) {
   ScopedUdoDomain env(nullptr);
   ModelTestBuilder builder;
   MakeUdoModel(builder);
@@ -402,18 +386,16 @@ TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_EnvVarUnset) {
   }
 }
 
-static void TestUdoContextRoundTrip(const std::filesystem::path& package, bool mixed) {
-  const auto dir = std::filesystem::temp_directory_path() /
-                   ("qnn_udo_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-  std::filesystem::create_directories(dir);
-  const auto cleanup = gsl::finally([&dir]() { std::error_code ec; std::filesystem::remove_all(dir, ec); });
+static void TestUdoContextRoundTrip(const std::filesystem::path& package, const std::filesystem::path& dsp, bool mixed) {
+  QnnScopedTempDir temporary_directory;
+  const auto& dir = temporary_directory.path();
   const auto context_path = dir / "myadd_ctx.onnx";
   ModelTestBuilder builder;
   MakeUdoModel(builder, mixed);
   const auto assignment = mixed ? ExpectedEPNodeAssignment::Some : ExpectedEPNodeAssignment::All;
   {
     ScopedUdoDomain env("udo_domain:MyAdd");
-    ASSERT_NO_FATAL_FAILURE(RunUdoWithoutCpuReference(builder, UdoProviderOptions(package), assignment,
+    ASSERT_NO_FATAL_FAILURE(RunUdoWithoutCpuReference(builder, UdoProviderOptions(package, dsp), assignment,
                                                       {{kOrtSessionOptionEpContextEnable, "1"}, {kOrtSessionOptionEpContextEmbedMode, "0"}, {kOrtSessionOptionEpContextFilePath, context_path.string()}}));
   }
   ONNX_NAMESPACE::ModelProto context;
@@ -438,15 +420,15 @@ static void TestUdoContextRoundTrip(const std::filesystem::path& package, bool m
   ASSERT_TRUE(has_binary);
   EXPECT_EQ(has_cpu_cast, mixed);
   ScopedUdoDomain env(nullptr);
-  RunUdoWithoutCpuReference(builder, UdoProviderOptions(package), assignment, {}, context_path);
+  RunUdoWithoutCpuReference(builder, UdoProviderOptions(package, dsp), assignment, {}, context_path);
 }
 
 TEST_F(QnnHTPUdoTests, UDO_Op_MyAdd_EPContext_GenAndLoad) {
-  TestUdoContextRoundTrip(package_path(), false);
+  TestUdoContextRoundTrip(package_path(), dsp_path(), false);
 }
 
 TEST_F(QnnHTPUdoTests, UDO_Op_MyAdd_MixedEPContext) {
-  TestUdoContextRoundTrip(package_path(), true);
+  TestUdoContextRoundTrip(package_path(), dsp_path(), true);
 }
 
 TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_LoadPregenerated) {
@@ -457,26 +439,20 @@ TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd_LoadPregenerated) {
   if (arch.empty()) GTEST_SKIP() << "Set ORT_QNN_UDO_CONTEXT_ARCH to the matching context architecture";
   const auto context_path = ExecutableDirectory() / "custom_op/contexts" / arch / "myadd_ctx.onnx";
   const auto packages = ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_CONTEXT_OP_PACKAGES", "");
-  if (!std::filesystem::is_regular_file(context_path) || packages.empty()) {
-    if (HtpArtifactRequired(ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_REQUIRED_BACKENDS", ""))) {
-      FAIL() << "Required pregenerated context or ORT_QNN_UDO_CONTEXT_OP_PACKAGES missing: " << context_path;
-    }
-    GTEST_SKIP() << "Pregenerated context or ORT_QNN_UDO_CONTEXT_OP_PACKAGES missing: " << context_path;
-  }
+  ASSERT_TRUE(std::filesystem::is_regular_file(context_path)) << "Requested pregenerated context missing: " << context_path;
+  ASSERT_FALSE(packages.empty()) << "Requested context requires ORT_QNN_UDO_CONTEXT_OP_PACKAGES";
   ScopedUdoDomain env(nullptr);
   ModelTestBuilder builder;
   MakeUdoModel(builder);
-  auto options = UdoProviderOptions({});
-  options["op_packages"] = packages;
+  const ProviderOptions options{{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"op_packages", packages}};
   RunUdoWithoutCpuReference(builder, options, ExpectedEPNodeAssignment::All, {}, context_path);
 #endif
 }
 
-TEST(QnnUdoArtifactLookup, UDO_Op_MyAdd_ArtifactLookupAndRequireFlag) {
+TEST(QnnUdoArtifactLookup, UDO_Op_MyAdd_ArtifactLookup) {
   EXPECT_TRUE(std::filesystem::is_directory(ExecutableDirectory()));
-  const auto missing = std::filesystem::temp_directory_path() /
-                       ("udo_lookup_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-  const auto cleanup = gsl::finally([&missing]() { std::error_code ec; std::filesystem::remove_all(missing, ec); });
+  QnnScopedTempDir temporary_directory;
+  const auto& missing = temporary_directory.path();
   const auto override_dir = missing / "override";
   const auto packaged_dir = missing / "custom_op/op_packages/htp";
   const auto artifact = FindUdoArtifact(missing, override_dir.string());
@@ -486,6 +462,13 @@ TEST(QnnUdoArtifactLookup, UDO_Op_MyAdd_ArtifactLookupAndRequireFlag) {
   std::filesystem::create_directories(override_dir);
   std::filesystem::create_directories(packaged_dir);
   const auto name = "libQnnMyAddOpPackage.so";
+#if defined(__ANDROID__) && defined(QNN_UDO_HTP_ARCH)
+  for (const auto& root : {override_dir, packaged_dir}) {
+    const auto dir = root / ("hexagon-v" + std::to_string(QNN_UDO_HTP_ARCH));
+    std::filesystem::create_directories(dir);
+    std::ofstream file(dir / name);
+  }
+#endif
   {
     std::ofstream file(missing / name);
   }
@@ -498,10 +481,17 @@ TEST(QnnUdoArtifactLookup, UDO_Op_MyAdd_ArtifactLookupAndRequireFlag) {
     std::ofstream file(override_dir / name);
   }
   EXPECT_EQ(FindUdoArtifact(missing, override_dir.string()).path, override_dir / name);
-  EXPECT_TRUE(HtpArtifactRequired("htp"));
-  EXPECT_TRUE(HtpArtifactRequired("cpu,htp"));
-  EXPECT_FALSE(HtpArtifactRequired(""));
-  EXPECT_FALSE(HtpArtifactRequired("nothtp"));
+#if defined(__ANDROID__) && defined(QNN_UDO_HTP_ARCH)
+  const auto dsp_dir = "hexagon-v" + std::to_string(QNN_UDO_HTP_ARCH);
+  EXPECT_EQ(FindUdoArtifact(missing, override_dir.string()).dsp, override_dir / dsp_dir / name);
+  std::filesystem::remove(override_dir / dsp_dir / name);
+  // An incomplete override must never be paired with another root's DSP half.
+  const auto fallback = FindUdoArtifact(missing, override_dir.string());
+  EXPECT_EQ(fallback.path, packaged_dir / name);
+  EXPECT_EQ(fallback.dsp, packaged_dir / dsp_dir / name);
+  std::filesystem::remove(packaged_dir / dsp_dir / name);
+  EXPECT_TRUE(FindUdoArtifact(missing, override_dir.string()).path.empty());
+#endif
 }
 
 }  // namespace test

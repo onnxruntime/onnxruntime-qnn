@@ -169,7 +169,7 @@ def test_archive_linux_excludes_testdata(tmp_path):
     _touch(rel / "libonnxruntime.so", "B")
     _touch(rel / "libQnnHtp.so", "B")
     _touch(rel / "custom_op/op_packages/htp/libQnnMyAddOpPackage.so", "host")
-    _touch(rel / "custom_op/op_packages/htp/dsp/libQnnMyAddOpPackage.so", "dsp")
+    _touch(rel / "custom_op/op_packages/htp/hexagon-v81/libQnnMyAddOpPackage.so", "dsp")
     _touch(rel / "custom_op/contexts/v81/myadd_ctx.onnx", "context")
     _touch(rel / "custom_op/contexts/v81/myadd_ctx_qnn.bin", "binary")
     _touch(rel / "onnxruntime_provider_test", "B")
@@ -205,7 +205,7 @@ def test_archive_linux_excludes_testdata(tmp_path):
 
     for fixture in [
         "op_packages/htp/libQnnMyAddOpPackage.so",
-        "op_packages/htp/dsp/libQnnMyAddOpPackage.so",
+        "op_packages/htp/hexagon-v81/libQnnMyAddOpPackage.so",
         "contexts/v81/myadd_ctx.onnx",
         "contexts/v81/myadd_ctx_qnn.bin",
     ]:

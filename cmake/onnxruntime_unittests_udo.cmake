@@ -6,31 +6,40 @@
 # The resulting library is used by ONNX Runtime unit tests.
 
 
-# Build the host registration library for HTP Custom Op tests.
-find_package(Python REQUIRED COMPONENTS Interpreter)
-# Must match qcom/packages.yml:llvm_linux_x86_64.version.
+# Package tools are available only on Linux x86_64 hosts.
+set(_UDO_SUPPORTED_HOST OFF)
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    set(_UDO_SUPPORTED_HOST ON)
+endif()
+set(_UDO_DEFAULT OFF)
+if(_UDO_SUPPORTED_HOST AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND onnxruntime_target_platform STREQUAL "x86_64")
+    set(_UDO_DEFAULT ON)
+endif()
+option(onnxruntime_QNN_BUILD_UDO_OP_PACKAGES "Build HTP Custom Op test packages" ${_UDO_DEFAULT})
+if(NOT onnxruntime_QNN_BUILD_UDO_OP_PACKAGES)
+    return()
+endif()
+if(NOT _UDO_SUPPORTED_HOST)
+    message(FATAL_ERROR "HTP op-package generation requires a Linux x86_64 host; disable onnxruntime_QNN_BUILD_UDO_OP_PACKAGES")
+endif()
+# Must match qcom/packages.yml.
 set(_LLVM_VERSION "21.1.8")
-# Must match qcom/packages.yml:hexagon_linux_x86_64.version (also referenced from
-# onnxruntime/test/providers/qnn/udo/HTP_Makefile HEXAGON_SDK_ROOT_V*).
 set(_HEXAGON_SDK_VERSION "6.5.0.0")
 if(UNIX)
     if ((CMAKE_SYSTEM_NAME STREQUAL "Linux" AND onnxruntime_target_platform STREQUAL "x86_64")
-        OR (ANDROID AND onnxruntime_target_platform STREQUAL "aarch64" AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux"))
+        OR (ANDROID AND onnxruntime_target_platform STREQUAL "aarch64"))
         find_program(MAKE_EXECUTABLE make REQUIRED)
-        # The generator interpreter is independent of the wheel's target Python.
-        # Prefer the wrapper's host venv, which supplies the generator dependencies.
-        set(_UDO_GENERATOR_PYTHON "${Python_EXECUTABLE}")
-        if(NOT (Python_VERSION_MAJOR EQUAL 3 AND (Python_VERSION_MINOR EQUAL 10 OR Python_VERSION_MINOR EQUAL 12)))
-            find_program(_UDO_SUPPORTED_PYTHON NAMES python3.10 python3.12
-                HINTS "${CMAKE_SOURCE_DIR}/../venv/bin" REQUIRED)
-            set(_UDO_GENERATOR_PYTHON "${_UDO_SUPPORTED_PYTHON}")
+        set(onnxruntime_QNN_UDO_GENERATOR_PYTHON "" CACHE FILEPATH "Host Python 3.10/3.12 with mako and lxml")
+        if(NOT onnxruntime_QNN_UDO_GENERATOR_PYTHON)
+            find_program(_UDO_SUPPORTED_PYTHON NAMES python3.10 python3.12 REQUIRED)
+            set(onnxruntime_QNN_UDO_GENERATOR_PYTHON "${_UDO_SUPPORTED_PYTHON}")
         endif()
-        execute_process(COMMAND ${_UDO_GENERATOR_PYTHON} -c "import sys; assert sys.version_info[:2] in ((3, 10), (3, 12))"
+        execute_process(COMMAND ${onnxruntime_QNN_UDO_GENERATOR_PYTHON} -c
+            "import sys, mako, lxml; assert sys.version_info[:2] in ((3, 10), (3, 12))"
             RESULT_VARIABLE _UDO_PYTHON_STATUS)
         if(NOT _UDO_PYTHON_STATUS EQUAL 0)
-            message(FATAL_ERROR "QNN op-package generator requires host Python 3.10 or 3.12")
+            message(FATAL_ERROR "QNN generator requires Python 3.10/3.12 with mako and lxml; set onnxruntime_QNN_UDO_GENERATOR_PYTHON or disable onnxruntime_QNN_BUILD_UDO_OP_PACKAGES")
         endif()
-
         # Locate the host tools used for Linux and Android HTP packages.
         set(_TOOLS_DIR "$ENV{ORT_BUILD_TOOLS_PATH}")
         if(NOT _TOOLS_DIR)
@@ -48,23 +57,30 @@ if(UNIX)
             REALPATH
             BASE_DIR "${_TOOLS_DIR}"
         )
-        set(_UDO_BUILD_TARGETS htp_x86)
+        set(_UDO_BUILD_TARGET htp_x86)
         set(_UDO_HOST_ARCH x86_64-linux-clang)
         set(_UDO_DSP_COMMANDS)
         set(_UDO_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/libQnnMyAddOpPackage.so)
         if(ANDROID)
             set(onnxruntime_QNN_UDO_HTP_ARCH "81" CACHE STRING "Hexagon architecture for Android Custom Op tests")
-            if(NOT onnxruntime_QNN_UDO_HTP_ARCH MATCHES "^(68|69|73|75|79|81|85)$")
+            file(STRINGS "${TEST_SRC_DIR}/providers/qnn/udo/HTP_Makefile" _UDO_TARGETS_LINE REGEX "^SUPPORTED_TARGETS =")
+            string(REPLACE "SUPPORTED_TARGETS =" "" _UDO_TARGETS "${_UDO_TARGETS_LINE}")
+            separate_arguments(_UDO_TARGETS)
+            if(NOT "hexagon-v${onnxruntime_QNN_UDO_HTP_ARCH}" IN_LIST _UDO_TARGETS)
                 message(FATAL_ERROR "Unsupported Custom Op HTP architecture: ${onnxruntime_QNN_UDO_HTP_ARCH}")
             endif()
-            set(_UDO_BUILD_TARGETS htp_aarch64 htp_v${onnxruntime_QNN_UDO_HTP_ARCH})
+            add_compile_definitions(QNN_UDO_HTP_ARCH=${onnxruntime_QNN_UDO_HTP_ARCH})
+            set(_UDO_BUILD_TARGET htp_aarch64)
             set(_UDO_HOST_ARCH aarch64-android)
-            list(APPEND _UDO_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/dsp/libQnnMyAddOpPackage.so)
+            list(APPEND _UDO_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/hexagon-v${onnxruntime_QNN_UDO_HTP_ARCH}/libQnnMyAddOpPackage.so)
             set(_UDO_DSP_COMMANDS
-                COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/dsp
+                COMMAND ${CMAKE_COMMAND} -E env QNN_SDK_ROOT=${onnxruntime_QNN_HOME}
+                    HEXAGON_SDK_ROOT=${HEXAGON_SDK_ROOT}/${_HEXAGON_SDK_VERSION}
+                    ${MAKE_EXECUTABLE} -C ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/MyAddOpPackage htp_v${onnxruntime_QNN_UDO_HTP_ARCH}
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/hexagon-v${onnxruntime_QNN_UDO_HTP_ARCH}
                 COMMAND ${CMAKE_COMMAND} -E copy
                     ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/MyAddOpPackage/build/hexagon-v${onnxruntime_QNN_UDO_HTP_ARCH}/libQnnMyAddOpPackage.so
-                    ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/dsp/libQnnMyAddOpPackage.so)
+                    ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/hexagon-v${onnxruntime_QNN_UDO_HTP_ARCH}/libQnnMyAddOpPackage.so)
         endif()
         add_custom_command(
             OUTPUT ${_UDO_OUTPUTS}
@@ -74,7 +90,7 @@ if(UNIX)
 
             # generate op package
             COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${onnxruntime_QNN_HOME}/lib/python
-            ${_UDO_GENERATOR_PYTHON} ${onnxruntime_QNN_HOME}/bin/x86_64-linux-clang/qnn-op-package-generator -p ${TEST_SRC_DIR}/providers/qnn/udo/MyAddOpPackageHtp.xml
+            ${onnxruntime_QNN_UDO_GENERATOR_PYTHON} ${onnxruntime_QNN_HOME}/bin/x86_64-linux-clang/qnn-op-package-generator -p ${TEST_SRC_DIR}/providers/qnn/udo/MyAddOpPackageHtp.xml
                                                                                                          -o ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp
 
             # copy pre-implement op package source file
@@ -84,12 +100,12 @@ if(UNIX)
                                              ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/MyAddOpPackage/Makefile
             # build op package
             COMMAND ${CMAKE_COMMAND} -E env QNN_SDK_ROOT=${onnxruntime_QNN_HOME}
-                                            PATH=${HEXAGON_SDK_ROOT}/${_HEXAGON_SDK_VERSION}/tools/HEXAGON_Tools/19.0.07/Tools/bin:${LLVM_TOOL_DIR}/bin/:$ENV{PATH}
+                                            PATH=${LLVM_TOOL_DIR}/bin/:$ENV{PATH}
                                             ANDROID_NDK_ROOT=${ANDROID_NDK_PATH}
                                             HEXAGON_SDK_ROOT=${HEXAGON_SDK_ROOT}/${_HEXAGON_SDK_VERSION}
             ${MAKE_EXECUTABLE} -C ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/MyAddOpPackage
                                "X86_CXX=${LLVM_TOOL_DIR}/bin/clang++ -stdlib=libc++"
-                               ${_UDO_BUILD_TARGETS}
+                               ${_UDO_BUILD_TARGET}
 
             # Produce the packaged lookup directory with the SDK library name.
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp

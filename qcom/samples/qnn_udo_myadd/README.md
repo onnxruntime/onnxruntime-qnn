@@ -119,9 +119,8 @@ The HTP fixture tests cover manual and automatic domains, invalid package paths,
 missing domains, context generation/loading, and mixed graphs. Package lookup
 checks `ORT_QNN_UDO_OP_PACKAGE_DIR`, `custom_op/op_packages/htp` beside the test
 executable. Both producers use `libQnnMyAddOpPackage.so`. Missing packages fail when the fixture
-was built by CMake or when
-`ORT_QNN_UDO_REQUIRED_BACKENDS=htp` is set; otherwise they skip. CMake selects a Python 3.10/3.12 generator independently of the wheel target
-and requires its fixture at runtime; test runners preserve an explicit caller override.
+was enabled by CMake; otherwise the JIT tests skip. CMake selects a Python 3.10/3.12 generator independently of the wheel target
+and requires its fixture at runtime; the package build can be disabled explicitly.
 
 The Linux CMake build produces
 `custom_op/op_packages/htp/libQnnMyAddOpPackage.so` beside the executable. The
@@ -142,14 +141,16 @@ ORT_QNN_UDO_CONTEXT_OP_PACKAGES="MyAdd:${ORT_BUILD}/custom_op/op_packages/htp/li
 ${ORT_BUILD}/onnxruntime_provider_test --gtest_filter="*UDO_Op_MyAdd_LoadPregenerated"
 ```
 
-This fixture validates the host simulator only. CI artifact transfer and
+The sample produces contexts manually; CI does not generate or run pregenerated
+Custom Op contexts yet. This simulator fixture validates the host simulator. CI artifact transfer and
 architecture-specific device context generation are separate work.
 
 For `UDO_Op_MyAdd_LoadPregenerated`, place the model and external binary under
 `custom_op/contexts/<arch>/` beside the executable (model name `myadd_ctx.onnx`).
 Set `ORT_QNN_UDO_CONTEXT_ARCH=<arch>` and
 `ORT_QNN_UDO_CONTEXT_OP_PACKAGES` to the target's registration entries. A device
-context load uses the matching skel by bare filename with `:HTP`, and requires
+context load uses the matching skel with `:HTP`, either an absolute path as in the
+tests or a bare filename resolved through the DSP search path, and requires
 the platform DSP search path. Windows builds and Windows device execution remain
 unvalidated; signing and matching DSP skels must be verified before using the Windows ARM64 context path. Pure EPContext
 loads require no `ORT_QNN_CUSTOM_OP_DOMAINS` variable.
@@ -158,16 +159,21 @@ loads require no `ORT_QNN_CUSTOM_OP_DOMAINS` variable.
 
 ## Android aarch64 JIT unit tests
 
-Build with `python qcom/build_and_test.py --config Release build_ort_android_aarch64`.
+Android package builds are opt-in until device CI runs these tests:
+
+```bash
+ORT_QNN_BUILD_UDO_OP_PACKAGES=ON python qcom/build_and_test.py --config Release build_ort_android_aarch64
+```
 CMake produces both halves of the HTP package beside the test executable:
 
 - `custom_op/op_packages/htp/libQnnMyAddOpPackage.so`: ARM64 preparation library (`:CPU`).
-- `custom_op/op_packages/htp/dsp/libQnnMyAddOpPackage.so`: Hexagon execution library (`:HTP`).
+- `custom_op/op_packages/htp/hexagon-v81/libQnnMyAddOpPackage.so`: Hexagon execution library (`:HTP`).
 
 The CMake cache setting `onnxruntime_QNN_UDO_HTP_ARCH` defaults to `81`.
 Select an architecture matching the device before building for another target.
-The tests register both libraries automatically; `ORT_QNN_UDO_HTP_OP_PACKAGE`
-can override the DSP library path. Both libraries belong to the `MyAdd` HTP package.
+The tests check the built DSP architecture against the device and register both
+libraries automatically. `ORT_QNN_UDO_OP_PACKAGE_DIR` overrides the root containing
+the host library and its `hexagon-v<arch>/` DSP subdirectory. Both libraries belong to the `MyAdd` HTP package.
 
 Deploy the test executable, ORT/QNN EP libraries, and the entire `custom_op`
 directory. Also deploy the matching QAIRT Android `libQnnHtp.so`,
@@ -175,11 +181,12 @@ directory. Also deploy the matching QAIRT Android `libQnnHtp.so`,
 with its catalog. Add the Android libraries to `LD_LIBRARY_PATH` and the DSP
 library directories to `ADSP_LIBRARY_PATH`.
 
-Run `ORT_QNN_UDO_REQUIRED_BACKENDS=htp ./onnxruntime_provider_test --gtest_filter='*UDO_Op_MyAdd*'`.
+Run `./onnxruntime_provider_test --gtest_filter='*UDO_Op_MyAdd*'`.
 Supply the pregenerated context and environment variables described above to include
 `LoadPregenerated`; otherwise that test skips. The seven JIT tests cover graph
 preparation, inference, domain registration, negative cases, and context round trips.
-Android aarch64 JIT and V81 context execution were validated on SM8850 with QAIRT 2.52.
+Android aarch64 JIT and V81 context execution were manually validated with QAIRT 2.52;
+these tests are not yet run by Android CI.
 
 ---
 

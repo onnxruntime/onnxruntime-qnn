@@ -7,10 +7,12 @@
 #include "onnxruntime_session_options_config_keys.h"
 #if !defined(ORT_MINIMAL_BUILD)
 #include <cmath>
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -39,6 +41,67 @@ using Microsoft::WRL::ComPtr;
 
 namespace onnxruntime {
 namespace test {
+
+// Thread-safe capture of session diagnostics for assertions on EP-owned messages.
+struct QnnTestLogCapture {
+  mutable std::mutex mutex;
+  std::vector<std::string> messages;
+  void Push(const char* message) {
+    std::lock_guard<std::mutex> lock(mutex);
+    messages.emplace_back(message);
+  }
+  size_t CountContaining(std::string_view needle) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return std::count_if(messages.begin(), messages.end(), [needle](const auto& message) {
+      return message.find(needle) != std::string::npos;
+    });
+  }
+  static void ORT_API_CALL Log(void* param, OrtLoggingLevel, const char*, const char*, const char*, const char* message) {
+    static_cast<QnnTestLogCapture*>(param)->Push(message);
+  }
+};
+
+inline void AttachQnnTestLogCapture(Ort::SessionOptions& options, QnnTestLogCapture& capture) {
+  Ort::ThrowOnError(Ort::GetApi().SetUserLoggingFunction(options, QnnTestLogCapture::Log, &capture));
+  options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+}
+
+class QnnScopedTempDir {
+ public:
+  QnnScopedTempDir() {
+    auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+    auto sanitize = [](std::string s) {
+      for (char& c : s) {
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' ||
+            c == '"' || c == '<' || c == '>' || c == '|') {
+          c = '_';
+        }
+      }
+      return s;
+    };
+    path_ = std::filesystem::temp_directory_path() /
+            (sanitize(info->test_suite_name()) + "_" + sanitize(info->name()));
+    // Remove any stale state left by a previous crashed test run before
+    // creating a fresh directory.
+    std::error_code ec;
+    std::filesystem::remove_all(path_, ec);
+    std::filesystem::create_directories(path_);
+  }
+
+  QnnScopedTempDir(const QnnScopedTempDir&) = delete;
+  QnnScopedTempDir& operator=(const QnnScopedTempDir&) = delete;
+
+  ~QnnScopedTempDir() {
+    std::error_code ec;
+    std::filesystem::remove_all(path_, ec);
+  }
+
+  const std::filesystem::path& path() const { return path_; }
+
+ private:
+  std::filesystem::path path_;
+};
+
 constexpr const char* kOnnxDomain = "";
 // ONNX domain used by the QNN block-op test models.
 constexpr const char* kQtiAiswDomain = "qti_aisw";
