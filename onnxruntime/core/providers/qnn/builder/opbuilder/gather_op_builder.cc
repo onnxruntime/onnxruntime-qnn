@@ -225,7 +225,8 @@ Ort::Status GatherOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
           ? GetRawNarrowIntIdentityQuantType(inputs[0].type)
           : std::nullopt;
   if (raw_narrow_int_identity_type.has_value()) {
-    RETURN_IF_ERROR(ProcessRawNarrowIntDataInput(qnn_model_wrapper, inputs[0], *raw_narrow_int_identity_type,
+    RETURN_IF_ERROR(ProcessRawNarrowIntDataInput(qnn_model_wrapper, inputs[0],
+                                                 raw_narrow_int_identity_type.value_or(QNN_DATATYPE_UNDEFINED),
                                                  input_names));
   } else {
     RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
