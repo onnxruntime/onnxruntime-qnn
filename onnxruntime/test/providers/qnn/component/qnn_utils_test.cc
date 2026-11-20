@@ -9,8 +9,11 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <numeric>
 #include <sstream>
@@ -54,6 +57,83 @@ namespace test {
 // using-declaration (not a wildcard using-directive) is required so that
 // `oss << qnn_value` resolves to the qnn::utils overload.
 using qnn::utils::operator<<;
+
+TEST(QnnUnit_UtilsTest, LowPowerBlockQuantizeData_ZeroBlockSizeReturnsError) {
+  const std::vector<float> data = {1.0f, 2.0f, 4.0f, 6.0f};
+  const std::vector<uint32_t> shape = {1, 4};
+  const std::vector<float> channel_scales = {1.0f};
+  const std::vector<uint8_t> block_scales = {1, 2};
+  const std::vector<int32_t> offsets = {0};
+  const std::vector<uint32_t> block_scales_shape = {1, 2};
+  std::vector<uint8_t> quant_bytes(data.size(), 0xAB);
+
+  const auto status = qnn::utils::LowPowerBlockQuantizeData(
+      data, shape, channel_scales, block_scales, offsets, quant_bytes,
+      QNN_DATATYPE_SFIXED_POINT_8, 0, 0, 0, block_scales_shape);
+
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("Data block size must be greater than zero"),
+            std::string::npos);
+  EXPECT_EQ(quant_bytes, std::vector<uint8_t>(data.size(), 0xAB));
+}
+
+TEST(QnnUnit_UtilsTest, LowPowerBlockQuantizeData_ValidBlockSizeQuantizesAllElements) {
+  const std::vector<float> data = {1.0f, 2.0f, 4.0f, 6.0f};
+  const std::vector<uint32_t> shape = {1, 4};
+  const std::vector<float> channel_scales = {1.0f};
+  const std::vector<uint8_t> block_scales = {1, 2};
+  const std::vector<int32_t> offsets = {0};
+  const std::vector<uint32_t> block_scales_shape = {1, 2};
+  std::vector<uint8_t> quant_bytes(data.size());
+
+  const auto status = qnn::utils::LowPowerBlockQuantizeData(
+      data, shape, channel_scales, block_scales, offsets, quant_bytes,
+      QNN_DATATYPE_SFIXED_POINT_8, 0, 0, 2, block_scales_shape);
+
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  // q = round(data / (channel_scale * block_scale)); each block has two elements.
+  EXPECT_EQ(quant_bytes, (std::vector<uint8_t>{1, 2, 2, 3}));
+}
+
+TEST(QnnUnit_UtilsTest, QuantizeData_PerTensorQuantizationRemainsSupported) {
+  const std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
+  const std::vector<uint32_t> shape = {4};
+  const std::vector<float> scales = {1.0f};
+  const std::vector<int32_t> offsets = {0};
+  std::vector<uint8_t> quant_bytes(data.size());
+
+  const auto status = qnn::utils::QuantizeData(
+      data, shape, scales, offsets, quant_bytes, QNN_DATATYPE_SFIXED_POINT_8, std::nullopt);
+
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(quant_bytes, (std::vector<uint8_t>{1, 2, 3, 4}));
+}
+
+TEST(QnnUnit_UtilsTest, OstreamLpbq_UnknownLengthPayloadsAreNotRead) {
+  Qnn_ScaleOffset_t scale_offset = {0.5f, 0};
+  uint8_t block_scale = 2;
+  Qnn_BlockwiseExpansion_t lpbq = QNN_BLOCKWISE_EXPANSION_INIT;
+  lpbq.axis = 0;
+  lpbq.numBlocksPerAxis = 4;
+  lpbq.blockScaleBitwidth = 4;
+  lpbq.blockScaleStorageType = QNN_BLOCKWISE_EXPANSION_BITWIDTH_SCALE_STORAGE_8;
+  // The generic printer has no tensor shape with which to validate these one-element buffers.
+  lpbq.scaleOffsets = &scale_offset;
+  lpbq.blocksScale8 = &block_scale;
+  Qnn_QuantizeParams_t params = QNN_QUANTIZE_PARAMS_INIT;
+  params.encodingDefinition = QNN_DEFINITION_DEFINED;
+  params.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION;
+  params.blockwiseExpansion = &lpbq;
+
+  std::ostringstream out;
+  out << params;
+
+  EXPECT_NE(out.str().find("numBlocksPerAxis=4"), std::string::npos);
+  EXPECT_NE(out.str().find("blockScaleBitwidth=4"), std::string::npos);
+  EXPECT_EQ(out.str().find("scales=("), std::string::npos);
+  EXPECT_EQ(out.str().find("offsets=("), std::string::npos);
+  EXPECT_EQ(out.str().find("perBlockIntScales=("), std::string::npos);
+}
 
 // =============================================================================
 // qnn::utils::NormalizeIndicesBytes
@@ -1413,6 +1493,17 @@ TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Raw_BufferSizeMismatchFails) {
   EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(2, 3, 0, input, output).IsOK());
 }
 
+TEST(QnnUnit_UtilsTest, TwoDimensionTranspose_Vector_ShapeSizeMismatchFails) {
+  const std::vector<uint8_t> input(4, 0);
+  const std::vector<uint32_t> oversized_shape = {std::numeric_limits<uint32_t>::max(),
+                                                 std::numeric_limits<uint32_t>::max()};
+  std::vector<uint8_t> output;
+  const Ort::Logger logger = MakeNullLogger();
+
+  EXPECT_FALSE(qnn::utils::TwoDimensionTranspose(input, oversized_shape, output, logger).IsOK());
+  EXPECT_TRUE(output.empty());
+}
+
 // =============================================================================
 // RequantizeBiasTensor — per-tensor and per-channel round-trip
 // =============================================================================
@@ -1879,6 +1970,82 @@ TEST(QnnUnit_UtilsTest, SignExtendUnpackedSubByteData_EmptySpanIsSafe) {
                                             gsl::make_span(bytes));
   EXPECT_TRUE(bytes.empty());
 }
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_ValidRelativePathStaysInModelDirectory) {
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(),
+                                                    std::filesystem::path("weights") / "data.bin",
+                                                    resolved_path);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(resolved_path.parent_path().filename(), "weights");
+  EXPECT_EQ(resolved_path.filename(), "data.bin");
+}
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_ParentTraversalReturnsError) {
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(),
+                                                    "../outside.bin", resolved_path);
+  EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_EmptyModelDirectoryUsesCurrentDirectory) {
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath({}, "data.bin", resolved_path);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(resolved_path, std::filesystem::weakly_canonical(std::filesystem::current_path() / "data.bin"));
+}
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_RootedPathReturnsError) {
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(),
+                                                    std::filesystem::path("/") / "outside.bin",
+                                                    resolved_path);
+  EXPECT_FALSE(status.IsOK());
+}
+
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_SymlinkOutsideModelDirectoryReturnsError) {
+  const std::filesystem::path test_root =
+      std::filesystem::temp_directory_path() /
+      ("qnn_external_data_path_test_" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const std::filesystem::path model_directory = test_root / "model";
+  const std::filesystem::path outside_directory = test_root / "outside";
+  const std::filesystem::path outside_file = outside_directory / "outside.bin";
+  const std::filesystem::path link = model_directory / "data.bin";
+
+  std::error_code error_code;
+  std::filesystem::remove_all(test_root, error_code);
+  ASSERT_TRUE(std::filesystem::create_directories(model_directory, error_code)) << error_code.message();
+  ASSERT_TRUE(std::filesystem::create_directories(outside_directory, error_code)) << error_code.message();
+  std::ofstream(outside_file).put('x');
+  ASSERT_TRUE(std::filesystem::exists(outside_file));
+
+  std::filesystem::create_symlink(outside_file, link, error_code);
+  if (error_code) {
+    const std::string symlink_error = error_code.message();
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(test_root, cleanup_error);
+    GTEST_SKIP() << "Symlink creation is not supported: " << symlink_error;
+  }
+
+  std::filesystem::path resolved_path;
+  auto status = qnn::utils::ResolveExternalDataPath(model_directory, link.filename(), resolved_path);
+  EXPECT_FALSE(status.IsOK());
+
+  std::filesystem::remove_all(test_root, error_code);
+}
+
+#ifdef _WIN32
+TEST(QnnUnit_UtilsTest, ResolveExternalDataPath_RootedWindowsPathsReturnError) {
+  for (const std::filesystem::path& path : {std::filesystem::path("\\outside.bin"),
+                                            std::filesystem::path("C:outside.bin"),
+                                            std::filesystem::path("C:\\outside.bin")}) {
+    std::filesystem::path resolved_path;
+    auto status = qnn::utils::ResolveExternalDataPath(std::filesystem::current_path(), path, resolved_path);
+    EXPECT_FALSE(status.IsOK()) << path.string();
+  }
+}
+#endif
 
 }  // namespace test
 }  // namespace onnxruntime

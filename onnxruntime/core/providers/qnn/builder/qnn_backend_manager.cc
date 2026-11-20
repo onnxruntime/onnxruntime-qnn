@@ -2176,9 +2176,9 @@ Ort::Status QnnBackendManager::SetupBackend(
     uint32_t htp_graph_splitting_num_prepare_threads) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
     RETURN_IF(enable_file_mapped_weights != file_mapped_weights_enabled_,
               "Cannot share QNN backend manager with a different file-mapping mode.");
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
 
     if (htp_share_resource_optimization_ == 1) {
       // If a context bin filepath has not been processed yet,
