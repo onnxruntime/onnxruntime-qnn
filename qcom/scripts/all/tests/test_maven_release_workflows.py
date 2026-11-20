@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-"""Check the two release paths without publishing."""
+"""Check release modes and existing caller defaults without publishing."""
 
 import json
 import shutil
@@ -26,19 +26,21 @@ def run_node(script):
     return json.loads(result.stdout)
 
 
-@pytest.mark.parametrize(("publish_mode", "maven_only"), [("non_maven", False), ("maven", True)])
-def test_release_paths(publish_mode, maven_only):
+@pytest.mark.parametrize("publish_mode", ["non_maven", "maven", "all"])
+@pytest.mark.parametrize("skip_android", [False, True])
+def test_release_paths(publish_mode, skip_android):
     entry = workflow("qualcomm-internal-upload-artifactory-main.yml")
     upload = workflow("qualcomm-internal-upload-artifactory-from-github.yml")
     build = workflow("qualcomm-internal-build-artifacts.yml")
     dispatch_inputs = entry[True]["workflow_dispatch"]["inputs"]
-    assert "maven_only" not in dispatch_inputs
     assert dispatch_inputs["publish_mode"]["type"] == "choice"
     assert dispatch_inputs["publish_mode"]["options"] == ["non_maven", "maven"]
     assert dispatch_inputs["publish_mode"]["default"] == "non_maven"
+    assert upload[True]["workflow_call"]["inputs"]["publish_mode"]["default"] == "all"
+    assert build[True]["workflow_call"]["inputs"]["publish_mode"]["default"] == "all"
     expressions = {
-        "maven_only": entry["jobs"]["publish-artifacts"]["with"]["maven_only"],
-        "skip_android": entry["jobs"]["publish-artifacts"]["with"]["skip_android_builds"],
+        "upload_mode": entry["jobs"]["publish-artifacts"]["with"]["publish_mode"],
+        "build_mode": upload["jobs"]["build-artifacts"]["with"]["publish_mode"],
         "build_aar": upload["jobs"]["build-artifacts"]["with"]["build_android_aarch64_aar"],
         "publish_maven": upload["jobs"]["upload-android-maven-workflow"]["if"],
         "device_test": build["jobs"]["test-android-aarch64"]["if"],
@@ -47,19 +49,21 @@ def test_release_paths(publish_mode, maven_only):
     result = run_node(
         f"""
         const expressions = {json.dumps(expressions)};
-        const inputs = {{publish_mode: {json.dumps(publish_mode)}, build_android_aarch64: false}};
+        const inputs = {{publish_mode: {json.dumps(publish_mode)},
+            build_android_aarch64: false, skip_android_builds: {json.dumps(skip_android)}}};
         const evaluate = key => new Function('inputs', 'return ' + expressions[key].slice(3, -2))(inputs);
-        inputs.maven_only = evaluate('maven_only');
-        inputs.skip_android_builds = evaluate('skip_android');
+        inputs.publish_mode = evaluate('upload_mode');
+        inputs.publish_mode = evaluate('build_mode');
         inputs.build_android_aarch64_aar = evaluate('build_aar');
         console.log(JSON.stringify(Object.fromEntries(Object.keys(expressions).map(key => [key, evaluate(key)]))));
         """
     )
+    android = publish_mode == "maven" or (publish_mode == "all" and not skip_android)
     assert result == {
-        "maven_only": maven_only,
-        "skip_android": not maven_only,
-        "build_aar": maven_only,
-        "publish_maven": maven_only,
-        "device_test": maven_only,
-        "publish_wheels": not maven_only,
+        "upload_mode": publish_mode,
+        "build_mode": publish_mode,
+        "build_aar": android,
+        "publish_maven": android,
+        "device_test": android,
+        "publish_wheels": publish_mode != "maven",
     }

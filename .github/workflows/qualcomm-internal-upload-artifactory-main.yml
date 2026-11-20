@@ -62,5 +62,4 @@ jobs:
       nightly_build: false
       skip_publish: false
       version_suffix: ${{ inputs.version_suffix }}
-      skip_android_builds: ${{ inputs.publish_mode == 'non_maven' }}
-      maven_only: ${{ inputs.publish_mode == 'maven' }}
+      publish_mode: ${{ inputs.publish_mode }}

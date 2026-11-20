@@ -39,10 +39,10 @@ on:
         description: "If true, skip building and uploading Android AAR/Maven artifacts."
         type: boolean
         default: false
-      maven_only:
-        description: "If true, build and test Android, then publish only the Maven artifact."
-        type: boolean
-        default: false
+      publish_mode:
+        description: "Artifact mode: non_maven, maven, or all (uses the existing Android skip flag)."
+        type: string
+        default: all
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
@@ -54,9 +54,9 @@ jobs:
     with:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
-      maven_only: ${{ inputs.maven_only }}
+      publish_mode: ${{ inputs.publish_mode }}
       build_android_aarch64: false
-      build_android_aarch64_aar: ${{ inputs.maven_only || !inputs.skip_android_builds }}
+      build_android_aarch64_aar: ${{ inputs.publish_mode != 'non_maven' && (inputs.publish_mode == 'maven' || !inputs.skip_android_builds) }}
       build_linux_aarch64_oe_gcc11_2: false
       linux_target_py_vsns: ${{ inputs.linux_target_py_vsns }}
       windows_target_archs: ${{ inputs.windows_target_archs }}
@@ -64,7 +64,7 @@ jobs:
 
   upload-wheel-workflow:
     name: "Upload Python Wheel artifacts to Artifactory"
-    if: ${{ !inputs.maven_only }}
+    if: ${{ inputs.publish_mode != 'maven' }}
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -257,7 +257,7 @@ jobs:
 
   upload-nuget-workflow:
     name: "Upload Nuget artifacts to Artifactory"
-    if: ${{ !inputs.maven_only }}
+    if: ${{ inputs.publish_mode != 'maven' }}
     runs-on: [Windows, self-hosted, Build, X64]
     needs: [build-artifacts]
 
@@ -372,7 +372,7 @@ jobs:
 
   upload-zip-workflow:
     name: "Upload Zip artifacts to Artifactory"
-    if: ${{ !inputs.maven_only }}
+    if: ${{ inputs.publish_mode != 'maven' }}
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -631,7 +631,7 @@ jobs:
     name: "Upload Android Maven artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
-    if: ${{ inputs.maven_only || !inputs.skip_android_builds }}
+    if: ${{ inputs.publish_mode != 'non_maven' && (inputs.publish_mode == 'maven' || !inputs.skip_android_builds) }}
 
     steps:
       - uses: actions/checkout@v6
