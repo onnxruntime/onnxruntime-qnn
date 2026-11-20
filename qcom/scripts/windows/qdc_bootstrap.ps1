@@ -92,6 +92,8 @@ try {
     if ($TestPlatform -notin @("windows-arm64", "windows-arm64-internal-symbols")) {
         throw "Unsupported test platform: $TestPlatform"
     }
+    $QnnInternalTestSymbols = ($Settings.qnn_internal_test_symbols -eq $true) -or
+        ($TestPlatform -eq "windows-arm64-internal-symbols")
     $ProviderTestProcesses = if ($null -ne $Settings.provider_test_processes) { $Settings.provider_test_processes } else { 1 }
     if ($ProviderTestProcesses -notin @(1, 2)) { throw "Unsupported provider test process count: $ProviderTestProcesses" }
     # The host must distinguish a smoke run from a full run even if some logs fail to download.
@@ -222,7 +224,7 @@ exit /b %PROBE_EXIT_CODE%
     if ($Settings.test_mode -eq "full") {
         & (Join-Path $TestRoot "run_tests.ps1") -Config $Config -PythonExe $PythonExe `
             -TestRepoRoot $PayloadRoot -QdcManifestPath $QdcManifestPath -ProviderTestProcesses $ProviderTestProcesses `
-            -SkipQnnSnapshots:($TestPlatform -eq "windows-arm64-internal-symbols")
+            -SkipQnnSnapshots:$QnnInternalTestSymbols
         if ($ProviderTestProcesses -eq 2) {
             foreach ($Index in 0..1) {
                 Assert-HtpResults -Report (Join-Path $BinaryRoot "onnxruntime_provider_test.exe.$Config.shard$Index.results.xml")

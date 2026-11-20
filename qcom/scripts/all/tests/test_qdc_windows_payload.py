@@ -4,6 +4,7 @@
 import hashlib
 import io
 import json
+import shutil
 import tarfile
 import zipfile
 
@@ -47,7 +48,10 @@ def write_archive(path, config="Release", multi_config=False, omit="", *, htp_ar
     contents = {
         f"{root}/run_tests.ps1": b"runner",
         f"{root}/ctest.exe": b"ctest",
-        f"{root}/CTestTestfile.cmake": b"ctest plan",
+        f"{root}/CTestTestfile.cmake": (
+            f"# Build directory: C:/checkout/{root}\n"
+            f'add_test(provider_test "{binaries}/onnxruntime_provider_test.exe")\n'
+        ).encode(),
         "qcom/scripts/windows/utils.ps1": b"original utils",
     }
     for name in (
@@ -100,13 +104,20 @@ def test_preserves_archive_and_places_data_next_to_binaries(
         source, tmp_path / "output", config=config, internal_symbols=internal_symbols, **payload_inputs
     )
     assert source.read_bytes() == original_zip
-    platform = "windows-arm64-internal-symbols" if internal_symbols else "windows-arm64"
+    platform = "windows-arm64"
     root = f"build/{platform}/{config}"
     binaries = f"{root}/{config}" if multi_config else root
     with zipfile.ZipFile(result) as payload:
         assert len(payload.namelist()) == len(set(payload.namelist()))
         for name, content in originals.items():
-            assert payload.read(name) == content
+            device_name = name.replace("build/windows-arm64-internal-symbols/", "build/windows-arm64/", 1)
+            expected = (
+                content.replace(b"windows-arm64-internal-symbols", b"windows-arm64")
+                if name.endswith(".cmake")
+                else content
+            )
+            assert payload.read(device_name) == expected
+        assert not any("build/windows-arm64-internal-symbols/" in name for name in payload.namelist())
         assert payload.read(f"{binaries}/testdata/sentinel.txt") == b"testdata"
         assert payload.read("cmake/external/onnx/onnx/backend/test/data/node/sentinel.txt") == b"node"
         assert payload.read(f"{root}/model_tests/onnx_models/testdata/qdq/model.onnx") == b"model"
@@ -119,6 +130,7 @@ def test_preserves_archive_and_places_data_next_to_binaries(
         assert settings["test_mode"] == "full"
         assert settings["test_platform"] == platform
         assert settings["provider_test_processes"] == (2 if internal_symbols else 1)
+        assert settings.get("qnn_internal_test_symbols", False) == internal_symbols
 
 
 @pytest.mark.parametrize("runtime", ("QnnHtpV{arch}Stub.dll", "libQnnHtpV{arch}Skel.so", "libqnnhtpv{arch}.cat"))
@@ -130,6 +142,16 @@ def test_missing_htp_runtime_fails_before_downloading(tmp_path, payload_inputs, 
     write_archive(source, omit=missing_runtime, htp_arch=htp_arch)
     with pytest.raises(ValueError, match=missing_runtime):
         prepare_windows_payload(source, tmp_path / "output", payload_inputs["testdata_archive"], htp_arch=htp_arch)
+
+
+@pytest.mark.parametrize("internal_symbols", (False, True))
+def test_payload_does_not_overwrite_source_archive(tmp_path, payload_inputs, internal_symbols):
+    source = tmp_path / "tests.zip"
+    write_archive(source, htp_arch=payload_inputs["htp_arch"], internal_symbols=internal_symbols)
+    original = source.read_bytes()
+    with pytest.raises(shutil.SameFileError):
+        prepare_windows_payload(source, tmp_path, internal_symbols=internal_symbols, **payload_inputs)
+    assert source.read_bytes() == original
 
 
 def test_wrong_htp_runtime_is_rejected(tmp_path, payload_inputs):
