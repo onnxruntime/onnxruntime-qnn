@@ -34,8 +34,7 @@ void RegisterAxis(const CumSumSpec& spec) {
 }
 
 OrtNodeUnitIODef MakeAxis(const CumSumSpec& spec) {
-  return MakeMockIODef("axis", spec.axis_is_int64 ? ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64
-                                                    : ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32,
+  return MakeMockIODef("axis", spec.axis_is_int64 ? ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64 : ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32,
                        std::vector<int64_t>{});
 }
 
