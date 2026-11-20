@@ -306,8 +306,9 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
       RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(gather_output.shape, output_shape), "Cannot get shape");
       const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
       Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+      const Qnn_DataType_t identity_qnn_data_type = raw_narrow_int_identity_type.value_or(QNN_DATATYPE_UNDEFINED);
 
-      QnnTensorWrapper output_wrapper(output_name, tensor_type, *raw_narrow_int_identity_type,
+      QnnTensorWrapper output_wrapper(output_name, tensor_type, identity_qnn_data_type,
                                       QnnQuantParamsWrapper::PerTensor(1.0f, 0), std::move(output_shape));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)), "Failed to add tensor.");
       RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
