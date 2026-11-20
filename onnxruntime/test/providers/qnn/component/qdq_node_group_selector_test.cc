@@ -1718,6 +1718,51 @@ TEST(QnnUnitQdqNodeGroupSelectorTest, GetOrtQDQSelectionsGroupNormalization) {
   EXPECT_TRUE(selector_mgr.GetOrtQDQSelections(deprecated_graph.AsGraph(), ctx.api, logger).empty());
 }
 
+TEST(QnnUnitQdqNodeGroupSelectorTest, GetOrtQDQSelectionsGatherNDRequiresMatchingQdqScales) {
+  struct Case {
+    float output_scale;
+    size_t expected_selections;
+  };
+  for (const Case& c : {Case{0.02f, 1u}, Case{0.04f, 0u}}) {
+    SCOPED_TRACE(c.output_scale);
+    QdqNodeGroupSelectorTestContext ctx;
+    OrtGlobalApiOverride global_guard(&ctx.api);
+
+    FakeOrtValue input_scale_value = FakeOrtValue::MakeFloat(0.02f);
+    FakeOrtValue output_scale_value = FakeOrtValue::MakeFloat(c.output_scale);
+    FakeValueInfo input_scale{"input_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+    FakeValueInfo output_scale{"output_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+    input_scale.initializer_value = &input_scale_value;
+    output_scale.initializer_value = &output_scale_value;
+
+    FakeValueInfo data_q{"data_q", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, {200, 80, 1, 4}};
+    FakeValueInfo data{"data", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {200, 80, 1, 4}};
+    FakeValueInfo indices{"indices", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, {200, 2}};
+    FakeValueInfo gathered{"gathered", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {200, 1, 4}};
+    FakeValueInfo gathered_q{"gathered_q", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, {200, 1, 4}};
+
+    FakeNode dq{"dq", "DequantizeLinear", "", 21, {&data_q, &input_scale}, {&data}};
+    FakeNode gather_nd{"gather_nd", "GatherND", "", 13, {&data, &indices}, {&gathered}};
+    FakeNode q{"q", "QuantizeLinear", "", 21, {&gathered, &output_scale}, {&gathered_q}};
+
+    data.producer = &dq;
+    gathered.producer = &gather_nd;
+    gathered.consumers = {&q};
+
+    FakeGraph graph{{dq, gather_nd, q}, {}, {}, {&input_scale, &output_scale}};
+    OrtSelectorManager selector_mgr;
+    auto logger = MakeNullLogger();
+    const auto selections = selector_mgr.GetOrtQDQSelections(graph.AsGraph(), ctx.api, logger);
+
+    ASSERT_EQ(selections.size(), c.expected_selections);
+    if (c.expected_selections == 1u) {
+      EXPECT_EQ(Ort::ConstNode(selections[0].target_node).GetOperatorType(), "GatherND");
+      EXPECT_EQ(selections[0].dq_nodes.size(), 1u);
+      EXPECT_EQ(selections[0].q_nodes.size(), 1u);
+    }
+  }
+}
+
 TEST(QnnUnit_QdqNodeGroupSelectorTest, GetOrtQDQSelections_MaxPoolVersionCheck_CoversVersionPath) {
   QdqNodeGroupSelectorTestContext ctx;
   // MaxPool is registered with versions={12}. A MaxPool node with since_version=12
