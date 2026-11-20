@@ -211,7 +211,9 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AU16_WS16Shifted) {
 // ExpectedEPNodeAssignment::Some alone would also pass for a fully-QNN graph, so this dumps the
 // compiled graph and asserts RmsNorm never lands on QNN. RMSNorm falls back to CPU along with every
 // other node except the two leading Quantize ops (input, dynamic gamma), which end up as their own
-// standalone QNN partition.
+// standalone QNN partition. Correct fallback placement alone doesn't prove correct results -- the
+// mixed CPU/QNN execution could still produce wrong numbers -- so this also checks output accuracy
+// against the CPU EP reference.
 TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale_AU16_WS16Shifted) {
   const std::filesystem::path json_qnn_graph_dir = "RMSNorm1D_LastAxis_DynamicScale_AU16_WS16Shifted";
   std::filesystem::remove_all(json_qnn_graph_dir);
@@ -223,7 +225,9 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale_AU16_WS16Shifted) {
                                        {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                        ExpectedEPNodeAssignment::Some,
                                        true,
-                                       json_qnn_graph_dir.string());
+                                       json_qnn_graph_dir.string(),
+                                       /*verify_outputs=*/true,
+                                       /*fp32_abs_err=*/1e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "RmsNorm", 0);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", 0);
@@ -256,6 +260,7 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_WS16Shifted) {
 // Same graph-level assertion as the AU16 case: ExpectedEPNodeAssignment::Some alone would also pass
 // for a fully-QNN graph. RMSNorm falls back to CPU along with every other node except the two
 // leading Quantize ops (input, dynamic gamma), which end up as their own standalone QNN partition.
+// Also checks output accuracy against the CPU EP reference, same reasoning as the AU16 case above.
 TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale_AS16_WS16Shifted) {
   const std::filesystem::path json_qnn_graph_dir = "RMSNorm1D_LastAxis_DynamicScale_AS16_WS16Shifted";
   std::filesystem::remove_all(json_qnn_graph_dir);
@@ -267,17 +272,24 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale_AS16_WS16Shifted) {
                                       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                       ExpectedEPNodeAssignment::Some,
                                       true,
-                                      json_qnn_graph_dir.string());
+                                      json_qnn_graph_dir.string(),
+                                      /*verify_outputs=*/true,
+                                      /*fp32_abs_err=*/1e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "RmsNorm", 0);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Dequantize", 0);
   AssertOpInQnnGraph(json_qnn_graph_dir, "Quantize", 2);  // input activation + dynamic gamma
 }
 
-// Gamma range centered just below zero quantizes to a small positive zero_point (+414) --
-// distinct from the exact-zero pass-through case below and the large-magnitude offsets covered
-// elsewhere; exercises the re-encode's near-zero correction path.
-TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_SmallPositiveOffset) {
+// Test names below are aligned to the QNN offset (the value the builder/HTP actually operate on),
+// which is the negative of the ONNX zero point used elsewhere in this file -- e.g. a gamma range
+// that produces ONNX zero_point +414 produces QNN offset -414, i.e. a *negative* QNN offset.
+
+// Gamma range [-4, 3.9] produces ONNX zero_point +414, i.e. QNN offset -414: a moderate
+// (non-saturating) negative QNN offset, clearly nonzero but well short of the INT16 minimum, so the
+// re-encode shifts without hitting the saturation edge case covered by
+// RMSNorm1D_LastAxis_StaticScale_AS16_WS16Shifted above.
+TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_NegativeOffset) {
   RunRMSNormQDQTest<int16_t, int16_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                                       TestInputDef<float>({3}, true, GetFloatDataInRange(-4.0f, 3.9f, 3)),
                                       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
@@ -288,10 +300,9 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_SmallPositiveOffs
                                       /*fp32_abs_err=*/1e-3f);
 }
 
-// A moderate (non-saturating) negative gamma skew: zero_point (-19661) stays clearly nonzero but
-// well short of the INT16 minimum, so the re-encode shifts without hitting the saturation edge
-// case covered by RMSNorm1D_LastAxis_StaticScale_AS16_WS16Shifted above.
-TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_NegativeOffset) {
+// Gamma range [-2, 8] produces ONNX zero_point -19661, i.e. QNN offset +19661: a large-magnitude
+// positive QNN offset, distinct from the near-saturating case above.
+TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_PositiveOffset) {
   RunRMSNormQDQTest<int16_t, int16_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                                       TestInputDef<float>({3}, true, GetFloatDataInRange(-2.0f, 8.0f, 3)),
                                       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
@@ -300,6 +311,32 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_NegativeOffset) {
                                       /*json_qnn_graph_dir=*/"",
                                       /*verify_outputs=*/true,
                                       /*fp32_abs_err=*/1e-3f);
+}
+
+// Gamma range [-3.9, 4.0] produces ONNX zero_point -415, i.e. a genuinely small positive QNN offset
+// (+415) -- the case the two tests above don't cover (one is negative, one is large-magnitude).
+// Asserts the re-encoded tensor's actual scale/offset rather than only checking output tolerance,
+// since a wrong-but-close re-encode could still pass ElementwiseAbsoluteVerifier by coincidence.
+TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_SmallPositiveOffset) {
+  const std::filesystem::path json_qnn_graph_dir = "RMSNorm1D_LastAxis_StaticScale_AS16_SmallPositiveOffset";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  TestInputDef<float> scale_def({3}, true, GetFloatDataInRange(-3.9f, 4.0f, 3));
+  RunRMSNormQDQTest<int16_t, int16_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+                                      scale_def,
+                                      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                                      ExpectedEPNodeAssignment::All,
+                                      true,
+                                      json_qnn_graph_dir.string(),
+                                      /*verify_outputs=*/true,
+                                      /*fp32_abs_err=*/1e-3f);
+
+  // Symmetric re-encode: offset forced to 0, scale doubled from the original asymmetric encoding.
+  const QuantParams<int16_t> original = GetTestInputQuantParams<int16_t>(scale_def);
+  AssertTensorQuantParamsInQnnGraph(json_qnn_graph_dir, "scale_initializer_s16sym",
+                                    original.scale * 2.0f, /*expected_offset=*/0);
 }
 
 // Gamma values genuinely straddle zero (as opposed to the nonnegative-only gamma used by every case
@@ -319,17 +356,29 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_MixedSignGamma) {
 // Regression guard: an (almost) symmetric gamma range solves zero_point = qmin - rmin/scale = 0, so
 // the builder's offset-is-already-zero check should take the pass-through path and leave gamma
 // untouched -- the re-encode above must not fire (or touch anything) when there's nothing to fix.
-// The looser bound here is unrelated to the pass-through itself; see AU16_WS16Shifted above for why.
+// The looser output bound is unrelated to the pass-through itself; see AU16_WS16Shifted above for
+// why. Output tolerance alone can't tell "gamma untouched" from "gamma re-encoded to something that
+// happens to land within tolerance", so this also asserts the tensor QNN actually receives keeps
+// its original scale/offset -- i.e. the re-encode truly did not fire.
 TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_OffsetZero) {
+  const std::filesystem::path json_qnn_graph_dir = "RMSNorm1D_LastAxis_StaticScale_AS16_OffsetZero";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  TestInputDef<float> scale_def({3}, true, GetFloatDataInRange(-32768.0f / 32767.0f * 4.0f, 4.0f, 3));
   RunRMSNormQDQTest<int16_t, int16_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                                      TestInputDef<float>({3}, true,
-                                                          GetFloatDataInRange(-32768.0f / 32767.0f * 4.0f, 4.0f, 3)),
+                                      scale_def,
                                       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                       ExpectedEPNodeAssignment::All,
                                       true,
-                                      /*json_qnn_graph_dir=*/"",
+                                      json_qnn_graph_dir.string(),
                                       /*verify_outputs=*/true,
                                       /*fp32_abs_err=*/1e-3f);
+
+  const QuantParams<int16_t> original = GetTestInputQuantParams<int16_t>(scale_def);
+  AssertTensorQuantParamsInQnnGraph(json_qnn_graph_dir, "scale_initializer",
+                                    original.scale, -original.zero_point);
 }
 
 // Gamma shape has leading 1-dims ([1, 1, 3]) that the builder must squeeze down to match X's
