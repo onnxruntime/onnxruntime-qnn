@@ -2176,8 +2176,6 @@ Ort::Status QnnBackendManager::SetupBackend(
     uint32_t htp_graph_splitting_num_prepare_threads) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
-    RETURN_IF(enable_file_mapped_weights != file_mapped_weights_enabled_,
-              "Cannot reuse QNN backend manager with a different file-mapped weights setting.");
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
 
     if (htp_share_resource_optimization_ == 1) {
@@ -2227,6 +2225,7 @@ Ort::Status QnnBackendManager::SetupBackend(
   if (enable_file_mapped_weights && !file_mapper_ && GetQnnBackendType() == QnnBackendType::HTP) {
     RETURN_IF(!rpcmem_library, "RPCMem Library is required for file mapping but is uninitialized.");
     rpcmem_library_ = rpcmem_library;
+    file_mapped_weights_enabled_ = true;
     file_mapper_ = std::make_unique<WindowsFileMapper>(*logger_ptr_);
   }
 #else

@@ -233,7 +233,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  if (qnn_backend_manager->FileMappingIsEnabled() && qnn_backend_manager->GetQnnBackendType() == QnnBackendType::HTP) {
+  if (qnn_backend_manager->FileMappingIsEnabled()) {
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(nullptr,
                                                                0,
                                                                context_binary_path_str,

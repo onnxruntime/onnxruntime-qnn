@@ -144,7 +144,6 @@ struct QnnBackendManagerConfig {
   // Caps the reused IO buffer size at context load. 0 = SDK default.
   uint64_t reused_io_limit_mb = 0;
   bool configure_host_mode = false;
-  bool enable_file_mapped_weights = false;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -171,7 +170,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                     PrivateConstructorTag)
       : backend_path_(config.backend_path),
         reused_io_limit_mb_(config.reused_io_limit_mb),
-        file_mapped_weights_enabled_(config.enable_file_mapped_weights),
         context_priority_(config.context_priority),
         qnn_serializer_config_(config.qnn_serializer_config),
         device_id_(config.device_id),
@@ -775,7 +773,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   Qnn_Version_t core_api_version_ = QNN_VERSION_INIT;
   Qnn_Version_t backend_api_version_ = QNN_VERSION_INIT;
-  // Fixed at construction; sessions sharing this manager must use the same setting.
   bool file_mapped_weights_enabled_ = false;
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE

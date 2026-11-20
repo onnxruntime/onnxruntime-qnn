@@ -1557,9 +1557,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   const auto shared_qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
   const bool reusing_shared_backend_manager = use_shared_backend_mgr && shared_qnn_backend_manager != nullptr;
   if (reusing_shared_backend_manager) {
-    if (enable_file_mapped_weights_ != shared_qnn_backend_manager->FileMappingIsEnabled()) {
-      LOG_AND_THROW_ERROR(logger_, "Cannot share QNN backend manager with a different file-mapped weights setting.");
-    }
     qnn_backend_manager_ = shared_qnn_backend_manager;
   } else {
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
@@ -1578,8 +1575,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                      enable_framework_op_trace_,
                                      skip_backend_op_validation,
                                      reused_io_limit_mb,
-                                     enable_htp_cross_device_prepare,
-                                     enable_file_mapped_weights_},
+                                     enable_htp_cross_device_prepare},
         static_cast<const ApiPtrs&>(*this), logger_);
   }
 
@@ -2867,13 +2863,6 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
     }
 
     if (has_all_graphs) {
-      // Check all settings before removing any model from the shared pool.
-      for (const auto& name_pair : names) {
-        if (!SharedContext::GetInstance().FileMappingSettingMatches(name_pair.second, enable_file_mapped_weights_)) {
-          return ort_api.CreateStatus(ORT_EP_FAIL,
-                                      "Cannot share QNN graph with a different file-mapped weights setting.");
-        }
-      }
       for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
         auto qnn_model_shared = SharedContext::GetInstance().GetSharedQnnModel(names[graph_idx].second);
         if (qnn_model_shared == nullptr) {

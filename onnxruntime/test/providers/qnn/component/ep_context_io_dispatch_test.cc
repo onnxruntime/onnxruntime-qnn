@@ -713,7 +713,7 @@ TEST_F(QnnUnit_CallbackBufferTest, SharedManagerCallbackDoesNotClearMappingFlag)
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
-TEST_F(QnnUnit_CallbackBufferTest, MappingMismatchPreservesDisabledNativeInitialAndList) {
+TEST_F(QnnUnit_CallbackBufferTest, SharedManagerKeepsDisabledMappingForNativeInitialAndList) {
   auto* manager = backend_->GetMutable();
   backend_->BackendType() = qnn::QnnBackendType::HTP;
   manager->*GetCallbackBackendMember(CallbackBackendSetupTag{}) = true;
@@ -726,9 +726,7 @@ TEST_F(QnnUnit_CallbackBufferTest, MappingMismatchPreservesDisabledNativeInitial
 
   ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, false, nullptr, binaries, disabled).IsOK());
   EXPECT_FALSE(manager->FileMappingIsEnabled());
-  auto status = manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, enabled);
-  EXPECT_FALSE(status.IsOK());
-  EXPECT_NE(std::string(status.GetErrorMessage()).find("different file-mapped weights setting"), std::string::npos);
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, enabled).IsOK());
   EXPECT_FALSE(manager->FileMappingIsEnabled());
   EXPECT_EQ(backend_->BackendHandle(), backend_handle);
   EXPECT_EQ((manager->*GetCallbackBackendMember(CallbackFileMapperTag{})).get(), nullptr);
@@ -753,8 +751,8 @@ TEST_F(QnnUnit_CallbackBufferTest, SharedMappingKeepsCallbacksOrdinaryAndAllowsN
   manager->*GetCallbackBackendMember(CallbackBackendSetupTag{}) = true;
   const qnn::EpContextIoDispatch native_dispatch;
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, *dispatch_).IsOK());
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, native_dispatch).IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, false, nullptr, binaries, *dispatch_).IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, false, nullptr, binaries, native_dispatch).IsOK());
   ASSERT_TRUE(manager->FileMappingIsEnabled());
 
   ASSERT_TRUE(InitialLoad().IsOK());
@@ -773,23 +771,21 @@ TEST_F(QnnUnit_CallbackBufferTest, SharedMappingKeepsCallbacksOrdinaryAndAllowsN
   EXPECT_TRUE(manager->FileMappingIsEnabled());
 }
 
-TEST_F(QnnUnit_CallbackBufferTest, MappingMismatchPreservesExistingBackend) {
+TEST_F(QnnUnit_CallbackBufferTest, SharedManagerOptionChangePreservesExistingBackend) {
   auto* manager = backend_->GetMutable();
   backend_->BackendType() = qnn::QnnBackendType::HTP;
   manager->*GetCallbackBackendMember(CallbackBackendSetupTag{}) = true;
   ASSERT_TRUE(manager->AddQnnContextHandle(this).IsOK());
   const qnn::EpContextIoDispatch native_dispatch;
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
-  auto status = manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, native_dispatch);
-  EXPECT_FALSE(status.IsOK());
-  EXPECT_NE(std::string(status.GetErrorMessage()).find("different file-mapped weights setting"), std::string::npos);
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, native_dispatch).IsOK());
   EXPECT_TRUE(manager->IsBackendSetup());
   EXPECT_TRUE(manager->HasContextHandle(this));
   EXPECT_FALSE(manager->FileMappingIsEnabled());
   EXPECT_EQ((manager->*GetCallbackBackendMember(CallbackFileMapperTag{})).get(), nullptr);
 }
 
-TEST_F(QnnUnit_CallbackBufferTest, MappingMismatchPreservesVtcmContexts) {
+TEST_F(QnnUnit_CallbackBufferTest, SharedManagerOptionChangePreservesVtcmContexts) {
   UseNativeReads();
   auto* manager = backend_->GetMutable();
   backend_->BackendType() = qnn::QnnBackendType::HTP;
@@ -806,9 +802,8 @@ TEST_F(QnnUnit_CallbackBufferTest, MappingMismatchPreservesVtcmContexts) {
   second.emplace(WriteNativeBinary("second"), std::make_unique<std::vector<std::string>>(1, "second"));
   ASSERT_TRUE(manager->SetupBackend(true, false, true, 1, true, nullptr, first, enabled).IsOK());
   EXPECT_EQ(mapped_list_calls_, 1u);
-  EXPECT_FALSE(manager->SetupBackend(true, false, true, 1, false, nullptr, second, disabled).IsOK());
-  EXPECT_EQ(manager->GetQnnContextSize(), 1u);
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, 1, true, nullptr, second, enabled).IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, 1, false, nullptr, second, disabled).IsOK());
+  EXPECT_TRUE(manager->FileMappingIsEnabled());
   EXPECT_EQ(list_calls_, 2u);
   EXPECT_EQ(mapped_list_calls_, 2u);
   EXPECT_EQ(manager->GetQnnContextSize(), 2u);

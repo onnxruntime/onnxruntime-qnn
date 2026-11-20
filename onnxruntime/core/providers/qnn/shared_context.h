@@ -30,13 +30,6 @@ class SharedContext {
     return it != shared_qnn_models_.end();
   }
 
-  bool FileMappingSettingMatches(const std::string& model_name, bool enable_file_mapped_weights) {
-    const std::lock_guard<std::mutex> lock(mtx_);
-    auto it = find_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
-                      [&model_name](const std::unique_ptr<qnn::QnnModel>& qnn_model) { return qnn_model->Name() == model_name; });
-    return it != shared_qnn_models_.end() && (*it)->FileMappingIsEnabled() == enable_file_mapped_weights;
-  }
-
   std::unique_ptr<qnn::QnnModel> GetSharedQnnModel(const std::string& model_name) {
     const std::lock_guard<std::mutex> lock(mtx_);
     auto it = find_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
