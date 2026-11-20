@@ -1,0 +1,54 @@
+# Accuracy Routing Result, Version 1
+
+The Linux internal-symbol Snapshot lane exports `accuracy_routing.json` by passing
+`--emit-routing-result=<path>` to `run_snapshot_accuracy.sh`. The runner exports
+its existing operator-group selection on exit. Exporting does not change its
+test filter or exit code. The file is cleared before execution and replaced
+atomically; an export failure logs a warning and leaves no consumable result.
+
+The Actions artifact name is
+`qnn-routing-linux-x86_64-<config>-py<python-version>-<run-attempt>`. Consumers must
+also validate the embedded repository, checkout commit, workflow reference, job,
+run ID, and attempt against the expected producer run.
+
+## Contract
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | `1`; other versions require an explicit consumer implementation |
+| `decision_granularity` | `operator_group`; the runner selects all Accuracy cases of an affected operator |
+| `producer` | Checkout SHA, Actions identity, actual build QAIRT/ORT versions, and downloaded golden profile |
+| `golden_manifest` | Versions and profile read from the golden store; missing data is represented by null |
+| `versions_match` | Both build versions match the manifest and the manifest supplies a profile |
+| `mode` | `compare`, `force_accuracy`, or `generate_goldens` |
+| `selection_complete` | Whether the runner completed its group selection |
+| `runner_exit_code`, `snapshot_exit_code` | Actual execution outcomes, including failure exits |
+| `snapshots` | Registered in-scope Snapshot identities and observed `match`, `drift`, or `untrusted` status |
+| `accuracy_decisions` | Accuracy identity, all Snapshot identities in its group, evidence status, and observed runner action |
+| `payload_sha256` | SHA-256 of UTF-8 compact JSON for all other fields, with keys sorted recursively |
+
+`accuracy_decisions[].runner_action` is `run`, `skip`, `unknown` (selection did not
+complete), or `out_of_scope` (no in-scope Snapshot group). It describes observed
+Linux selection. It does not grant target-platform eligibility. Evidence status
+is independently `match`, `drift`, `untrusted`, or `unmapped`; a Linux skip with
+missing or incompatible metadata remains untrusted for consumption.
+
+The digest detects payload corruption. It does not authenticate a producer.
+Consumers must obtain artifacts from the expected trusted workflow run.
+
+## Initial Consumer Boundary
+
+This change publishes results only. It supplies no Windows consumer or target
+skip policy. A later consumer must validate identity, schema, mode, successful
+execution, complete selection, versions, profile, and the registered target
+universe, then join evidence to a reviewed target policy. Missing or incompatible
+evidence must retain target Accuracy execution.
+
+The current `linux-x86_64-htp-simulator` namespace does not establish a v73
+execution profile. `producer.target_htp_arch` is therefore null. Windows ARM64
+v73 consumption requires explicit architecture evidence and simulator/device
+equivalence before any target skip can be enabled. This exporter never infers
+architecture from a profile label.
+
+Target Integration and legacy E2E tests continue under their existing execution
+policy. Per-operator legacy disposition is separate from artifact publication.
