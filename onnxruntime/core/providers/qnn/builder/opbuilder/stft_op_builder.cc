@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <cstring>
+#include <limits>
+
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -35,6 +38,37 @@ class STFTOpBuilder : public BaseOpBuilder {
 // Checks if the given input is a window input (float type).
 static bool IsWindowInput(const OrtNodeUnitIODef& input) {
   return input.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+}
+
+static Ort::Status ReadStftScalar(QnnModelWrapper& qnn_model_wrapper,
+                                  const OrtNodeUnitIODef& input,
+                                  const char* parameter_name,
+                                  uint32_t& value) {
+  TensorInfo input_info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input, input_info));
+  RETURN_IF_NOT(input_info.is_initializer,
+                (std::string("STFT ") + parameter_name + " must be a constant initializer.").c_str());
+  RETURN_IF(input_info.qnn_data_type != QNN_DATATYPE_INT_32 &&
+                input_info.qnn_data_type != QNN_DATATYPE_INT_64,
+            (std::string("STFT ") + parameter_name + " must be an int32 or int64 initializer.").c_str());
+
+  std::vector<uint8_t> data;
+  const bool is_int32 = input_info.qnn_data_type == QNN_DATATYPE_INT_32;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
+      input_info.initializer_tensor, data, true, is_int32 ? sizeof(int32_t) : sizeof(int64_t)));
+
+  int64_t scalar = 0;
+  if (is_int32) {
+    int32_t scalar_int32 = 0;
+    std::memcpy(&scalar_int32, data.data(), sizeof(scalar_int32));
+    scalar = scalar_int32;
+  } else {
+    std::memcpy(&scalar, data.data(), sizeof(scalar));
+  }
+  RETURN_IF(scalar <= 0 || scalar > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
+            (std::string("STFT ") + parameter_name + " must be positive and fit in uint32.").c_str());
+  value = static_cast<uint32_t>(scalar);
+  return Ort::Status();
 }
 
 Ort::Status STFTOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
@@ -199,8 +233,6 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   std::vector<std::string> param_tensor_names;
   // Extract frame_step from the inputs if it exists
   uint32_t frame_step_info = 0;
-  TensorInfo frame_step = {};
-  TensorInfo frame_length = {};
   uint32_t frame_length_info = 0;
 
   int frame_length_index = -1;
@@ -223,23 +255,16 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
   // Process frame_step
   if (frame_step_index != -1) {
-    const auto& frame_step_input = inputs[frame_step_index];
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(frame_step_input, frame_step));
-    std::vector<uint8_t> frame_step_data;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(frame_step.initializer_tensor, frame_step_data));
-    frame_step_info = *reinterpret_cast<uint32_t*>(frame_step_data.data());
+    RETURN_IF_ERROR(ReadStftScalar(qnn_model_wrapper, inputs[frame_step_index],
+                                   QNN_OP_STFT_PARAM_FRAME_STEP, frame_step_info));
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), frame_step_info,
                                            QNN_OP_STFT_PARAM_FRAME_STEP, param_tensor_names));
   }
 
   // Process frame_length if it exists
   if (frame_length_index != -1) {
-    const auto& frame_length_input = inputs[frame_length_index];
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(frame_length_input, frame_length));
-
-    std::vector<uint8_t> frame_length_data;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(frame_length.initializer_tensor, frame_length_data));
-    frame_length_info = *reinterpret_cast<uint32_t*>(frame_length_data.data());
+    RETURN_IF_ERROR(ReadStftScalar(qnn_model_wrapper, inputs[frame_length_index],
+                                   QNN_OP_STFT_PARAM_FRAME_LENGTH, frame_length_info));
 
     // Create frame_length parameter
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), frame_length_info,
