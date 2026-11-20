@@ -132,6 +132,37 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GraphHasEpContextNode_QnnExecutionProviderS
   EXPECT_TRUE(GraphHasEpContextNode(graph.AsGraph(), ctx.api, EP_CONTEXT_TYPE_BIN));
 }
 
+TEST(QnnUnit_OnnxCtxModelHelperTest, GraphHasEpContextNode_VirtualSourcesRespectContextType) {
+  for (const char* name : {"qnn.virtual", "QNN.Virtual", "qnnexecutionprovider.virtual", "QNNExecutionProvider.Virtual"}) {
+    for (const auto& type : {EP_CONTEXT_TYPE_BIN, EP_CONTEXT_TYPE_DLC}) {
+      SCOPED_TRACE(name);
+      SCOPED_TRACE(type);
+      CtxHelperTestContext ctx;
+      auto source = FakeOpAttr::MakeString(SOURCE, name);
+      auto context_type = FakeOpAttr::MakeString(EP_CONTEXT_TYPE, type);
+      FakeNode node{"virtual_context", "EPContext", "", 1, {}, {}};
+      node.attrs[SOURCE] = &source;
+      node.attrs[EP_CONTEXT_TYPE] = &context_type;
+      FakeGraph graph{{node}, {}, {}, {}};
+      EXPECT_EQ(GraphHasEpContextNode(graph.AsGraph(), ctx.api, EP_CONTEXT_TYPE_BIN),
+                std::string(type) == EP_CONTEXT_TYPE_BIN);
+      EXPECT_EQ(GraphHasDlcContextNode(graph.AsGraph(), ctx.api), std::string(type) == EP_CONTEXT_TYPE_DLC);
+    }
+  }
+}
+
+TEST(QnnUnit_OnnxCtxModelHelperTest, GraphHasEpContextNode_DoesNotAcceptArbitraryVirtualSuffixes) {
+  for (const char* name : {"other.virtual", "qnn.virtual.extra", "qnnexecutionprovider.virtual.extra"}) {
+    SCOPED_TRACE(name);
+    CtxHelperTestContext ctx;
+    auto source = FakeOpAttr::MakeString(SOURCE, name);
+    FakeNode node{"context", "EPContext", "", 1, {}, {}};
+    node.attrs[SOURCE] = &source;
+    FakeGraph graph{{node}, {}, {}, {}};
+    EXPECT_FALSE(GraphHasEpContextNode(graph.AsGraph(), ctx.api, EP_CONTEXT_TYPE_BIN));
+  }
+}
+
 TEST(QnnUnit_OnnxCtxModelHelperTest, GraphHasEpContextNode_QairtexportSource_ReturnsTrue) {
   CtxHelperTestContext ctx;
   FakeOpAttr source = FakeOpAttr::MakeString(SOURCE, "qairtexport");

@@ -52,6 +52,8 @@ class GenieBackendManager : public std::enable_shared_from_this<GenieBackendMana
   // Initializes handles to Genie resources (device, logger, etc.).
   Ort::Status SetupBackend();
 
+  std::shared_ptr<void> GetBackendLibraryLifetime() const { return backend_libraries_; }
+
   void* GetGenieBackendHandle() { return backend_lib_handle_; }
 
  private:
@@ -61,9 +63,13 @@ class GenieBackendManager : public std::enable_shared_from_this<GenieBackendMana
 
   void* LoadLib(const char* file_name, int flags, std::string& error_msg);
 
-  Ort::Status UnloadLib(void* handle);
-
  private:
+  struct LibraryDeleter {
+    void operator()(void* handle) const noexcept;
+  };
+  using UniqueLibraryHandle = std::unique_ptr<void, LibraryDeleter>;
+  const std::shared_ptr<std::vector<UniqueLibraryHandle>> backend_libraries_ =
+      std::make_shared<std::vector<UniqueLibraryHandle>>();
   std::recursive_mutex logger_recursive_mutex_;
   const Ort::Logger* logger_ptr_;
 
