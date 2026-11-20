@@ -1796,6 +1796,36 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, Fp16Precision_Pushed) {
   EXPECT_EQ(found->precision, QNN_PRECISION_FLOAT16);
 }
 
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, MatmulLutDefault_MatchesPlatformSupport) {
+  qnn::HtpGraphConfigs_t configs{};
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+
+#if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
+  EXPECT_TRUE(configs.enable_htp_matmul_lut);
+  EXPECT_EQ(builder.GetSize(), 1u);
+  auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_FINALIZE_CONFIG);
+  ASSERT_NE(found, nullptr);
+  EXPECT_STREQ(found->finalizeConfig.key, "enable_matmul_lut");
+  EXPECT_EQ(found->finalizeConfig.value.dataType, QNN_DATATYPE_BOOL_8);
+  EXPECT_EQ(found->finalizeConfig.value.bool8Value, 1);
+#else
+  EXPECT_FALSE(configs.enable_htp_matmul_lut);
+  EXPECT_EQ(builder.GetSize(), 0u);
+#endif
+}
+
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, MatmulLutDisabled_NotPushed) {
+  qnn::HtpGraphConfigs_t configs{};
+  configs.enable_htp_matmul_lut = false;
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+
+  EXPECT_EQ(builder.GetSize(), 0u);
+}
+
 TEST(QnnUnit_PopulateHtpGraphConfigsTest, MultipleConfigs_AllPushed) {
   qnn::HtpGraphConfigs_t configs{};
   configs.htp_num_cores = 3;
