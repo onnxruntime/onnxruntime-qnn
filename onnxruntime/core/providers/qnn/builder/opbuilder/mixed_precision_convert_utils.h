@@ -39,6 +39,14 @@ Ort::Status ConvertActivationToOutputPrecision(QnnModelWrapper& qnn_model_wrappe
                                                Qnn_DataType_t output_dtype,
                                                bool do_op_validation);
 
+// Returns the activation scale ConvertActivationToOutputPrecision would leave on the activation, without emitting
+// any node: the Convert's derived scale when it would insert one, else the activation's own scale. Reads only the
+// activation's dtype and quantization parameters, so it also works before any QNN tensor exists.
+Ort::Status GetPostConvertActivationScale(Qnn_DataType_t activation_dtype,
+                                          const QnnQuantParamsWrapper& activation_quant_param,
+                                          Qnn_DataType_t output_dtype,
+                                          float& scale);
+
 // Builds `qnn_op_type` at `native_dtype` and inserts a QNN Convert to the node's
 // declared output tensor/precision.
 Ort::Status InsertOutputPrecisionConvert(QnnModelWrapper& qnn_model_wrapper,

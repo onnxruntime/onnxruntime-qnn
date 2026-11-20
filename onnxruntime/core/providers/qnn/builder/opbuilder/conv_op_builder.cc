@@ -84,6 +84,14 @@ class ConvOpBuilder : public BaseOpBuilder {
                               std::vector<std::string>& input_names) const ORT_MUST_USE_RESULT;
 };
 
+// Defined below. Also called from IsOpSupported so that a Conv it rejects is left on CPU before layout transform.
+static Ort::Status ShouldUseFp16ConvFallback(QnnModelWrapper& qnn_model_wrapper,
+                                             const OrtNodeUnit& node_unit,
+                                             const Ort::Logger& logger,
+                                             Qnn_DataType_t declared_output_dtype,
+                                             OnnxConvType conv_type,
+                                             bool& use_fallback);
+
 // Conv/ConvTranspose ops are sensitive with data layout, no special validation so far
 // The nodes from 1st call of GetCapability do not get layout transformer applied, it's still NCHW
 // The nodes from 2nd call of GetCapability get layout transformer applied, it's NHWC
@@ -194,6 +202,12 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                       act_bitwidth != 16 || weight_bitwidth != 16,
                   "QNN EP: Conv a16w16 is not supported on V68 HTP (only a16w8).");
 
+    // Reject a Conv whose int32 bias would overflow once its activation is widened and that the FP16 fallback
+    // **cannot** happen. Checked here, not only in ProcessInputs, so it is rejected before layout transform runs.
+    bool needs_fp16_fallback = false;
+    RETURN_IF_ERROR(ShouldUseFp16ConvFallback(qnn_model_wrapper, node_unit, logger, declared_output_dtype,
+                                              conv_type, needs_fp16_fallback));
+
     // checking for per-channel quantization
     const auto& input_1 = inputs[1];  // weight
     bool is_per_axis_quant = false;
@@ -291,6 +305,87 @@ Ort::Status ConvOpBuilder::ProcessConvBias(QnnModelWrapper& qnn_model_wrapper,
   return ProcessInput(qnn_model_wrapper, inputs[2], logger, input_names);
 }
 
+// In mixed precision model, if the Conv node's input precision needs to be widened to be made equal to
+// output precision (uint8 -> uint16), the input activation scale to the Conv node would shrink.
+// Bias scale which is computed as input scale * weight scale would also need to be updated with this change.
+// Effective new bias values could overflow the INT32 MAX value allowed. This method checks if such a overflow
+// is triggered, and sets use_fallback to True.
+static Ort::Status ShouldUseFp16ConvFallback(QnnModelWrapper& qnn_model_wrapper,
+                                             const OrtNodeUnit& node_unit,
+                                             const Ort::Logger& logger,
+                                             Qnn_DataType_t declared_output_dtype,
+                                             OnnxConvType conv_type,
+                                             bool& use_fallback) {
+  use_fallback = false;
+  const auto& inputs = node_unit.Inputs();
+  if (inputs.size() != 3 || conv_type != OnnxConvType::kConv ||
+      !IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    return Ort::Status();
+  }
+
+  // Read from the node unit's own definitions, not from QNN tensors, so the answer is the same in the first
+  // (NCHW) GetCapability pass, where no tensor exists yet, and in ProcessInputs.
+  TensorInfo act_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], act_info));
+  if (utils::FixedPointBitWidth(act_info.qnn_data_type) == 0 ||
+      utils::FixedPointBitWidth(declared_output_dtype) == 0 || !act_info.quant_param.IsPerTensor()) {
+    return Ort::Status();
+  }
+
+  if (utils::FixedPointBitWidth(act_info.qnn_data_type) == utils::FixedPointBitWidth(declared_output_dtype)) {
+    return Ort::Status();
+  }
+
+  TensorInfo weight_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], weight_info));
+  // Only per-tensor and per-channel weights reach the int32 bias requantization checked here. Block-quantized
+  // weights (BLOCK, BW_FLOAT_BLOCK, LPBQ) keep their bias on a separate path.
+  if (!weight_info.quant_param.IsPerTensor(/*include_bw*/ true) && !weight_info.quant_param.IsPerChannel()) {
+    return Ort::Status();
+  }
+  // The FP16 path dequantizes the weight when the graph is built, so it needs constant 8/16-bit data.
+  const auto weight_encoding = weight_info.quant_param.Get().quantizationEncoding;
+  const bool weight_supports_fp16 =
+      weight_info.is_initializer && (weight_encoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET ||
+                                     weight_encoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET);
+
+  float post_convert_scale = 0.0f;
+  RETURN_IF_ERROR(utils::GetPostConvertActivationScale(act_info.qnn_data_type, act_info.quant_param,
+                                                       declared_output_dtype, post_convert_scale));
+  bool saturates = false;
+  RETURN_IF_ERROR(utils::BiasRequantizationSaturates(qnn_model_wrapper, inputs[2], weight_info.quant_param,
+                                                     post_convert_scale, saturates));
+  if (!saturates) {
+    return Ort::Status();
+  }
+
+  // TODO: grouped/depthwise Conv keeps the clipped-bias warning until its FP16 path is validated.
+  OrtNodeAttrHelper node_helper(node_unit);
+  if (node_helper.Get("group", static_cast<uint32_t>(1)) != 1) {
+    return Ort::Status();
+  }
+
+  // From here the bias overflows. An error leaves the node on CPU, which is only reliable when this runs from
+  // IsOpSupported's first pass: once ORT has converted the node to NHWC, rejecting it fails session creation.
+  RETURN_IF(!weight_supports_fp16,
+            ("QNN EP: Conv " + node_unit.Name() +
+             " has an int32 bias that would overflow after the activation is widened, and the FP16 fallback "
+             "needs a constant 8/16-bit per-tensor or per-channel weight, so the node stays on CPU.")
+                .c_str());
+  RETURN_IF(act_info.shape.size() == 5,
+            ("QNN EP: Conv " + node_unit.Name() +
+             " has an int32 bias that would overflow after the activation is widened, and the FP16 fallback "
+             "does not support 5D Conv, so the node stays on CPU.")
+                .c_str());
+
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
+              ("Conv " + node_unit.Name() +
+               ": int32 bias would overflow at the widened activation scale, running the Conv in FP16.")
+                  .c_str());
+  use_fallback = true;
+  return Ort::Status();
+}
+
 Ort::Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger,
@@ -333,17 +428,29 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   Qnn_DataType_t act_dtype = act_wrapper.GetTensorDataType();
 
   // Convert a mixed-precision activation/output pair before Conv runs.
+  bool use_fp16_fallback = false;
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     // 1. Read the Conv's own declared (Q-node) output precision.
     const auto& conv_output = node_unit.Outputs()[0];
     Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
     RETURN_IF_ERROR(utils::GetQnnDataType(conv_output.quant_param.has_value(), conv_output.type,
                                           declared_output_dtype));
-    // 2. Convert the activation to the output's precision before Conv consumes it, so Conv computes and emits
-    // natively at declared_output_dtype. A 16-bit activation feeding an 8-bit output is left to
-    // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output.
-    RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names, declared_output_dtype,
-                                                              do_op_validation));
+    RETURN_IF_ERROR(ShouldUseFp16ConvFallback(qnn_model_wrapper, node_unit, logger,
+                                              declared_output_dtype, conv_type, use_fp16_fallback));
+    if (use_fp16_fallback) {
+      // FP16 Conv: the weight and bias are emitted as FP16 below, and the output is quantized back.
+      const std::string fp16_act_name = utils::UniqueNameGenerator().New(act_name, "_fp16");
+      RETURN_IF_ERROR(qnn_model_wrapper.AddDequantizeNode(act_name, fp16_act_name, QNN_DATATYPE_FLOAT_16,
+                                                          std::vector<uint32_t>(act_wrapper.GetTensorDims()),
+                                                          do_op_validation));
+      input_names[0] = fp16_act_name;
+    } else {
+      // 2. Convert the activation to the output's precision before Conv consumes it, so Conv computes and emits
+      // natively at declared_output_dtype. A 16-bit activation feeding an 8-bit output is left to
+      // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output.
+      RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names, declared_output_dtype,
+                                                                do_op_validation));
+    }
     act_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
   }
 
@@ -523,6 +630,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     // Input 1: weight. This input must be transposed manually by QNN EP.
     //
     std::string actual_name = input_info.is_initializer ? input1_name : utils::UniqueNameGenerator().New(input1_name, "_transpose");
+    if (use_fp16_fallback) {
+      // The FP16 weight must not share a tensor name with another Conv that reads the same initializer quantized.
+      actual_name = utils::UniqueNameGenerator().New(node_unit, "_weight_fp16");
+    }
     input_names.push_back(actual_name);
 
     std::vector<uint32_t> actual_shape;
@@ -605,11 +716,20 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       }
     }
 
-    Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(actual_name);
-    QnnTensorWrapper input_tensorwrapper(actual_name, tensor_type, input_info.qnn_data_type,
-                                         std::move(input_info.quant_param),
-                                         std::move(actual_shape), std::move(unpacked_tensor));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+    if (use_fp16_fallback) {
+      std::vector<uint8_t> fp16_weight;
+      RETURN_IF_ERROR(utils::DequantizeToFp16(unpacked_tensor, actual_shape, input_info.quant_param,
+                                              input_info.qnn_data_type, fp16_weight));
+      QnnTensorWrapper fp16_tensorwrapper(actual_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_16,
+                                          QnnQuantParamsWrapper(), std::move(actual_shape), std::move(fp16_weight));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fp16_tensorwrapper)), "Failed to add tensor.");
+    } else {
+      Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(actual_name);
+      QnnTensorWrapper input_tensorwrapper(actual_name, tensor_type, input_info.qnn_data_type,
+                                           std::move(input_info.quant_param),
+                                           std::move(actual_shape), std::move(unpacked_tensor));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+    }
 
     // Workaround that inserts a QNN Convert op before input[1] (converts from quantized uint16 to signed symmetric int16)
     // to avoid a QNN validation failure.
@@ -659,8 +779,12 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   //
   const bool has_bias_input = num_inputs == 3;
   if (has_bias_input) {
-    RETURN_IF_ERROR(ProcessConvBias(qnn_model_wrapper, node_unit, logger,
-                                    inputs, is_bq_weight, use_lpbq_path, input_names));
+    if (use_fp16_fallback) {
+      RETURN_IF_ERROR(ProcessBqFp16Bias(qnn_model_wrapper, node_unit, inputs[2], input_names));
+    } else {
+      RETURN_IF_ERROR(ProcessConvBias(qnn_model_wrapper, node_unit, logger,
+                                      inputs, is_bq_weight, use_lpbq_path, input_names));
+    }
   }
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 16 && QNN_API_VERSION_MINOR <= 18)
@@ -1209,7 +1333,12 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
     Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-    if (is_bw_float_block && is_quantized_tensor) {
+    // FP16 Conv: the non-native BQ kernel, or the FP16 fallback for an overflowing int32 bias. The fallback is the
+    // only path that emits an FP16 weight under a quantized output, so the weight dtype identifies it.
+    const bool is_fp16_weight_conv =
+        qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1]) &&
+        qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetTensorDataType() == QNN_DATATYPE_FLOAT_16;
+    if ((is_bw_float_block || is_fp16_weight_conv) && is_quantized_tensor) {
       // Non-native BQ Conv outputs FP16; downstream QDQ expects INT16.
       // Emit: Conv (FP16 output) → Quantize (FP16 → INT16 quantized output).
       // Reuse the original QuantizeLinear input name for the FP16 tensor so the QNN graph

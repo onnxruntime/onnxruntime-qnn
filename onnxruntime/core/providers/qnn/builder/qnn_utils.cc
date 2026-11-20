@@ -2040,11 +2040,11 @@ Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param
   return Ort::Status();
 }
 
-Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant_param,
-                                         std::vector<float>& scales,
-                                         std::vector<int32_t>& offsets,
-                                         int32_t& axis) {
-  const auto& qp = bias_quant_param.Get();
+Ort::Status GetScalesAndOffsets(const QnnQuantParamsWrapper& quant_param,
+                                std::vector<float>& scales,
+                                std::vector<int32_t>& offsets,
+                                int32_t& axis) {
+  const auto& qp = quant_param.Get();
   axis = 0;
 
   if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_SCALE_OFFSET) {
@@ -2056,7 +2056,7 @@ Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant
   } else if (qp.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET) {
     RETURN_IF_NOT(qp.axisScaleOffsetEncoding.scaleOffset != nullptr &&
                       qp.axisScaleOffsetEncoding.numScaleOffsets > 0,
-                  "Invalid AXIS_SCALE_OFFSET bias quant params");
+                  "Invalid AXIS_SCALE_OFFSET quant params");
     axis = qp.axisScaleOffsetEncoding.axis;
     const size_t n = qp.axisScaleOffsetEncoding.numScaleOffsets;
     scales.resize(n);
@@ -2069,7 +2069,7 @@ Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant
     RETURN_IF_NOT(qp.bwAxisScaleOffsetEncoding.scales != nullptr &&
                       qp.bwAxisScaleOffsetEncoding.offsets != nullptr &&
                       qp.bwAxisScaleOffsetEncoding.numElements > 0,
-                  "Invalid BW_AXIS_SCALE_OFFSET bias quant params");
+                  "Invalid BW_AXIS_SCALE_OFFSET quant params");
     axis = qp.bwAxisScaleOffsetEncoding.axis;
     const size_t n = qp.bwAxisScaleOffsetEncoding.numElements;
     scales.resize(n);
@@ -2079,7 +2079,7 @@ Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant
       offsets[i] = qp.bwAxisScaleOffsetEncoding.offsets[i];
     }
   } else {
-    return MAKE_EP_FAIL("Unsupported bias quantization encoding for requantization.");
+    return MAKE_EP_FAIL("Unsupported quantization encoding: expected per-tensor or per-axis scale/offset.");
   }
 
   return Ort::Status();
@@ -2297,6 +2297,96 @@ Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
   return Ort::Status();
 }
 
+Ort::Status DequantizeToFp16(gsl::span<const uint8_t> quant_bytes,
+                             gsl::span<const uint32_t> shape,
+                             const QnnQuantParamsWrapper& quant_param,
+                             Qnn_DataType_t data_type,
+                             std::vector<uint8_t>& fp16_bytes) {
+  std::vector<float> scales;
+  std::vector<int32_t> offsets;
+  int32_t axis = 0;
+  RETURN_IF_ERROR(GetScalesAndOffsets(quant_param, scales, offsets, axis));
+
+  const size_t num_elems = ShapeSizeCalc(shape, 0, shape.size());
+  std::vector<float> values(num_elems);
+  const auto axis_opt = (scales.size() > 1) ? std::optional<int64_t>(axis) : std::nullopt;
+  RETURN_IF_ERROR(DequantizePerChannel(quant_bytes, shape, scales, offsets, values, data_type, axis_opt));
+
+  fp16_bytes.resize(num_elems * sizeof(uint16_t));
+  auto* fp16_ptr = reinterpret_cast<uint16_t*>(fp16_bytes.data());
+  for (size_t i = 0; i < num_elems; ++i) {
+    const Ort::Float16_t fp16_val(values[i]);
+    std::memcpy(&fp16_ptr[i], &fp16_val.val, sizeof(uint16_t));
+  }
+  return Ort::Status();
+}
+
+static bool BiasNeedsRequantization(gsl::span<const float> current_scales,
+                                    gsl::span<const int32_t> current_offsets,
+                                    gsl::span<const float> weights_scales,
+                                    float activation_scale) {
+  for (size_t i = 0; i < current_scales.size(); ++i) {
+    const float w = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
+    if (current_offsets[i] != 0 || !CheckBiasScaleMatch(current_scales[i], w, activation_scale)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+Ort::Status BiasRequantizationSaturates(QnnModelWrapper& qnn_model_wrapper,
+                                        const OrtNodeUnitIODef& bias_def,
+                                        const QnnQuantParamsWrapper& weight_quant_param,
+                                        float activation_scale,
+                                        bool& saturates) {
+  saturates = false;
+
+  TensorInfo bias_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(bias_def, bias_info));
+  if (!bias_info.is_initializer || bias_info.qnn_data_type != QNN_DATATYPE_SFIXED_POINT_32 ||
+      bias_info.shape.size() != 1 ||
+      !(bias_info.quant_param.IsPerTensor(/*include_bw*/ true) || bias_info.quant_param.IsPerChannel())) {
+    return Ort::Status();
+  }
+
+  std::vector<float> weights_scales;
+  RETURN_IF_ERROR(GetWeightQuantScales(weight_quant_param, weights_scales));
+  if (weights_scales.empty()) {
+    return Ort::Status();
+  }
+
+  std::vector<float> current_scales;
+  std::vector<int32_t> current_offsets;
+  int32_t bias_quant_axis = 0;
+  RETURN_IF_ERROR(GetScalesAndOffsets(bias_info.quant_param, current_scales, current_offsets,
+                                      bias_quant_axis));
+  if (!BiasNeedsRequantization(current_scales, current_offsets, weights_scales, activation_scale)) {
+    return Ort::Status();
+  }
+
+  std::vector<uint8_t> original_bias_data;
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(bias_info.initializer_tensor, original_bias_data));
+  const size_t num_elems = bias_info.shape[0];
+  std::vector<float> float_bias(num_elems);
+  const auto axis_opt = (current_scales.size() > 1) ? std::optional<int64_t>(bias_quant_axis) : std::nullopt;
+  RETURN_IF_ERROR(DequantizePerChannel(original_bias_data, bias_info.shape, current_scales, current_offsets,
+                                       float_bias, bias_info.qnn_data_type, axis_opt));
+
+  // Mirrors RequantizeBiasTensor + QuantizeData: float32 dequantize, then double nearbyint(value / scale).
+  for (size_t c = 0; c < num_elems; ++c) {
+    const float weight_scale = (c < weights_scales.size()) ? weights_scales[c] : weights_scales[0];
+    const double new_scale = static_cast<double>(weight_scale * activation_scale);
+    RETURN_IF_NOT(new_scale > 0.0, "Bias scale value is non-positive");
+    const double quantized = std::nearbyint(static_cast<double>(float_bias[c]) / new_scale);
+    if (quantized > static_cast<double>(std::numeric_limits<int32_t>::max()) ||
+        quantized < static_cast<double>(std::numeric_limits<int32_t>::min())) {
+      saturates = true;
+      break;
+    }
+  }
+  return Ort::Status();
+}
+
 static Ort::Status RequantizeBiasIfNeeded(QnnModelWrapper& qnn_model_wrapper,
                                           const Ort::Logger& logger,
                                           const OrtNodeUnit& node_unit,
@@ -2310,20 +2400,11 @@ static Ort::Status RequantizeBiasIfNeeded(QnnModelWrapper& qnn_model_wrapper,
   int32_t bias_quant_axis = 0;
   std::vector<float> current_scales;
   std::vector<int32_t> current_offsets;
-  RETURN_IF_ERROR(GetBiasQuantScalesAndOffsets(bias_info.quant_param, current_scales,
-                                               current_offsets, bias_quant_axis));
+  RETURN_IF_ERROR(GetScalesAndOffsets(bias_info.quant_param, current_scales,
+                                      current_offsets, bias_quant_axis));
 
   const size_t num_channels = current_scales.size();
-  bool needs_requantization = false;
-  for (size_t i = 0; i < num_channels && !needs_requantization; ++i) {
-    const float w = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
-    if (current_offsets[i] != 0 ||
-        !CheckBiasScaleMatch(current_scales[i], w, activation_scale)) {
-      needs_requantization = true;
-    }
-  }
-
-  if (!needs_requantization) {
+  if (!BiasNeedsRequantization(current_scales, current_offsets, weights_scales, activation_scale)) {
     return Ort::Status();  // Scales already match; caller processes bias normally.
   }
 
@@ -2449,7 +2530,7 @@ Ort::Status ProcessBiasForQuantizedOp(QnnModelWrapper& qnn_model_wrapper,
       std::vector<float> scales;
       std::vector<int32_t> offsets;
       int32_t quant_axis = 0;
-      RETURN_IF_ERROR(GetBiasQuantScalesAndOffsets(bias_info.quant_param, scales, offsets, quant_axis));
+      RETURN_IF_ERROR(GetScalesAndOffsets(bias_info.quant_param, scales, offsets, quant_axis));
       if (quant_axis != 0) {
         bias_info.quant_param = (scales.size() == 1)
                                     ? QnnQuantParamsWrapper::PerTensor(scales[0], offsets[0])

@@ -90,13 +90,34 @@ Ort::Status AlignBinaryInputPrecision(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
+static bool ActivationConvertedUpToOutput(Qnn_DataType_t activation_dtype, Qnn_DataType_t output_dtype) {
+  return !IsNarrowingQuantOutput(activation_dtype, output_dtype) &&
+         NeedsPrecisionConvert(activation_dtype, output_dtype);
+}
+
+Ort::Status GetPostConvertActivationScale(Qnn_DataType_t activation_dtype,
+                                          const QnnQuantParamsWrapper& activation_quant_param,
+                                          Qnn_DataType_t output_dtype,
+                                          float& scale) {
+  RETURN_IF_NOT(activation_quant_param.IsPerTensor(),
+                "QNN EP's activation precision Convert only supports per-tensor quantization");
+  const Qnn_ScaleOffset_t& encoding = activation_quant_param.Get().scaleOffsetEncoding;
+  if (!ActivationConvertedUpToOutput(activation_dtype, output_dtype)) {
+    scale = encoding.scale;
+    return Ort::Status();
+  }
+  int32_t unused_offset = 0;
+  return DeriveScaleOffsetForDtype(activation_dtype, encoding.offset, encoding.scale, output_dtype,
+                                   /*to_symmetric*/ false, scale, unused_offset);
+}
+
 Ort::Status ConvertActivationToOutputPrecision(QnnModelWrapper& qnn_model_wrapper,
                                                std::vector<std::string>& input_names,
                                                Qnn_DataType_t output_dtype,
                                                bool do_op_validation) {
   const auto& activation = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
   const Qnn_DataType_t activation_dtype = activation.GetTensorDataType();
-  if (IsNarrowingQuantOutput(activation_dtype, output_dtype) || !NeedsPrecisionConvert(activation_dtype, output_dtype)) {
+  if (!ActivationConvertedUpToOutput(activation_dtype, output_dtype)) {
     return Ort::Status();
   }
   RETURN_IF_NOT(activation.GetQnnQuantParams().IsPerTensor(),

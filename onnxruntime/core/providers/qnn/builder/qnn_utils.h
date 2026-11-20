@@ -905,13 +905,14 @@ bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation
 Ort::Status GetWeightQuantScales(const QnnQuantParamsWrapper& weight_quant_param,
                                  std::vector<float>& weights_scales);
 
-// Extracts current scales, offsets, and axis from a bias's quant params.
+// Extracts scales, offsets, and the quantization axis from a per-tensor or per-axis quantization encoding
+// (used for biases and for 8/16-bit weights). Per-tensor encodings return one scale/offset and axis 0.
 // Supports SCALE_OFFSET, BW_SCALE_OFFSET, AXIS_SCALE_OFFSET, BW_AXIS_SCALE_OFFSET.
 // Returns failure for unsupported encodings.
-Ort::Status GetBiasQuantScalesAndOffsets(const QnnQuantParamsWrapper& bias_quant_param,
-                                         std::vector<float>& scales,
-                                         std::vector<int32_t>& offsets,
-                                         int32_t& axis);
+Ort::Status GetScalesAndOffsets(const QnnQuantParamsWrapper& quant_param,
+                                std::vector<float>& scales,
+                                std::vector<int32_t>& offsets,
+                                int32_t& axis);
 
 // Quantizes a float bias tensor to int32 using bias_scale = activation_scale * weight_scale.
 // Used when the bias is provided as float (no quantization info) but activation and weight are quantized.
@@ -1132,6 +1133,23 @@ std::string PtrToString(const void* const ptr);
 Ort::Status DequantizeInt32BiasToFp16(gsl::span<const uint8_t> raw_int32_bytes,
                                       gsl::span<const float> scales,
                                       std::vector<uint8_t>& fp16_bytes);
+
+// Dequantizes per-tensor or per-channel quantized data to FP16 bytes. `quant_param` supplies the
+// scales, offsets and (for per-channel) the axis within `shape`.
+Ort::Status DequantizeToFp16(gsl::span<const uint8_t> quant_bytes,
+                             gsl::span<const uint32_t> shape,
+                             const QnnQuantParamsWrapper& quant_param,
+                             Qnn_DataType_t data_type,
+                             /*out*/ std::vector<uint8_t>& fp16_bytes);
+
+// Sets `saturates` when ProcessBiasForQuantizedOp would requantize the int32 initializer `bias_def` to
+// weight_scale[c] * activation_scale and at least one channel would not fit in int32. False when the bias
+// is not an int32 initializer or is already at that scale (no requantization happens).
+Ort::Status BiasRequantizationSaturates(QnnModelWrapper& qnn_model_wrapper,
+                                        const OrtNodeUnitIODef& bias_def,
+                                        const QnnQuantParamsWrapper& weight_quant_param,
+                                        float activation_scale,
+                                        /*out*/ bool& saturates);
 
 // Processes a bias tensor for quantized ops (LPBQ Conv2D, etc.).
 // Handles: INT32 quantized (check/requantize if mismatch), float (quantize).
