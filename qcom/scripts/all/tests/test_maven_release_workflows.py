@@ -26,12 +26,18 @@ def run_node(script):
     return json.loads(result.stdout)
 
 
-@pytest.mark.parametrize("maven_only", [False, True])
-def test_release_paths(maven_only):
+@pytest.mark.parametrize(("publish_mode", "maven_only"), [("non_maven", False), ("maven", True)])
+def test_release_paths(publish_mode, maven_only):
     entry = workflow("qualcomm-internal-upload-artifactory-main.yml")
     upload = workflow("qualcomm-internal-upload-artifactory-from-github.yml")
     build = workflow("qualcomm-internal-build-artifacts.yml")
+    dispatch_inputs = entry[True]["workflow_dispatch"]["inputs"]
+    assert "maven_only" not in dispatch_inputs
+    assert dispatch_inputs["publish_mode"]["type"] == "choice"
+    assert dispatch_inputs["publish_mode"]["options"] == ["non_maven", "maven"]
+    assert dispatch_inputs["publish_mode"]["default"] == "non_maven"
     expressions = {
+        "maven_only": entry["jobs"]["publish-artifacts"]["with"]["maven_only"],
         "skip_android": entry["jobs"]["publish-artifacts"]["with"]["skip_android_builds"],
         "build_aar": upload["jobs"]["build-artifacts"]["with"]["build_android_aarch64_aar"],
         "publish_maven": upload["jobs"]["upload-android-maven-workflow"]["if"],
@@ -41,14 +47,16 @@ def test_release_paths(maven_only):
     result = run_node(
         f"""
         const expressions = {json.dumps(expressions)};
-        const inputs = {{maven_only: {json.dumps(maven_only)}, build_android_aarch64: false}};
+        const inputs = {{publish_mode: {json.dumps(publish_mode)}, build_android_aarch64: false}};
         const evaluate = key => new Function('inputs', 'return ' + expressions[key].slice(3, -2))(inputs);
+        inputs.maven_only = evaluate('maven_only');
         inputs.skip_android_builds = evaluate('skip_android');
         inputs.build_android_aarch64_aar = evaluate('build_aar');
         console.log(JSON.stringify(Object.fromEntries(Object.keys(expressions).map(key => [key, evaluate(key)]))));
         """
     )
     assert result == {
+        "maven_only": maven_only,
         "skip_android": not maven_only,
         "build_aar": maven_only,
         "publish_maven": maven_only,

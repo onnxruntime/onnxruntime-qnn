@@ -15,10 +15,13 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: "rc0"
-      maven_only:
-        description: "If false, publish non-Maven artifacts. If true, build, test, and publish only Maven artifacts."
-        type: boolean
-        default: false
+      publish_mode:
+        description: "Publish non-Maven artifacts, or build, test, and publish Maven artifacts."
+        type: choice
+        options:
+          - non_maven
+          - maven
+        default: non_maven
 
 jobs:
   check-admin-permission:
@@ -59,5 +62,5 @@ jobs:
       nightly_build: false
       skip_publish: false
       version_suffix: ${{ inputs.version_suffix }}
-      skip_android_builds: ${{ !inputs.maven_only }}
-      maven_only: ${{ inputs.maven_only }}
+      skip_android_builds: ${{ inputs.publish_mode == 'non_maven' }}
+      maven_only: ${{ inputs.publish_mode == 'maven' }}
