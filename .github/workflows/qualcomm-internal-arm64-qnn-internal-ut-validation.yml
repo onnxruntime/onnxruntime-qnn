@@ -1,0 +1,212 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal ARM64 QNN Internal-UT Validation
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform to validate"
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - linux-arm64
+          - windows-arm64
+      linux_ref:
+        description: "Linux ARM64 enablement branch/ref"
+        required: false
+        default: "dev/tzuhwei/linux-arm64-qnn-ut-internal-symbols"
+        type: string
+      windows_ref:
+        description: "Windows ARM64 enablement branch/ref"
+        required: false
+        default: "dev/tzuhwei/windows-arm64-qnn-ut-internal-symbols-ci-shadow"
+        type: string
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  build-linux-arm64:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'dev/tzuhwei/arm64-qnn-internal-ut-validation' || github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'linux-arm64') }}
+    runs-on: [self-hosted, X64, Linux, Build]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.linux_ref || 'dev/tzuhwei/linux-arm64-qnn-ut-internal-symbols' }}
+          submodules: recursive
+      - name: Build Linux ARM64 internal-symbol test binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep the product build scripts unchanged. This validation checkout is
+          # short-lived, so inject the test-only CMake define here before the
+          # manylinux Docker task consumes build.sh.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("qcom/scripts/linux/build.sh")
+          text = path.read_text()
+          needle = 'if [ -n "${qnn_arch_abi}" ]; then'
+          replacement = 'common_args+=(--cmake_extra_defines "onnxruntime_QNN_ENABLE_INTERNAL_UT_SYMBOLS:BOOL=ON")\n\n' + needle
+          if needle not in text:
+              raise SystemExit("Could not locate common_args in qcom/scripts/linux/build.sh")
+          path.write_text(text.replace(needle, replacement, 1))
+
+          # The manylinux task runs as an unprivileged user. Keep uv's wheel
+          # cache on the persistent package-cache mount instead of the small
+          # per-container home filesystem.
+          docker_task = Path("qcom/ep_build/tasks/docker.py")
+          text = docker_task.read_text()
+          needle = '"ORT_BUILD_PRUNE_PACKAGES": "0",'
+          replacement = needle + '\n            "UV_CACHE_DIR": "/ort_caches/packages/uv",'
+          if needle not in text:
+              raise SystemExit("Could not locate Docker environment in qcom/ep_build/tasks/docker.py")
+          docker_task.write_text(text.replace(needle, replacement, 1))
+
+          build_task = Path("qcom/ep_build/tasks/build.py")
+          text = build_task.read_text()
+          needle = 'venv_path=DOCKER_REPO_ROOT / "build" / "venv.build",'
+          replacement = 'venv_path=Path("/ort_caches/packages/internal-ut-venv.build"),'
+          if needle not in text:
+              raise SystemExit("Could not locate Docker venv path in qcom/ep_build/tasks/build.py")
+          build_task.write_text(text.replace(needle, replacement, 1))
+          PY
+          python3 qcom/build_and_test.py --target-py-version None build_ort_linux_aarch64_manylinux_2_34
+          python3 qcom/build_and_test.py --target-py-version None \
+            create_venv archive_ort_linux_aarch64_manylinux_2_34 archive_testdata --only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qnn-internal-ut-linux-arm64
+          path: |
+            build/onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2
+            build/onnxruntime-testdata.tar.bz2
+          if-no-files-found: error
+
+  test-linux-arm64:
+    needs: build-linux-arm64
+    if: ${{ needs.build-linux-arm64.result == 'success' }}
+    runs-on: [self-hosted, ARM64, Linux, Test]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.linux_ref || 'dev/tzuhwei/linux-arm64-qnn-ut-internal-symbols' }}
+          submodules: recursive
+      - uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-ut-linux-arm64
+          path: build
+      - name: Extract Linux ARM64 test archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 qcom/build_and_test.py --target-py-version None \
+            create_venv extract_ort_linux_aarch64_manylinux_2_34 --only
+      - name: List and run QNN unit and integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_bin="$(find build/linux-aarch64_manylinux_2_34/Release -type f -name onnxruntime_provider_test -print -quit)"
+          test -n "${test_bin}" || { echo "onnxruntime_provider_test not found"; exit 1; }
+          test_bin="$(realpath "${test_bin}")"
+          test_dir="$(dirname "${test_bin}")"
+          export ORT_QNN_ENABLE_CPU_BACKEND=1
+          export LD_LIBRARY_PATH="${test_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+          # Some component fixtures load libQnnHtp.so directly and call
+          # backendCreate(), bypassing QnnBackendManager's Linux-only default
+          # for this variable. Match the standard Linux test flow by exposing
+          # the packaged V68 skel beside the QNN host libraries.
+          export ADSP_LIBRARY_PATH="${test_dir}${ADSP_LIBRARY_PATH:+;${ADSP_LIBRARY_PATH}}"
+          cd "${test_dir}"
+          failures=0
+          for filter in 'QnnUnit_*' 'QnnInteg_*'; do
+            echo "::group::${filter}"
+            "${test_bin}" --gtest_list_tests "--gtest_filter=${filter}"
+            if ! "${test_bin}" "--gtest_filter=${filter}"; then
+              failures=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "${failures}"
+
+  build-windows-arm64:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'dev/tzuhwei/arm64-qnn-internal-ut-validation' || github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'windows-arm64') }}
+    runs-on: [self-hosted, X64, Windows, Build]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.windows_ref || 'dev/tzuhwei/windows-arm64-qnn-ut-internal-symbols-ci-shadow' }}
+          submodules: recursive
+      - name: Build Windows ARM64 internal-symbol test binary
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python.exe qcom/build_and_test.py --target-py-version None create_venv
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to create the build virtual environment' }
+          & .\qcom\scripts\windows\build.ps1 `
+            -Arch arm64 `
+            -Config Release `
+            -Mode build `
+            -PyVEnv "$PWD\venv" `
+            -QnnInternalUtSymbols 1
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to build the Windows ARM64 internal-symbol binary' }
+          # archive_ort_windows_arm64 uses the standard build directory name.
+          # Point it at the test-only build instead of copying the complete
+          # CMake tree (which contains read-only third-party test files).
+          New-Item -ItemType Junction -Path build\windows-arm64 `
+            -Target (Resolve-Path build\windows-arm64-internal-symbols) | Out-Null
+          python.exe qcom/build_and_test.py --target-py-version None `
+            archive_ort_windows_arm64 archive_testdata --only
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to archive the Windows ARM64 test inputs' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qnn-internal-ut-windows-arm64
+          path: |
+            build/onnxruntime-tests-windows-arm64.zip
+            build/onnxruntime-testdata.zip
+          if-no-files-found: error
+
+  test-windows-arm64:
+    needs: build-windows-arm64
+    if: ${{ needs.build-windows-arm64.result == 'success' }}
+    runs-on: [self-hosted, ARM64, Windows, Test]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.windows_ref || 'dev/tzuhwei/windows-arm64-qnn-ut-internal-symbols-ci-shadow' }}
+          submodules: recursive
+      - uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-ut-windows-arm64
+          path: build
+      - name: Extract Windows ARM64 test archives
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python.exe qcom/build_and_test.py --target-py-version None `
+            create_venv extract_ort_windows_arm64 --only
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to extract the Windows ARM64 test inputs' }
+      - name: List and run QNN unit and integration tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testBin = Get-ChildItem build/windows-arm64/Release -Recurse -Filter onnxruntime_provider_test.exe |
+            Select-Object -First 1
+          if ($null -eq $testBin) { throw 'onnxruntime_provider_test.exe not found' }
+          $env:ORT_QNN_ENABLE_CPU_BACKEND = '1'
+          $env:PATH = "$($testBin.DirectoryName);$env:PATH"
+          Push-Location $testBin.DirectoryName
+          try {
+            foreach ($filter in @('QnnUnit_*', 'QnnInteg_*')) {
+              & $testBin.FullName --gtest_list_tests "--gtest_filter=$filter"
+              if ($LASTEXITCODE -ne 0) { throw "Failed to list $filter" }
+              & $testBin.FullName "--gtest_filter=$filter" --gtest_brief=1
+              if ($LASTEXITCODE -ne 0) { throw "Tests failed for $filter" }
+            }
+          }
+          finally { Pop-Location }
