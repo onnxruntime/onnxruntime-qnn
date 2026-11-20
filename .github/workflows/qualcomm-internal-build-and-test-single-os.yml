@@ -406,7 +406,6 @@ jobs:
 
       - name: Test Windows ARM64 QNN internal-symbol build
         if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols }}
-        timeout-minutes: 60
         run: >
           python.exe qcom/build_and_test.py
           --target-py-version ${{ inputs.target_py_vsn }}
