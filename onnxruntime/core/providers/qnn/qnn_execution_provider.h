@@ -53,9 +53,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   OrtStatus* ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice* const* devices,
                                                     size_t num_devices,
                                                     const char* compatibility_info,
-                                                    OrtCompiledModelCompatibility* model_compatibility) noexcept;
+                                                    OrtCompiledModelCompatibility* model_compatibility);
   OrtStatus* GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* hw,
-                                                     OrtDeviceEpIncompatibilityDetails* details) noexcept;
+                                                     OrtDeviceEpIncompatibilityDetails* details);
 
   friend struct GenieNodeComputeInfo;
   friend class QnnEpFactory;
