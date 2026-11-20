@@ -14,6 +14,10 @@ on:
         description: "If true, include a verbose version string in wheel file names."
         type: boolean
         default: true
+      run_windows_arm64_qdc:
+        description: "If true, also validate the Windows ARM64 test archive on QDC."
+        type: boolean
+        default: false
       version_suffix:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
@@ -167,6 +171,7 @@ jobs:
       # Validate the shared ARM64 test archive once: native HTP v73 and QDC HTP v81
       # consume the archive uploaded by the first Python-version build.
       run_tests: ${{ matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      run_windows_arm64_qdc: ${{ inputs.run_windows_arm64_qdc }}
       build_test_same_runner: false
       test_wheel: false
       # For each arch, upload the test archive with the first Python version we encounter
