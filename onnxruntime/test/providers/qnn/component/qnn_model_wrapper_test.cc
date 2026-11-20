@@ -1915,6 +1915,9 @@ static int g_initializer_value_sentinel = 0;
 static ONNXTensorElementDataType g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
 static std::vector<int64_t> g_tensor_dims;
 static const void* g_tensor_raw_data = nullptr;
+static int g_external_initializer_info_sentinel = 0;
+static size_t g_external_initializer_byte_size = 0;
+static bool g_external_initializer_released = false;
 
 OrtStatus* StubGraphGetModelPathEmpty(const OrtGraph*,
                                       const ORTCHAR_T** model_path) noexcept {
@@ -1927,6 +1930,18 @@ OrtStatus* StubValueInfoGetExternalNull(const OrtValueInfo*,
   *info = nullptr;
   return nullptr;
 }
+OrtStatus* StubValueInfoGetExternal(const OrtValueInfo*,
+                                    OrtExternalInitializerInfo** info) noexcept {
+  *info = reinterpret_cast<OrtExternalInitializerInfo*>(&g_external_initializer_info_sentinel);
+  return nullptr;
+}
+size_t StubExternalInitializerGetByteSize(const OrtExternalInitializerInfo*) noexcept {
+  return g_external_initializer_byte_size;
+}
+void StubReleaseExternalInitializerInfo(OrtExternalInitializerInfo*) noexcept {
+  g_external_initializer_released = true;
+}
+
 OrtStatus* StubGetValueInfoTypeInfo(const OrtValueInfo*,
                                     const OrtTypeInfo** type_info) noexcept {
   *type_info = reinterpret_cast<const OrtTypeInfo*>(&g_type_info_sentinel);
@@ -1966,6 +1981,13 @@ OrtStatus* StubGetTensorData(const OrtValue*, const void** out) noexcept {
 
 // Installs all unpack stubs on ctx.
 void SetupUnpackStubs(QnnModelWrapperTestContext& ctx) {
+  // C++ API wrappers and Ort::Status use the global API, including when tests
+  // route tensor metadata lookups through this stub table.
+  const auto& api = Ort::GetApi();
+  ctx.stub_ort_api.CreateStatus = api.CreateStatus;
+  ctx.stub_ort_api.GetErrorCode = api.GetErrorCode;
+  ctx.stub_ort_api.GetErrorMessage = api.GetErrorMessage;
+  ctx.stub_ort_api.ReleaseStatus = api.ReleaseStatus;
   ctx.stub_ort_api.Graph_GetModelPath = StubGraphGetModelPathEmpty;
   ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo = StubValueInfoGetExternalNull;
   ctx.stub_ort_api.GetValueInfoTypeInfo = StubGetValueInfoTypeInfo;
@@ -2017,6 +2039,57 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_INT8_ReturnsRawBytes) {
   ASSERT_TRUE(s.IsOK());
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(static_cast<int8_t>(result[0]), -5);
+}
+
+// External data must describe exactly the bytes required by the initializer's shape and type.
+TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalSizeMismatchReturnsError) {
+  g_element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  g_tensor_dims = {2, 2};
+  g_external_initializer_byte_size = sizeof(float);
+  g_external_initializer_released = false;
+
+  QnnModelWrapperTestContext ctx;
+  SetupUnpackStubs(ctx);
+  ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo = StubValueInfoGetExternal;
+  ctx.stub_ort_api.ExternalInitializerInfo_GetByteSize = StubExternalInitializerGetByteSize;
+  ctx.stub_ort_api.ReleaseExternalInitializerInfo = StubReleaseExternalInitializerInfo;
+  OrtGlobalApiOverride api_guard(&ctx.stub_ort_api);
+  qnn::ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  auto fake_vi = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
+  std::vector<uint8_t> result;
+  Ort::Status status = wrapper->UnpackInitializerData(fake_vi, result, /*unpack_4bit=*/false);
+
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("does not match"), std::string::npos);
+  EXPECT_TRUE(g_external_initializer_released);
+  EXPECT_TRUE(result.empty());
+}
+
+TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalShapeApiFailureReturnsErrorAndReleasesMetadata) {
+  g_external_initializer_released = false;
+
+  QnnModelWrapperTestContext ctx;
+  SetupUnpackStubs(ctx);
+  ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo = StubValueInfoGetExternal;
+  ctx.stub_ort_api.ReleaseExternalInitializerInfo = StubReleaseExternalInitializerInfo;
+  OrtGlobalApiOverride api_guard(&ctx.stub_ort_api);
+  ctx.stub_ort_api.GetDimensionsCount = [](const OrtTensorTypeAndShapeInfo*, size_t*) noexcept -> OrtStatus* {
+    return Ort::Status("shape lookup failed", ORT_INVALID_ARGUMENT).release();
+  };
+  auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
+
+  const auto* initializer = reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel);
+  std::vector<uint8_t> result{0xAA};
+  Ort::Status status;
+  ASSERT_NO_THROW(status = wrapper->UnpackInitializerData(initializer, result, /*unpack_4bit=*/false));
+
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_EQ(status.GetErrorCode(), ORT_INVALID_ARGUMENT);
+  EXPECT_EQ(status.GetErrorMessage(), "shape lookup failed");
+  EXPECT_TRUE(g_external_initializer_released);
+  EXPECT_EQ(result, (std::vector<uint8_t>{0xAA}));
 }
 
 // UnpackZeroPoints: null input pointer → RETURN_IF fires → error.

@@ -178,6 +178,28 @@ size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType
   return GetQnnTensorDataSizeInBytes(num_elements, element_type);
 }
 
+Ort::Status GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape,
+                                        Qnn_DataType_t element_type,
+                                        size_t& data_size) {
+  size_t num_elements = 1;
+  for (uint32_t dim : shape) {
+    size_t next_num_elements = 0;
+    RETURN_IF_NOT(SafeMultiply(num_elements, static_cast<size_t>(dim), next_num_elements),
+                  "QNN tensor element count overflow.");
+    num_elements = next_num_elements;
+  }
+
+  if (element_type == QNN_DATATYPE_SFIXED_POINT_4 || element_type == QNN_DATATYPE_UFIXED_POINT_4) {
+    data_size = num_elements / 2 + num_elements % 2;
+    return Ort::Status();
+  }
+
+  const size_t element_size = GetElementSizeByType(element_type);
+  RETURN_IF_NOT(SafeMultiply(num_elements, element_size, data_size),
+                "QNN tensor byte size overflow.");
+  return Ort::Status();
+}
+
 size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor) {
   uint32_t rank = GetQnnTensorRank(tensor);
   uint32_t* dims = GetQnnTensorDims(tensor);
@@ -2223,9 +2245,26 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
   OrtExternalInitializerInfo* external_initializer = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer));
   if (external_initializer) {
-    RETURN_IF_ERROR(ReadExternalData(ort_api, external_initializer, model_path, unpacked_tensor));
-    ort_api.ReleaseExternalInitializerInfo(external_initializer);
-    return Ort::Status();
+    const Ort::ExternalInitializerInfo external_info(external_initializer);
+    try {
+      const auto tensor_info = Ort::ConstValueInfo(initializer).TypeInfo().GetTensorTypeAndShapeInfo();
+      RETURN_IF(tensor_info == nullptr, "initializer is not a tensor.");
+
+      const auto dims = tensor_info.GetShape();
+      RETURN_IF(std::any_of(dims.begin(), dims.end(), [](int64_t dim) { return dim < 0; }),
+                "External initializer has a negative dimension.");
+
+      const size_t expected_byte_size = GetOnnxTensorDataSizeInBytes(dims, tensor_info.GetElementType());
+      const size_t external_byte_size = external_info.GetByteSize();
+      RETURN_IF_NOT(external_byte_size == expected_byte_size,
+                    ("External initializer byte size does not match its declared shape and element type. Expected " +
+                     std::to_string(expected_byte_size) + " bytes, got " + std::to_string(external_byte_size) + ".")
+                        .c_str());
+
+      return ReadExternalData(ort_api, external_info, model_path, unpacked_tensor);
+    } catch (const Ort::Exception& error) {
+      return Ort::Status(error);
+    }
   }
 
   const OrtTypeInfo* type_info = nullptr;
