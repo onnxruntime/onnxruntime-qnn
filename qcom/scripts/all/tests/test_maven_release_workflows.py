@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-"""Check release path selection and source-SHA validation without publishing."""
+"""Check the two release paths without publishing."""
 
 import json
 import shutil
@@ -21,7 +21,7 @@ def workflow(name):
 
 def run_node(script):
     if NODE is None:
-        pytest.skip("Node.js is required to execute the GitHub Actions expressions and script")
+        pytest.skip("Node.js is required to evaluate the GitHub Actions expressions")
     result = subprocess.run([NODE, "--input-type=module"], input=script, text=True, capture_output=True, check=True)
     return json.loads(result.stdout)
 
@@ -55,53 +55,3 @@ def test_release_paths(maven_only):
         "device_test": maven_only,
         "publish_wheels": not maven_only,
     }
-
-
-@pytest.mark.parametrize(
-    "sha,exists", [("", True), ("main", True), ("a" * 39, True), ("g" * 40, True), ("a" * 40, False), ("a" * 40, True)]
-)
-def test_source_sha_validation(sha, exists):
-    entry = workflow("qualcomm-internal-upload-artifactory-main.yml")
-    script = next(
-        step["with"]["script"]
-        for step in entry["jobs"]["check-admin-permission"]["steps"]
-        if step["name"] == "Validate source SHA"
-    )
-    result = run_node(
-        f"""
-        process.env.SOURCE_SHA = {json.dumps(sha)};
-        let requested = null;
-        const github = {{rest: {{repos: {{getCommit: async args => {{
-            requested = args.ref;
-            if (!{json.dumps(exists)}) throw new Error('Commit not found');
-            return {{data: {{sha: args.ref}}}};
-        }}}}}}}};
-        const execute = new (Object.getPrototypeOf(async function() {{}}).constructor)(
-            'github', 'context', 'core', {json.dumps(script)});
-        try {{
-            await execute(github, {{repo: {{owner: 'owner', repo: 'repo'}}}}, {{info: () => {{}}}});
-            console.log(JSON.stringify({{success: true, requested}}));
-        }} catch {{
-            console.log(JSON.stringify({{success: false, requested}}));
-        }}
-        """
-    )
-    assert result["success"] == (sha == "a" * 40 and exists)
-    assert result["requested"] == (sha if sha == "a" * 40 else None)
-
-
-def test_source_sha_reaches_all_release_workers():
-    pending = ["qualcomm-internal-upload-artifactory-main.yml"]
-    visited = set()
-    while pending:
-        name = pending.pop()
-        if name in visited:
-            continue
-        visited.add(name)
-        for job in workflow(name)["jobs"].values():
-            if job.get("uses", "").startswith("./.github/workflows/"):
-                assert job["with"]["source_sha"] == "${{ inputs.source_sha }}", name
-                pending.append(Path(job["uses"]).name)
-            for step in job.get("steps", []):
-                if step.get("uses", "").startswith("actions/checkout@"):
-                    assert step["with"]["ref"] == "${{ inputs.source_sha }}", name

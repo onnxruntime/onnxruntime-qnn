@@ -10,12 +10,7 @@
 name: Build and upload testdata archives
 
 on:
-  workflow_call:
-    inputs:
-      source_sha:
-        description: "Commit SHA to archive. Empty uses the workflow revision."
-        type: string
-        default: ""
+  workflow_call: {}
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
@@ -30,7 +25,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_sha }}
           submodules: recursive
 
       - name: Build testdata archive

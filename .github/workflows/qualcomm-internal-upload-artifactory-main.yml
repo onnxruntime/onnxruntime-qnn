@@ -16,13 +16,9 @@ on:
         type: string
         default: "rc0"
       maven_only:
-        description: "If false, publish non-Maven artifacts. If true, build and test Maven artifacts from source_sha."
+        description: "If false, publish non-Maven artifacts. If true, build, test, and publish only Maven artifacts."
         type: boolean
         default: false
-      source_sha:
-        description: "Full commit SHA from the corresponding non-Maven release run. Required for Maven-only."
-        type: string
-        default: ""
 
 jobs:
   check-admin-permission:
@@ -54,24 +50,6 @@ jobs:
               core.setFailed(`Failed to check permissions: ${error.message}`);
             }
 
-      - name: Validate source SHA
-        if: ${{ inputs.maven_only || inputs.source_sha != '' }}
-        uses: actions/github-script@v8
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        with:
-          script: |
-            const sha = process.env.SOURCE_SHA;
-            if (!/^[0-9a-f]{40}$/i.test(sha)) {
-              throw new Error('Provide the full 40-character source_sha from the corresponding non-Maven release run.');
-            }
-            const { data: commit } = await github.rest.repos.getCommit({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: sha
-            });
-            core.info(`Release source SHA: ${commit.sha}`);
-
   publish-artifacts:
     name: Publish artifacts
     needs: check-admin-permission
@@ -83,4 +61,3 @@ jobs:
       version_suffix: ${{ inputs.version_suffix }}
       skip_android_builds: ${{ !inputs.maven_only }}
       maven_only: ${{ inputs.maven_only }}
-      source_sha: ${{ inputs.source_sha }}
