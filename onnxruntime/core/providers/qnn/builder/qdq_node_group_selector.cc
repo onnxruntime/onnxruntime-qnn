@@ -1926,6 +1926,7 @@ void OrtSelectorManager::CreateSelectors() {
       {"Flatten", {}},
       {"Gather", {}},
       {"GatherElements", {}},
+      {"GatherND", {}},
       {"MaxPool", {12}},
       {"Reshape", {}},
       {"Resize", {}},

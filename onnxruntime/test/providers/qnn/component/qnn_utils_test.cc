@@ -58,6 +58,83 @@ namespace test {
 // `oss << qnn_value` resolves to the qnn::utils overload.
 using qnn::utils::operator<<;
 
+TEST(QnnUnit_UtilsTest, LowPowerBlockQuantizeData_ZeroBlockSizeReturnsError) {
+  const std::vector<float> data = {1.0f, 2.0f, 4.0f, 6.0f};
+  const std::vector<uint32_t> shape = {1, 4};
+  const std::vector<float> channel_scales = {1.0f};
+  const std::vector<uint8_t> block_scales = {1, 2};
+  const std::vector<int32_t> offsets = {0};
+  const std::vector<uint32_t> block_scales_shape = {1, 2};
+  std::vector<uint8_t> quant_bytes(data.size(), 0xAB);
+
+  const auto status = qnn::utils::LowPowerBlockQuantizeData(
+      data, shape, channel_scales, block_scales, offsets, quant_bytes,
+      QNN_DATATYPE_SFIXED_POINT_8, 0, 0, 0, block_scales_shape);
+
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("Data block size must be greater than zero"),
+            std::string::npos);
+  EXPECT_EQ(quant_bytes, std::vector<uint8_t>(data.size(), 0xAB));
+}
+
+TEST(QnnUnit_UtilsTest, LowPowerBlockQuantizeData_ValidBlockSizeQuantizesAllElements) {
+  const std::vector<float> data = {1.0f, 2.0f, 4.0f, 6.0f};
+  const std::vector<uint32_t> shape = {1, 4};
+  const std::vector<float> channel_scales = {1.0f};
+  const std::vector<uint8_t> block_scales = {1, 2};
+  const std::vector<int32_t> offsets = {0};
+  const std::vector<uint32_t> block_scales_shape = {1, 2};
+  std::vector<uint8_t> quant_bytes(data.size());
+
+  const auto status = qnn::utils::LowPowerBlockQuantizeData(
+      data, shape, channel_scales, block_scales, offsets, quant_bytes,
+      QNN_DATATYPE_SFIXED_POINT_8, 0, 0, 2, block_scales_shape);
+
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  // q = round(data / (channel_scale * block_scale)); each block has two elements.
+  EXPECT_EQ(quant_bytes, (std::vector<uint8_t>{1, 2, 2, 3}));
+}
+
+TEST(QnnUnit_UtilsTest, QuantizeData_PerTensorQuantizationRemainsSupported) {
+  const std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
+  const std::vector<uint32_t> shape = {4};
+  const std::vector<float> scales = {1.0f};
+  const std::vector<int32_t> offsets = {0};
+  std::vector<uint8_t> quant_bytes(data.size());
+
+  const auto status = qnn::utils::QuantizeData(
+      data, shape, scales, offsets, quant_bytes, QNN_DATATYPE_SFIXED_POINT_8, std::nullopt);
+
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(quant_bytes, (std::vector<uint8_t>{1, 2, 3, 4}));
+}
+
+TEST(QnnUnit_UtilsTest, OstreamLpbq_UnknownLengthPayloadsAreNotRead) {
+  Qnn_ScaleOffset_t scale_offset = {0.5f, 0};
+  uint8_t block_scale = 2;
+  Qnn_BlockwiseExpansion_t lpbq = QNN_BLOCKWISE_EXPANSION_INIT;
+  lpbq.axis = 0;
+  lpbq.numBlocksPerAxis = 4;
+  lpbq.blockScaleBitwidth = 4;
+  lpbq.blockScaleStorageType = QNN_BLOCKWISE_EXPANSION_BITWIDTH_SCALE_STORAGE_8;
+  // The generic printer has no tensor shape with which to validate these one-element buffers.
+  lpbq.scaleOffsets = &scale_offset;
+  lpbq.blocksScale8 = &block_scale;
+  Qnn_QuantizeParams_t params = QNN_QUANTIZE_PARAMS_INIT;
+  params.encodingDefinition = QNN_DEFINITION_DEFINED;
+  params.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION;
+  params.blockwiseExpansion = &lpbq;
+
+  std::ostringstream out;
+  out << params;
+
+  EXPECT_NE(out.str().find("numBlocksPerAxis=4"), std::string::npos);
+  EXPECT_NE(out.str().find("blockScaleBitwidth=4"), std::string::npos);
+  EXPECT_EQ(out.str().find("scales=("), std::string::npos);
+  EXPECT_EQ(out.str().find("offsets=("), std::string::npos);
+  EXPECT_EQ(out.str().find("perBlockIntScales=("), std::string::npos);
+}
+
 // =============================================================================
 // qnn::utils::NormalizeIndicesBytes
 // =============================================================================
