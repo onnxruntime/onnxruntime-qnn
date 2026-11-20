@@ -209,9 +209,59 @@ jobs:
       test_runner_arch: arm64
       target_py_vsn: None
       qnn_internal_test_symbols: true
+      qnn_accuracy_routing_shadow: ${{ inputs.do_all && github.event_name == 'pull_request' }}
       run_tests: true
       build_test_same_runner: false
       upload_wheel: false
+
+  windows-arm64-v73-routing-shadow:
+    name: Windows ARM64 v73 routing shadow
+    if: ${{ !cancelled() && inputs.do_all && github.event_name == 'pull_request' && needs['path-filter'].outputs.code == 'true' && github.event.pull_request.head.repo.fork != true }}
+    needs: [path-filter, build-and-test-linux-x86_64-internal-symbols, build-and-test-windows-arm64-internal-symbols]
+    runs-on: ["self-hosted", "Windows", "ARM64", "Test"]
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - name: Clear prior routing observation inputs
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath "routing-shadow" -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Download Linux routing result
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-routing-linux-x86_64-Release-pyNone-${{ github.run_attempt }}
+          path: routing-shadow/linux
+
+      - name: Download Windows ARM64 target evidence
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64-internal-symbols pynone Test Results
+          path: routing-shadow/target
+
+      - name: Observe v73 Accuracy selection
+        shell: pwsh
+        run: |
+          $SourceCommit = git rev-parse HEAD
+          python.exe qcom/scripts/all/consume_accuracy_routing.py `
+            --artifact=routing-shadow/linux/accuracy_routing.json `
+            --target-evidence=routing-shadow/target/routing_target_evidence.json `
+            --policy=qcom/scripts/all/v73_accuracy_shadow_policy.json `
+            --source-commit=$SourceCommit `
+            --output=routing-shadow/observation.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload routing observation
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: qnn-routing-windows-arm64-v73-shadow-${{ github.run_attempt }}
+          path: routing-shadow/observation.json
+          retention-days: 7
+          if-no-files-found: warn
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
