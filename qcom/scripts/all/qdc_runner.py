@@ -26,6 +26,7 @@ import httpx
 import requests
 from extract_testdata import MAPPING as _TESTDATA_MAPPING
 from extract_testdata import extract_to_staging
+from ort_build_identity import RUNTIME_VERSION_FILE
 from package_manager import PackageManager
 from prettytable import PrettyTable
 from qdc_windows_payload import prepare_windows_payload, validate_windows_results
@@ -1188,7 +1189,12 @@ class RunnerCli:
         """Re-pack the 4 handles from the testdata archive into the per-platform QDC payload."""
         with tempfile.TemporaryDirectory(prefix="QdcMergeTestdata-") as tmp:
             staging = Path(tmp)
-            extract_to_staging(testdata_archive, staging)
+            with zipfile.ZipFile(archive_path) as archive:
+                version_name = f"build/{target_platform}/Release/{RUNTIME_VERSION_FILE}"
+                runtime_version = (
+                    archive.read(version_name).decode("utf-8").strip() if version_name in archive.namelist() else None
+                )
+            extract_to_staging(testdata_archive, staging, runtime_version)
 
             with zipfile.ZipFile(archive_path, mode="a") as out_zip:
                 for handle, rel_template in _TESTDATA_MAPPING.items():

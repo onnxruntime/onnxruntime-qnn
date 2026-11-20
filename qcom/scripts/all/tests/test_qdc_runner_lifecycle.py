@@ -6,6 +6,8 @@
 import ast
 import logging
 import shutil
+import tempfile
+import zipfile
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
@@ -14,6 +16,9 @@ from typing import NamedTuple
 from unittest.mock import Mock
 
 import pytest
+from extract_testdata import MAPPING, extract_to_staging
+from ort_build_identity import RUNTIME_VERSION_FILE, TESTDATA_IDENTITY_FILE
+from ort_build_identity import testdata_identity as make_testdata_identity
 from qdc_windows_payload import validate_windows_results
 
 
@@ -44,6 +49,55 @@ def lifecycle():
     }
     exec(compile(ast.Module(body=body, type_ignores=[]), str(path), "exec"), namespace)
     return SimpleNamespace(**namespace)
+
+
+@pytest.mark.parametrize("runtime_version", ("1.25.0", "1.24.0", None))
+def test_archive_only_qdc_merge_validates_runtime_before_appending(tmp_path, monkeypatch, runtime_version):
+    # Load the actual merge method while excluding QDC SDK imports/network decorators.
+    path = Path(__file__).parents[1] / "qdc_runner.py"
+    source = ast.parse(path.read_text(encoding="utf-8"))
+    runner_cli = next(node for node in source.body if isinstance(node, ast.ClassDef) and node.name == "RunnerCli")
+    merge = next(
+        node for node in runner_cli.body if isinstance(node, ast.FunctionDef) and node.name == "__merge_testdata"
+    )
+    merge.decorator_list = []
+    namespace = {
+        "Path": Path,
+        "tempfile": tempfile,
+        "zipfile": zipfile,
+        "extract_to_staging": extract_to_staging,
+        "RUNTIME_VERSION_FILE": RUNTIME_VERSION_FILE,
+        "_TESTDATA_MAPPING": MAPPING,
+    }
+    exec(compile(ast.Module(body=[merge], type_ignores=[]), str(path), "exec"), namespace)
+    sdk = tmp_path / "sdk"
+    assets = tmp_path / "assets"
+    sdk.mkdir()
+    (sdk / "VERSION_NUMBER").write_text("1.25.0", encoding="utf-8")
+    testdata = assets / "onnxruntime/test/testdata"
+    testdata.mkdir(parents=True)
+    (assets / "VERSION_NUMBER").write_text("1.25.0", encoding="utf-8")
+    (testdata / "model.onnx").write_bytes(b"model")
+    models = tmp_path / "testdata.zip"
+    with zipfile.ZipFile(models, "w") as archive:
+        archive.writestr("testdata/model.onnx", b"model")
+        archive.writestr(TESTDATA_IDENTITY_FILE, make_testdata_identity(str(sdk), str(assets)))
+    binaries = tmp_path / "tests.zip"
+    with zipfile.ZipFile(binaries, "w") as archive:
+        archive.writestr("build/android-aarch64/Release/runtime.so", b"runtime")
+        if runtime_version is not None:
+            archive.writestr(f"build/android-aarch64/Release/{RUNTIME_VERSION_FILE}", runtime_version)
+    monkeypatch.delenv("ORT_PREBUILT_ROOT", raising=False)
+    monkeypatch.delenv("ORT_TEST_ASSETS_ROOT", raising=False)
+    original = binaries.read_bytes()
+    if runtime_version == "1.25.0":
+        namespace["__merge_testdata"](None, binaries, models, "android-aarch64")
+        with zipfile.ZipFile(binaries) as archive:
+            assert archive.read("build/android-aarch64/Release/testdata/model.onnx") == b"model"
+    else:
+        with pytest.raises(ValueError):
+            namespace["__merge_testdata"](None, binaries, models, "android-aarch64")
+        assert binaries.read_bytes() == original
 
 
 def runner_with_client(lifecycle, client):

@@ -3,11 +3,13 @@
 
 import hashlib
 import http.client
+import json
 import shutil
 import tarfile
 import zipfile
 from pathlib import Path
 
+import archive_testdata
 import pytest
 from archive_testdata import (
     OrtCoreDep,
@@ -17,6 +19,9 @@ from archive_testdata import (
     stage_sources,
     write_archives,
 )
+from extract_testdata import extract
+from ort_build_identity import RUNTIME_VERSION_FILE, TESTDATA_IDENTITY_FILE, build_identity
+from ort_build_identity import testdata_identity as make_testdata_identity
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -218,3 +223,84 @@ def test_write_archives_emits_zip_and_tar_bz2(tmp_path):
     with tarfile.open(out / "onnxruntime-testdata.tar.bz2", "r:bz2") as t:
         names = sorted(m.name for m in t.getmembers() if m.isfile())
     assert names == ["node/d.pb", "pytorch-converted/b.pb", "pytorch-operator/c.pb", "testdata/a.onnx"]
+
+
+@pytest.mark.parametrize("extension", ["zip", "tar.bz2"])
+def test_prebuilt_archive_uses_selected_assets_and_checks_identity(tmp_path, monkeypatch, extension):
+    sdk = tmp_path / "sdk"
+    assets = tmp_path / "assets"
+    _make_tree(sdk, {"VERSION_NUMBER": "1.25.0"})
+    _make_tree(assets, {"VERSION_NUMBER": "1.25.0", "onnxruntime/test/testdata/selected.onnx": "selected"})
+    for handle in ("pytorch-converted", "pytorch-operator", "node"):
+        _make_tree(tmp_path / f"cmake/external/onnx/onnx/backend/test/data/{handle}", {"model.onnx": handle})
+
+    def unexpected_fetch(*args, **kwargs):
+        raise AssertionError("Prebuilt testdata must not request ORT source")
+
+    monkeypatch.setattr(archive_testdata, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(archive_testdata, "parse_deps_txt", unexpected_fetch)
+    monkeypatch.setattr(archive_testdata, "download_and_verify", unexpected_fetch)
+    monkeypatch.setenv("ORT_PREBUILT_ROOT", str(sdk))
+    monkeypatch.setenv("ORT_TEST_ASSETS_ROOT", str(assets))
+    monkeypatch.setattr(
+        "sys.argv", ["archive_testdata.py", f"--build-dir={tmp_path / 'stage'}", f"--output-dir={tmp_path / 'out'}"]
+    )
+    assert archive_testdata.main() == 0
+    archive = tmp_path / f"out/onnxruntime-testdata.{extension}"
+    if extension == "zip":
+        with zipfile.ZipFile(archive) as zf:
+            assert json.loads(zf.read(TESTDATA_IDENTITY_FILE)) == json.loads(
+                make_testdata_identity(str(sdk), str(assets))
+            )
+    destination = tmp_path / "device"
+    extract(archive, "android-aarch64", destination)
+    models = destination / "build/android-aarch64/Release/testdata"
+    assert (models / "selected.onnx").read_text() == "selected"
+
+    # Local build identities change on relocation; portable model compatibility does not.
+    relocated_sdk = tmp_path / "other/sdk"
+    relocated_assets = tmp_path / "other/assets"
+    shutil.copytree(sdk, relocated_sdk)
+    shutil.copytree(assets, relocated_assets)
+    assert build_identity(str(sdk), str(assets)) != build_identity(str(relocated_sdk), str(relocated_assets))
+    for selected_sdk, selected_assets in (
+        (relocated_sdk, assets),
+        (sdk, relocated_assets),
+        (relocated_sdk, relocated_assets),
+    ):
+        monkeypatch.setenv("ORT_PREBUILT_ROOT", str(selected_sdk))
+        monkeypatch.setenv("ORT_TEST_ASSETS_ROOT", str(selected_assets))
+        extract(archive, "android-aarch64", destination)
+        assert (models / "selected.onnx").read_text() == "selected"
+
+    # Archive-only consumers need the version carried by their per-arch binaries.
+    monkeypatch.delenv("ORT_PREBUILT_ROOT")
+    monkeypatch.delenv("ORT_TEST_ASSETS_ROOT")
+    with pytest.raises(ValueError, match="runtime version"):
+        extract(archive, "android-aarch64", destination)
+    version_file = models.parent / RUNTIME_VERSION_FILE
+    version_file.write_text("1.25.0", encoding="utf-8")
+    extract(archive, "android-aarch64", destination)
+    version_file.write_text("1.24.0", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not match the selected ORT"):
+        extract(archive, "android-aarch64", destination)
+    assert (models / "selected.onnx").read_text() == "selected"
+    version_file.unlink()
+
+    # Equal SDK/assets versions still cannot consume an archive from another version.
+    (relocated_sdk / "VERSION_NUMBER").write_text("1.26.0", encoding="utf-8")
+    (relocated_assets / "VERSION_NUMBER").write_text("1.26.0", encoding="utf-8")
+    monkeypatch.setenv("ORT_PREBUILT_ROOT", str(relocated_sdk))
+    monkeypatch.setenv("ORT_TEST_ASSETS_ROOT", str(relocated_assets))
+    with pytest.raises(ValueError, match="does not match the selected ORT"):
+        extract(archive, "android-aarch64", destination)
+    assert (models / "selected.onnx").read_text() == "selected"
+
+    # An archive from the old selection is rejected before altering device testdata.
+    replacement = tmp_path / "replacement"
+    _make_tree(replacement, {"VERSION_NUMBER": "1.25.0", "onnxruntime/test/testdata/B.onnx": "B"})
+    monkeypatch.setenv("ORT_PREBUILT_ROOT", str(sdk))
+    monkeypatch.setenv("ORT_TEST_ASSETS_ROOT", str(replacement))
+    with pytest.raises(ValueError, match="does not match the selected ORT"):
+        extract(archive, "android-aarch64", destination)
+    assert (models / "selected.onnx").read_text() == "selected"

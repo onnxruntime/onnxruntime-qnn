@@ -66,6 +66,26 @@ def test_extract_rejects_unknown_handle(tmp_path):
         extract(archive=archive, target_platform="linux-x86_64", repo_root=repo_root)
 
 
+def test_extract_rejects_pinned_source_archive_for_prebuilt_tests(tmp_path, monkeypatch):
+    sdk = tmp_path / "sdk"
+    assets = tmp_path / "assets"
+    for root in (sdk, assets):
+        root.mkdir()
+        (root / "VERSION_NUMBER").write_text("1.25.0")
+    (assets / "onnxruntime/test/testdata").mkdir(parents=True)
+    monkeypatch.setenv("ORT_PREBUILT_ROOT", str(sdk))
+    monkeypatch.setenv("ORT_TEST_ASSETS_ROOT", str(assets))
+    archive = tmp_path / "pinned.zip"
+    _make_archive(archive, {"testdata/old.onnx": "pinned-version model"})
+    models = tmp_path / "device/build/android-aarch64/Release/testdata"
+    models.mkdir(parents=True)
+    (models / "selected.onnx").write_text("keep")
+    with pytest.raises(ValueError, match="rerun archive_testdata"):
+        extract(archive, "android-aarch64", tmp_path / "device")
+    assert (models / "selected.onnx").read_text() == "keep"
+    assert not (models / "old.onnx").exists()
+
+
 def test_extract_supports_tar_bz2(tmp_path):
     archive = tmp_path / "td.tar.bz2"
     src = tmp_path / "src"
@@ -138,6 +158,7 @@ def test_windows_arm64_extraction_task_consumes_selected_build(tmp_path, monkeyp
     script = tmp_path / "qcom/scripts/all/extract_testdata.py"
     script.parent.mkdir(parents=True)
     shutil.copyfile(Path(__file__).parent.parent / "extract_testdata.py", script)
+    shutil.copyfile(Path(__file__).parent.parent / "ort_build_identity.py", script.with_name("ort_build_identity.py"))
     build = tmp_path / "build"
     build.mkdir()
     prefix = "" if config == "Release" else f"{config}-"

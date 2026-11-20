@@ -19,8 +19,12 @@ DEFAULT_MIRROR_DIR = REPO_ROOT / "mirror"
 DEPS_TXT = REPO_ROOT / "cmake" / "deps.txt"
 
 
-def main(deps_dir: Path, mirror_dir: Path) -> None:
+def main(deps_dir: Path, mirror_dir: Path, *, ort_home: Path | None = None) -> None:
     deps = _parse_deps_txt()
+    if ort_home is not None:
+        # The SDK replaces ORT source only; the QNN EP still needs the other dependencies.
+        deps = [dep for dep in deps if dep[0] != "ort_core"]
+        logging.info("Using prebuilt ORT at %s; skipping ort_core dependency download", ort_home)
     cache = FileCache(deps_dir)
 
     logging.info(f"Downloading dependencies into {deps_dir}")
@@ -63,6 +67,12 @@ def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
+        "--ort-home",
+        type=Path,
+        help="Prebuilt ORT SDK replacing the ort_core source dependency.",
+    )
+
+    parser.add_argument(
         "--deps-dir",
         "-d",
         type=Path,
@@ -87,4 +97,4 @@ if __name__ == "__main__":
     parser = make_parser()
     args = parser.parse_args()
 
-    main(args.deps_dir, args.mirror_dir)
+    main(args.deps_dir, args.mirror_dir, ort_home=args.ort_home)
