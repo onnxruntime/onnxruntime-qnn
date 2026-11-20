@@ -254,10 +254,21 @@ jobs:
           QNN_UT_TWO_PASS_SNAPSHOT_ACCURACY: ${{ inputs.target_os == 'linux' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && '1' || '' }}
 
       - name: Validate Linux x86_64 QNN snapshots and routed accuracy
+        id: linux_snapshot_routing
         if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && inputs.run_tests && inputs.build_test_same_runner }}
         run: >
           bash qcom/scripts/all/run_snapshot_accuracy.sh
           --build-dir="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/${BUILD_CONFIG_DIR}"
+          --emit-routing-result="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/${BUILD_CONFIG_DIR}/snapshot_accuracy_results/accuracy_routing.json"
+
+      - name: Upload Linux snapshot routing result
+        if: ${{ !cancelled() && steps.linux_snapshot_routing.outcome != 'skipped' && steps.linux_snapshot_routing.outcome != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: qnn-routing-linux-x86_64-${{ inputs.build_config }}-py${{ inputs.target_py_vsn }}-${{ github.run_attempt }}
+          retention-days: 7
+          path: ${{ github.workspace }}/build/linux-${{ env.BUILD_DIR_ARCH }}/${{ env.BUILD_CONFIG_DIR }}/snapshot_accuracy_results/accuracy_routing.json
+          if-no-files-found: warn
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
