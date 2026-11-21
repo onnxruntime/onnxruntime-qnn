@@ -1733,10 +1733,9 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                             runtime_capabilities,
                                                             &logger_);
 
-  // File mapping and encryption are mutually exclusive: an App-provided read callback replaces
-  // the on-disk read, so file mapping must be off when a read callback is registered.
+  // A callback session may initialize a manager later reused by native sessions.
+  // Preserve the setup option; the manager decides mapping per load.
   if (enable_file_mapped_weights_ && io_dispatch_->HasReadCallback()) {
-    enable_file_mapped_weights_ = false;
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
                 "EPContext read callback registered; disabling file mapping for this session.");
   }

@@ -212,11 +212,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Reads a context binary file into a buffer. Validates the file exists and is non-empty.
   // Shared between LoadCachedQnnContextFromBuffer and RecoverFromSSR to avoid duplicating
-  // file I/O logic. If io_dispatch is non-null and carries a read callback, the
-  // callback is dispatched instead of reading from disk.
+  // native file I/O logic. Callback output is owned separately by the caller.
   Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                    std::vector<char>& buffer,
-                                    const qnn::EpContextIoDispatch& io_dispatch);
+                                    std::vector<char>& buffer);
 
   // Reloads a QNN context from its binary file after an SSR event. Handles both file-mapped
   // and direct-read paths to match initial-load behavior. Always starts a new spill-fill
@@ -505,6 +503,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                             uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
+
+  Ort::Status ReadContextBinFromCallback(const std::string& context_bin_filepath,
+                                         qnn::EpContextBuffer& buffer,
+                                         const qnn::EpContextIoDispatch& io_dispatch);
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
