@@ -68,10 +68,18 @@ TEST_F(QnnCPUBackendTests, Inverse_4d_test) {
                         ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || (defined(__linux__) && !defined(__aarch64__))
 //
 // HTP tests:
 //
+
+// On x86 Linux with SM8350 (V68), FP32 Inverse is rejected by the V68 guard and falls back to CPU EP.
+// On real ARM64 hardware the arch is not V68, so FP32 Inverse runs on HTP.
+#if defined(__linux__) && !defined(__aarch64__)
+static constexpr ExpectedEPNodeAssignment kFP32HtpExpected = ExpectedEPNodeAssignment::None;
+#else
+static constexpr ExpectedEPNodeAssignment kFP32HtpExpected = ExpectedEPNodeAssignment::All;
+#endif
 
 // Returns a function that builds a model with a QDQ Inverse node.
 template <typename QuantType>
@@ -132,7 +140,7 @@ TEST_F(QnnHTPBackendTests, Inverse_2d) {
 
   RunInverseTest<float>({TestInputDef<float>({2, 2}, false, input_vector)},
                         {},
-                        ExpectedEPNodeAssignment::All,
+                        kFP32HtpExpected,
                         1e-3f,
                         "htp");
 }
@@ -144,7 +152,7 @@ TEST_F(QnnHTPBackendTests, Inverse_3d) {
 
   RunInverseTest<float>({TestInputDef<float>({10, 2, 2}, false, input_vector)},
                         {},
-                        ExpectedEPNodeAssignment::All,
+                        kFP32HtpExpected,
                         1e-3f,
                         "htp");
 }
@@ -156,7 +164,7 @@ TEST_F(QnnHTPBackendTests, Inverse_4d) {
 
   RunInverseTest<float>({TestInputDef<float>({1, 10, 2, 2}, false, input_vector)},
                         {},
-                        ExpectedEPNodeAssignment::All,
+                        kFP32HtpExpected,
                         1e-3f,
                         "htp");
 }
@@ -210,7 +218,7 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
                                ExpectedEPNodeAssignment::All,
                                tolerance);
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || (defined(__linux__) && !defined(__aarch64__))
 
 }  // namespace test
 }  // namespace onnxruntime
