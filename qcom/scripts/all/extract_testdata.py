@@ -16,6 +16,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from ort_build_identity import RUNTIME_VERSION_FILE, validate_testdata_archive
+
 QCOM_ROOT = Path(__file__).parent.parent.parent
 REPO_ROOT = QCOM_ROOT.parent
 
@@ -50,8 +52,8 @@ def _detect_config_dir(repo_root: Path, plat: str, build_config: str = "Release"
     return build_config
 
 
-def extract_to_staging(archive: Path, staging: Path) -> None:
-    """Extract archive into staging dir. Supports .zip and .tar.bz2."""
+def extract_to_staging(archive: Path, staging: Path, runtime_version: str | None = None) -> None:
+    """Extract and validate testdata in staging. Supports .zip and .tar.bz2."""
     if archive.suffix == ".zip":
         with zipfile.ZipFile(archive) as zf:
             zf.extractall(staging)
@@ -64,6 +66,7 @@ def extract_to_staging(archive: Path, staging: Path) -> None:
                 tf.extractall(staging)
     else:
         raise ValueError(f"Unsupported archive format: {archive}")
+    validate_testdata_archive(staging, runtime_version)
 
 
 def extract(
@@ -84,9 +87,11 @@ def extract(
         config_dir = _detect_config_dir(repo_root, target_platform, build_config)
     else:
         config_dir = config
+    version_file = repo_root / "build" / target_platform / config_dir.split("/")[0] / RUNTIME_VERSION_FILE
+    runtime_version = version_file.read_text(encoding="utf-8").strip() if version_file.is_file() else None
     with tempfile.TemporaryDirectory(prefix="extract-testdata-") as tmp:
         staging = Path(tmp)
-        extract_to_staging(archive, staging)
+        extract_to_staging(archive, staging, runtime_version)
 
         present_handles = {p.name for p in staging.iterdir() if p.is_dir()}
         unknown = present_handles - set(MAPPING.keys())

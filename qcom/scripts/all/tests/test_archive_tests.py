@@ -2,6 +2,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
+import json
 import logging
 import os
 import tarfile
@@ -12,9 +13,11 @@ import pytest
 from archive_tests import (
     PerArchAcceptRules,
     _iter_msvc_redist,
+    archive_android,
     archive_linux,
     archive_windows,
 )
+from ort_build_identity import RUNTIME_VERSION_FILE, build_identity
 
 
 def _touch(p: Path, content: str = "") -> None:
@@ -25,6 +28,46 @@ def _touch(p: Path, content: str = "") -> None:
 @pytest.fixture
 def per_arch_rules() -> PerArchAcceptRules:
     return PerArchAcceptRules()
+
+
+@pytest.mark.parametrize("config", ("Release", "Debug", "RelWithDebInfo"))
+@pytest.mark.parametrize("platform", ("linux-x86_64", "windows-arm64", "windows-multi", "android-aarch64"))
+def test_archive_carries_successful_build_version_without_local_paths(tmp_path, platform, config):
+    sdk = tmp_path / "sdk"
+    _touch(sdk / "VERSION_NUMBER", "1.25.0")
+    target = "windows-arm64" if platform == "windows-multi" else platform
+    build = tmp_path / "build" / target
+    release = build / config
+    binaries = release / config if platform == "windows-multi" else release
+    _touch(binaries / "onnxruntime.dll", "runtime")
+    _touch(build / f"ort-build-identity-{config}.txt", build_identity(str(sdk), ""))
+    # Version comes from the successful snapshot, even if SDK contents subsequently change.
+    _touch(sdk / "VERSION_NUMBER", "1.26.0")
+    if platform.startswith("windows"):
+        archive_windows(target, config, repo_root=tmp_path)
+    elif platform.startswith("android"):
+        archive_android(target, config, tmp_path / "qairt", repo_root=tmp_path)
+    else:
+        archive_linux(target, config, repo_root=tmp_path)
+    suffix = "tar.bz2" if platform.startswith("linux") else "zip"
+    config_suffix = "" if config == "Release" or platform.startswith("android") else f"{config}-"
+    path = tmp_path / "build" / f"onnxruntime-tests-{config_suffix}{target}.{suffix}"
+    name = f"build/{target}/{config}/{RUNTIME_VERSION_FILE}"
+    if suffix == "zip":
+        with zipfile.ZipFile(path) as archive:
+            assert archive.read(name) == b"1.25.0"
+    else:
+        with tarfile.open(path, "r:bz2") as archive:
+            assert archive.extractfile(name).read() == b"1.25.0"
+
+
+def test_source_build_archive_omits_prebuilt_version(tmp_path):
+    release = tmp_path / "build/windows-arm64/Release"
+    _touch(release / "onnxruntime.dll", "source runtime")
+    _touch(release.parent / "ort-build-identity-Release.txt", json.dumps({"sdk": None, "assets": None}))
+    archive_windows("windows-arm64", repo_root=tmp_path)
+    with zipfile.ZipFile(tmp_path / "build/onnxruntime-tests-windows-arm64.zip") as archive:
+        assert not any(name.endswith(RUNTIME_VERSION_FILE) for name in archive.namelist())
 
 
 # --- accept-list rule unit tests ---
