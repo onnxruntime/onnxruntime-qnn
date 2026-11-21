@@ -398,8 +398,8 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, RegisterSelector_IncreasesSize) {
 // =============================================================================
 
 // OrtVariadicNodeGroupSelector::Check also requires each DQ input to match the Q
-// output's scale via IsQDQPairSupported; the fixtures below wire up scale initializers
-// via FakeGraph for this. Note: IsQDQPairSupported only compares scale, not zero-point.
+// output's scale and zero-point via IsQDQPairSupported; the fixtures below wire up
+// initializers via FakeGraph for this.
 
 TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_Accepts2DqSameType) {
   QdqNodeGroupSelectorTestContext ctx;
@@ -499,6 +499,53 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_AcceptsDifferentScaleInitializer
   OrtVariadicNodeGroupSelector sel;
   EXPECT_TRUE(sel.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
                         {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()}));
+}
+
+// Builds a 2-input Concat group where Q and both DQs share one scale but carry the given
+// uint8 zero-points, and returns the selector result.
+static bool CheckVariadicWithZeroPoints(int64_t q_zp, int64_t dq1_zp, int64_t dq2_zp,
+                                        bool same_zp_initializer_name = false) {
+  QdqNodeGroupSelectorTestContext ctx;
+  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeValueInfo scale_vi{"scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  FakeOrtValue scale_val = FakeOrtValue::MakeFloat(0.5f);
+  scale_vi.initializer_value = &scale_val;
+
+  FakeValueInfo q_zp_vi{"q_zp", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeOrtValue q_zp_val = FakeOrtValue::MakeInt(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, q_zp);
+  q_zp_vi.initializer_value = &q_zp_val;
+  FakeValueInfo dq1_zp_vi{same_zp_initializer_name ? "q_zp" : "dq1_zp", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeOrtValue dq1_zp_val = FakeOrtValue::MakeInt(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, dq1_zp);
+  dq1_zp_vi.initializer_value = &dq1_zp_val;
+  FakeValueInfo dq2_zp_vi{"dq2_zp", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {}};
+  FakeOrtValue dq2_zp_val = FakeOrtValue::MakeInt(ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, dq2_zp);
+  dq2_zp_vi.initializer_value = &dq2_zp_val;
+
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in, &scale_vi, &dq1_zp_vi}, {}};
+  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in, &scale_vi, &dq2_zp_vi}, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeNode main_node{"concat", "Concat", "", 13, {&dummy, &dummy}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {&main_out, &scale_vi, &q_zp_vi}, {&q_out}};
+
+  FakeGraph graph{{}, {}, {}, {&scale_vi, &q_zp_vi, &dq1_zp_vi, &dq2_zp_vi}};
+
+  OrtVariadicNodeGroupSelector sel;
+  return sel.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
+                   {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()});
+}
+
+// Same scale but one DQ's zero-point differs from the Q output's -- must be rejected.
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_RejectsMismatchedZeroPoint) {
+  EXPECT_FALSE(CheckVariadicWithZeroPoints(/*q_zp=*/128, /*dq1_zp=*/128, /*dq2_zp=*/100));
+}
+
+// Distinct zero-point initializers holding equal values are accepted (value, not identity).
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_AcceptsDifferentZeroPointInitializerNamesSameValue) {
+  EXPECT_TRUE(CheckVariadicWithZeroPoints(/*q_zp=*/128, /*dq1_zp=*/128, /*dq2_zp=*/128));
 }
 
 TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_RejectsMixedDqTypes) {
