@@ -548,6 +548,54 @@ TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_AcceptsDifferentZeroPointInitial
   EXPECT_TRUE(CheckVariadicWithZeroPoints(/*q_zp=*/128, /*dq1_zp=*/128, /*dq2_zp=*/128));
 }
 
+// Builds a 2-input Concat group with distinctly-named vector (per-channel) scales for Q and both DQs.
+static bool CheckVariadicWithVectorScales(std::vector<float> q_scale, std::vector<float> dq1_scale,
+                                          std::vector<float> dq2_scale) {
+  QdqNodeGroupSelectorTestContext ctx;
+  FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+
+  FakeOrtValue q_val = FakeOrtValue::MakeFloats(std::move(q_scale));
+  FakeValueInfo q_scale_vi{"q_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  q_scale_vi.initializer_value = &q_val;
+  FakeOrtValue dq1_val = FakeOrtValue::MakeFloats(std::move(dq1_scale));
+  FakeValueInfo dq1_scale_vi{"dq1_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  dq1_scale_vi.initializer_value = &dq1_val;
+  FakeOrtValue dq2_val = FakeOrtValue::MakeFloats(std::move(dq2_scale));
+  FakeValueInfo dq2_scale_vi{"dq2_scale", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};
+  dq2_scale_vi.initializer_value = &dq2_val;
+
+  FakeValueInfo dq_in{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode dq1{"dq1", "DequantizeLinear", "", 13, {&dq_in, &dq1_scale_vi}, {}};
+  FakeNode dq2{"dq2", "DequantizeLinear", "", 13, {&dq_in, &dq2_scale_vi}, {}};
+
+  FakeValueInfo main_out{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1, 4}};
+  FakeNode main_node{"concat", "Concat", "", 13, {&dummy, &dummy}, {&main_out}};
+
+  FakeValueInfo q_out{"z", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, {1, 4}};
+  FakeNode q{"q", "QuantizeLinear", "", 13, {&main_out, &q_scale_vi}, {&q_out}};
+
+  FakeGraph graph{{}, {}, {}, {&q_scale_vi, &dq1_scale_vi, &dq2_scale_vi}};
+
+  OrtVariadicNodeGroupSelector sel;
+  return sel.Check(graph.AsGraph(), ctx.api, main_node.AsNode(), nullptr,
+                   {dq1.AsNode(), dq2.AsNode()}, {q.AsNode()});
+}
+
+// Scales that agree on element [0] but differ in a later element must be rejected.
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_RejectsVectorScaleDifferingInLaterElement) {
+  EXPECT_FALSE(CheckVariadicWithVectorScales({0.5f, 0.25f}, {0.5f, 0.25f}, {0.5f, 0.3f}));
+}
+
+// Scales with different element counts must be rejected.
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_RejectsVectorScaleWithDifferentLength) {
+  EXPECT_FALSE(CheckVariadicWithVectorScales({0.5f, 0.25f}, {0.5f, 0.25f}, {0.5f}));
+}
+
+// Distinct vector scale initializers with equal values in every element are accepted.
+TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_AcceptsEqualVectorScales) {
+  EXPECT_TRUE(CheckVariadicWithVectorScales({0.5f, 0.25f}, {0.5f, 0.25f}, {0.5f, 0.25f}));
+}
+
 TEST(QnnUnit_QdqNodeGroupSelectorTest, Variadic_RejectsMixedDqTypes) {
   QdqNodeGroupSelectorTestContext ctx;
   FakeValueInfo dummy{"d", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {}};

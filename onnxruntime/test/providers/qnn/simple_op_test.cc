@@ -2141,6 +2141,18 @@ TEST_F(QnnHTPBackendTests, VariadicOp_Concat_2Inputs_2ndAxis) {
                         ExpectedEPNodeAssignment::All);
 }
 
+// Test QDQ Concat with strongly mismatched input encodings (~100x scale difference). A fused Concat
+// that copies raw quantized codes without requantizing produces wrong values here, so the QNN result
+// must still match the CPU QDQ accuracy.
+TEST_F(QnnHTPBackendTests, VariadicOp_Concat_MismatchedInputEncodings) {
+  RunQDQOpTest<uint8_t>("Concat",
+                        {TestInputDef<float>({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8)),
+                         TestInputDef<float>({1, 2, 2, 2}, false, GetFloatDataInRange(-0.1f, 0.1f, 8))},
+                        {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+                        13,
+                        ExpectedEPNodeAssignment::All);
+}
+
 TEST_F(QnnHTPBackendTests, LpNormalization_u8_rank4) {
   std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
   RunQDQOpTest<uint8_t>("LpNormalization",

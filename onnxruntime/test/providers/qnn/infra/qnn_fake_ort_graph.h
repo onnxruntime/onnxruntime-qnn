@@ -115,8 +115,19 @@ struct FakeOrtValue {
   double double_data = 0.0;
   // Little-endian bytes of an integer scalar (e.g. a zero-point), see MakeInt.
   alignas(8) unsigned char int_bytes[8] = {};
+  // Payload of a 1-D float tensor (e.g. a per-channel scale), see MakeFloats. Empty for scalars.
+  std::vector<float> float_values;
 
   const OrtValue* AsOrtValue() const { return reinterpret_cast<const OrtValue*>(this); }
+
+  // 1-D float tensor, e.g. a per-channel quantization scale.
+  static FakeOrtValue MakeFloats(std::vector<float> v) {
+    FakeOrtValue r;
+    r.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+    r.shape = {static_cast<int64_t>(v.size())};
+    r.float_values = std::move(v);
+    return r;
+  }
 
   // Integer scalar of the given 8/16-bit element type (e.g. a quantization zero-point).
   static FakeOrtValue MakeInt(ONNXTensorElementDataType type, int64_t v) {
@@ -501,7 +512,8 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
     auto* fov = reinterpret_cast<FakeOrtValue*>(v);
     switch (fov->elem_type) {
       case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
-        *out = &fov->float_data;
+        *out = fov->float_values.empty() ? static_cast<void*>(&fov->float_data)
+                                         : static_cast<void*>(fov->float_values.data());
         break;
       case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
       case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
@@ -513,6 +525,17 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
         *out = &fov->double_data;
         break;
     }
+    return nullptr;
+  };
+
+  // GetTensorShapeElementCount: product of the dims (1 for a scalar). The info pointer is a
+  // FakeOrtValue or FakeValueInfo, which share the same leading layout.
+  api.GetTensorShapeElementCount = [](const OrtTensorTypeAndShapeInfo* info, size_t* out) noexcept -> OrtStatus* {
+    size_t count = 1;
+    for (int64_t dim : reinterpret_cast<const FakeValueInfo*>(info)->shape) {
+      count *= static_cast<size_t>(dim);
+    }
+    *out = count;
     return nullptr;
   };
 
