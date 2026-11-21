@@ -162,7 +162,7 @@ Enabling this option is expected to shorten initialization time. However, if oth
 
 Invalid values for this option are ignored.
 
-When `htp_share_resource_optimization` is set to "1", initialization optimizations are already enabled, so this option is not required.
+When `htp_share_resource_optimization` is set to "1" or "2", initialization optimizations are already enabled, so this option is not required.
 
 |`"htp_performance_mode"`|Description|
 |---|---|
