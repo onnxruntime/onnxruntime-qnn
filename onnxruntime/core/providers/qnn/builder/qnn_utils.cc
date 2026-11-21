@@ -7,6 +7,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <string>
 #include <utility>
@@ -411,29 +412,8 @@ std::ostream& operator<<(std::ostream& out, const Qnn_QuantizeParams_t& quantize
       out << " axis=" << lpbq.axis
           << " numBlocksPerAxis=" << lpbq.numBlocksPerAxis
           << " blockScaleBitwidth=" << lpbq.blockScaleBitwidth;
-      // For LPBQ, num_elems are not present in the quantize_params,
-      // we are using numBlocksPerAxis instead to print the first numBlocksPerAxis scale offset values
-      size_t num_elems = lpbq.numBlocksPerAxis;
-      bool truncate = num_elems > 20;
-      num_elems = truncate ? 20 : num_elems;
-      if (lpbq.scaleOffsets != nullptr) {
-        out << " scales=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << lpbq.scaleOffsets[i].scale << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")") << " offsets=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << lpbq.scaleOffsets[i].offset << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")");
-      }
-      if (lpbq.blocksScale8 != nullptr) {
-        out << " perBlockIntScales=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << static_cast<int32_t>(lpbq.blocksScale8[i]) << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")");
-      }
+      // Neither LPBQ array length can be validated without the tensor's axis size.
+      // Keep this generic printer limited to scalar metadata.
     } else {
       out << " encoding not supported.";
     }
@@ -1425,6 +1405,8 @@ Ort::Status LowPowerBlockQuantizeData(gsl::span<const float> data,
                                       int64_t block_scales_axis,
                                       size_t data_block_size,
                                       gsl::span<const uint32_t> block_scales_shape) {
+  RETURN_IF_NOT(data_block_size != 0, "Data block size must be greater than zero");
+
   // transpose weight to match [K, N] where K : In Channel and N : Out Channel
   const size_t num_dims = data_shape.size();
   const size_t num_elems = ShapeSizeCalc(data_shape, 0, num_dims);
@@ -1494,7 +1476,9 @@ Ort::Status LowPowerBlockQuantizeData(gsl::span<const float> data,
 
 std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_ErrorHandle_t qnn_error_handle) {
   const char* error_msg = nullptr;
-  if (qnn_interface.errorGetMessage(qnn_error_handle, &error_msg) == QNN_SUCCESS) {
+  if (qnn_interface.errorGetMessage != nullptr &&
+      QNN_GET_ERROR_CODE(qnn_interface.errorGetMessage(qnn_error_handle, &error_msg)) == QNN_SUCCESS &&
+      error_msg != nullptr) {
     return error_msg;
   }
   return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
@@ -2238,13 +2222,18 @@ Ort::Status ReadExternalData(const OrtApi& ort_api,
 Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const OrtValueInfo* initializer,
                                   const std::filesystem::path& model_path,
-                                  std::vector<uint8_t>& unpacked_tensor) {
+                                  std::vector<uint8_t>& unpacked_tensor,
+                                  std::optional<size_t> expected_byte_size) {
+  RETURN_IF(initializer == nullptr, "Initializer to unpack must not be null.");
   OrtExternalInitializerInfo* external_initializer = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer));
-  if (external_initializer) {
-    RETURN_IF_ERROR(ReadExternalData(ort_api, external_initializer, model_path, unpacked_tensor));
-    ort_api.ReleaseExternalInitializerInfo(external_initializer);
-    return Ort::Status();
+  auto external_info = std::unique_ptr<OrtExternalInitializerInfo, FuncDeleter<OrtExternalInitializerInfo>>(
+      external_initializer, FuncDeleter<OrtExternalInitializerInfo>{ort_api.ReleaseExternalInitializerInfo});
+  if (external_info) {
+    RETURN_IF(expected_byte_size.has_value() &&
+                  ort_api.ExternalInitializerInfo_GetByteSize(external_info.get()) != *expected_byte_size,
+              "Initializer byte count does not match its declared shape and element type.");
+    return ReadExternalData(ort_api, external_info.get(), model_path, unpacked_tensor);
   }
 
   const OrtTypeInfo* type_info = nullptr;

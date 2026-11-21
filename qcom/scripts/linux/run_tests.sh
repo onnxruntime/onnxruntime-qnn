@@ -124,9 +124,31 @@ onnx_models_root="$(get_onnx_models_dir)"
 orig_build_dir=$(sed -n "s@# Build directory: @@p" CTestTestfile.cmake)
 sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
 
+if [ "$(uname -m)" == "aarch64" ]; then
+    # Linux ARM64 has no snapshot golden producer or accuracy routing yet.
+    sed --in-place=".bak" \
+        '/onnxruntime_provider_test/s@--gtest_filter=-QnnAcc_\*@--gtest_filter=-QnnSnapshot_*@g' \
+        CTestTestfile.cmake
+
+    grep -q -- '--gtest_filter=-QnnSnapshot_\*' CTestTestfile.cmake ||
+        { echo "ERROR: failed to apply Linux ARM64 provider-test filter"; exit 1; }
+fi
+
 log_info "-=-=-=- Running ctests -=-=-=-"
 exclude_args=()
-count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"
+if [ -n "${QNN_UT_TWO_PASS_SNAPSHOT_ACCURACY:-}" ]; then
+    # Snapshot drift is a routing signal, not a failure: the CI workflow runs
+    # the two-pass runner after this baseline suite to verify only the paired
+    # accuracy cases. Keep the ordinary provider tests in this step, but leave
+    # both snapshot and accuracy tiers to that runner.
+    count_errors ./ctest --verbose --timeout 10800 --stop-on-failure \
+        --exclude-regex '^onnxruntime_provider_test$' "${exclude_args[@]}"
+    count_errors ./onnxruntime_provider_test \
+        --gtest_filter='-QnnSnapshot_*:QnnAcc_*' \
+        --gtest_output="xml:${build_dir}/onnxruntime_provider_test.results.xml"
+else
+    count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"
+fi
 
 # TODO: We will support python wheel in linux
 # log_info "-=-=-=- Running Python tests -=-=-=-"

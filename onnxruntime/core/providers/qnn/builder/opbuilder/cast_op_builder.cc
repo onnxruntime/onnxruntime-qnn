@@ -18,9 +18,7 @@ namespace qnn {
 // (already resolved into node_unit.Outputs()[0].type by ONNX type inference), so it is never
 // added to the QNN graph.
 //
-// FP -> Bool lowering:
-//   * HTP: emit Sign -> Abs -> Cast so the Cast input is normalised to {0.0, 1.0} to comply v79+.
-//   * Other backends: emit NotEqual(x, 0.f).
+// FP -> Bool lowering uses NotEqual(x, 0.f).
 //
 // UInt8 -> Float lowering (HTP only):
 //   HTP QNN_OP_CAST treats UINT_8 input as boolean when the output is a float type, mapping every
@@ -48,10 +46,6 @@ class CastOpBuilder : public BaseOpBuilder {
   // True when the ONNX Cast/CastLike is (fp32|fp16) -> bool. Independent of backend.
   bool IsFpToBoolCast(const OrtNodeUnit& node_unit) const;
 
-  // True when the fp -> bool Cast should be lowered as Sign -> Abs -> Cast on HTP.
-  // Assumes IsFpToBoolCast(node_unit) is already true; only checks the backend.
-  bool UseSignAbsCastForHtp(const QnnModelWrapper& qnn_model_wrapper) const;
-
   // True when the Cast is uint8 -> (fp32|fp16) on HTP/SERIALIZER.
   bool IsUInt8ToFloatCastOnHtp(const OrtNodeUnit& node_unit,
                                const QnnModelWrapper& qnn_model_wrapper) const;
@@ -60,13 +54,6 @@ class CastOpBuilder : public BaseOpBuilder {
                                            const OrtNodeUnit& node_unit,
                                            std::vector<std::string>& input_names,
                                            const Ort::Logger& logger) const;
-
-  // Emits Sign -> Abs -> Cast(BOOL) for node_unit.Inputs()[0] -> output_name. Caller must
-  // have already added the input and output tensor wrappers.
-  Ort::Status EmitSignAbsCastDecomposition(QnnModelWrapper& qnn_model_wrapper,
-                                           const OrtNodeUnit& node_unit,
-                                           const std::string& output_name,
-                                           bool do_op_validation) const ORT_MUST_USE_RESULT;
 
   // Emits Cast(uint8->int32) -> Cast(int32->float32|fp16) for node_unit.Inputs()[0] -> output_name.
   // Caller must have already added the input and output tensor wrappers.
@@ -90,11 +77,6 @@ bool CastOpBuilder::IsFpToBoolCast(const OrtNodeUnit& node_unit) const {
 
   return ((input_qnn_dtype == QNN_DATATYPE_FLOAT_16 || input_qnn_dtype == QNN_DATATYPE_FLOAT_32) &&
           output_qnn_dtype == QNN_DATATYPE_BOOL_8);
-}
-
-bool CastOpBuilder::UseSignAbsCastForHtp(const QnnModelWrapper& qnn_model_wrapper) const {
-  const QnnBackendType be = qnn_model_wrapper.GetQnnBackendType();
-  return (be == QnnBackendType::HTP || be == QnnBackendType::SERIALIZER);
 }
 
 bool CastOpBuilder::IsUInt8ToFloatCastOnHtp(const OrtNodeUnit& node_unit,
@@ -168,10 +150,9 @@ Ort::Status CastOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + input_name).c_str());
     input_names.push_back(input_name);
-    if (IsFpToBoolCast(node_unit) && !UseSignAbsCastForHtp(qnn_model_wrapper)) {
-      return ProcessExtraInputForNotEqual(qnn_model_wrapper, node_unit, input_names, logger);
-    }
-    return Ort::Status();
+    return IsFpToBoolCast(node_unit)
+               ? ProcessExtraInputForNotEqual(qnn_model_wrapper, node_unit, input_names, logger)
+               : Ort::Status();
   }
 
   // 4. Unpack initializer data if the input is a constant.
@@ -202,83 +183,10 @@ Ort::Status CastOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                 "Failed to add input tensor for QNN Cast node.");
   input_names.push_back(input_name);
 
-  // 7. Append the zero-tensor input for the NotEqual lowering when applicable.
-  // FP -> bool on non-HTP backends needs the zero constant for the NotEqual lowering.
-  if (IsFpToBoolCast(node_unit) && !UseSignAbsCastForHtp(qnn_model_wrapper)) {
-    return ProcessExtraInputForNotEqual(qnn_model_wrapper, node_unit, input_names, logger);
-  }
-  return Ort::Status();
-}
-
-Ort::Status CastOpBuilder::EmitSignAbsCastDecomposition(QnnModelWrapper& qnn_model_wrapper,
-                                                        const OrtNodeUnit& node_unit,
-                                                        const std::string& output_name,
-                                                        bool do_op_validation) const {
-  // 1. Derive input name, dtype, and shape from the Cast's ONNX input.
-  const auto& input = node_unit.Inputs()[0];
-  const std::string& input_name = input.name;
-
-  Qnn_DataType_t input_qnn_dtype = QNN_DATATYPE_UNDEFINED;
-  RETURN_IF_ERROR(utils::GetQnnDataType(false, input.type, input_qnn_dtype));
-
-  std::vector<uint32_t> input_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.shape, input_shape),
-                "Cannot get shape for FP-to-Bool Cast input.");
-
-  // 2. Reserve deterministic intermediate names so DLC inspection and context cache lookups stay stable.
-  const std::string sign_out_name = utils::NodeUnitBaseName(node_unit) + "_signabs_sign";
-  const std::string abs_out_name = utils::NodeUnitBaseName(node_unit) + "_signabs_abs";
-
-  // 3. Register the two NATIVE intermediates with the same shape/dtype as the Cast input.
-  QnnTensorWrapper sign_out_wrapper(sign_out_name,
-                                    QNN_TENSOR_TYPE_NATIVE,
-                                    input_qnn_dtype,
-                                    QnnQuantParamsWrapper(),
-                                    std::vector<uint32_t>(input_shape));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sign_out_wrapper)),
-                "Failed to add Sign intermediate tensor.");
-
-  QnnTensorWrapper abs_out_wrapper(abs_out_name,
-                                   QNN_TENSOR_TYPE_NATIVE,
-                                   input_qnn_dtype,
-                                   QnnQuantParamsWrapper(),
-                                   std::vector<uint32_t>(input_shape));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(abs_out_wrapper)),
-                "Failed to add Abs intermediate tensor.");
-
-  // 4. Sign(x) -> sign_out. Sign(x) is {-1, 0, +1}.
-  const std::string sign_node_name = utils::UniqueNameGenerator().New(node_unit, "_signabs_sign_node");
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sign_node_name,
-                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_SIGN,
-                                                {input_name},
-                                                {sign_out_name},
-                                                {},
-                                                do_op_validation),
-                "Failed to create Sign node.");
-
-  // 5. Abs(sign_out) -> abs_out. Collapses {-1, 0, +1} to {0, 1}.
-  const std::string abs_node_name = utils::UniqueNameGenerator().New(node_unit, "_signabs_abs_node");
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(abs_node_name,
-                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_ABS,
-                                                {sign_out_name},
-                                                {abs_out_name},
-                                                {},
-                                                do_op_validation),
-                "Failed to create Abs node.");
-
-  // 6. Cast(abs_out, to=BOOL) -> original ONNX Cast output.
-  const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit);
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
-                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_CAST,
-                                                {abs_out_name},
-                                                {output_name},
-                                                {},
-                                                do_op_validation),
-                "Failed to create Cast node.");
-  return Ort::Status();
+  // 7. Add the zero input when FP -> Bool uses the NotEqual lowering.
+  return IsFpToBoolCast(node_unit)
+             ? ProcessExtraInputForNotEqual(qnn_model_wrapper, node_unit, input_names, logger)
+             : Ort::Status();
 }
 
 Ort::Status CastOpBuilder::EmitUInt8ToFloatViaInt32Decomposition(QnnModelWrapper& qnn_model_wrapper,
@@ -384,14 +292,8 @@ Ort::Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     return EmitUInt8ToFloatViaInt32Decomposition(qnn_model_wrapper, node_unit, output_name, do_op_validation);
   }
 
-  // 6. FP -> bool: Sign -> Abs -> Cast on HTP, NotEqual(x, 0.f) elsewhere.
-  //    Non-fp -> bool: regular one-to-one Cast.
+  // 6. FP -> bool uses NotEqual(x, 0.f).
   if (IsFpToBoolCast(node_unit)) {
-    if (UseSignAbsCastForHtp(qnn_model_wrapper)) {
-      RETURN_IF_NOT(input_names.size() == 1, "FP-to-Bool Cast decomposition expects exactly one input.");
-      return EmitSignAbsCastDecomposition(qnn_model_wrapper, node_unit, output_name, do_op_validation);
-    }
-    // NotEqual(x, 0.f) — the zero constant was already appended in ProcessInputs.
     const std::string notequal_node_name = utils::UniqueNameGenerator().New(node_unit);
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(notequal_node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
@@ -404,7 +306,7 @@ Ort::Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     return Ort::Status();
   }
 
-  // 7. Non-fp -> bool: regular one-to-one Cast.
+  // 7. Handle other Casts with a regular one-to-one Cast node.
   const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit);
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,

@@ -88,11 +88,18 @@ try {
     Start-Transcript -Path (Join-Path $LogDir "bootstrap_stdout.txt") | Out-Null
     $TranscriptStarted = $true
     $Settings = Get-Content (Join-Path $PayloadRoot "qdc_windows_config.json") -Raw | ConvertFrom-Json
+    $TestPlatform = if ($Settings.test_platform) { $Settings.test_platform } else { "windows-arm64" }
+    if ($TestPlatform -notin @("windows-arm64", "windows-arm64-internal-symbols")) {
+        throw "Unsupported test platform: $TestPlatform"
+    }
+    $ProviderTestProcesses = if ($null -ne $Settings.provider_test_processes) { $Settings.provider_test_processes } else { 1 }
+    if ($ProviderTestProcesses -notin @(1, 2)) { throw "Unsupported provider test process count: $ProviderTestProcesses" }
     # The host must distinguish a smoke run from a full run even if some logs fail to download.
     $QdcManifestPath = Join-Path $LogDir "required-reports.results.txt"
     @{
         test_mode = $Settings.test_mode
         build_config = $Settings.build_config
+        provider_test_processes = $ProviderTestProcesses
         ctest_reports = @()
     } | ConvertTo-Json | Set-Content -LiteralPath $QdcManifestPath -Encoding UTF8
     if ((Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash -ne $Settings.python_sha256) {
@@ -135,7 +142,7 @@ try {
     Write-Host "Helper Python: $PythonExe ($Version)"
 
     $Config = $Settings.build_config
-    $TestRoot = Join-Path $PayloadRoot "build\windows-arm64\$Config"
+    $TestRoot = Join-Path $PayloadRoot "build\$TestPlatform\$Config"
     $BinaryRoot = $TestRoot
     if (Test-Path (Join-Path $TestRoot "$Config\onnxruntime_provider_test.exe")) {
         $BinaryRoot = Join-Path $TestRoot $Config
@@ -145,6 +152,7 @@ try {
         throw "QDC Windows tests require an ARM64 device."
     }
     Get-CimInstance Win32_Processor | Select-Object Name, Architecture | Format-List | Out-Host
+    Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, DriverDate | Format-List | Out-Host
 
     # This small QDQ Add test requires full QNN assignment, runs inference and checks output accuracy.
     $ProbeTest = "BinaryOp_Add4D"
@@ -154,7 +162,7 @@ try {
     $ProbeExitCodeFile = Join-Path $LogDir "htp-smoke.exitcode.txt"
     $ProbeWrapper = Join-Path $LogDir "run-htp-smoke.cmd"
     $ProbeExecutable = Join-Path $BinaryRoot "onnxruntime_provider_test.exe"
-    $env:ORT_UNIT_TEST_MAIN_LOG_LEVEL = "1"
+    $env:ORT_UNIT_TEST_MAIN_LOG_LEVEL = "2" # WARNING for the smoke test and full suite.
     @"
 @echo off
 "$ProbeExecutable" --gtest_filter=QnnHTPBackendTests.$ProbeTest "--gtest_output=xml:$ProbeXml"
@@ -213,8 +221,15 @@ exit /b %PROBE_EXIT_CODE%
 
     if ($Settings.test_mode -eq "full") {
         & (Join-Path $TestRoot "run_tests.ps1") -Config $Config -PythonExe $PythonExe `
-            -TestRepoRoot $PayloadRoot -QdcManifestPath $QdcManifestPath
-        Assert-HtpResults -Report (Join-Path $BinaryRoot "onnxruntime_provider_test.exe.$Config.results.xml")
+            -TestRepoRoot $PayloadRoot -QdcManifestPath $QdcManifestPath -ProviderTestProcesses $ProviderTestProcesses `
+            -SkipQnnSnapshots:($TestPlatform -eq "windows-arm64-internal-symbols")
+        if ($ProviderTestProcesses -eq 2) {
+            foreach ($Index in 0..1) {
+                Assert-HtpResults -Report (Join-Path $BinaryRoot "onnxruntime_provider_test.exe.$Config.shard$Index.results.xml")
+            }
+        } else {
+            Assert-HtpResults -Report (Join-Path $BinaryRoot "onnxruntime_provider_test.exe.$Config.results.xml")
+        }
     } elseif ($Settings.test_mode -ne "smoke") {
         throw "Unsupported test mode: $($Settings.test_mode)"
     }
