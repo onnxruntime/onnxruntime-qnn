@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <cstring>
+#include <initializer_list>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -35,12 +38,10 @@ class TopKOpBuilder : public BaseOpBuilder {
 
  protected:
   Qnn_DataType_t GetSupportedOutputDataType(size_t index, Qnn_DataType_t qnn_data_type) const override {
-    if (index == 1) {
-      if (qnn_data_type == QNN_DATATYPE_INT_64) {
-        return QNN_DATATYPE_INT_32;
-      } else if (qnn_data_type == QNN_DATATYPE_UINT_64) {
-        return QNN_DATATYPE_UINT_32;
-      }
+    if (qnn_data_type == QNN_DATATYPE_INT_64) {
+      return QNN_DATATYPE_INT_32;
+    } else if (index == 1 && qnn_data_type == QNN_DATATYPE_UINT_64) {
+      return QNN_DATATYPE_UINT_32;
     }
     return qnn_data_type;
   }
@@ -95,6 +96,49 @@ Ort::Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   size_t input_rank = input_info.shape.size();
   size_t axis = 0;
   RETURN_IF_ERROR(GetNormalizedAxis(node_unit, input_rank, axis));
+
+  // The base INT64 input conversion runs after ProcessInputs. Cast before
+  // reversal so StridedSlice sees matching INT32 input and native output types.
+  if (qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType() == QNN_DATATYPE_INT_64) {
+    const std::string cast_name = utils::UniqueNameGenerator().New(node_unit, "_input_cast_int32");
+    RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(cast_name, input_names[0], cast_name,
+                                                  QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_INT_32,
+                                                  QnnQuantParamsWrapper(), std::vector<uint32_t>(input_info.shape),
+                                                  do_op_validation));
+    input_names[0] = cast_name;
+  }
+
+  // QNN TopK prefers the larger index for equal values. Reversing the selected
+  // axis makes that preference select the smaller original index, as ONNX requires.
+  // QNN StridedSlice ranges use signed int32 begin/end/stride values.
+  std::vector<int32_t> ranges;
+  ranges.reserve(input_rank * 3);
+  for (size_t i = 0; i < input_rank; ++i) {
+    RETURN_IF_NOT(input_info.shape[i] > 0 &&
+                      input_info.shape[i] <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max()),
+                  "TopK input dimensions must be positive and fit in int32.");
+    const int32_t dim = SafeInt<int32_t>(input_info.shape[i]);
+    ranges.insert(ranges.end(), i == axis ? std::initializer_list<int32_t>{dim - 1, -1, -1}
+                                          : std::initializer_list<int32_t>{0, dim, 1});
+  }
+  auto reverse_param = createQnnParamWrapper<int32_t>(node_unit.Index(), node_unit.Name() + "_reverse",
+                                                      QNN_OP_STRIDED_SLICE_PARAM_RANGES,
+                                                      {SafeInt<uint32_t>(input_rank), 3}, std::move(ranges));
+  const std::string reverse_param_name = reverse_param.GetParamTensorName();
+  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(reverse_param)), "Failed to add reverse ranges.");
+
+  const auto& input_tensor = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
+  const std::string reversed_input_name = node_unit.Outputs()[1].name + "_reverse_input";
+  QnnTensorWrapper reversed_input(reversed_input_name, QNN_TENSOR_TYPE_NATIVE,
+                                  input_tensor.GetTensorDataType(), input_tensor.GetQnnQuantParams().Copy(),
+                                  std::vector<uint32_t>(input_info.shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(reversed_input)), "Failed to add reversed input.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_reverse"),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                QNN_OP_STRIDED_SLICE, {input_names[0]}, {reversed_input_name},
+                                                {reverse_param_name}, do_op_validation),
+                "Failed to reverse TopK input.");
+  input_names[0] = reversed_input_name;
   if (axis == input_rank - 1) {
     return Ort::Status();
   }
@@ -116,7 +160,7 @@ Ort::Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                                      input_info.shape,
                                                      transpose_perm,
                                                      transpose_output_shape,
-                                                     input_info.qnn_data_type,
+                                                     input_tensor.GetTensorDataType(),
                                                      input_info.quant_param,
                                                      do_op_validation,
                                                      false,
@@ -160,16 +204,8 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   const auto& outputs = node_unit.Outputs();
   size_t axis = 0;
   RETURN_IF_ERROR(GetNormalizedAxis(node_unit, input_rank, axis));
-  if (axis == input_rank - 1) {
-    RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper,
-                                   node_unit,
-                                   std::move(input_names),
-                                   std::move(param_tensor_names),
-                                   logger,
-                                   do_op_validation,
-                                   GetQnnOpType(node_unit.OpType())));
-    return Ort::Status();
-  }
+  ORT_UNUSED_PARAMETER(logger);
+  const bool needs_transpose = axis != input_rank - 1;
 
   std::vector<std::string> transpose_input_names;
   std::vector<std::vector<std::uint32_t>> transpose_input_shapes;
@@ -181,38 +217,66 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     // Since user may not be aware of the additional Transpose, the original output name of TopK node must be used by
     // the additional Transpose node which has the same output as original TopK node.
     const std::string& output_name = output.name;
-    const std::string transpose_input_name = output_name + "_transpose";
+    const bool needs_cast = qnn_model_wrapper.IsGraphOutput(output_name) &&
+                            output.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64;
+    const std::string transpose_input_name = needs_transpose ? output_name + "_transpose"
+                                             : needs_cast    ? output_name + "_cast"
+                                                             : output_name;
     transpose_input_names.push_back(std::move(transpose_input_name));
 
     // Since the input of TopK node is permuted, its output shape must be manually calculated.
     TensorInfo output_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, output_info));
     size_t output_rank = output_info.shape.size();
-    RETURN_IF_NOT(axis < output_rank,
-                  "TopK axis must be smaller than the output rank.");
+    RETURN_IF_NOT(axis < output_rank, "TopK axis must be smaller than the output rank.");
 
     std::vector<uint32_t> transpose_input_shape = output_info.shape;
-    transpose_input_shape[output_rank - 1] = output_info.shape[axis];
-    transpose_input_shape[axis] = output_info.shape[output_rank - 1];
+    if (needs_transpose) {
+      transpose_input_shape[output_rank - 1] = output_info.shape[axis];
+      transpose_input_shape[axis] = output_info.shape[output_rank - 1];
+    }
     transpose_input_shapes.push_back(std::move(transpose_input_shape));
 
+    const Qnn_TensorType_t tensor_type = !needs_transpose && !needs_cast &&
+                                                 qnn_model_wrapper.IsGraphOutput(output_name)
+                                             ? QNN_TENSOR_TYPE_APP_READ
+                                             : QNN_TENSOR_TYPE_NATIVE;
     QnnTensorWrapper output_tensorwrapper(transpose_input_names[output_idx],
-                                          QNN_TENSOR_TYPE_NATIVE,
-                                          output_info.qnn_data_type,
+                                          tensor_type,
+                                          GetSupportedOutputDataType(output_idx, output_info.qnn_data_type),
                                           output_info.quant_param.Copy(),
                                           std::vector<uint32_t>(transpose_input_shapes[output_idx]));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
   }
 
-  // Add TopK node.
+  // Restore original indices with (axis_size - 1) - reversed_index. Integer
+  // subtraction preserves the exact tie order and which elements cross the K boundary.
+  const std::string reversed_indices_name = outputs[1].name + "_reverse_indices";
+  QnnTensorWrapper reversed_indices(reversed_indices_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_INT_32,
+                                    QnnQuantParamsWrapper(), std::vector<uint32_t>(transpose_input_shapes[1]));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(reversed_indices)), "Failed to add reversed indices.");
+  const int32_t max_index = SafeInt<int32_t>(input_info.shape[axis]) - 1;
+  std::vector<uint8_t> max_index_bytes(sizeof(max_index));
+  std::memcpy(max_index_bytes.data(), &max_index, sizeof(max_index));
+  const std::string max_index_name = outputs[1].name + "_max_index";
+  QnnTensorWrapper max_index_tensor(max_index_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_INT_32,
+                                    QnnQuantParamsWrapper(), {1}, std::move(max_index_bytes));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(max_index_tensor)), "Failed to add maximum index.");
+
+  // Add TopK node, followed by the index mapping in the permuted layout.
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 GetQnnOpType(node_unit.OpType()),
                                                 std::move(input_names),
-                                                std::vector<std::string>(transpose_input_names),
+                                                {transpose_input_names[0], reversed_indices_name},
                                                 std::move(param_tensor_names),
                                                 do_op_validation),
                 "Failed to add node.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_restore_indices"),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_ELEMENT_WISE_SUBTRACT,
+                                                {max_index_name, reversed_indices_name},
+                                                {transpose_input_names[1]}, {}, do_op_validation),
+                "Failed to restore TopK indices.");
 
   // Add Transpose nodes for each output to permute back.
   for (size_t output_idx = 0; output_idx < 2; ++output_idx) {
@@ -231,10 +295,9 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     std::string transpose_output_name = output_name;
     bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
 
-    // TopK's second output is indices which could be INT64 dtype, and QnnTensorWrapper directly changes the dtype to
-    // INT32 during the wrapper construction. Nevertheless, if this output happens to be graph output, an additional
-    // Cast must be added to cast dtype from INT32 back to INT64.
-    bool is_cast_required = output_idx == 1 && output_info.qnn_data_type == QNN_DATATYPE_INT_64 && is_graph_output;
+    // Native values and indices use INT32. Restore either INT64 graph output
+    // after index mapping and any transpose back to the original layout.
+    bool is_cast_required = output_info.qnn_data_type == QNN_DATATYPE_INT_64 && is_graph_output;
     std::string cast_input_name = "";
     if (is_cast_required) {
       cast_input_name = output_name + "_cast";
@@ -244,32 +307,25 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
       is_graph_output = false;
     }
 
-    RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(),
-                                                       transpose_input_names[output_idx],
-                                                       transpose_output_name,
-                                                       transpose_input_shapes[output_idx],
-                                                       transpose_perm,
-                                                       output_info.shape,
-                                                       output_info.qnn_data_type,
-                                                       output_info.quant_param,
-                                                       do_op_validation,
-                                                       false,
-                                                       is_graph_output));
+    if (needs_transpose) {
+      RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(),
+                                                         transpose_input_names[output_idx],
+                                                         transpose_output_name,
+                                                         transpose_input_shapes[output_idx],
+                                                         transpose_perm,
+                                                         output_info.shape,
+                                                         GetSupportedOutputDataType(output_idx, output_info.qnn_data_type),
+                                                         output_info.quant_param,
+                                                         do_op_validation,
+                                                         false,
+                                                         is_graph_output));
+    }
 
     if (is_cast_required) {
-      QnnTensorWrapper cast_output_tensorwrapper(output_name,
-                                                 QNN_TENSOR_TYPE_APP_READ,
-                                                 output_info.qnn_data_type,
-                                                 output_info.quant_param.Copy(),
-                                                 std::vector<uint32_t>(output_info.shape));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cast_output_tensorwrapper)), "Failed to add tensor.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_CAST),
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_CAST,
-                                                    {cast_input_name},
-                                                    {output_name},
-                                                    {}),
-                    "Failed to add node");
+      RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(utils::UniqueNameGenerator().New(node_unit, "_output_cast_int64"),
+                                                    cast_input_name, output_name, QNN_TENSOR_TYPE_APP_READ,
+                                                    output_info.qnn_data_type, output_info.quant_param.Copy(),
+                                                    std::vector<uint32_t>(output_info.shape), do_op_validation));
     }
   }
 
