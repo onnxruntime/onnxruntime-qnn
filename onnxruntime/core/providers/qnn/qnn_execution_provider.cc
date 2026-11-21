@@ -1473,6 +1473,19 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE,
               (std::string(kHtpReusedIoLimitMb) + ": " + std::to_string(reused_io_limit_mb)).c_str());
 
+  bool htp_context_init_acceleration = ParseBoolOption(
+      ort_api, session_options_,
+      FormatEPConfigKey("htp_context_init_acceleration"),
+      false, logger_);
+#ifndef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+  if (htp_context_init_acceleration) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "htp_context_init_acceleration is not supported with QAIRT SDK < 2.47. "
+                "Ignoring the option.");
+    htp_context_init_acceleration = false;
+  }
+#endif
+
   // HTP Graph Splitting (Graph Program Executor). Requires QAIRT SDK 2.49+ at runtime.
   // Supported in both JIT and AOT workflows.
   enable_htp_graph_splitting_ = ParseBoolOption(ort_api,
@@ -1579,7 +1592,8 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                      enable_framework_op_trace_,
                                      skip_backend_op_validation,
                                      reused_io_limit_mb,
-                                     enable_htp_cross_device_prepare},
+                                     enable_htp_cross_device_prepare,
+                                     htp_context_init_acceleration},
         static_cast<const ApiPtrs&>(*this), logger_);
   }
 

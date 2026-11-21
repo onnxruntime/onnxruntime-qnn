@@ -1372,6 +1372,18 @@ Ort::Status QnnBackendManager::BuildContextBinaryConfigs(
   }
 #endif
 
+#ifdef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+  if (htp_context_init_acceleration_) {
+    auto custom = configs_builder.PushCustomConfig();
+    custom->option = QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION;
+    custom->initAcceleration = true;
+
+    auto config = configs_builder.PushConfig();
+    config->option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+    config->customConfig = custom;
+  }
+#endif
+
   return Ort::Status();
 }
 
