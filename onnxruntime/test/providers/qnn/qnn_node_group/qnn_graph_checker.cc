@@ -346,6 +346,35 @@ void AssertTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
       << "QNN tensor '" << tensor_name << "': expected shape mismatch in " << json_path;
 }
 
+void AssertTensorQuantParamsInQnnGraph(const std::filesystem::path& dump_dir,
+                                       const std::string& tensor_name,
+                                       float expected_scale,
+                                       int32_t expected_offset) {
+  std::filesystem::path json_path;
+  ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path))
+      << "No QNN JSON graph file found in " << dump_dir;
+
+  nlohmann::json root;
+  ASSERT_TRUE(ParseQnnJsonGraph(json_path, root))
+      << "Failed to parse QNN JSON graph: " << json_path;
+  SCOPED_TRACE(json_path.string());
+
+  try {
+    const auto& tensors = root.at("graph").at("tensors");
+    ASSERT_TRUE(tensors.contains(tensor_name)) << "QNN tensor '" << tensor_name << "' not found";
+    const auto& quant_params = tensors.at(tensor_name).at("quant_params");
+    EXPECT_EQ(quant_params.at("definition").get<uint32_t>(), QNN_DEFINITION_DEFINED);
+    EXPECT_EQ(quant_params.at("encoding").get<uint32_t>(), QNN_QUANTIZATION_ENCODING_SCALE_OFFSET);
+    const auto& scale_offset = quant_params.at("scale_offset");
+    EXPECT_FLOAT_EQ(scale_offset.at("scale").get<float>(), expected_scale)
+        << "QNN tensor '" << tensor_name << "' has unexpected scale";
+    EXPECT_EQ(scale_offset.at("offset").get<int32_t>(), expected_offset)
+        << "QNN tensor '" << tensor_name << "' has unexpected offset";
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to check quant params of QNN tensor '" << tensor_name << "': " << ex.what();
+  }
+}
+
 static void AssertOpInputQuantizationEncoding(const std::filesystem::path& dump_dir,
                                               const std::string& op,
                                               size_t input_index,
