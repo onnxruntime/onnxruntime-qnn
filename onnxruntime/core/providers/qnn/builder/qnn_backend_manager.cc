@@ -3016,21 +3016,37 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
           }
         };
 
+    // Tie the registration to the memory's lifetime. If the memory was released meanwhile (or the hook cannot be
+    // added for another reason), drop the registration: a cached handle without a hook would outlive the memory and
+    // be reused, with a stale mapping, by a later allocation or import at the same address.
+    Ort::Status attach_status = [&]() -> Ort::Status {
 #ifdef _WIN32
-    if (QnnExternalResourceImporterImpl::FindImportMemory(memory_address)) {
-      RETURN_IF_ERROR(QnnExternalResourceImporterImpl::AddImportMemoryCleanUp(
-          memory_address, QnnExternalResourceImporterImpl::ImportResourceCleanUpFn{std::move(unregister_mem_handle)}));
-    } else if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
-      RETURN_IF_ERROR(Dx12SharedMemoryAllocator::AddAllocationCleanUp(
-          memory_address, Dx12SharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
-    } else
+      if (QnnExternalResourceImporterImpl::FindImportMemory(memory_address) ||
+          QnnExternalResourceImporterImpl::FindImportedHostMemory(memory_address).has_value()) {
+        // Imports are long-lived and may be used by many sessions; the hook is dropped once this context expires.
+        return QnnExternalResourceImporterImpl::AddImportMemoryCleanUp(
+            memory_address, QnnExternalResourceImporterImpl::ImportResourceCleanUpFn{std::move(unregister_mem_handle)},
+            std::weak_ptr<void>{context_handle_record});
+      }
+      if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
+        return Dx12SharedMemoryAllocator::AddAllocationCleanUp(
+            memory_address, Dx12SharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)});
+      }
 #endif  // _WIN32
       if (IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
-        RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(
-            memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
-      } else {
-        return MAKE_EP_FAIL("Cannot add allocation clean up function for unsupported backend.");
+        return HtpSharedMemoryAllocator::AddAllocationCleanUp(
+            memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)});
       }
+      return MAKE_EP_FAIL("Cannot add allocation clean up function for unsupported backend.");
+    }();
+
+    if (!attach_status.IsOK()) {
+      if (auto rollback_status = context_mem_handle_manager->Unregister(memory_address); !rollback_status.IsOK()) {
+        ORT_CXX_LOG(*logger_ptr_, ORT_LOGGING_LEVEL_ERROR, rollback_status.GetErrorMessage().c_str());
+      }
+      mem_handle = nullptr;
+      return attach_status;
+    }
   }
 
   return Ort::Status();

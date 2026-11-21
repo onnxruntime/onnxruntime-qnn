@@ -4,6 +4,7 @@
 #include "core/providers/qnn/qnn_provider_factory.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +13,7 @@
 #include <exception>
 #include <iostream>
 #include <optional>
+#include <tuple>
 #include <utility>
 
 #include "QnnCommon.h"
@@ -128,14 +130,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
 
   // HOST_ACCESSIBLE memory for HTP and GPU backends.
   OrtMemoryInfo* mem_info = nullptr;
-  auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
-                                             OrtMemoryInfoDeviceType_CPU,
-                                             qnn::kQualcommPciVendorId,
-                                             /*device_id*/ 0,
-                                             OrtDeviceMemoryType_HOST_ACCESSIBLE,
-                                             /*alignment*/ 0,
-                                             OrtAllocatorType::OrtDeviceAllocator,
-                                             &mem_info);
+  auto* status = qnn::CreateHtpSharedMemoryInfo(ort_api, &mem_info);
   if (status != nullptr) {
     ort_api.ReleaseMemoryInfo(mem_info);
     ort_api.ReleaseStatus(status);
@@ -621,7 +616,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
 // External resource importer from D3D12
 OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImpl(
     OrtEpFactory* this_ptr,
-    const OrtEpDevice* /*ep_device*/,
+    const OrtEpDevice* ep_device,
     OrtExternalResourceImporterImpl** out_importer) noexcept {
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
@@ -639,15 +634,26 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
   // and then query the resulting OrtMemoryInfo for device ID.
   int device_id = 0;
 
+  // The device type selects the importable memory: D3D12 resources for the GPU backend, host allocations
+  // (mapped through FastRPC) for the HTP backend.
+  const OrtHardwareDevice* device = ep_device != nullptr ? factory->ort_api.EpDevice_Device(ep_device) : nullptr;
+  if (device == nullptr) {
+    return factory->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "ep_device has no hardware device");
+  }
+  const OrtHardwareDeviceType device_type = factory->ort_api.HardwareDevice_Type(device);
+
   // Create the external resource importer
   try {
-    *out_importer = std::make_unique<QnnExternalResourceImporterImpl>(device_id, factory->ort_api).release();
+    *out_importer = std::make_unique<QnnExternalResourceImporterImpl>(device_id, factory->ort_api,
+                                                                      device_type)
+                        .release();
   } catch (...) {
     return factory->ort_api.CreateStatus(ORT_FAIL, "Failed to create external resource importer");
   }
 
   return nullptr;
 #else
+  std::ignore = ep_device;
   return factory->ort_api.CreateStatus(
       ORT_NOT_IMPLEMENTED, "External resource import is not supported on non-Windows platforms");
 #endif
@@ -678,6 +684,14 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetCustomOpDomainsImpl(
 }
 
 }  // namespace onnxruntime
+
+namespace {
+// Number of QnnEpFactory instances created by CreateEpFactories and not yet released.
+std::atomic<size_t>& LiveFactoryCount() {
+  static std::atomic<size_t> count{0};
+  return count;
+}
+}  // namespace
 
 extern "C" {
 //
@@ -780,6 +794,7 @@ OrtStatus* CreateEpFactories(const char* registration_name,
 
   factories[0] = factory.release();
   *num_factories = 1;
+  LiveFactoryCount().fetch_add(1);
 
   return nullptr;
 }
@@ -790,6 +805,15 @@ OrtStatus* ReleaseEpFactory(OrtEpFactory* factory) {
   }
 
   delete static_cast<onnxruntime::QnnEpFactory*>(factory);
+#ifdef _WIN32
+  // Host imports hold process-wide FastRPC mappings. Once the last factory is gone, undo any the app did not release
+  // before the EP library is unloaded, which would otherwise leak them.
+  if (LiveFactoryCount().fetch_sub(1) == 1) {
+    onnxruntime::QnnExternalResourceImporterImpl::ReleaseOutstandingHostImports();
+  }
+#else
+  LiveFactoryCount().fetch_sub(1);
+#endif
   return nullptr;
 }
 }

@@ -71,10 +71,27 @@ struct RpcMemApi {
   rpcmem::RegisterBufFnPtr register_buf;
 };
 
+// FastRPC buffer registration protocol for CPU memory that FastRPC did not allocate. register_buf returns nothing:
+// to_fd reports the result (-1 when the buffer is not mapped). An fd of -1 deregisters, and the attributes must match
+// the registration.
+
+// Maps [buf, buf + size) with `attr`. Returns the mapping's fd, or -1 on failure.
+inline int RegisterFastRpcBuffer(const RpcMemApi& api, void* buf, size_t size, int attr) {
+  api.register_buf(buf, size, /*fd*/ 0, attr);
+  return api.to_fd(buf);
+}
+
+// Undoes RegisterFastRpcBuffer. Returns true if the buffer is no longer mapped.
+inline bool DeregisterFastRpcBuffer(const RpcMemApi& api, void* buf, size_t size, int attr) {
+  api.register_buf(buf, size, /*fd*/ -1, attr);
+  return api.to_fd(buf) == -1;
+}
+
 // Loads and provides access to the RPCMEM API functions from a dynamically loaded library.
 class RpcMemLibrary {
  public:
   RpcMemLibrary();
+  explicit RpcMemLibrary(RpcMemApi api) : api_(api) {}
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(RpcMemLibrary);
 
