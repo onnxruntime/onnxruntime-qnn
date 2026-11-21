@@ -113,8 +113,41 @@ struct FakeOrtValue {
   // Scalar payload (read by GetTensorMutableData)
   float float_data = 0.0f;
   double double_data = 0.0;
+  // Little-endian bytes of an integer scalar (e.g. a zero-point), see MakeInt.
+  alignas(8) unsigned char int_bytes[8] = {};
 
   const OrtValue* AsOrtValue() const { return reinterpret_cast<const OrtValue*>(this); }
+
+  // Integer scalar of the given 8/16-bit element type (e.g. a quantization zero-point).
+  static FakeOrtValue MakeInt(ONNXTensorElementDataType type, int64_t v) {
+    FakeOrtValue r;
+    r.elem_type = type;
+    switch (type) {
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8: {
+        const auto x = static_cast<uint8_t>(v);
+        std::memcpy(r.int_bytes, &x, sizeof(x));
+        break;
+      }
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8: {
+        const auto x = static_cast<int8_t>(v);
+        std::memcpy(r.int_bytes, &x, sizeof(x));
+        break;
+      }
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16: {
+        const auto x = static_cast<uint16_t>(v);
+        std::memcpy(r.int_bytes, &x, sizeof(x));
+        break;
+      }
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16: {
+        const auto x = static_cast<int16_t>(v);
+        std::memcpy(r.int_bytes, &x, sizeof(x));
+        break;
+      }
+      default:
+        break;
+    }
+    return r;
+  }
 
   static FakeOrtValue MakeFloat(float v) {
     FakeOrtValue r;
@@ -466,9 +499,20 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
   // GetTensorMutableData: production code (qdq_node_group_selector.cc) calls the mutable variant via api_ptrs_.
   api.GetTensorMutableData = [](OrtValue* v, void** out) noexcept -> OrtStatus* {
     auto* fov = reinterpret_cast<FakeOrtValue*>(v);
-    *out = (fov->elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-               ? static_cast<void*>(&fov->float_data)
-               : static_cast<void*>(&fov->double_data);
+    switch (fov->elem_type) {
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+        *out = &fov->float_data;
+        break;
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+      case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
+        *out = fov->int_bytes;
+        break;
+      default:
+        *out = &fov->double_data;
+        break;
+    }
     return nullptr;
   };
 

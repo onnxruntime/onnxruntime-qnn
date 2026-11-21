@@ -665,7 +665,43 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
   return num_absorbed_outputs == q_nodes.size();
 }
 
-// Helper function to check if a QDQ pair is supported
+// True if the Q and DQ zero-points are equal: same initializer, both absent, or equal scalar values.
+// An absent zero-point is treated as 0 (ONNX default).
+bool IsQDQZeroPointEqual(const OrtGraph* graph, const OrtApi& ort_api,
+                         const std::vector<const OrtValueInfo*>& q_inputs,
+                         const std::vector<const OrtValueInfo*>& dq_inputs) {
+  const OrtValueInfo* q_zp_vi = q_inputs.size() > 2 ? q_inputs[2] : nullptr;
+  const OrtValueInfo* dq_zp_vi = dq_inputs.size() > 2 ? dq_inputs[2] : nullptr;
+  if (q_zp_vi == nullptr && dq_zp_vi == nullptr) {
+    return true;
+  }
+
+  if (q_zp_vi != nullptr && dq_zp_vi != nullptr) {
+    const char* q_zp_name = nullptr;
+    const char* dq_zp_name = nullptr;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(q_zp_vi, &q_zp_name), ort_api);
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(dq_zp_vi, &dq_zp_name), ort_api);
+    if (strcmp(q_zp_name, dq_zp_name) == 0) {
+      return true;
+    }
+  }
+
+  const auto read_zero_point = [&](const OrtValueInfo* vi, int64_t& zero_point) {
+    if (vi == nullptr) {
+      zero_point = 0;
+      return true;
+    }
+    const OrtValue* init = GetInitializerFromValueInfo(graph, ort_api, vi);
+    Qnn_DataType_t unused_type = QNN_DATATYPE_UNDEFINED;
+    return init != nullptr && GetZeroPointValue(ort_api, init, zero_point, unused_type);
+  };
+
+  int64_t q_zp = 0;
+  int64_t dq_zp = 0;
+  return read_zero_point(q_zp_vi, q_zp) && read_zero_point(dq_zp_vi, dq_zp) && q_zp == dq_zp;
+}
+
+// Helper function to check if a QDQ pair is supported (same scale and same zero-point)
 bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* q_node, const OrtNode* dq_node) {
   // Check if both nodes have the same scale
   size_t q_num_inputs = 0;
@@ -791,7 +827,7 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
     ort_api.ReleaseTensorTypeAndShapeInfo(dq_tensor_info);
   }
 
-  return same_scale;
+  return same_scale && IsQDQZeroPointEqual(graph, ort_api, q_inputs, dq_inputs);
 }
 
 }  // namespace
@@ -1104,6 +1140,18 @@ bool OrtVariadicNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
 
   if (dt_input.value() != dt_output.value()) {
     return false;
+  }
+
+  // With >= 2 inputs, each DQ input must also match the Q output's scale/zero-point --
+  // otherwise QNN's fused Concat/Max/Min would silently misinterpret a mismatched
+  // input's raw codes under the output's encoding. Skipped for a single input (nothing
+  // to compare); mirrors Split's selector below, which uses IsQDQPairSupported the same way.
+  if (dq_nodes.size() > 1) {
+    for (const OrtNode* dq_node : dq_nodes) {
+      if (!IsQDQPairSupported(graph, ort_api, q_nodes[0], dq_node)) {
+        return false;
+      }
+    }
   }
 
   return true;
