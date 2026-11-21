@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 
 #include "core/providers/qnn/builder/ep_context_io_dispatch.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -156,6 +157,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      QnnModelLookupTable& qnn_models,
                                      int64_t max_spill_fill_size,
                                      const qnn::EpContextIoDispatch& io_dispatch,
+                                     uint64_t* preflight_derived_max_spill_fill_size,
                                      const Ort::Logger* logger) {
   const char* op_type = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOperatorType(main_context_node, &op_type));
@@ -167,6 +169,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   OrtNodeAttrHelper node_helper(*main_context_node);
   bool is_embed_mode = node_helper.Get(EMBED_MODE, true);
   bool is_multi_soc_ep_context = node_helper.Get(IS_MULTI_SOC_EP_CONTEXT, false);
+  const int64_t declared_max_spill_fill_size = node_helper.Get(MAX_SIZE, static_cast<int64_t>(0));
   if (is_embed_mode) {
     const std::string& context_binary = node_helper.Get(EP_CACHE_CONTEXT, "");
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(const_cast<char*>(context_binary.c_str()),
@@ -175,8 +178,10 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                main_context_node_name,
                                                                qnn_models,
                                                                max_spill_fill_size,
+                                                               declared_max_spill_fill_size,
                                                                io_dispatch,
-                                                               is_multi_soc_ep_context);
+                                                               is_multi_soc_ep_context,
+                                                               preflight_derived_max_spill_fill_size);
   }
 
   std::filesystem::path folder_path = std::filesystem::path(ctx_onnx_model_path).parent_path();
@@ -224,8 +229,10 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                main_context_node_name,
                                                                qnn_models,
                                                                max_spill_fill_size,
+                                                               declared_max_spill_fill_size,
                                                                io_dispatch,
-                                                               is_multi_soc_ep_context);
+                                                               is_multi_soc_ep_context,
+                                                               preflight_derived_max_spill_fill_size);
   }
 
   if (!std::filesystem::is_regular_file(context_binary_path)) {
@@ -240,8 +247,10 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                main_context_node_name,
                                                                qnn_models,
                                                                max_spill_fill_size,
+                                                               declared_max_spill_fill_size,
                                                                io_dispatch,
-                                                               is_multi_soc_ep_context);
+                                                               is_multi_soc_ep_context,
+                                                               preflight_derived_max_spill_fill_size);
   }
 #endif
 
@@ -272,46 +281,51 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                              main_context_node_name,
                                                              qnn_models,
                                                              max_spill_fill_size,
+                                                             declared_max_spill_fill_size,
                                                              io_dispatch,
-                                                             is_multi_soc_ep_context);
+                                                             is_multi_soc_ep_context,
+                                                             preflight_derived_max_spill_fill_size);
 }
 
-Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
-                                   const OrtApi& ort_api,
-                                   uint32_t total_context_size,
-                                   int64_t& max_spill_fill_size,
-                                   std::vector<int>& main_context_pos_list) {
-  max_spill_fill_size = 0;
-  int max_size_index = 0;
-  for (uint32_t idx = 0; idx < total_context_size; ++idx) {
-    // 'graphs' contains ALL EPContext subgraphs, not just main contexts. Indirect through
-    // 'main_context_pos_list' to pick out the main-context graph at this iteration.
-    // Using 'idx' directly would read non-main (or unrelated) graphs when main contexts
-    // are at non-consecutive positions, producing a wrong max spill-fill size.
-    int graph_idx = main_context_pos_list[idx];
-    size_t num_nodes = 0;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graphs[graph_idx], &num_nodes));
-    RETURN_IF(num_nodes != 1, "OrtGraph should have only one EPContext node.");
+Ort::Status PreflightQnnContexts(const OrtGraph** graphs,
+                                 const OrtApi& ort_api,
+                                 const std::basic_string<ORTCHAR_T>& ctx_onnx_model_path,
+                                 QnnBackendManager* qnn_backend_manager,
+                                 const Ort::Logger& logger,
+                                 const qnn::EpContextIoDispatch& io_dispatch,
+                                 std::vector<int>& main_context_pos_list,
+                                 int64_t& group_max_spill_fill_size) {
+  group_max_spill_fill_size = 0;
+  if (main_context_pos_list.size() < 2) {
+    return Ort::Status();
+  }
 
-    std::vector<const OrtNode*> nodes(num_nodes);
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(graphs[graph_idx], nodes.data(), nodes.size()));
-
-    const OrtNode* ep_context_node = nodes[0];
-
-    OrtNodeAttrHelper node_helper(*ep_context_node);
-    int64_t max_size = node_helper.Get(MAX_SIZE, static_cast<int64_t>(0));
-    if (max_size > max_spill_fill_size) {
-      max_spill_fill_size = max_size;
+  QnnModelLookupTable preflight_models;
+  uint64_t derived_group_max_spill_fill_size = 0;
+  size_t max_size_index = 0;
+  for (size_t idx = 0; idx < main_context_pos_list.size(); ++idx) {
+    uint64_t derived_max_spill_fill_size = 0;
+    RETURN_IF_ERROR(LoadQnnCtxFromOnnxGraph(graphs[main_context_pos_list[idx]],
+                                            ort_api,
+                                            ctx_onnx_model_path,
+                                            qnn_backend_manager,
+                                            preflight_models,
+                                            logger,
+                                            /*max_spill_fill_size=*/0,
+                                            io_dispatch,
+                                            &derived_max_spill_fill_size));
+    if (derived_max_spill_fill_size > derived_group_max_spill_fill_size) {
+      derived_group_max_spill_fill_size = derived_max_spill_fill_size;
       max_size_index = idx;
     }
   }
 
-  if (0 != max_size_index) {
-    int tmp_index = main_context_pos_list[0];
-    main_context_pos_list[0] = main_context_pos_list[max_size_index];
-    main_context_pos_list[max_size_index] = tmp_index;
+  RETURN_IF(derived_group_max_spill_fill_size > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+            "Context binary spill-fill size exceeds the supported int64 range.");
+  group_max_spill_fill_size = static_cast<int64_t>(derived_group_max_spill_fill_size);
+  if (max_size_index != 0) {
+    std::swap(main_context_pos_list[0], main_context_pos_list[max_size_index]);
   }
-
   return Ort::Status();
 }
 
@@ -322,7 +336,8 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                     QnnModelLookupTable& qnn_models,
                                     const Ort::Logger& logger,
                                     int64_t max_spill_fill_size,
-                                    const qnn::EpContextIoDispatch& io_dispatch) {
+                                    const qnn::EpContextIoDispatch& io_dispatch,
+                                    uint64_t* preflight_derived_max_spill_fill_size) {
   size_t num_nodes = 0;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graph, &num_nodes));
   RETURN_IF(num_nodes != 1, "OrtGraph should have only one EPContext node.");
@@ -338,6 +353,7 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                                      qnn_models,
                                                      max_spill_fill_size,
                                                      io_dispatch,
+                                                     preflight_derived_max_spill_fill_size,
                                                      &logger);
 
   // This is the protocol with customer that status with INVALID_GRAPH will be generated if failed to load context model

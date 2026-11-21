@@ -2908,24 +2908,22 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
 
   std::vector<int> main_context_pos_list;
   RETURN_IF_NOT_OK(qnn::GetMainContextNode(graphs, count, ort_api, main_context_pos_list));
-  uint32_t total_context_size = SafeInt<uint32_t>(main_context_pos_list.size());
-
   int64_t max_spill_fill_size = 0;
-
-  // Adjust the main_context_pos_list, move the one with max spill fill buffer to the beginning
-  // HTP spill fill buffer only works for multiple QNN contexts generated after QNN v2.28
-  if (total_context_size > 1) {
-    RETURN_IF_NOT_OK(qnn::TryGetMaxSpillFillSize(graphs,
-                                                 ort_api,
-                                                 total_context_size,
-                                                 max_spill_fill_size,
-                                                 main_context_pos_list));
-  }
-
   // Figure out the EP context model path from session option
   std::basic_string<ORTCHAR_T> model_path = GetModelPathString(graphs[0], ort_api);
   std::basic_string<ORTCHAR_T> context_model_path;
   GetContextOnnxModelFilePath(context_cache_path_cfg_, model_path, context_model_path);
+
+  // Preflight every binary before creating the first context. The effective group size and
+  // load order come from binary metadata, never from the model-controlled max_size attribute.
+  RETURN_IF_NOT_OK(qnn::PreflightQnnContexts(graphs,
+                                             ort_api,
+                                             context_model_path,
+                                             qnn_backend_manager_.get(),
+                                             logger_,
+                                             *io_dispatch_,
+                                             main_context_pos_list,
+                                             max_spill_fill_size));
 
   // AOT Phase 2 sidecar discovery for profiling enrichment. Loaded here
   // (before any context binary is restored) so the lookup is on the backend
@@ -3377,6 +3375,7 @@ OrtStatus* QnnEp::ReloadCompiledContext(const OrtGraph** graphs,
       "",  // no file path needed for in-memory load
       fused_node_names[0],
       loaded_models,
+      0,
       0,
       *io_dispatch_);
   if (!load_status.IsOK()) {

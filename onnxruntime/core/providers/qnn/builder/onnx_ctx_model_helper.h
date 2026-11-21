@@ -68,13 +68,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                      QnnModelLookupTable& qnn_models,
                                      int64_t max_spill_fill_size,
                                      const qnn::EpContextIoDispatch& io_dispatch,
+                                     uint64_t* preflight_derived_max_spill_fill_size = nullptr,
                                      const Ort::Logger* logger = nullptr);
-
-Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
-                                   const OrtApi& ort_api,
-                                   uint32_t total_context_size,
-                                   int64_t& max_spill_fill_size,
-                                   std::vector<int>& main_context_pos_list);
 
 Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                     const OrtApi& ort_api,
@@ -83,7 +78,19 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                     QnnModelLookupTable& qnn_models,
                                     const Ort::Logger& logger,
                                     int64_t max_spill_fill_size,
-                                    const qnn::EpContextIoDispatch& io_dispatch);
+                                    const qnn::EpContextIoDispatch& io_dispatch,
+                                    uint64_t* preflight_derived_max_spill_fill_size = nullptr);
+
+// Validate all main-context binaries without creating contexts, then derive the group size
+// and put the binary with the largest requirement first. Single contexts do not use a group.
+Ort::Status PreflightQnnContexts(const OrtGraph** graphs,
+                                 const OrtApi& ort_api,
+                                 const std::basic_string<ORTCHAR_T>& ctx_onnx_model_path,
+                                 QnnBackendManager* qnn_backend_manager,
+                                 const Ort::Logger& logger,
+                                 const qnn::EpContextIoDispatch& io_dispatch,
+                                 std::vector<int>& main_context_pos_list,
+                                 int64_t& group_max_spill_fill_size);
 
 Ort::Status CreateEPContextNodes(const OrtNode** fused_nodes,
                                  size_t count,
