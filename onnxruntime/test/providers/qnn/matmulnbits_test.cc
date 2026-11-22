@@ -64,6 +64,7 @@ struct TestParams {
   bool has_zero_point{false};
   bool is_zp_symmetric{false};
   bool enable_lpbq{false};
+  bool enable_matmul_lut{false};
 };
 
 // Adds the MatMulNBits weight B (packed uint8 BQ), float scales, and optional uint8 zero_point.
@@ -197,6 +198,9 @@ static void RunHtpQDQMatMulNBitsTest(const TestParams params,
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+  if (params.enable_matmul_lut) {
+    provider_options["enable_htp_matmul_lut"] = "1";
+  }
   if (params.enable_lpbq) {
     provider_options["enable_block_quant_weight_optimization"] = "1";
   } else {
@@ -607,6 +611,21 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B2_BS64) {
   params.has_zero_point = false;
   RunHtpQDQMatMulNBitsTest<2, uint16_t>(params, /*expect_native_bq=*/false);
 }
+
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && \
+    (QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40))
+TEST_F(QnnHTPBackendTests, MatMulNBits_W2A16_MatmulLutEnabled) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  TestParams params;
+  params.M = 1;
+  params.N = 32;
+  params.K = 128;
+  params.block_size = 64;
+  params.enable_matmul_lut = true;
+  RunHtpQDQMatMulNBitsTest<2, uint16_t>(params);
+}
+#endif
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_QDQ_U16_M1_N32_K128_B2_BS64_ZP) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);

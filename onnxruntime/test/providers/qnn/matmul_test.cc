@@ -670,24 +670,6 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulBQ_U16Int2_BlockSize16) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-2f)});
 }
 
-#if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && \
-    (QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40))
-TEST_F(QnnHTPBackendTests, MatMul_MatmulLutEnabled) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-
-  ProviderOptions options;
-  options["backend_type"] = "htp";
-  options["enable_htp_matmul_lut"] = "1";
-  options["use_native_matmul"] = "1";
-  RunQnnModelTest(
-      BuildMatMulOpTestCase(
-          TestInputDef<float>({4, 8}, false, GetSequentialFloatData({4, 8}, 0.01f, 0.02f)),
-          TestInputDef<float>({8, 3}, true, GetSequentialFloatData({8, 3}, 0.02f, 0.02f))),
-      options, /*opset=*/18,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
-}
-#endif
-
 // Rank-3 activation [1, M, K]: leading dim=1, reshapes to [1, 1, M, K] matching weight [1, 1, K, N].
 TEST_F(QnnHTPBackendTests, MatMulBQ_U16Int4_Rank3Activation) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
