@@ -54,7 +54,8 @@ class UDOQDQFusion : public IQnnNodeGroup {
       const OrtNodeUnit& input_dq_unit,
       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-      const Ort::Logger& logger);
+      const Ort::Logger& logger,
+      bool fuse_qdq);
 
  private:
   const std::string op_type_;
