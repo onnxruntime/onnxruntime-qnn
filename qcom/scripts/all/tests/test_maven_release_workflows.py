@@ -34,7 +34,7 @@ def test_release_paths(publish_mode):
     assert upload["jobs"]["upload-android-maven-workflow"]["needs"] == ["build-artifacts"]
     dispatch_inputs = entry[True]["workflow_dispatch"]["inputs"]
     assert dispatch_inputs["publish_mode"]["type"] == "choice"
-    assert dispatch_inputs["publish_mode"]["options"] == ["non_maven", "maven"]
+    assert dispatch_inputs["publish_mode"]["options"] == ["non_maven", "maven", "all"]
     assert dispatch_inputs["publish_mode"]["default"] == "non_maven"
     assert upload[True]["workflow_call"]["inputs"]["publish_mode"]["default"] == "all"
     assert build[True]["workflow_call"]["inputs"]["publish_mode"]["default"] == "all"

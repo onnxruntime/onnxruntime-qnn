@@ -16,11 +16,12 @@ on:
         type: string
         default: "rc0"
       publish_mode:
-        description: "Publish non-Maven artifacts, or build, test, and publish Maven artifacts."
+        description: "Publish non-Maven artifacts, Maven artifacts, or all artifacts."
         type: choice
         options:
           - non_maven
           - maven
+          - all
         default: non_maven
 
 jobs:
