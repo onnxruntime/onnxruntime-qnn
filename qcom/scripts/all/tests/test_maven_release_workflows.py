@@ -21,7 +21,7 @@ def workflow(name):
 
 def run_node(script):
     if NODE is None:
-        pytest.skip("Node.js is required to evaluate the GitHub Actions expressions")
+        pytest.fail("Node.js is required to evaluate the GitHub Actions expressions")
     result = subprocess.run([NODE, "--input-type=module"], input=script, text=True, capture_output=True, check=True)
     return json.loads(result.stdout)
 
@@ -31,6 +31,7 @@ def test_release_paths(publish_mode):
     entry = workflow("qualcomm-internal-upload-artifactory-main.yml")
     upload = workflow("qualcomm-internal-upload-artifactory-from-github.yml")
     build = workflow("qualcomm-internal-build-artifacts.yml")
+    assert upload["jobs"]["upload-android-maven-workflow"]["needs"] == ["build-artifacts"]
     dispatch_inputs = entry[True]["workflow_dispatch"]["inputs"]
     assert dispatch_inputs["publish_mode"]["type"] == "choice"
     assert dispatch_inputs["publish_mode"]["options"] == ["non_maven", "maven"]
