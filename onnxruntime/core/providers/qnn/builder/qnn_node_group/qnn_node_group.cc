@@ -120,20 +120,19 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {
-  std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper & qnn_model_wrapper,
-                                               const OrtNodeUnit& udo_node_unit,
-                                               const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
-                                               const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-                                               const Ort::Logger& logger)>
-      boundFunction = std::bind(&UDOQDQFusion::TryFusion,
-                                node_type,
-                                op_package,
-                                /*qnn_model_wrapper=*/std::placeholders::_1,
-                                /*udo_node_unit=*/std::placeholders::_2,
-                                /*node_to_node_unit=*/std::placeholders::_3,
-                                /*node_unit_to_qnn_node_group=*/std::placeholders::_4,
-                                /*logger=*/std::placeholders::_5);
-  fusions[node_type] = {boundFunction};
+  auto bind_fusion = [&](bool fuse_qdq) {
+    return std::bind(&UDOQDQFusion::TryFusion,
+                     node_type,
+                     op_package,
+                     /*qnn_model_wrapper=*/std::placeholders::_1,
+                     /*udo_node_unit=*/std::placeholders::_2,
+                     /*node_to_node_unit=*/std::placeholders::_3,
+                     /*node_unit_to_qnn_node_group=*/std::placeholders::_4,
+                     /*logger=*/std::placeholders::_5,
+                     fuse_qdq);
+  };
+  // A package may accept floating-point inputs but reject fused quantized tensors.
+  fusions[node_type] = {bind_fusion(true), bind_fusion(false)};
 }
 /// <summary>
 /// Given a starting NodeUnit, this function tries all possible fusions that start with that NodeUnit.

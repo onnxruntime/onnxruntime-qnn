@@ -45,6 +45,9 @@ Ort::Status GetInputNodeUnits(const QnnModelWrapper& qnn_model_wrapper,
 
   for (size_t i = 0; i < num_inputs; ++i) {
     const OrtValueInfo* input_value_info = inputs[i];
+    if (input_value_info == nullptr) {
+      continue;
+    }
 
     // Get the producer of this input
     const OrtNode* input_node = nullptr;
@@ -82,6 +85,9 @@ Ort::Status GetOutputNodeUnits(const QnnModelWrapper& qnn_model_wrapper,
 
   for (size_t i = 0; i < num_outputs; ++i) {
     const OrtValueInfo* output_value_info = outputs[i];
+    if (output_value_info == nullptr) {
+      continue;
+    }
 
     // Get the consumer of this output
     size_t num_consumers;
@@ -297,23 +303,25 @@ std::unique_ptr<IQnnNodeGroup> UDOQDQFusion::TryFusion(
     const OrtNodeUnit& udo_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-    const Ort::Logger& logger) {
+    const Ort::Logger& logger,
+    bool fuse_qdq) {
   // find all input DequantizeLinear nodes
   std::map<size_t, const OrtNodeUnit*> input_node_units;
-  Ort::Status status = GetInputNodeUnits(qnn_model_wrapper, udo_node_unit, node_to_node_unit, node_unit_to_qnn_node_group, input_node_units);
-  if (!status.IsOK()) {
-    return nullptr;
-  }
-
   // find all output QuantizeLinear nodes
   std::map<size_t, const OrtNodeUnit*> output_node_units;
-  status = GetOutputNodeUnits(qnn_model_wrapper, udo_node_unit, node_to_node_unit, output_node_units);
-  if (!status.IsOK()) {
-    return nullptr;
+  if (fuse_qdq) {
+    Ort::Status status = GetInputNodeUnits(qnn_model_wrapper, udo_node_unit, node_to_node_unit, node_unit_to_qnn_node_group, input_node_units);
+    if (!status.IsOK()) {
+      return nullptr;
+    }
+    status = GetOutputNodeUnits(qnn_model_wrapper, udo_node_unit, node_to_node_unit, output_node_units);
+    if (!status.IsOK()) {
+      return nullptr;
+    }
   }
 
   // Convert UDO node
-  status = CreateOrValidateOnQnn(op_type, op_package, qnn_model_wrapper, input_node_units, udo_node_unit, output_node_units, true, logger);
+  Ort::Status status = CreateOrValidateOnQnn(op_type, op_package, qnn_model_wrapper, input_node_units, udo_node_unit, output_node_units, true, logger);
   if (!status.IsOK()) {
     return nullptr;
   }
