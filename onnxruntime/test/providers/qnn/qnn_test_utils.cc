@@ -487,6 +487,22 @@ void VerifyQnnEpModelAssignment(const std::string& model_data,
   ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), registration_name, expected_ep_assignment));
 }
 
+void VerifyMalformedNdIndexShapeIsRejected(const GetTestModelFn& build_model) {
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, build_model);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  TryEnableQNNSaver(provider_options);
+
+  ASSERT_NO_FATAL_FAILURE(VerifyQnnEpModelAssignment(model->model_data, "InvalidNDIndexShape", provider_options,
+                                                     ExpectedEPNodeAssignment::None));
+}
+
 void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
                                     const char* log_id,
                                     const ProviderOptions& provider_options,

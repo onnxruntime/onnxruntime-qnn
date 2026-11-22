@@ -154,7 +154,7 @@ struct QnnRealHtpBackendManagerContext {
     auto status = manager_->SetupBackend(/*load_from_cached_context=*/false,
                                          need_load_system_lib,
                                          /*share_ep_contexts=*/false,
-                                         /*htp_share_resource_optimization=*/-1,
+                                         /*htp_share_resource_optimization=*/0,
                                          /*enable_file_mapped_weights=*/false,
                                          /*rpcmem_library=*/nullptr,
                                          dummy_map);
