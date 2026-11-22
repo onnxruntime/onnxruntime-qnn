@@ -51,7 +51,7 @@ on:
         type: boolean
         default: false
       publish_mode:
-        description: "Artifact mode: maven builds and tests Android only; non_maven excludes Android; all builds selected platforms and includes AAR for Android."
+        description: "Artifact mode: maven builds and tests Android only; non_maven excludes Android; all uses the build flags."
         type: string
         default: all
 
@@ -79,8 +79,8 @@ jobs:
       run_tests: false
       upload_test_archive: true
       upload_wheel: false
-      build_aar: ${{ inputs.publish_mode != 'non_maven' }}
-      upload_aar: ${{ inputs.publish_mode != 'non_maven' }}
+      build_aar: ${{ inputs.publish_mode == 'maven' || (inputs.publish_mode != 'non_maven' && inputs.build_android_aarch64_aar) }}
+      upload_aar: ${{ inputs.publish_mode == 'maven' || (inputs.publish_mode != 'non_maven' && inputs.build_android_aarch64_aar) }}
 
   test-android-aarch64:
     if: ${{ inputs.publish_mode == 'maven' || (inputs.publish_mode != 'non_maven' && (inputs.build_android_aarch64 || inputs.build_android_aarch64_aar)) }}
