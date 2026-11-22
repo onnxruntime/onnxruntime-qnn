@@ -202,6 +202,21 @@ static Ort::Status CreateOrValidateOnQnn(
     ORT_CXX_RETURN_ON_API_FAIL(ort_api.OpAttr_GetName(attr, &attribute_name));
     std::string attr_name = std::string(attribute_name);
 
+    // shortcut: adapt contrib GQA defaults for this FP16 package until its validator accepts them.
+    if (op_type == "GroupQueryAttention" && op_package == "gqa_op_package" && node_unit.Domain() == "com.microsoft") {
+      if (attr_name == "k_quant_type" || attr_name == "v_quant_type") {
+        RETURN_IF_NOT(node_helper.GetString(attr_name) == std::optional<std::string>{"NONE"},
+                      "The GQA package does not support quantized KV caches.");
+        continue;
+      }
+      if (attr_name == "smooth_softmax" && node_helper.GetInt64(attr_name) == std::optional<int64_t>{-1}) {
+        // Contrib GQA enables smooth softmax only for 1; its schema default -1 means disabled.
+        RETURN_IF_ERROR(AddQnnScalar<int32_t>(qnn_model_wrapper, node_unit.Index(), node_name, 0,
+                                              attr_name, param_names));
+        continue;
+      }
+    }
+
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("Parse attribute name: " + attr_name + " for op " + node_name).c_str());
