@@ -22,7 +22,7 @@ on:
           - non_maven
           - maven
           - all
-        default: non_maven
+        default: all
 
 jobs:
   check-admin-permission:
