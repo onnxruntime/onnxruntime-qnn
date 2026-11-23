@@ -780,6 +780,22 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
       return false;
     }
 
+    // Per-channel scales have several elements; they must match in count and in every value.
+    size_t q_count = 0;
+    size_t dq_count = 0;
+    status = ort_api.GetTensorShapeElementCount(q_tensor_info, &q_count);
+    if (status == nullptr) {
+      status = ort_api.GetTensorShapeElementCount(dq_tensor_info, &dq_count);
+    }
+    if (status != nullptr || q_count != dq_count) {
+      if (status != nullptr) {
+        ort_api.ReleaseStatus(status);
+      }
+      ort_api.ReleaseTensorTypeAndShapeInfo(q_tensor_info);
+      ort_api.ReleaseTensorTypeAndShapeInfo(dq_tensor_info);
+      return false;
+    }
+
     // Compare the scale values
     if (q_element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
       float* q_scale_data = nullptr;
@@ -800,7 +816,7 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
         return false;
       }
 
-      same_scale = (*q_scale_data == *dq_scale_data);
+      same_scale = std::equal(q_scale_data, q_scale_data + q_count, dq_scale_data);
     } else if (q_element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE) {
       double* q_scale_data = nullptr;
       double* dq_scale_data = nullptr;
@@ -820,7 +836,7 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
         return false;
       }
 
-      same_scale = (*q_scale_data == *dq_scale_data);
+      same_scale = std::equal(q_scale_data, q_scale_data + q_count, dq_scale_data);
     }
 
     ort_api.ReleaseTensorTypeAndShapeInfo(q_tensor_info);
