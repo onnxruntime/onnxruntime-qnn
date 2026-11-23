@@ -196,7 +196,7 @@ static void RunCastLikeOpTest(const std::vector<int64_t>& shape,
                   EPVerificationParams{expected_ep_assignment});
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
                                ONNX_NAMESPACE::TensorProto_DataType dst_type,
                                ExpectedEPNodeAssignment expected_ep_assignment) {
@@ -227,7 +227,7 @@ static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
 
   RunQnnModelTest(testcase, provider_options, /* opset */ 13, EPVerificationParams{expected_ep_assignment});
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 //
 // CPU tests:
@@ -263,7 +263,7 @@ TEST_F(QnnCPUBackendTests, TestCastLikeFloatToInt32) {
   RunCastLikeOpTest<float, int32_t>({2, 3}, ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -311,7 +311,6 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP) {
 }
 
 // Cast(fp32 -> bool) on HTP over a mix of signs, magnitudes, and sub-1 values.
-// Guards the Sign -> Abs -> Cast lowering in cast_op_builder.cc.
 TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP_GenericFpValues) {
   RunQnnModelTest(BuildCastTestCaseWithData<float>(
                       {8},
@@ -322,24 +321,21 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP_GenericFpValues) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
-// Cast float16 to bool on HTP. (Windows ARM64 CI v73 rejects).
+// Cast float16 to bool on HTP.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
-#if defined(__linux__) && !defined(__aarch64__)
-  GTEST_SKIP() << "x86 HTP sim validator rejects Cast(fp16 -> BOOL); requires real device.";
+#if defined(_WIN32)
+  GTEST_SKIP() << "FP16-to-bool Cast is unsupported on Windows HTP devices.";
 #endif
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
   RunCastFP16HTPTest({3, 3},
                      ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
                      ExpectedEPNodeAssignment::All);
 }
 
 // Cast(fp16 -> bool) on HTP over a mix of signs, magnitudes, and sub-1 values.
-// Guards the Sign -> Abs -> Cast lowering for fp16 in cast_op_builder.cc.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP_GenericFpValues) {
-#if defined(__linux__) && !defined(__aarch64__)
-  GTEST_SKIP() << "x86 HTP sim validator rejects Cast(fp16 -> BOOL); requires real device.";
+#if defined(_WIN32)
+  GTEST_SKIP() << "FP16-to-bool Cast is unsupported on Windows HTP devices.";
 #endif
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
   const std::vector<float> fp32_data = {-5.0f, -0.5f, 0.0f, 0.5f, 0.9f, 1.0f, 5.0f, 100.0f};
   std::vector<Ort::Float16_t> fp16_data;
   fp16_data.reserve(fp32_data.size());
@@ -387,9 +383,9 @@ TEST_F(QnnHTPBackendTests, TestCastLikeInt64ToInt32HTP) {
 TEST_F(QnnHTPBackendTests, TestCastLikeFloatToBoolHTP) {
   RunCastLikeOpTest<float, bool>({3, 3}, ExpectedEPNodeAssignment::All, "htp");
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 //
 // GPU tests:
 //
@@ -426,7 +422,7 @@ TEST_F(QnnGPUBackendTests, DISABLED_TestCastInt32ToInt64) {
                          ExpectedEPNodeAssignment::All, "gpu");
 }
 
-#endif  // defined(_M_ARM64) GPU tests
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC)) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime

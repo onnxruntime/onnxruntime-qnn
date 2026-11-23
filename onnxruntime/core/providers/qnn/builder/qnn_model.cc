@@ -827,7 +827,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 #endif
   RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, context_handle_lease, execute_status, ort_profiler));
 
-  if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+  if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == QNN_GET_ERROR_CODE(execute_status)) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
     if (ort_profiler) {
       ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
@@ -844,15 +844,17 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       context_handle_lease = qnn_backend_manager_->GetContextHandleLease(graph_info_->GraphContext());
       RETURN_IF_NOT(context_handle_lease, "QNN context is no longer available after SSR recovery.");
       RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, context_handle_lease, execute_status, ort_profiler));
-      if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+      if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == QNN_GET_ERROR_CODE(execute_status)) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
         if (ort_profiler) {
           ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
         }
 #endif
-        return Ort::Status("NPU crashed again after SSR recovery.", QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+        const std::string message = "NPU crashed again after SSR recovery. " +
+                                    utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status);
+        return Ort::Status(message.c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
       }
-      if (QNN_GRAPH_NO_ERROR == execute_status) {
+      if (QNN_GRAPH_NO_ERROR == QNN_GET_ERROR_CODE(execute_status)) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "SSR recovery succeeded.");
       }
     } else {
@@ -860,12 +862,14 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       // SSR recovery requires a context binary on disk to reload from, so skip recovery.
       std::ostringstream oss;
       oss << "NPU crashed. SSR detected. Recovery not supported"
-             " (no context binary on disk — JIT or embed_mode=1). Error code: "
-          << execute_status;
+             " (no context binary on disk — JIT or embed_mode=1). "
+          << utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status);
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
       return Ort::Status(oss.str().c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
     }
-  } else if (QNN_GRAPH_NO_ERROR != execute_status) {
+  }
+
+  if (QNN_GRAPH_NO_ERROR != QNN_GET_ERROR_CODE(execute_status)) {
     return MAKE_EP_FAIL(("QNN graph execute error. " +
                          utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status))
                             .c_str());

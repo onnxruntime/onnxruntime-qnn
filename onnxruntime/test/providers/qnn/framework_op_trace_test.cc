@@ -994,7 +994,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_QDQFusion_ManyToOne) {
 
 // Test Gelu fusion on HTP.
 TEST_F(QnnHTPBackendTests, FrameworkOpTrace_GeluFusion) {
-#if defined(_WIN32) && !defined(_M_ARM64)
+#if defined(_WIN32) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
   GTEST_SKIP() << "GeluFusion not supported on Windows x86 HTP simulation";
 #else
   ScopedTempDir tmp;
@@ -1722,7 +1722,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_MixedEPContext_HTP_Phase2InferenceSu
 // Test N:1 fusion — multiple ONNX nodes → single QNN Gelu op sharing same source chain.
 // Uses ONNX Gelu decomposition pattern (Mul/Div/Erf/Add) which gets fused by GeluFusion on HTP.
 TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_GeluFusion) {
-#if defined(_WIN32) && !defined(_M_ARM64)
+#if defined(_WIN32) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
   GTEST_SKIP() << "GeluFusion not supported on Windows x86 HTP simulation";
 #else
   ScopedTempDir tmp;
@@ -1796,7 +1796,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_GeluFusion) {
 // Each QNN op entry in op_mappings should share the same 3 ONNX op sources, proving
 // that the trace correctly records the N:M relationship.
 TEST_F(QnnHTPBackendTests, FrameworkOpTrace_NtoM_ReshapeEinsumReshape) {
-#if defined(_WIN32) && !defined(_M_ARM64)
+#if defined(_WIN32) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
   GTEST_SKIP() << "ReshapeEinsumReshape fusion not supported on Windows x86 HTP simulation";
 #else
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
@@ -2511,7 +2511,7 @@ TEST_F(QnnHTPBackendTests, FrameworkOpTrace_CpuFallbackDisabled_SecondPassSuppor
 // ================= FCB multi-SoC framework op trace (x86-only) =================
 // Multi-SoC FCB EP-context compilation is an x86 offline-preparation feature
 // (the EP rejects it on aarch64), so these E2E tests are x86-only.
-#if !defined(__aarch64__) && !defined(_M_ARM64)
+#if !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
 
 namespace {
 
@@ -2733,7 +2733,7 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_FrameworkOpTrace_Mixed) {
   fs::remove_all(trace_dir);
 }
 
-#endif  // !defined(__aarch64__) && !defined(_M_ARM64)
+#endif  // !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
 
 }  // namespace test
 }  // namespace onnxruntime

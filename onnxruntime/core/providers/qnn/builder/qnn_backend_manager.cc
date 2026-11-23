@@ -334,25 +334,25 @@ Ort::Status QnnBackendManager::LoadBackend() {
   // QNN requires ADSP_LIBRARY_PATH to be set in order to find skel libs on Linux
   static std::once_flag set_adsp_path_once;
 
-  std::call_once(set_adsp_path_once, [this]() {
+  std::call_once(set_adsp_path_once, [&backend_path = backend_path_]() {
     constexpr std::string_view kAdspLibraryPathEnvVar{"ADSP_LIBRARY_PATH"};
     const char* existingPath = getenv(kAdspLibraryPathEnvVar.data());
     if (existingPath != nullptr) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_WARNING,
-                      ("Using existing ADSP_LIBRARY_PATH setting of " +
-                       std::string(existingPath) + ", which may cause the HTP backend to fail.")
-                          .c_str());
+      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Using existing ADSP_LIBRARY_PATH setting of " +
+                   std::string(existingPath) + ", which may cause the HTP backend to fail.")
+                      .c_str());
       return;
     }
 
-    std::filesystem::path _backend_path(backend_path_);
+    std::filesystem::path _backend_path(backend_path);
     std::filesystem::path qnnLibPath = _backend_path.is_absolute()
                                            ? _backend_path.parent_path()
                                            : std::filesystem::path(OrtGetRuntimePath());
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_WARNING,
-                    ("Setting " + std::string(kAdspLibraryPathEnvVar) + " = " + qnnLibPath.string()).c_str());
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+                ORT_LOGGING_LEVEL_WARNING,
+                ("Setting " + std::string(kAdspLibraryPathEnvVar) + " = " + qnnLibPath.string()).c_str());
     setenv(kAdspLibraryPathEnvVar.data(), qnnLibPath.c_str(), 1);
   });
 #endif
@@ -1510,11 +1510,12 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   context_config_resource_sharing.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   context_config_resource_sharing.customConfig = &resource_sharing_custom_config;
 
-  // Set share resource optimization type to SEQUENTIAL_WITHOUT_VA_OPTIMIZATION
   // This is controlled by the htp_share_resource_optimization option
   QnnHtpContext_CustomConfig_t context_config_resource_sharing_opt_type;
   context_config_resource_sharing_opt_type.option = QNN_HTP_CONTEXT_CONFIG_OPTION_SHARE_RESOURCES_OPTIMIZATION_TYPE;
-  context_config_resource_sharing_opt_type.shareResOptType = SEQUENTIAL_WITHOUT_VA_OPTIMIZATION;
+  context_config_resource_sharing_opt_type.shareResOptType =
+      htp_share_resource_optimization_ == 2 ? SEQUENTIAL_WITH_VA_OPTIMIZATION
+                                            : SEQUENTIAL_WITHOUT_VA_OPTIMIZATION;
   QnnContext_Config_t resource_sharing_opt_type_config;
   resource_sharing_opt_type_config.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   resource_sharing_opt_type_config.customConfig = &context_config_resource_sharing_opt_type;
@@ -2068,7 +2069,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
   Qnn_ContextHandle_t context = nullptr;
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
-  if (htp_share_resource_optimization_ == 1) {
+  if (htp_share_resource_optimization_) {
     {
       std::lock_guard<std::mutex> lock(ep_context_handle_map_mutex_);
       auto context_it = ep_context_handle_map_.find(node_name);
@@ -2150,7 +2151,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool load_from_cached_context,
     bool need_load_system_lib,
     bool share_ep_contexts,
-    int htp_share_resource_optimization,
+    uint8_t htp_share_resource_optimization,
     bool enable_file_mapped_weights,
     std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
@@ -2172,7 +2173,7 @@ Ort::Status QnnBackendManager::SetupBackend(
                       "backend manager; disabling file mapping for this session.");
     }
 
-    if (htp_share_resource_optimization_ == 1) {
+    if (htp_share_resource_optimization_) {
       // If a context bin filepath has not been processed yet,
       // then a new context must be created for the set of context bins
       bool context_exists = false;
@@ -2340,14 +2341,14 @@ Ort::Status QnnBackendManager::SetupBackend(
 #endif
   }
 
-  if (status.IsOK() && (htp_share_resource_optimization_ == 1 || !load_from_cached_context)) {
-    if (htp_share_resource_optimization_ == 1 && enable_htp_graph_splitting) {
+  if (status.IsOK() && (htp_share_resource_optimization_ || !load_from_cached_context)) {
+    if (htp_share_resource_optimization_ && enable_htp_graph_splitting) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
-                      "enable_htp_graph_splitting is not compatible with htp_share_resource_optimization=1 "
+                      "enable_htp_graph_splitting is not compatible with htp_share_resource_optimization "
                       "(VTCM sharing path uses QnnContext_createFromBinaryListAsync which does not accept "
                       "graph-splitting configs). Graph splitting will be ignored for this session.");
     }
-    status = htp_share_resource_optimization_ == 1
+    status = htp_share_resource_optimization_
                  ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map,
                                                                io_dispatch)
                  : CreateContext(enable_htp_weight_sharing,

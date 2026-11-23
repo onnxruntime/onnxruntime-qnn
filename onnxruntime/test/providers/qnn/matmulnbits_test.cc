@@ -18,7 +18,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Re-implement testcases from test/contrib_ops/matmul_4bits_test.cc.
 
@@ -310,7 +310,7 @@ bool IsNativeBqExpected([[maybe_unused]] QnnHtpDevice_Arch_t htp_arch) {
 #endif  // defined(__linux__) && !defined(__aarch64__)
 }
 
-#if defined(_M_ARM64)
+#if (defined(_M_ARM64) || defined(_M_ARM64EC))
 // QNN GPU only support FP16 activations and Q4_0 weights, with zero_points = 8
 // Accumulation with larger channel accumulates more error. Set higher abs_error with respect to K.
 TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_M1_N128_K512_withZp) {
@@ -352,7 +352,7 @@ TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_M10_N128_K512) {
   params.has_zero_point = false;
   RunMatMulNBitsTest<4>(params);
 }
-#endif  // defined(_M_ARM64)
+#endif  // (defined(_M_ARM64) || defined(_M_ARM64EC))
 
 TEST_F(QnnHTPBackendTests, MatMulNBits_M1_N2_K64_B2_BS16) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
@@ -1187,7 +1187,7 @@ TEST_F(QnnHTPBackendTests, MatMulNBits_LPBQ_M1_N4_K64_B4_BS16_AZP) {
   RunHtpQDQMatMulNBitsTest<4, int16_t>(params);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

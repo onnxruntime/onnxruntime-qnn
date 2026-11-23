@@ -42,7 +42,7 @@ on:
         default: "Release"
         type: string
       qnn_internal_test_symbols:
-        description: "Enable QNN EP internal test symbols for supported targets. Test archives are not supported in this mode."
+        description: "Enable QNN EP internal test symbols for supported targets. Production artifacts are not supported in this mode."
         default: false
         type: boolean
       version_suffix:
@@ -129,8 +129,8 @@ env:
   # Cross compilation on Windows adds a folder to the build directory.
   BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && format('{0}/{0}', inputs.build_config) || inputs.build_config }}"
 
-  # The internal-symbol build is intentionally isolated from the shipping Windows build directory.
-  BUILD_DIR_ARCH: "${{ inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols && format('{0}-internal-symbols', inputs.target_arch) || inputs.target_arch }}"
+  # Internal-symbol builds are intentionally isolated from shipping build directories.
+  BUILD_DIR_ARCH: "${{ inputs.qnn_internal_test_symbols && format('{0}-internal-symbols', inputs.target_arch) || inputs.target_arch }}"
 
   TEST_ARCHIVE_EXT: "${{ inputs.target_os == 'linux' && 'tar.bz2' || 'zip' }}"
 
@@ -159,7 +159,7 @@ jobs:
       - name: Validate internal-symbol artifact settings
         if: ${{ inputs.qnn_internal_test_symbols && (inputs.upload_test_archive || inputs.upload_wheel || inputs.upload_nuget || inputs.upload_archive || inputs.build_pdb_archive || inputs.upload_pdb_archive || inputs.upload_aar) }}
         run: |
-          echo "::error::Internal-symbol builds must not publish test or production artifacts."
+          echo "::error::Internal-symbol builds must not publish test or production artifacts to Artifactory."
           exit 1
 
       - name: Initialize submodules
@@ -176,7 +176,69 @@ jobs:
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
-          ${{ inputs.upload_test_archive == true && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
+          ${{ inputs.upload_test_archive && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
+
+      # Preserve executable modes and symlinks in the temporary cross-runner
+      # hand-off. The existing archive accept-list excludes build intermediates.
+      - name: Pack Linux internal-symbol test inputs
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner }}
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, 'qcom/scripts/all')
+          from archive_tests import archive_linux
+          archive_linux('linux-${{ env.BUILD_DIR_ARCH }}', '${{ inputs.build_config }}')
+          PY
+
+      # Artifactory credentials are also used to obtain version-aligned snapshot
+      # goldens before the Linux x86_64 internal-symbol shadow test runs.
+      - name: Setup JFrog CLI
+        if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' }}
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Enable aligned snapshot goldens for Linux x86_64 shadow validation
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && inputs.run_tests && inputs.build_test_same_runner }}
+        run: |
+          golden_dir="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/snapshot-goldens"
+          rm -rf -- "${golden_dir}"
+          bash qcom/scripts/linux/prepare_snapshot_goldens.sh \
+            --build-dir="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/${BUILD_CONFIG_DIR}" \
+            --golden-dir="${golden_dir}" \
+            --golden-profile="linux-x86_64-htp-simulator"
+
+      - name: Upload Linux internal-symbol test inputs
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
+          retention-days: 1
+          path: ${{ github.workspace }}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}linux-${{ env.BUILD_DIR_ARCH }}.tar.bz2
+          if-no-files-found: error
+
+      # Use the existing archive layout and include MSVC runtime DLLs for QDC.
+      # These test-only archives stay in temporary Actions storage.
+      - name: Pack Windows ARM64 internal-symbol test inputs
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols && !inputs.build_test_same_runner }}
+        run: >
+          python.exe qcom/build_and_test.py
+          --target-py-version ${{ inputs.target_py_vsn }}
+          --config ${{ inputs.build_config }}
+          archive_ort_windows_arm64_internal_symbols --only
+
+      - name: Upload Windows internal-symbol test inputs
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols && !inputs.build_test_same_runner }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
+          retention-days: 1
+          path: ${{ github.workspace }}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}windows-${{ env.BUILD_DIR_ARCH }}.zip
+          if-no-files-found: error
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }}
@@ -186,6 +248,16 @@ jobs:
           --target-py-version ${{inputs.target_py_vsn}}
           --config ${{ inputs.build_config }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }} --only
+        env:
+          # The two-pass runner below owns snapshot and accuracy execution for
+          # this lane; the baseline ctest run retains all other provider tests.
+          QNN_UT_TWO_PASS_SNAPSHOT_ACCURACY: ${{ inputs.target_os == 'linux' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && '1' || '' }}
+
+      - name: Validate Linux x86_64 QNN snapshots and routed accuracy
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && inputs.run_tests && inputs.build_test_same_runner }}
+        run: >
+          bash qcom/scripts/all/run_snapshot_accuracy.sh
+          --build-dir="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/${BUILD_CONFIG_DIR}"
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
@@ -208,24 +280,14 @@ jobs:
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
-
-      # Artifactory steps are no-ops on fork PRs (secrets unavailable); the build still compiles the change.
-      - name: Setup JFrog CLI
-        if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' }}
-        uses: jfrog/setup-jfrog-cli@v5
-        with:
-          disable-auto-build-publish: true
-          disable-job-summary: true
-        env:
-          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
-          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/snapshot_accuracy_results/*.json
 
       - name: Upload Test Archive to Artifactory
         if: ${{ inputs.has_code_changes && inputs.upload_test_archive && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
-          src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.${{ env.TEST_ARCHIVE_EXT }}"
+          src_pattern: "onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}${{inputs.target_os}}-${{ inputs.target_arch }}.${{ env.TEST_ARCHIVE_EXT }}"
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.has_code_changes && inputs.upload_wheel && env.BUILD_ARTIFACTORY_REPO != '' }}
@@ -290,7 +352,7 @@ jobs:
           docker builder prune -f --filter until=72h
 
   test:
-    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && '-self-hosted' || '' }}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     # Cross-runner test stage requires Artifactory hand-off from build; skip on fork PRs where secrets are unavailable.
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
     needs: [build]
@@ -306,7 +368,7 @@ jobs:
         run: git submodule update --init --recursive
 
       - name: Setup JFrog CLI
-        if: ${{ inputs.has_code_changes }}
+        if: ${{ inputs.has_code_changes && (!inputs.qnn_internal_test_symbols || inputs.testdata_archive_artifact_name != '') }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
@@ -316,10 +378,24 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Download Tests from Artifactory
-        if: ${{ inputs.has_code_changes }}
+        if: ${{ inputs.has_code_changes && !inputs.qnn_internal_test_symbols }}
         uses: ./.github/actions/download-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
+
+      - name: Download Linux internal-symbol test inputs
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols }}
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
+          path: ${{ github.workspace }}/build/
+
+      - name: Download Windows internal-symbol test inputs
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols }}
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
+          path: ${{ github.workspace }}/build/
 
       - name: Download testdata from Artifactory
         if: ${{ inputs.has_code_changes && inputs.testdata_archive_artifact_name != '' }}
@@ -328,35 +404,81 @@ jobs:
           name: ${{ inputs.testdata_archive_artifact_name }}
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
-        if: ${{ inputs.has_code_changes }}
+        if: ${{ inputs.has_code_changes && !(inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols) }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
+          --target-py-version ${{ inputs.target_py_vsn }}
           --config ${{ inputs.build_config }}
           create_venv
-          extract_ort_${{inputs.target_os}}_${{inputs.target_arch}}
-          test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
+          extract_ort_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
+          test_ort_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }} --only
+
+      - name: Test Windows ARM64 QNN internal-symbol build
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols }}
+        run: >
+          python.exe qcom/build_and_test.py
+          --target-py-version ${{ inputs.target_py_vsn }}
+          --config ${{ inputs.build_config }}
+          create_venv
+          extract_ort_windows_arm64_internal_symbols
+          test_ort_windows_arm64_internal_symbols --only
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
         if: ${{ always() && inputs.has_code_changes }} # always run even if the previous step fails
         with:
-          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
+          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
           group_reports: false
           include_passed: true
           detailed_summary: true
           verbose_summary:  false
           report_paths: |
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v7
         if: ${{ always() && inputs.has_code_changes }} # always run even if the previous step fails
         with:
-          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
+          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '-internal-symbols' || '' }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
           retention-days: 7
           path: |
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+            ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+
+  test-windows-arm64-qdc:
+    # A WoS QDC test takes around 2 hours, tying up Linux CI resources.
+    # Disable WoS QDC testing for now until we find a solution or a better way to test it.
+    # TODO: Restore the job condition once that solution or testing approach is available.
+    if: ${{ false }}
+    needs: [build]
+    uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
+    secrets: inherit
+    with:
+      has_code_changes: ${{ inputs.has_code_changes }}
+      target_os: windows
+      target_arch: arm64
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      build_config: ${{ inputs.build_config }}
+      qnn_internal_test_symbols: ${{ inputs.qnn_internal_test_symbols }}
+      testdata_archive_artifact_name: ${{ inputs.testdata_archive_artifact_name }}
+
+  windows-arm64-validation:
+    # Preserve the existing Windows ARM64 test check name for self-hosted validation.
+    name: "test-windows-arm64-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && !inputs.qnn_internal_test_symbols && github.event.pull_request.head.repo.fork != true }}
+    needs: [build, test]
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    timeout-minutes: 5
+    steps:
+      - name: Require build and self-hosted Windows ARM64 tests
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          SELF_HOSTED_RESULT: ${{ needs.test.result }}
+        run: |
+          if [ "$BUILD_RESULT" != "success" ] || [ "$SELF_HOSTED_RESULT" != "success" ]; then
+            echo "::error::Windows ARM64 validation failed: build=$BUILD_RESULT self-hosted=$SELF_HOSTED_RESULT"
+            exit 1
+          fi
 
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"

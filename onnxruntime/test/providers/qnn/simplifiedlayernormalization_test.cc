@@ -12,7 +12,7 @@
 
 namespace onnxruntime {
 namespace test {
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Runs a float32 SimplifiedLayerNormalization model on the QNN CPU backend.
 static void RunSimplifiedLayerNormCpuTest(const TestInputDef<float>& input_def,
@@ -286,7 +286,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_4D_LastAxis_AU16_WU8) {
       true /* use_contrib_qdq_ops */);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

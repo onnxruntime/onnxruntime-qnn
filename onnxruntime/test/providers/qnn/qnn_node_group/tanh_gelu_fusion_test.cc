@@ -171,7 +171,7 @@ void RunTanhGeluFusionTest(const std::string& test_name,
 
 }  // namespace
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 // ---- Positive tests --------------------------------------------------------
 
 // 4D input: typical batch * channel * H * W layout.
@@ -352,7 +352,7 @@ TEST_F(QnnHTPBackendTests, TanhGeluFusion_SharedForwardIntermediate_ShouldNotFus
                   EPVerificationParams{ExpectedEPNodeAssignment::Some, ElementwiseAbsoluteVerifier(6e-3f)});
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime
