@@ -46,8 +46,9 @@ struct QnnUdoPlaceholderKernel {
 //
 // The placeholder imposes no type or shape constraint on its inputs/outputs (both are
 // VARIADIC with UNDEFINED element type). ORT resolves the output type/shape from the
-// model's own output value_info. GQA uses fixed optional slots matching its ONNX
-// signature because ORT's variadic type inference rejects empty interior inputs.
+// model's own output value_info — standard ONNX models exported by conversion tools
+// always carry this information.  No InferOutputShapeFn is registered; the placeholder
+// solely satisfies schema registration so the domain/op-type is known at load time.
 struct QnnUdoPlaceholderOp
     : Ort::CustomOpBase<QnnUdoPlaceholderOp, QnnUdoPlaceholderKernel, /*WithStatus=*/true> {
   QnnUdoPlaceholderOp(std::string op_type, std::string ep_type)
@@ -68,39 +69,20 @@ struct QnnUdoPlaceholderOp
   const char* GetName() const { return op_type_.c_str(); }
   const char* GetExecutionProviderType() const { return ep_type_.c_str(); }
 
-  static Ort::Status InferOutputShape(Ort::ShapeInferContext& /*context*/) {
-    return Ort::Status();  // Preserve the model's declared output types and shapes.
-  }
-
-  // shortcut: GQA targets the ONNX signature; use registered schemas before supporting other GQA package signatures.
-  size_t GetInputTypeCount() const { return op_type_ == "GroupQueryAttention" ? 17 : 1; }
-  ONNXTensorElementDataType GetInputType(size_t index) const {
-    if (op_type_ == "GroupQueryAttention") {
-      if (index == 5 || index == 6 || index == 16) {
-        return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
-      }
-      if (index == 9) {
-        return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64;
-      }
-    }
+  size_t GetInputTypeCount() const { return 1; }
+  ONNXTensorElementDataType GetInputType(size_t /*index*/) const {
     return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   }
-  OrtCustomOpInputOutputCharacteristic GetInputCharacteristic(size_t index) const {
-    if (op_type_ == "GroupQueryAttention") {
-      return index == 0 || index == 5 || index == 6 ? INPUT_OUTPUT_REQUIRED : INPUT_OUTPUT_OPTIONAL;
-    }
+  OrtCustomOpInputOutputCharacteristic GetInputCharacteristic(size_t /*index*/) const {
     return OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_VARIADIC;
   }
   bool GetVariadicInputHomogeneity() const { return false; }
 
-  size_t GetOutputTypeCount() const { return op_type_ == "GroupQueryAttention" ? 4 : 1; }
+  size_t GetOutputTypeCount() const { return 1; }
   ONNXTensorElementDataType GetOutputType(size_t /*index*/) const {
     return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   }
-  OrtCustomOpInputOutputCharacteristic GetOutputCharacteristic(size_t index) const {
-    if (op_type_ == "GroupQueryAttention") {
-      return index == 0 ? INPUT_OUTPUT_REQUIRED : INPUT_OUTPUT_OPTIONAL;
-    }
+  OrtCustomOpInputOutputCharacteristic GetOutputCharacteristic(size_t /*index*/) const {
     return OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_VARIADIC;
   }
   bool GetVariadicOutputHomogeneity() const { return false; }

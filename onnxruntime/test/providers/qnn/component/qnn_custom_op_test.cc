@@ -18,8 +18,6 @@
 #include <string>
 #include <vector>
 
-#include "onnx/onnx_pb.h"
-
 #include "test/providers/qnn/infra/qnn_test_windows_compat.h"
 
 #include "core/providers/qnn/custom_op/qnn_custom_op.h"
@@ -119,51 +117,6 @@ TEST(QnnUnit_CustomOpTest, PlaceholderOp_Metadata) {
             OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_VARIADIC);
   EXPECT_FALSE(op.GetVariadicInputHomogeneity());
   EXPECT_FALSE(op.GetVariadicOutputHomogeneity());
-}
-
-TEST(QnnUnit_CustomOpTest, PlaceholderOp_LoadsOmittedInteriorInputs) {
-  ONNX_NAMESPACE::ModelProto model;
-  model.set_ir_version(9);
-  auto* opset = model.add_opset_import();
-  opset->set_domain("optional_udo");
-  opset->set_version(1);
-  auto* graph = model.mutable_graph();
-  graph->set_name("optional_udo");
-  auto add_value = [](ONNX_NAMESPACE::ValueInfoProto* value, const char* name, int type) {
-    value->set_name(name);
-    auto* tensor_type = value->mutable_type()->mutable_tensor_type();
-    tensor_type->set_elem_type(type);
-    tensor_type->mutable_shape()->add_dim()->set_dim_value(1);
-  };
-  add_value(graph->add_input(), "X", ONNX_NAMESPACE::TensorProto_DataType_FLOAT16);
-  add_value(graph->add_input(), "length", ONNX_NAMESPACE::TensorProto_DataType_INT32);
-  add_value(graph->add_input(), "positions", ONNX_NAMESPACE::TensorProto_DataType_INT64);
-  add_value(graph->add_output(), "Y", ONNX_NAMESPACE::TensorProto_DataType_FLOAT16);
-  auto* node = graph->add_node();
-  node->set_domain("optional_udo");
-  node->set_op_type("GroupQueryAttention");
-  node->add_input("X");
-  node->add_input("");
-  node->add_input("");
-  node->add_input("X");
-  node->add_input("X");
-  node->add_input("length");
-  node->add_input("length");
-  node->add_input("");
-  node->add_input("");
-  node->add_input("positions");
-  node->add_output("Y");
-
-  qnn::QnnUdoPlaceholderOp op{"GroupQueryAttention", "CPUExecutionProvider"};
-  Ort::CustomOpDomain domain{"optional_udo"};
-  domain.Add(&op);
-  Ort::SessionOptions options;
-  options.Add(domain);
-  Ort::Env env;
-  const auto bytes = model.SerializeAsString();
-  Ort::Session session{env, bytes.data(), bytes.size(), options};
-  EXPECT_EQ(session.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetElementType(),
-            ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16);
 }
 
 TEST(QnnUnit_CustomOpTest, PlaceholderKernel_ComputeReturnsError) {
