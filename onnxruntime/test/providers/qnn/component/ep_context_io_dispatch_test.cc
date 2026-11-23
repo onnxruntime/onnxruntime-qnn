@@ -156,7 +156,7 @@ struct CallbackFileMapperTag {
   friend type GetCallbackBackendMember(CallbackFileMapperTag);
 };
 struct CallbackSharingModeTag {
-  using type = int qnn::QnnBackendManager::*;
+  using type = uint8_t qnn::QnnBackendManager::*;
   friend type GetCallbackBackendMember(CallbackSharingModeTag);
 };
 template struct CallbackBackendMemberAccess<CallbackFileMapperTag,
@@ -408,7 +408,9 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
         auto notify = mapped ? params[count]->v2->notifyFunc : params[count]->v1.notifyFunc;
         auto notify_param = mapped ? params[count]->v2->notifyParam : params[count]->v1.notifyParam;
         CheckNativeBinary(data, size);
-        if (mapped) EXPECT_NE(params[count]->v2->callback, nullptr);
+        if (mapped) {
+          EXPECT_NE(params[count]->v2->callback, nullptr);
+        }
         auto context = reinterpret_cast<Qnn_ContextHandle_t>(
             static_cast<uintptr_t>(1000 + test.list_calls_ * 10 + count));
         notify(context, nullptr, "native_graph", QNN_CONTEXT_NOTIFY_TYPE_GRAPH_INIT,
@@ -657,7 +659,9 @@ TEST_F(QnnUnit_CallbackBufferTest, NativeSsrBufferSurvivesSdkAndPreservesFailure
     Qnn_ContextHandle_t context = nullptr;
     auto status = backend_->GetMutable()->ReloadContextForSSR(path, 0, context, native_dispatch);
     EXPECT_EQ(status.IsOK(), result == QNN_SUCCESS);
-    if (result != QNN_SUCCESS) EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+    if (result != QNN_SUCCESS) {
+      EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+    }
   }
   EXPECT_EQ(ordinary_calls_, 2u);
   EXPECT_TRUE(std::filesystem::remove(path));
@@ -681,7 +685,9 @@ TEST_F(QnnUnit_CallbackBufferTest, NativeListBuffersSurviveNotificationsAndReadF
     sdk_result_ = result;
     auto status = (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, native_dispatch);
     EXPECT_EQ(status.IsOK(), result == QNN_SUCCESS);
-    if (result != QNN_SUCCESS) EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+    if (result != QNN_SUCCESS) {
+      EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+    }
   }
   EXPECT_EQ(list_calls_, 2u);
   auto missing = binaries.begin();
@@ -705,8 +711,8 @@ TEST_F(QnnUnit_CallbackBufferTest, SharedManagerCallbackDoesNotClearMappingFlag)
   const qnn::EpContextIoDispatch* sequence[] = {&native_dispatch, dispatch_.get(), &native_dispatch};
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
   for (const auto* io_dispatch : sequence) {
-    ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, *io_dispatch).IsOK());
-    EXPECT_TRUE(manager->FileMappingIsEnabled());
+    ASSERT_TRUE(manager->SetupBackend(true, false, true, 0, true, nullptr, binaries, *io_dispatch).IsOK());
+    EXPECT_TRUE(manager->*GetCallbackBackendMember(CallbackMappingFlagTag{}));
   }
   EXPECT_EQ(read_calls_, 0u);
 }
@@ -724,13 +730,13 @@ TEST_F(QnnUnit_CallbackBufferTest, SharedManagerKeepsDisabledMappingForNativeIni
   const qnn::EpContextIoDispatch enabled(*native_options, capabilities);
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
 
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, false, nullptr, binaries, disabled).IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, 0, false, nullptr, binaries, disabled).IsOK());
   EXPECT_FALSE(manager->FileMappingIsEnabled());
-  EXPECT_FALSE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, enabled).IsOK());
+  EXPECT_FALSE(manager->SetupBackend(true, false, true, 0, true, nullptr, binaries, enabled).IsOK());
   EXPECT_FALSE(manager->FileMappingIsEnabled());
   EXPECT_EQ(backend_->BackendHandle(), backend_handle);
   EXPECT_EQ((manager->*GetCallbackBackendMember(CallbackFileMapperTag{})).get(), nullptr);
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, false, nullptr, binaries, disabled).IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, 0, false, nullptr, binaries, disabled).IsOK());
   EXPECT_FALSE(manager->FileMappingIsEnabled());
 
   UseNativeMappingSdk();
@@ -751,8 +757,8 @@ TEST_F(QnnUnit_CallbackBufferTest, SharedMappingKeepsCallbacksOrdinaryAndAllowsN
   manager->*GetCallbackBackendMember(CallbackBackendSetupTag{}) = true;
   const qnn::EpContextIoDispatch native_dispatch;
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, *dispatch_).IsOK());
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, native_dispatch).IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, 0, true, nullptr, binaries, *dispatch_).IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, 0, true, nullptr, binaries, native_dispatch).IsOK());
   ASSERT_TRUE(manager->FileMappingIsEnabled());
 
   ASSERT_TRUE(InitialLoad().IsOK());
@@ -778,10 +784,10 @@ TEST_F(QnnUnit_CallbackBufferTest, MappingMismatchPreservesExistingBackend) {
   ASSERT_TRUE(manager->AddQnnContextHandle(this).IsOK());
   const qnn::EpContextIoDispatch native_dispatch;
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
-  auto status = manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, native_dispatch);
+  auto status = manager->SetupBackend(true, false, true, 0, true, nullptr, binaries, native_dispatch);
   EXPECT_FALSE(status.IsOK());
   EXPECT_EQ(status.GetErrorMessage(), "Cannot share QNN backend manager with a different file-mapping mode.");
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, false, nullptr, binaries, native_dispatch).IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, 0, false, nullptr, binaries, native_dispatch).IsOK());
   EXPECT_TRUE(manager->IsBackendSetup());
   EXPECT_TRUE(manager->HasContextHandle(this));
   EXPECT_FALSE(manager->FileMappingIsEnabled());
@@ -826,7 +832,7 @@ TEST_F(QnnUnit_CallbackBufferTest, MappedSsrFailureRereadsNativeFile) {
   manager->*GetCallbackBackendMember(CallbackBackendSetupTag{}) = true;
   const qnn::EpContextIoDispatch native_dispatch;
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, native_dispatch).IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, 0, true, nullptr, binaries, native_dispatch).IsOK());
   Qnn_ContextHandle_t context = nullptr;
   ASSERT_TRUE(manager->ReloadContextForSSR(WriteNativeBinary("mapped_failure"), 0, context, native_dispatch).IsOK());
   EXPECT_NE(ordinary_buffer_, metadata_buffer_);
@@ -844,7 +850,7 @@ TEST_F(QnnUnit_CallbackBufferTest, BinaryVersionFallbackReusesMappedBytes) {
   manager->*GetCallbackBackendMember(CallbackBackendSetupTag{}) = true;
   const qnn::EpContextIoDispatch native_dispatch;
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
-  ASSERT_TRUE(manager->SetupBackend(true, false, true, -1, true, nullptr, binaries, native_dispatch).IsOK());
+  ASSERT_TRUE(manager->SetupBackend(true, false, true, 0, true, nullptr, binaries, native_dispatch).IsOK());
   Qnn_ContextHandle_t context = nullptr;
   ASSERT_TRUE(manager->ReloadContextForSSR(WriteNativeBinary("old_version"), 0, context, native_dispatch).IsOK());
   EXPECT_EQ(ordinary_buffer_, metadata_buffer_);

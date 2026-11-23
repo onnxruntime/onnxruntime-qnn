@@ -396,7 +396,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool IsBackendSetup() { return backend_setup_completed_; }
 
   bool FileMappingIsEnabled() {
-    return file_mapped_weights_enabled_;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    return file_mapped_weights_enabled_ && file_mapper_ != nullptr;
+#else
+    return false;
+#endif
   }
 
   // Note that whether in host mode is meaningless if not on device.

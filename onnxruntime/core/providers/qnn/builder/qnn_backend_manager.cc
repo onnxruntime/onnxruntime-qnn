@@ -2222,16 +2222,15 @@ Ort::Status QnnBackendManager::SetupBackend(
     status = LoadQnnSerializerBackend();
   }
 
+  file_mapped_weights_enabled_ = enable_file_mapped_weights;
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Backend is determined after LoadBackend() or LoadQnnSerializerBackend()
   if (enable_file_mapped_weights && !file_mapper_ && GetQnnBackendType() == QnnBackendType::HTP) {
     RETURN_IF(!rpcmem_library, "RPCMem Library is required for file mapping but is uninitialized.");
     rpcmem_library_ = rpcmem_library;
-    file_mapped_weights_enabled_ = true;
     file_mapper_ = std::make_unique<WindowsFileMapper>(*logger_ptr_);
   }
 #else
-  ORT_UNUSED_PARAMETER(enable_file_mapped_weights);
   ORT_UNUSED_PARAMETER(rpcmem_library);
 #endif
 
