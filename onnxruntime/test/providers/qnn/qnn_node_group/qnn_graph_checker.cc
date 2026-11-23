@@ -6,7 +6,10 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <set>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "QnnTypes.h"
 #include "nlohmann/json.hpp"
@@ -174,6 +177,39 @@ void AssertQnnGraphInputCount(const std::filesystem::path& dump_dir, size_t expe
   }
 
   EXPECT_EQ(input_count, expected_count) << "Unexpected QNN graph input count in " << json_path;
+}
+
+void AssertQnnGraphInputNames(const std::filesystem::path& dump_dir,
+                              const std::vector<std::string>& expected_names) {
+  if (::testing::Test::IsSkipped()) {
+    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
+  }
+  std::filesystem::path json_path;
+  ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path))
+      << "No QNN JSON graph file found in " << dump_dir;
+
+  nlohmann::json root;
+  ASSERT_TRUE(ParseQnnJsonGraph(json_path, root))
+      << "Failed to parse QNN JSON graph: " << json_path;
+  ASSERT_TRUE(root.is_object() && root.contains("graph") && root["graph"].is_object() &&
+              root["graph"].contains("tensors") && root["graph"]["tensors"].is_object())
+      << "JSON missing 'graph.tensors' object in: " << json_path;
+
+  constexpr uint32_t kAppWrite = static_cast<uint32_t>(QNN_TENSOR_TYPE_APP_WRITE);
+  std::set<std::string> actual_names;
+  try {
+    for (const auto& [tensor_name, tensor] : root["graph"]["tensors"].items()) {
+      if (tensor.is_object() && tensor.contains("type") && tensor["type"].is_number_unsigned() &&
+          tensor["type"].get<uint32_t>() == kAppWrite) {
+        actual_names.insert(tensor_name);
+      }
+    }
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to iterate QNN graph tensors in " << json_path << ": " << ex.what();
+  }
+
+  const std::set<std::string> expected(expected_names.begin(), expected_names.end());
+  EXPECT_EQ(actual_names, expected) << "Unexpected QNN graph inputs in " << json_path;
 }
 
 void AssertConvertOutputDataType(const std::filesystem::path& dump_dir,

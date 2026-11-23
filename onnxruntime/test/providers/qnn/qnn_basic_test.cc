@@ -16,6 +16,7 @@
 
 #include "core/providers/qnn/builder/qnn_ep_sanitize_utils.h"
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/api_asserts.h"
 
@@ -1039,7 +1040,10 @@ TEST_F(QnnHTPBackendTests, QnnIrKeepsUnconsumedGraphInputs) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   const std::filesystem::path qnn_dlc_dir = "dlc_output_unconsumed_inputs";
+  const std::filesystem::path json_dir = "json_output_unconsumed_inputs";
   std::filesystem::remove_all(qnn_dlc_dir);
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
 
   ModelTestBuilder helper;
   helper.MakeInput<float>("x", {1, 4}, {1.0f, -2.0f, 3.0f, -4.0f});
@@ -1067,6 +1071,8 @@ TEST_F(QnnHTPBackendTests, QnnIrKeepsUnconsumedGraphInputs) {
   options["offload_graph_io_quantization"] = "0";
   options["dump_qnn_ir_dlc"] = "1";
   options["dump_qnn_ir_dlc_dir"] = qnn_dlc_dir.string();
+  options["dump_json_qnn_graph"] = "1";
+  options["json_qnn_graph_dir"] = json_dir.string();
 
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
@@ -1076,6 +1082,9 @@ TEST_F(QnnHTPBackendTests, QnnIrKeepsUnconsumedGraphInputs) {
                           Ort::Session(*ort_env, model_data.data(), model_data.size(), so));
 
   EXPECT_EQ(scoped.session().GetInputCount(), 3u);
+
+  // The composed QNN graph declares all three model inputs, not only the one Relu reads.
+  AssertQnnGraphInputNames(json_dir, {"x", "unused_a", "unused_b"});
 
   ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
   std::string dlc_bytes;
@@ -1089,7 +1098,7 @@ TEST_F(QnnHTPBackendTests, QnnIrKeepsUnconsumedGraphInputs) {
   }
   ASSERT_EQ(file_count, 1);
 
-  // Tensor names are plain strings in the DLC.
+  // The names reach the serialized DLC. Tensor names are plain strings in it.
   EXPECT_THAT(dlc_bytes, ::testing::HasSubstr("unused_a"));
   EXPECT_THAT(dlc_bytes, ::testing::HasSubstr("unused_b"));
 }

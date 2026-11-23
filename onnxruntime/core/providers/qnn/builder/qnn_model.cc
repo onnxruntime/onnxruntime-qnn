@@ -330,7 +330,7 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                                                       QnnQuantParamsWrapper(),
                                                                       std::move(qnn_shape))),
                   ("Failed to add unconsumed graph input: " + unconsumed).c_str());
-    // libQnnIr crashes on a graph input with no consumer; a Cast with an unread output gives it one.
+    // QnnIr crashes on a graph input with no consumer; a Cast with an unread output gives it one.
     RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(unconsumed + "_unconsumed_sink",
                                                   unconsumed,
                                                   unconsumed + "_unconsumed_sink_out",
