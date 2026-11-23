@@ -19,9 +19,11 @@ SNAPSHOT = "QnnSnapshot_Clip_OpBuilderTest"
 ACCURACY = "QnnAcc_Clip_AccuracyTest"
 
 
-def export(tmp_path, snapshot, manifest, extra=(), snapshot_list=None):
+def export(tmp_path, snapshot, manifest, extra=(), snapshot_list=None, accuracy_list=None):
     (tmp_path / "snapshots.txt").write_text(snapshot_list or f"{SNAPSHOT}.\n  Case\n")
-    (tmp_path / "accuracy.txt").write_text(f"{ACCURACY}.\n  Case\nQnnAcc_Other_AccuracyTest.\n  Other\n")
+    (tmp_path / "accuracy.txt").write_text(
+        accuracy_list or f"{ACCURACY}.\n  Case\nQnnAcc_Other_AccuracyTest.\n  Other\n"
+    )
     (tmp_path / "snapshot.json").write_text(json.dumps(snapshot))
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
     result = subprocess.run(
@@ -77,6 +79,8 @@ def test_evidence_status_is_separate_from_observed_selection(tmp_path, case, man
     assert unmapped["runner_action"] == "out_of_scope"
     assert unmapped["status"] == "unmapped"
     assert result["producer"]["target_htp_arch"] is None
+    assert result["evidence_granularity"] == "testcase"
+    assert result["decision_granularity"] == "operator_group"
     digest = result.pop("payload_sha256")
     assert digest == hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -161,9 +165,21 @@ def test_pairing_excludes_other_cases_and_variants(tmp_path):
     assert decision["runner_action"] == "run"
 
 
-def test_pairing_includes_both_snapshot_tiers_for_the_same_case(tmp_path):
+@pytest.mark.parametrize(
+    "session_case, expected",
+    [
+        (PASS, "match"),
+        ({**PASS, "failures": [{"failure": "[QNN_SNAPSHOT_DRIFT]"}]}, "drift"),
+        ({"status": "RUN", "result": "SKIPPED"}, "untrusted"),
+        (None, "untrusted"),
+    ],
+)
+def test_pairing_requires_both_snapshot_tiers_for_match(tmp_path, session_case, expected):
     session = "QnnSnapshot_Clip_SessionTest"
-    data = {"testsuites": [{"name": suite, "testsuite": [{"name": "Case", **PASS}]} for suite in (SNAPSHOT, session)]}
+    data = snapshot(PASS)
+    data["testsuites"].append(
+        {"name": session, "testsuite": [] if session_case is None else [{"name": "Case", **session_case}]}
+    )
     result = export(
         tmp_path,
         data,
@@ -172,6 +188,26 @@ def test_pairing_includes_both_snapshot_tiers_for_the_same_case(tmp_path):
         snapshot_list=f"{SNAPSHOT}.\n  Case\n{session}.\n  Case\n",
     )
     assert result["accuracy_decisions"][0]["snapshot_test_ids"] == [SNAPSHOT + ".Case", session + ".Case"]
+    assert result["accuracy_decisions"][0]["status"] == expected
+
+
+def test_partial_group_drift_preserves_independent_testcase_evidence(tmp_path):
+    drift = {**PASS, "failures": [{"failure": "[QNN_SNAPSHOT_DRIFT]"}]}
+    data = {"testsuites": [{"name": SNAPSHOT, "testsuite": [{"name": "Case", **PASS}, {"name": "Other", **drift}]}]}
+    result = export(
+        tmp_path,
+        data,
+        MANIFEST,
+        ("--selection-complete", "--target-groups=Clip"),
+        snapshot_list=f"{SNAPSHOT}.\n  Case\n  Other\n",
+        accuracy_list=f"{ACCURACY}.\n  Case\n  Other\n  Unpaired\n",
+    )
+    decisions = {case["accuracy_test_id"]: case for case in result["accuracy_decisions"]}
+    assert decisions[ACCURACY + ".Case"]["status"] == "match"
+    assert decisions[ACCURACY + ".Other"]["status"] == "drift"
+    assert decisions[ACCURACY + ".Unpaired"]["status"] == "unmapped"
+    assert decisions[ACCURACY + ".Unpaired"]["snapshot_test_ids"] == []
+    assert all(case["runner_action"] == "run" for case in decisions.values())
 
 
 def test_same_group_without_exact_pair_is_unmapped(tmp_path):

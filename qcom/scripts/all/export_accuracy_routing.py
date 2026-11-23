@@ -125,7 +125,8 @@ def export_result(args: argparse.Namespace) -> dict:
             status = "match"
         else:
             status = "untrusted"
-        # Selection is the runner's existing group decision, not a new gate.
+        # This records Linux group selection only. Target consumers use exact
+        # testcase evidence and reviewed policy, not this action, to allow skips.
         action = "run" if group in target_groups else "skip"
         if not args.selection_complete:
             action = "unknown"
@@ -142,6 +143,7 @@ def export_result(args: argparse.Namespace) -> dict:
 
     return {
         "schema_version": 1,
+        "evidence_granularity": "testcase",
         "decision_granularity": "operator_group",
         "producer": {
             "source_commit_sha": args.source_commit,

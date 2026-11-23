@@ -24,7 +24,8 @@ run ID, and attempt against the expected producer run.
 | Field | Meaning |
 |---|---|
 | `schema_version` | `1`; other versions require an explicit consumer implementation |
-| `decision_granularity` | `operator_group`; the runner selects all Accuracy cases of an affected operator |
+| `evidence_granularity` | `testcase`; evidence is paired by exact suite variant and testcase name |
+| `decision_granularity` | `operator_group`; describes the existing Linux runner selection, not target skip granularity |
 | `producer` | Checkout SHA, Actions identity, actual build QAIRT/ORT versions, and downloaded golden profile |
 | `golden_manifest` | Versions and profile read from the golden store; missing data is represented by null |
 | `versions_match` | Both build versions match the manifest and the manifest supplies a profile |
@@ -64,6 +65,24 @@ skip policy. A later consumer must validate identity, schema, mode, successful
 execution, complete selection, versions, profile, and the registered target
 universe, then join evidence to a reviewed target policy. Missing or incompatible
 evidence must retain target Accuracy execution.
+
+### Testcase-level target skip rule
+
+A target consumer starts from its full registered Accuracy scope and defaults
+every testcase to `run`. It adds a testcase to the skip list only after all
+artifact trust checks pass and the reviewed target policy supplies an eligible
+mapping whose required Snapshot identities are all present and trusted matches.
+The consumer must check the policy's complete required evidence set; a partial
+producer pairing cannot establish completeness on its own.
+
+Drift, missing evidence, an unmapped target case, or any validation failure
+retains execution. One matched case may be eligible even when another case in
+the same operator group drifts. Neither `runner_action=skip` nor
+`runner_action=run` determines the target action. In shadow validation, the
+consumer reports this proposed skip list while all target Accuracy tests run;
+enforcement is a separate change.
+
+This exporter supplies testcase evidence, not a target-authorized skip list.
 
 The current `linux-x86_64-htp-simulator` namespace does not establish a v73
 execution profile. `producer.target_htp_arch` is therefore null. Windows ARM64
