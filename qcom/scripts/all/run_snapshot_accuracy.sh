@@ -114,8 +114,13 @@ EOF
 done
 
 if [ -n "${routing_result}" ]; then
-    routing_result="$(realpath -m "${routing_result}")"
-    rm -f -- "${routing_result}" "${routing_result}.tmp"
+    if prepared_routing_result="$(realpath -m "${routing_result}")" &&
+       rm -f -- "${prepared_routing_result}" "${prepared_routing_result}.tmp"; then
+        routing_result="${prepared_routing_result}"
+    else
+        log_warn "Routing artifact preparation failed; continuing tests without artifact publication."
+        routing_result=""
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -359,7 +364,10 @@ export_routing_result() {
         --qairt-version="${qairt_version}" --ort-version="${ort_version}" \
         --target-groups="${target_ops}" --mode="${mode}" \
         --runner-exit="${runner_exit}" --snapshot-exit="${snapshot_exit}" \
-        --output="${routing_result}" "${export_args[@]}"
+        --output="${routing_result}" "${export_args[@]}" || return 1
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+        printf 'routing_result_path=%s\n' "${routing_result}" >> "${GITHUB_OUTPUT}" || return 1
+    fi
 }
 
 if [ -n "${routing_result}" ]; then

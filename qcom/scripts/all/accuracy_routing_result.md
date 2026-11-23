@@ -3,8 +3,16 @@
 The Linux internal-symbol Snapshot lane exports `accuracy_routing.json` by passing
 `--emit-routing-result=<path>` to `run_snapshot_accuracy.sh`. The runner exports
 its existing operator-group selection on exit. Exporting does not change its
-test filter or exit code. The file is cleared before execution and replaced
-atomically; an export failure logs a warning and leaves no consumable result.
+test filter or exit code. Output preparation and export failures log a warning
+and retain the original test execution. Reused local output files are cleared
+when preparation succeeds, and new results are replaced atomically.
+
+CI creates a unique directory under `RUNNER_TEMP`, named with the run ID,
+attempt, and a random suffix. Only a successful export emits the
+`routing_result_path` step output used by the upload action. Preparation or
+export failure therefore cannot publish a previous result. An `always()` cleanup
+step removes only the current directory after upload; cleanup failure warns.
+The runner's normal `RUNNER_TEMP` cleanup provides an additional cleanup path.
 
 The Actions artifact name is
 `qnn-routing-linux-x86_64-<config>-py<python-version>-<run-attempt>`. Consumers must
