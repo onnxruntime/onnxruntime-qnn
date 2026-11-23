@@ -464,6 +464,25 @@ class TaskLibrary:
     if is_host_windows():
 
         @task
+        @depends(["build_ort_windows_arm64_internal_symbols"])
+        def archive_ort_windows_arm64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Archiving Windows ARM64 QNN internal-symbol tests for device validation",
+                    self.__venv_path,
+                    "arm64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "archive",
+                    qnn_internal_test_symbols=True,
+                )
+            )
+
+    if is_host_windows():
+
+        @task
         @depends(["build_ort_windows_arm64ec"])
         def archive_ort_windows_arm64ec(self, plan: Plan) -> str:
             return plan.add_step(
@@ -1006,33 +1025,44 @@ class TaskLibrary:
 
     if is_host_linux() and is_host_arm64():
 
+        def __extract_ort_linux_aarch64_manylinux_2_34(self, *, internal_symbols: bool = False) -> CompositeTask:
+            target_platform = "linux-aarch64_manylinux_2_34"
+            if internal_symbols:
+                target_platform += "-internal-symbols"
+            config_prefix = "" if self.__config == "Release" else f"{self.__config}-"
+            return CompositeTask(
+                None,
+                [
+                    ExtractArchiveTask(
+                        "Extracting per-arch ONNX Runtime archive",
+                        REPO_ROOT / "build" / f"onnxruntime-tests-{config_prefix}{target_platform}.tar.bz2",
+                        REPO_ROOT,
+                    ),
+                    RunExecutablesTask(
+                        "Extracting global testdata archive",
+                        [
+                            [
+                                str(self.__python_executable),
+                                str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                "--target-platform",
+                                target_platform,
+                                "--config",
+                                self.__config,
+                                "--archive",
+                                str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
+                            ]
+                        ],
+                    ),
+                ],
+            )
+
         @task
         def extract_ort_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
-            return plan.add_step(
-                CompositeTask(
-                    None,
-                    [
-                        ExtractArchiveTask(
-                            "Extracting per-arch ONNX Runtime archive",
-                            REPO_ROOT / "build" / "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2",
-                            REPO_ROOT,
-                        ),
-                        RunExecutablesTask(
-                            "Extracting global testdata archive",
-                            [
-                                [
-                                    str(self.__python_executable),
-                                    str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
-                                    "--target-platform",
-                                    "linux-aarch64_manylinux_2_34",
-                                    "--archive",
-                                    str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
-                                ]
-                            ],
-                        ),
-                    ],
-                )
-            )
+            return plan.add_step(self.__extract_ort_linux_aarch64_manylinux_2_34())
+
+        @task
+        def extract_ort_linux_aarch64_manylinux_2_34_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(self.__extract_ort_linux_aarch64_manylinux_2_34(internal_symbols=True))
 
     @task
     def extract_ort_linux_x86_64(self, plan: Plan) -> str:
@@ -1092,6 +1122,14 @@ class TaskLibrary:
 
     @task
     def extract_ort_windows_arm64(self, plan: Plan) -> str:
+        return self._extract_windows_arm64_tests(plan)
+
+    @task
+    def extract_ort_windows_arm64_internal_symbols(self, plan: Plan) -> str:
+        return self._extract_windows_arm64_tests(plan, internal_symbols=True)
+
+    def _extract_windows_arm64_tests(self, plan: Plan, *, internal_symbols: bool = False) -> str:
+        platform = "windows-arm64-internal-symbols" if internal_symbols else "windows-arm64"
         config_prefix = "" if self.__config == "Release" else f"{self.__config}-"
         return plan.add_step(
             CompositeTask(
@@ -1099,7 +1137,7 @@ class TaskLibrary:
                 [
                     ExtractArchiveTask(
                         "Extracting per-arch ONNX Runtime archive",
-                        REPO_ROOT / "build" / f"onnxruntime-tests-{config_prefix}windows-arm64.zip",
+                        REPO_ROOT / "build" / f"onnxruntime-tests-{config_prefix}{platform}.zip",
                         REPO_ROOT,
                     ),
                     RunExecutablesTask(
@@ -1109,7 +1147,7 @@ class TaskLibrary:
                                 str(self.__python_executable),
                                 str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
                                 "--target-platform",
-                                "windows-arm64",
+                                platform,
                                 "--build-config",
                                 self.__config,
                                 "--archive",
@@ -1118,7 +1156,8 @@ class TaskLibrary:
                         ],
                     ),
                 ],
-            )
+            ),
+            step_id=f"extract_ort_{platform.replace('-', '_')}",
         )
 
     @task
@@ -1445,22 +1484,37 @@ class TaskLibrary:
             ]
         )
         def test_ort_qdc_windows_arm64(self, plan: Plan) -> str:
+            return self._add_windows_qdc_test(plan)
+
+        @task
+        @depends(
+            [
+                "create_qdc_venv",
+                (is_host_windows(), "archive_ort_windows_arm64_internal_symbols"),
+                (is_host_windows(), "archive_testdata"),
+            ]
+        )
+        def test_ort_qdc_windows_arm64_internal_symbols(self, plan: Plan) -> str:
+            return self._add_windows_qdc_test(plan, internal_symbols=True)
+
+        def _add_windows_qdc_test(self, plan: Plan, internal_symbols: bool = False) -> str:
+            extra_args = [
+                f"--config={self.__config}",
+                f"--windows-test-mode={os.environ.get('QDC_WINDOWS_TEST_MODE', 'full')}",
+                # Preserve the existing full-suite allowance and queue admission timeout.
+                "--job-timeout-minutes=180",
+                "--queue-timeout-minutes=150",
+            ]
+            if internal_symbols:
+                extra_args.append("--windows-internal-symbols")
             return plan.add_step(
                 QdcTestsTask(
                     "Testing ONNX Runtime for Windows on ARM64 in QDC",
                     self.__venv_path,
                     ["windows"],
-                    extra_args=[
-                        f"--config={self.__config}",
-                        f"--windows-test-mode={os.environ.get('QDC_WINDOWS_TEST_MODE', 'full')}",
-                        # Full Windows execution runs CTest plus four model suites. Keep the
-                        # device-job allowance separate from the QDC queue admission timeout.
-                        "--job-timeout-minutes=180",
-                        # A preceding full Windows run can occupy the single QDC target for
-                        # around 2 hours. Allow one normal run plus setup time to clear.
-                        "--queue-timeout-minutes=150",
-                    ],
-                )
+                    extra_args=extra_args,
+                ),
+                step_id=f"test_ort_qdc_windows_arm64{'_internal_symbols' if internal_symbols else ''}",
             )
 
     if is_host_windows():
@@ -1490,6 +1544,25 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
+                )
+            )
+
+    if is_host_windows():
+
+        @task
+        @depends(["build_ort_windows_arm64_internal_symbols"])
+        def test_ort_windows_arm64_internal_symbols(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Testing ONNX Runtime for Windows on ARM64 with QNN EP internal test symbols",
+                    self.__venv_path,
+                    "arm64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                    qnn_internal_test_symbols=True,
                 )
             )
 

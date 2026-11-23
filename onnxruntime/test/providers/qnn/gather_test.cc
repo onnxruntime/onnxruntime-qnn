@@ -3,8 +3,11 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <string>
 
+#include <gsl/util>
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -551,6 +554,42 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesDynamicInt64_BatchDims0) {
       ExpectedEPNodeAssignment::All);
 }
 
+// The data DQ and output Q must fold into GatherND; leaving them standalone makes HTP reject the graph on
+// devices without FP16 support.
+TEST_F(QnnHTPBackendTests, GatherNDQdqFoldsDataDqAndOutputQ) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / "GatherNDQdqFoldsDataDqAndOutputQ";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  const TestInputDef<float> input_def({2, 2, 2}, false, {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f});
+  const TestInputDef<int64_t> indices_def({2, 2}, true, {0, 0, 1, 1});
+  const std::vector<ONNX_NAMESPACE::AttributeProto> attrs{
+      test::MakeAttribute("batch_dims", static_cast<int64_t>(0))};
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  TestQDQModelAccuracy<uint8_t>(
+      BuildOpTestCase<float, int64_t>("GatherND_node", "GatherND", {input_def}, {indices_def}, attrs),
+      BuildQDQGatherNdTestCase<uint8_t, int64_t>(input_def, indices_def, attrs),
+      provider_options,
+      /*opset=*/13,
+      ExpectedEPNodeAssignment::All);
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "GatherNd", 1);
+  // The graph input and output account for the only Quantize and Dequantize.
+  AssertOpInQnnGraph(graph_dir, "Quantize", 1);
+  AssertOpInQnnGraph(graph_dir, "Dequantize", 1);
+}
+
 // Two GatherND nodes share the same negative-indices initializer but consume
 // `data` inputs with different shapes along the indexed columns, so the
 // per-axis remap produces different bytes. Without a rename on rewrite, the
@@ -585,6 +624,40 @@ TEST_F(QnnHTPBackendTests, GatherNdSharedStaticNegIndicesDifferentDataShapes) {
 #endif
 
   RunQnnModelTest(build_model, provider_options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
+}
+
+TEST_F(QnnHTPBackendTests, GatherNDRejectsNegativeBatchDims) {
+  VerifyMalformedNdIndexShapeIsRejected([](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("data", {2}, {1.0f, 2.0f});
+    builder.MakeInitializer<int64_t>("indices", {1, 1}, {0});
+    builder.AddNode("gathernd", "GatherND", {"data", "indices"}, {"Y"}, kOnnxDomain,
+                    {test::MakeAttribute("batch_dims", static_cast<int64_t>(-1))});
+    builder.MakeOutput("Y");
+  });
+}
+
+TEST_F(QnnHTPBackendTests, GatherNDRejectsBatchDimsAtIndicesRank) {
+  VerifyMalformedNdIndexShapeIsRejected([](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("data", {2, 2, 2},
+                             {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f});
+    builder.MakeInitializer<int64_t>("indices", {1, 1}, {0});
+    builder.AddNode("gathernd", "GatherND", {"data", "indices"}, {"Y"}, kOnnxDomain,
+                    {test::MakeAttribute("batch_dims", static_cast<int64_t>(2))});
+    builder.MakeOutput("Y");
+  });
+}
+
+// HTP supports dynamic INT64 GatherND indices. Keep this input dynamic so the
+// rejection also covers the non-initializer path through ProcessGatherNDIndices.
+TEST_F(QnnHTPBackendTests, GatherNDRejectsDynamicIndicesWithBatchDimsAtIndicesRank) {
+  VerifyMalformedNdIndexShapeIsRejected([](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("data", {2, 2, 2},
+                             {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f});
+    builder.MakeInput<int64_t>("indices", {1, 1}, {0});
+    builder.AddNode("gathernd", "GatherND", {"data", "indices"}, {"Y"}, kOnnxDomain,
+                    {test::MakeAttribute("batch_dims", static_cast<int64_t>(2))});
+    builder.MakeOutput("Y");
+  });
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)

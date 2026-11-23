@@ -40,8 +40,9 @@ def htp_arch(request):
     return request.param
 
 
-def write_archive(path, config="Release", multi_config=False, omit="", *, htp_arch):
-    root = f"build/windows-arm64/{config}"
+def write_archive(path, config="Release", multi_config=False, omit="", *, htp_arch, internal_symbols=False):
+    platform = "windows-arm64-internal-symbols" if internal_symbols else "windows-arm64"
+    root = f"build/{platform}/{config}"
     binaries = f"{root}/{config}" if multi_config else root
     contents = {
         f"{root}/run_tests.ps1": b"runner",
@@ -74,8 +75,9 @@ def write_archive(path, config="Release", multi_config=False, omit="", *, htp_ar
 @pytest.mark.parametrize("config", ("Release", "Debug", "RelWithDebInfo"))
 @pytest.mark.parametrize("multi_config", (False, True))
 @pytest.mark.parametrize("testdata_format", ("zip", "tar.bz2"))
+@pytest.mark.parametrize("internal_symbols", (False, True))
 def test_preserves_archive_and_places_data_next_to_binaries(
-    tmp_path, payload_inputs, config, multi_config, testdata_format
+    tmp_path, payload_inputs, config, multi_config, testdata_format, internal_symbols
 ):
     if testdata_format == "tar.bz2":
         data = tmp_path / "testdata.tar.bz2"
@@ -90,11 +92,16 @@ def test_preserves_archive_and_places_data_next_to_binaries(
                 target.addfile(info, io.BytesIO(content))
         payload_inputs["testdata_archive"] = data
     source = tmp_path / "tests.zip"
-    originals = write_archive(source, config, multi_config, htp_arch=payload_inputs["htp_arch"])
+    originals = write_archive(
+        source, config, multi_config, htp_arch=payload_inputs["htp_arch"], internal_symbols=internal_symbols
+    )
     original_zip = source.read_bytes()
-    result = prepare_windows_payload(source, tmp_path / "output", config=config, **payload_inputs)
+    result = prepare_windows_payload(
+        source, tmp_path / "output", config=config, internal_symbols=internal_symbols, **payload_inputs
+    )
     assert source.read_bytes() == original_zip
-    root = f"build/windows-arm64/{config}"
+    platform = "windows-arm64-internal-symbols" if internal_symbols else "windows-arm64"
+    root = f"build/{platform}/{config}"
     binaries = f"{root}/{config}" if multi_config else root
     with zipfile.ZipFile(result) as payload:
         assert len(payload.namelist()) == len(set(payload.namelist()))
@@ -110,6 +117,8 @@ def test_preserves_archive_and_places_data_next_to_binaries(
         assert settings["build_config"] == config
         assert settings["expected_htp_arch"] == payload_inputs["htp_arch"]
         assert settings["test_mode"] == "full"
+        assert settings["test_platform"] == platform
+        assert settings["provider_test_processes"] == (2 if internal_symbols else 1)
 
 
 @pytest.mark.parametrize("runtime", ("QnnHtpV{arch}Stub.dll", "libQnnHtpV{arch}Skel.so", "libqnnhtpv{arch}.cat"))
@@ -255,6 +264,56 @@ def full_windows_results(windows_results):
 
 def test_valid_full_windows_results(full_windows_results):
     validate_windows_results(full_windows_results)
+
+
+@pytest.fixture
+def internal_windows_results(full_windows_results):
+    logs = full_windows_results / "nested/QDC_logs"
+    provider = logs / "onnxruntime_provider_test.exe.Release.results.xml"
+    reports = [f"onnxruntime_provider_test.exe.Release.shard{index}.results.xml" for index in range(2)]
+    for name in reports:
+        (logs / name).write_bytes(provider.read_bytes())
+    provider.unlink()
+    (logs / "required-reports.results.txt").write_text(
+        json.dumps(
+            {
+                "test_mode": "full",
+                "build_config": "Release",
+                "provider_test_processes": 2,
+                "ctest_reports": [*reports, "other_unit_test.exe.Release.results.xml"],
+            }
+        )
+    )
+    return full_windows_results
+
+
+def test_valid_internal_windows_results(internal_windows_results):
+    validate_windows_results(internal_windows_results)
+
+
+@pytest.mark.parametrize("index", (0, 1))
+@pytest.mark.parametrize("outcome", ("missing", "failed", "skipped"))
+def test_both_internal_provider_processes_must_pass(internal_windows_results, index, outcome):
+    report = (
+        internal_windows_results / f"nested/QDC_logs/onnxruntime_provider_test.exe.Release.shard{index}.results.xml"
+    )
+    if outcome == "missing":
+        report.unlink()
+    else:
+        child = '<failure message="HTP inference failed" />' if outcome == "failed" else "<skipped />"
+        report.write_text(f'<testsuite><testcase classname="QnnHTPBackendTests">{child}</testcase></testsuite>')
+    with pytest.raises(ValueError):
+        validate_windows_results(internal_windows_results)
+
+
+@pytest.mark.parametrize("processes", (0, 3, True, "2"))
+def test_invalid_provider_process_count_is_rejected(internal_windows_results, processes):
+    path = internal_windows_results / "nested/QDC_logs/required-reports.results.txt"
+    manifest = json.loads(path.read_text())
+    manifest["provider_test_processes"] = processes
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="Unsupported provider test process count"):
+        validate_windows_results(internal_windows_results)
 
 
 @pytest.mark.parametrize(

@@ -246,6 +246,8 @@ def _make_fake_vc_redist(redist_root: Path, arch_subdir: str) -> None:
     [
         ("windows-x86_64", "x64"),
         ("windows-arm64", "arm64"),
+        ("windows-arm64-internal-symbols", "arm64"),
+        ("windows-x86_64-internal-symbols", "x64"),
         ("windows-arm64ec", "arm64"),  # arm64ec loads the native ARM64 CRT
         ("windows-arm64x", "arm64"),  # arm64x is a hybrid arm64+arm64ec set; native ARM64 CRT
     ],
@@ -271,11 +273,11 @@ def test_archive_windows_bundles_msvc_redist(tmp_path, plat, arch_subdir):
     assert not any(n.endswith(".manifest") for n in names)
 
 
-def test_archive_windows_redist_colocates_with_binaries_nested_layout(tmp_path):
+@pytest.mark.parametrize("plat", ("windows-arm64", "windows-arm64-internal-symbols"))
+def test_archive_windows_redist_colocates_with_binaries_nested_layout(tmp_path, plat):
     """Regression: in the VS multi-config layout binaries nest at Release/Release/, so the
     redist must land there too — otherwise the loader can't find it on a clean machine."""
     repo_root = tmp_path / "repo"
-    plat = "windows-arm64"
     _make_fake_windows_tree_nested(repo_root, plat)
     redist_root = tmp_path / "redist"
     _make_fake_vc_redist(redist_root, "arm64")

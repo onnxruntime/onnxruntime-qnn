@@ -167,7 +167,7 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     // Conv's actual compute bitwidth is always the wider of the activation's and the output's: when
     // the activation is wider, it's Converted down only after Conv (AddOpWithQuantizedOutput);
     // otherwise the activation is Converted up to the output's precision before Conv runs.
-    // See utils::ConvertActivationToOutputPrecision.
+    // See utils::ConvertInputToPrecision.
     Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
     RETURN_IF_ERROR(utils::GetQnnDataType(node_unit.Outputs()[0].quant_param.has_value(),
                                           node_unit.Outputs()[0].type, declared_output_dtype));
@@ -342,8 +342,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     // 2. Convert the activation to the output's precision before Conv consumes it, so Conv computes and emits
     // natively at declared_output_dtype. A 16-bit activation feeding an 8-bit output is left to
     // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output.
-    RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names, declared_output_dtype,
-                                                              do_op_validation));
+    RETURN_IF_ERROR(utils::ConvertInputToPrecision(qnn_model_wrapper, node_unit, input_names[0], declared_output_dtype,
+                                                   do_op_validation));
     act_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
   }
 
