@@ -261,6 +261,49 @@ void AssertOpOutputInQnnGraph(const std::filesystem::path& dump_dir,
   }
 }
 
+void AssertOpInputInQnnGraph(const std::filesystem::path& dump_dir,
+                             const std::string& op,
+                             size_t input_index,
+                             uint32_t expected_data_type,
+                             std::optional<std::pair<float, int32_t>> expected_scale_offset) {
+  if (::testing::Test::IsSkipped()) {
+    GTEST_SKIP() << "Skipped: no QNN graph dump was produced (test was already skipped).";
+  }
+  std::filesystem::path json_path;
+  ASSERT_TRUE(FindQnnJsonGraph(dump_dir, json_path)) << "No QNN JSON graph file found in " << dump_dir;
+  nlohmann::json root;
+  ASSERT_TRUE(ParseQnnJsonGraph(json_path, root)) << "Failed to parse QNN JSON graph: " << json_path;
+  SCOPED_TRACE(json_path.string());
+  try {
+    const auto& graph = root.at("graph");
+    const auto& nodes = graph.at("nodes");
+    const auto& tensors = graph.at("tensors");
+    ASSERT_TRUE(nodes.is_object() && tensors.is_object());
+    const nlohmann::json* matched_node = nullptr;
+    for (const auto& node : nodes) {
+      if (node.at("type") == op) {
+        ASSERT_EQ(matched_node, nullptr) << "Expected a single " << op << " node";
+        matched_node = &node;
+      }
+    }
+    ASSERT_NE(matched_node, nullptr) << "No " << op << " node found";
+    const auto& inputs = matched_node->at("input_names");
+    ASSERT_TRUE(inputs.is_array() && input_index < inputs.size() && inputs[input_index].is_string());
+    const auto& tensor = tensors.at(inputs[input_index].get<std::string>());
+    EXPECT_EQ(tensor.at("data_type").get<uint32_t>(), expected_data_type);
+    if (expected_scale_offset.has_value()) {
+      const auto& quant_params = tensor.at("quant_params");
+      EXPECT_EQ(quant_params.at("definition").get<uint32_t>(), QNN_DEFINITION_DEFINED);
+      EXPECT_EQ(quant_params.at("encoding").get<uint32_t>(), QNN_QUANTIZATION_ENCODING_SCALE_OFFSET);
+      const auto& scale_offset = quant_params.at("scale_offset");
+      EXPECT_FLOAT_EQ(scale_offset.at("scale").get<float>(), expected_scale_offset->first);
+      EXPECT_EQ(scale_offset.at("offset").get<int32_t>(), expected_scale_offset->second);
+    }
+  } catch (const std::exception& ex) {
+    FAIL() << "Failed to check " << op << " input " << input_index << ": " << ex.what();
+  }
+}
+
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
                              const std::string& node_name) {
   // Same skip-propagation safety net as AssertOpInQnnGraph above.

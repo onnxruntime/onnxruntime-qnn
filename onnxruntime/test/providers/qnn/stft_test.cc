@@ -76,6 +76,47 @@ static void RunStftOpTest(const TestInputDef<SignalType>& signal_def,
                   EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
+template <typename StepType>
+static void RunStftScalarInputTest(bool constant_frame_step,
+                                   bool constant_frame_length,
+                                   ExpectedEPNodeAssignment expected_ep_assignment) {
+  std::vector<float> signal_data(128, 1.0f);
+  std::vector<float> window_data(16, 1.0f);
+
+  RunStftOpTest<float, StepType>(
+      TestInputDef<float>({1, 128, 1}, false, signal_data),
+      TestInputDef<StepType>({}, constant_frame_step, {8}),
+      TestInputDef<float>({16}, true, window_data),
+      TestInputDef<StepType>({}, constant_frame_length, {16}),
+      {test::MakeAttribute("onesided", static_cast<int64_t>(1))},
+      17,
+      expected_ep_assignment);
+}
+
+TEST_F(QnnHTPBackendTests, StftOp_DynamicFrameStep_FallsBack) {
+  RunStftScalarInputTest<int32_t>(false, true, ExpectedEPNodeAssignment::None);
+}
+
+TEST_F(QnnHTPBackendTests, StftOp_DynamicFrameLength_FallsBack) {
+  RunStftScalarInputTest<int32_t>(true, false, ExpectedEPNodeAssignment::None);
+}
+
+TEST_F(QnnHTPBackendTests, StftOp_Int32ConstantParameters) {
+  RunStftScalarInputTest<int32_t>(true, true, ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, StftOp_Int64ConstantParameters) {
+  RunStftScalarInputTest<int64_t>(true, true, ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, StftOp_Int64DynamicFrameStep_FallsBack) {
+  RunStftScalarInputTest<int64_t>(false, true, ExpectedEPNodeAssignment::None);
+}
+
+TEST_F(QnnHTPBackendTests, StftOp_Int64DynamicFrameLength_FallsBack) {
+  RunStftScalarInputTest<int64_t>(true, false, ExpectedEPNodeAssignment::None);
+}
+
 TEST_F(QnnHTPBackendTests, StftOp_Float_WithWindowOnly) {
   std::vector<float> signal_data(128, 1.0f);  // Signal: shape [1, 128, 1]
   std::vector<float> window_data(16, 1.0f);   // Window: shape [16]

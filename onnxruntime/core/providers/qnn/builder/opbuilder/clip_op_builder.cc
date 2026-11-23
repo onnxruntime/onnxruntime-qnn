@@ -41,7 +41,8 @@ static Ort::Status ProcessClipMinMax(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input, input_info));
 
   RETURN_IF_NOT(input_info.is_initializer, "QNN EP: Clip min/max must be a constant initializer.");
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, val_bytes));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(
+      input_info.initializer_tensor, val_bytes, true, utils::GetElementSizeByType(input_info.qnn_data_type)));
 
   // If the input is quantized, we need to dequantize it
   if (input.quant_param.has_value()) {

@@ -187,6 +187,36 @@ TEST_F(QnnHTPBackendTests, ScatterNDSharedNegativeIndicesInitializer) {
                   EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
+TEST_F(QnnHTPBackendTests, ScatterNDRejectsRankZeroIndices) {
+  VerifyMalformedNdIndexShapeIsRejected([](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("data", {2}, {1.0f, 2.0f});
+    builder.MakeInitializer<int64_t>("indices", {}, {0});
+    builder.MakeInitializer<float>("updates", {2}, {3.0f, 4.0f});
+    builder.AddNode("scatternd", "ScatterND", {"data", "indices", "updates"}, {"Y"}, kOnnxDomain);
+    builder.MakeOutput("Y");
+  });
+}
+
+TEST_F(QnnHTPBackendTests, ScatterNDRejectsZeroIndexDepth) {
+  VerifyMalformedNdIndexShapeIsRejected([](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("data", {2}, {1.0f, 2.0f});
+    builder.MakeInitializer<int64_t>("indices", {1, 0}, {});
+    builder.MakeInitializer<float>("updates", {1, 2}, {3.0f, 4.0f});
+    builder.AddNode("scatternd", "ScatterND", {"data", "indices", "updates"}, {"Y"}, kOnnxDomain);
+    builder.MakeOutput("Y");
+  });
+}
+
+TEST_F(QnnHTPBackendTests, ScatterNDRejectsIndexDepthPastDataRank) {
+  VerifyMalformedNdIndexShapeIsRejected([](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("data", {2}, {1.0f, 2.0f});
+    builder.MakeInitializer<int64_t>("indices", {1, 2}, {0, 0});
+    builder.MakeInitializer<float>("updates", {1}, {3.0f});
+    builder.AddNode("scatternd", "ScatterND", {"data", "indices", "updates"}, {"Y"}, kOnnxDomain);
+    builder.MakeOutput("Y");
+  });
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 
