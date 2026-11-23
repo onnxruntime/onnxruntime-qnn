@@ -215,6 +215,10 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AU16_WS16Shifted) {
 // mixed CPU/QNN execution could still produce wrong numbers -- so this also checks output accuracy
 // against the CPU EP reference.
 TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale_AU16_WS16Shifted) {
+  // RunRMSNormQDQTest's GTEST_SKIP() for HTP arch <= V68 only returns out of that helper, not out of
+  // this test body -- without this guard, the AssertOpInQnnGraph calls below still run on such
+  // runners and fail because no QNN graph was ever dumped (the run itself was skipped).
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "RMSNorm1D_LastAxis_DynamicScale_AU16_WS16Shifted";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -262,6 +266,10 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_WS16Shifted) {
 // leading Quantize ops (input, dynamic gamma), which end up as their own standalone QNN partition.
 // Also checks output accuracy against the CPU EP reference, same reasoning as the AU16 case above.
 TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale_AS16_WS16Shifted) {
+  // Same reason as the AU16 case above: the post-run AssertOpInQnnGraph calls need their own skip,
+  // since RunRMSNormQDQTest's internal GTEST_SKIP() for HTP arch <= V68 doesn't propagate out of
+  // this test body on its own.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "RMSNorm1D_LastAxis_DynamicScale_AS16_WS16Shifted";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -318,6 +326,10 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_PositiveOffset) {
 // Asserts the re-encoded tensor's actual scale/offset rather than only checking output tolerance,
 // since a wrong-but-close re-encode could still pass ElementwiseAbsoluteVerifier by coincidence.
 TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_SmallPositiveOffset) {
+  // RunRMSNormQDQTest's GTEST_SKIP() for HTP arch <= V68 only returns out of that helper, not out of
+  // this test body -- without this guard, the AssertTensorQuantParamsInQnnGraph call below still runs
+  // on such runners and fails because no QNN graph was ever dumped (the run itself was skipped).
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "RMSNorm1D_LastAxis_StaticScale_AS16_SmallPositiveOffset";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -361,6 +373,10 @@ TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_MixedSignGamma) {
 // happens to land within tolerance", so this also asserts the tensor QNN actually receives keeps
 // its original scale/offset -- i.e. the re-encode truly did not fire.
 TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AS16_OffsetZero) {
+  // Same reason as SmallPositiveOffset above: the post-run AssertTensorQuantParamsInQnnGraph call
+  // needs its own skip, since RunRMSNormQDQTest's internal GTEST_SKIP() for HTP arch <= V68 doesn't
+  // propagate out of this test body on its own.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "RMSNorm1D_LastAxis_StaticScale_AS16_OffsetZero";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
