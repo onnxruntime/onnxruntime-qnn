@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from archive_tests import (
+    _TARGET_PLATFORMS,
     PerArchAcceptRules,
     _iter_msvc_redist,
     archive_linux,
@@ -25,6 +26,17 @@ def _touch(p: Path, content: str = "") -> None:
 @pytest.fixture
 def per_arch_rules() -> PerArchAcceptRules:
     return PerArchAcceptRules()
+
+
+@pytest.mark.parametrize(
+    "target_platform",
+    [
+        "linux-x86_64_ubuntu_22_04-internal-symbols",
+        "linux-aarch64_manylinux_2_34-internal-symbols",
+    ],
+)
+def test_internal_symbol_linux_target_platform_is_supported(target_platform: str) -> None:
+    assert target_platform in _TARGET_PLATFORMS
 
 
 # --- accept-list rule unit tests ---
