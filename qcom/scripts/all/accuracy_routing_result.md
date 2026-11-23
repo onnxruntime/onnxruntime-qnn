@@ -32,12 +32,19 @@ run ID, and attempt against the expected producer run.
 | `selection_complete` | Whether the runner completed its group selection |
 | `runner_exit_code`, `snapshot_exit_code` | Actual execution outcomes, including failure exits |
 | `snapshots` | Registered in-scope Snapshot identities and observed `match`, `drift`, or `untrusted` status |
-| `accuracy_decisions` | Accuracy identity, all Snapshot identities in its group, evidence status, and observed runner action |
+| `accuracy_decisions` | Accuracy identity, paired Snapshot identities with the same suite variant and testcase name, evidence status, and observed runner action |
 | `payload_sha256` | SHA-256 of UTF-8 compact JSON for all other fields, with keys sorted recursively |
+
+`snapshot_test_ids` contains only the paired testcase, not the entire operator
+group. OpBuilder and Session Snapshot suites map to the corresponding Accuracy
+suite by preserving the variant suffix and exact testcase name. If both tiers
+contain that same case, both identities are listed. Cases without an exact
+pair are `unmapped`; another case or variant cannot supply their evidence.
 
 `accuracy_decisions[].runner_action` is `run`, `skip`, `unknown` (selection did not
 complete), or `out_of_scope` (no in-scope Snapshot group). It describes observed
-Linux selection. It does not grant target-platform eligibility. Evidence status
+Linux group selection. A paired case may match while its group still runs due
+to drift in another case. It does not grant target-platform eligibility. Evidence status
 is independently `match`, `drift`, `untrusted`, or `unmapped`; a Linux skip with
 missing or incompatible metadata remains untrusted for consumption.
 

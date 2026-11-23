@@ -19,8 +19,8 @@ SNAPSHOT = "QnnSnapshot_Clip_OpBuilderTest"
 ACCURACY = "QnnAcc_Clip_AccuracyTest"
 
 
-def export(tmp_path, snapshot, manifest, extra=()):
-    (tmp_path / "snapshots.txt").write_text(f"{SNAPSHOT}.\n  Case\n")
+def export(tmp_path, snapshot, manifest, extra=(), snapshot_list=None):
+    (tmp_path / "snapshots.txt").write_text(snapshot_list or f"{SNAPSHOT}.\n  Case\n")
     (tmp_path / "accuracy.txt").write_text(f"{ACCURACY}.\n  Case\nQnnAcc_Other_AccuracyTest.\n  Other\n")
     (tmp_path / "snapshot.json").write_text(json.dumps(snapshot))
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
@@ -92,6 +92,56 @@ def test_duplicate_snapshot_identity_fails_closed(tmp_path):
     data["testsuites"].append(data["testsuites"][0])
     result = export(tmp_path, data, MANIFEST, ("--selection-complete",))
     assert result["accuracy_decisions"][0]["status"] == "untrusted"
+
+
+def test_pairing_excludes_other_cases_and_variants(tmp_path):
+    other_variant = "QnnSnapshot_Clip_OpBuilder_QDQFloatTest"
+    drift = {**PASS, "failures": [{"failure": "[QNN_SNAPSHOT_DRIFT]"}]}
+    data = {
+        "testsuites": [
+            {"name": SNAPSHOT, "testsuite": [{"name": "Case", **PASS}, {"name": "Other", **drift}]},
+            {"name": other_variant, "testsuite": [{"name": "Case", **drift}]},
+        ]
+    }
+    result = export(
+        tmp_path,
+        data,
+        MANIFEST,
+        ("--selection-complete", "--target-groups=Clip"),
+        snapshot_list=f"{SNAPSHOT}.\n  Case\n  Other\n{other_variant}.\n  Case\n",
+    )
+    decision = result["accuracy_decisions"][0]
+    assert decision["snapshot_test_ids"] == [SNAPSHOT + ".Case"]
+    assert decision["status"] == "match"
+    assert decision["runner_action"] == "run"
+
+
+def test_pairing_includes_both_snapshot_tiers_for_the_same_case(tmp_path):
+    session = "QnnSnapshot_Clip_SessionTest"
+    data = {"testsuites": [{"name": suite, "testsuite": [{"name": "Case", **PASS}]} for suite in (SNAPSHOT, session)]}
+    result = export(
+        tmp_path,
+        data,
+        MANIFEST,
+        ("--selection-complete",),
+        snapshot_list=f"{SNAPSHOT}.\n  Case\n{session}.\n  Case\n",
+    )
+    assert result["accuracy_decisions"][0]["snapshot_test_ids"] == [SNAPSHOT + ".Case", session + ".Case"]
+
+
+def test_same_group_without_exact_pair_is_unmapped(tmp_path):
+    data = {"testsuites": [{"name": SNAPSHOT, "testsuite": [{"name": "Other", **PASS}]}]}
+    result = export(
+        tmp_path,
+        data,
+        MANIFEST,
+        ("--selection-complete", "--target-groups=Clip"),
+        snapshot_list=f"{SNAPSHOT}.\n  Other\n",
+    )
+    decision = result["accuracy_decisions"][0]
+    assert decision["snapshot_test_ids"] == []
+    assert decision["status"] == "unmapped"
+    assert decision["runner_action"] == "run"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake executable fixture")

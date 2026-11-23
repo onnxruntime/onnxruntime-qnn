@@ -12,7 +12,7 @@ import os
 import re
 from pathlib import Path
 
-SNAPSHOT_GROUP = re.compile(r"^QnnSnapshot_(.+?)_(?:OpBuilder|Session)(?:_\w+)?Test$")
+SNAPSHOT_GROUP = re.compile(r"^QnnSnapshot_(.+?)_(?:OpBuilder|Session)(_\w+)?Test$")
 ACCURACY_GROUP = re.compile(r"^QnnAcc_(.+?)_Accuracy(?:_\w+)?Test$")
 
 
@@ -83,14 +83,17 @@ def export_result(args: argparse.Namespace) -> dict:
     )
     target_groups = set(filter(None, args.target_groups.split(",")))
     snapshots = []
-    groups: dict[str, list[dict]] = {}
+    groups = set()
+    paired_snapshots: dict[tuple[str, str], list[dict]] = {}
     for suite, name in snapshot_cases:
         match = SNAPSHOT_GROUP.fullmatch(suite)
         if not match:
             raise ValueError(f"Unrecognized Snapshot suite: {suite}")
         record = {"test_id": f"{suite}.{name}", "status": statuses.get((suite, name), "untrusted")}
         snapshots.append(record)
-        groups.setdefault(match[1], []).append(record)
+        groups.add(match[1])
+        accuracy_suite = f"QnnAcc_{match[1]}_Accuracy{match[2] or ''}Test"
+        paired_snapshots.setdefault((accuracy_suite, name), []).append(record)
 
     decisions = []
     for suite, name in accuracy_cases:
@@ -98,7 +101,7 @@ def export_result(args: argparse.Namespace) -> dict:
         if not match:
             raise ValueError(f"Unrecognized Accuracy suite: {suite}")
         group = match[1]
-        evidence = groups.get(group, [])
+        evidence = paired_snapshots.get((suite, name), [])
         if not evidence:
             status = "unmapped"
         elif any(case["status"] == "drift" for case in evidence):
@@ -111,7 +114,7 @@ def export_result(args: argparse.Namespace) -> dict:
         action = "run" if group in target_groups else "skip"
         if not args.selection_complete:
             action = "unknown"
-        elif not evidence:
+        elif group not in groups:
             action = "out_of_scope"
         decisions.append(
             {
