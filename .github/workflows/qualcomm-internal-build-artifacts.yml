@@ -142,7 +142,9 @@ jobs:
       target_arch: x86_64_ubuntu_22_04
       testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: ${{ matrix.target_py_vsn }}
-      run_tests: false
+      # Validate once on the X64 build runner using the first Python-version build.
+      run_tests: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
+      build_test_same_runner: true
       test_wheel: false
       upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
       upload_wheel: true
@@ -166,11 +168,12 @@ jobs:
       testdata_archive_artifact_name: testdata-zip
       target_py_vsn: ${{ matrix.target_py_vsn }}
       build_runner_arch: "${{ matrix.target_arch == 'arm64' && 'ARM64' || 'X64' }}"
-      test_runner_arch: ARM64
+      test_runner_arch: "${{ matrix.target_arch == 'arm64' && 'ARM64' || 'X64' }}"
       # Validate the shared ARM64 test archive once: native HTP v73 and QDC HTP v81
       # consume the archive uploaded by the first Python-version build.
-      run_tests: ${{ matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      build_test_same_runner: false
+      # Windows x86_64 validates locally once; ARM64 retains its cross-runner tests.
+      run_tests: ${{ (matrix.target_arch == 'arm64' || matrix.target_arch == 'x86_64') && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_test_same_runner: ${{ matrix.target_arch != 'arm64' }}
       test_wheel: false
       # For each arch, upload the test archive with the first Python version we encounter
       upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
