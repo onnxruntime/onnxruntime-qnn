@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -19,6 +20,27 @@
 namespace onnxruntime {
 namespace test {
 namespace {
+
+struct CapturedTransposeNode {
+  std::string type;
+  std::vector<std::string> inputs;
+  std::vector<std::string> outputs;
+};
+
+std::vector<CapturedTransposeNode> captured_transpose_nodes;
+
+Qnn_ErrorHandle_t CaptureTransposeNode(Qnn_GraphHandle_t, Qnn_OpConfig_t op_config) {
+  CapturedTransposeNode node;
+  node.type = op_config.v1.typeName;
+  for (uint32_t i = 0; i < op_config.v1.numOfInputs; ++i) {
+    node.inputs.emplace_back(qnn::GetQnnTensorName(op_config.v1.inputTensors[i]));
+  }
+  for (uint32_t i = 0; i < op_config.v1.numOfOutputs; ++i) {
+    node.outputs.emplace_back(qnn::GetQnnTensorName(op_config.v1.outputTensors[i]));
+  }
+  captured_transpose_nodes.push_back(std::move(node));
+  return QNN_GRAPH_NO_ERROR;
+}
 
 std::vector<FakeOpAttr> MakePermAttr(const std::vector<int64_t>& perm) {
   return {FakeOpAttr::MakeInt64s("perm", perm)};
@@ -75,32 +97,40 @@ TEST(QnnUnit_Transpose_ComponentTest, EmptyInputs_IsNoOp) {
   EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("output"));
 }
 
-TEST(QnnUnit_Transpose_ComponentTest, Int64GraphOutput_EmitsCastInsteadOfReshape) {
+TEST(QnnUnit_Transpose_ComponentTest, OversizedStaticInput_DeclinesFoldAndEmitsTranspose) {
   OpBuilderTestContext ctx;
-  SetupMockInitRegistryStubs(ctx);
-  ctx.output_info.names.push_back("output");
-  ctx.output_info.indices["output"] = 0;
+  ctx.qnn_interface.tensorCreateGraphTensor = [](Qnn_GraphHandle_t, Qnn_Tensor_t*) {
+    return static_cast<Qnn_ErrorHandle_t>(QNN_TENSOR_NO_ERROR);
+  };
+  ctx.qnn_interface.graphAddNode = CaptureTransposeNode;
   auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
   ASSERT_NE(wrapper, nullptr);
   qnn::utils::UniqueNameGenerator().Reset();
 
-  auto input = MakeMockIODef("input_cast_int32", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32,
-                             std::vector<int64_t>{128, 1, 128});
-  auto output = MakeMockIODef("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
-                              std::vector<int64_t>{1, 128, 128});
+  // The fold budget is 1 MiB. A valid FP32 tensor above it must fall back
+  // to a runtime Transpose rather than producing a folded STATIC output.
+  AddStaticFloatTensor(*wrapper, "input", {513, 513}, std::vector<float>(513 * 513, 1.0f));
+  auto input = MakeMockIODef("input", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                             std::vector<int64_t>{513, 513});
+  auto output = MakeMockIODef("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                              std::vector<int64_t>{513, 513});
   auto node = MakeMockNodeUnit("Transpose", {input}, {output}, "transpose", "", 13, 0,
-                               MakePermAttr({1, 0, 2}));
+                               MakePermAttr({1, 0}));
   const auto* builder = qnn::GetOpBuilder("Transpose");
   ASSERT_NE(builder, nullptr);
-
-  const auto status = builder->AddToModelBuilder(*wrapper, node, ctx.ort_logger, /*do_op_validation=*/false);
+  const auto status = builder->AddToModelBuilder(*wrapper, node, ctx.ort_logger, false);
   ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
-  const auto& tensors = wrapper->GetModelTensorsMap();
-  const auto output_it = tensors.find("output");
-  ASSERT_NE(output_it, tensors.end());
-  EXPECT_EQ(output_it->second.GetTensorType(), QNN_TENSOR_TYPE_APP_READ);
-  EXPECT_EQ(output_it->second.GetTensorDataType(), QNN_DATATYPE_INT_32);
-  EXPECT_NE(tensors.find("output_cast_int64"), tensors.end());
+  const auto& output_tensor = wrapper->GetQnnTensorWrapper("output");
+  EXPECT_EQ(output_tensor.GetTensorType(), QNN_TENSOR_TYPE_NATIVE);
+  EXPECT_EQ(output_tensor.GetTensorDataType(), QNN_DATATYPE_FLOAT_32);
+  EXPECT_EQ(output_tensor.GetTensorDims(), (std::vector<uint32_t>{513, 513}));
+
+  captured_transpose_nodes.clear();
+  ASSERT_TRUE(wrapper->ComposeQnnGraph());
+  ASSERT_EQ(captured_transpose_nodes.size(), 1u);
+  EXPECT_EQ(captured_transpose_nodes[0].type, QNN_OP_TRANSPOSE);
+  EXPECT_EQ(captured_transpose_nodes[0].inputs, (std::vector<std::string>{"input"}));
+  EXPECT_EQ(captured_transpose_nodes[0].outputs, (std::vector<std::string>{"output"}));
 }
 
 }  // namespace test
