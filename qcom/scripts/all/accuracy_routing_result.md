@@ -51,6 +51,12 @@ missing or incompatible metadata remains untrusted for consumption.
 The digest detects payload corruption. It does not authenticate a producer.
 Consumers must obtain artifacts from the expected trusted workflow run.
 
+Manifest versions must be nonempty strings, and the profile must be a valid
+namespace identifier. Invalid nested values are normalized to null. GTest
+`failures`, when present, must be an array of objects with string failure
+messages; invalid nested evidence is untrusted. This validation never changes
+the independently observed runner action.
+
 ## Initial Consumer Boundary
 
 This change publishes results only. It supplies no Windows consumer or target

@@ -94,6 +94,51 @@ def test_duplicate_snapshot_identity_fails_closed(tmp_path):
     assert result["accuracy_decisions"][0]["status"] == "untrusted"
 
 
+@pytest.mark.parametrize("profile", [True, False, {}, {"profile": "simulator"}, [], 73, "", " ", "profile/invalid"])
+@pytest.mark.parametrize("targets", ["", "Clip"])
+def test_invalid_manifest_profile_cannot_supply_match(tmp_path, profile, targets):
+    result = export(
+        tmp_path,
+        snapshot(PASS),
+        {**MANIFEST, "golden_profile": profile},
+        ("--selection-complete", f"--target-groups={targets}"),
+    )
+    assert not result["versions_match"]
+    assert result["producer"]["golden_profile"] is None
+    assert result["golden_manifest"]["golden_profile"] is None
+    assert result["accuracy_decisions"][0]["status"] == "untrusted"
+    assert result["accuracy_decisions"][0]["runner_action"] == ("run" if targets else "skip")
+
+
+@pytest.mark.parametrize(
+    "failures", [{}, "", None, False, 0, ["QNN_SNAPSHOT_DRIFT"], [{}], [{"failure": None}], [{"failure": 42}]]
+)
+@pytest.mark.parametrize("targets", ["", "Clip"])
+def test_invalid_nested_failures_cannot_supply_match(tmp_path, failures, targets):
+    result = export(
+        tmp_path,
+        snapshot({**PASS, "failures": failures}),
+        MANIFEST,
+        ("--selection-complete", f"--target-groups={targets}"),
+    )
+    assert result["snapshots"][0]["status"] == "untrusted"
+    assert result["accuracy_decisions"][0]["status"] == "untrusted"
+    assert result["accuracy_decisions"][0]["runner_action"] == ("run" if targets else "skip")
+
+
+@pytest.mark.parametrize("field", ["qairt_version", "ort_version"])
+def test_invalid_manifest_versions_are_normalized_to_unknown(tmp_path, field):
+    result = export(tmp_path, snapshot(PASS), {**MANIFEST, field: {}}, ("--selection-complete",))
+    assert result["golden_manifest"][field] is None
+    assert not result["versions_match"]
+    assert result["accuracy_decisions"][0]["status"] == "untrusted"
+
+
+def test_valid_empty_failure_array_still_supplies_match(tmp_path):
+    result = export(tmp_path, snapshot({**PASS, "failures": []}), MANIFEST, ("--selection-complete",))
+    assert result["accuracy_decisions"][0]["status"] == "match"
+
+
 def test_pairing_excludes_other_cases_and_variants(tmp_path):
     other_variant = "QnnSnapshot_Clip_OpBuilder_QDQFloatTest"
     drift = {**PASS, "failures": [{"failure": "[QNN_SNAPSHOT_DRIFT]"}]}

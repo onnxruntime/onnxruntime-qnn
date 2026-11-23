@@ -14,6 +14,7 @@ from pathlib import Path
 
 SNAPSHOT_GROUP = re.compile(r"^QnnSnapshot_(.+?)_(?:OpBuilder|Session)(_\w+)?Test$")
 ACCURACY_GROUP = re.compile(r"^QnnAcc_(.+?)_Accuracy(?:_\w+)?Test$")
+GOLDEN_PROFILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 def parse_test_list(text: str) -> list[tuple[str, str]]:
@@ -33,14 +34,19 @@ def parse_test_list(text: str) -> list[tuple[str, str]]:
 
 
 def snapshot_status(case: dict) -> str:
-    messages = json.dumps(case)
+    failures = case.get("failures", [])
+    if not isinstance(failures, list) or any(
+        not isinstance(failure, dict) or not isinstance(failure.get("failure"), str) for failure in failures
+    ):
+        return "untrusted"
+    if case.get("status") != "RUN" or case.get("result") != "COMPLETED":
+        return "untrusted"
+    messages = "\n".join(failure["failure"] for failure in failures)
     if "QNN_SNAPSHOT_DRIFT" in messages:
         return "drift"
     if "QNN_GOLDEN_ABSENT" in messages:
         return "untrusted"
-    if case.get("status") == "RUN" and case.get("result") == "COMPLETED" and not case.get("failures"):
-        return "match"
-    return "untrusted"
+    return "untrusted" if failures else "match"
 
 
 def load_snapshot_cases(path: Path) -> dict[tuple[str, str], str]:
@@ -58,7 +64,16 @@ def load_snapshot_cases(path: Path) -> dict[tuple[str, str], str]:
 def read_manifest(path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
+        if not isinstance(value, dict):
+            return {}
+        manifest = {}
+        for key in ("qairt_version", "ort_version", "golden_profile"):
+            field = value.get(key)
+            valid = isinstance(field, str) and bool(field.strip())
+            if key == "golden_profile":
+                valid = valid and GOLDEN_PROFILE.fullmatch(field) is not None
+            manifest[key] = field if valid else None
+        return manifest
     except (OSError, ValueError):
         return {}
 
