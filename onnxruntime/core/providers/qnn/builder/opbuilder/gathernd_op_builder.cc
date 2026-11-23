@@ -18,6 +18,10 @@ class GatherNDOpBuilder : public BaseOpBuilder {
   GatherNDOpBuilder() : BaseOpBuilder("GatherNDOpBuilder") {}
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(GatherNDOpBuilder);
 
+  Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger) const override ORT_MUST_USE_RESULT;
+
  protected:
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
@@ -129,6 +133,25 @@ Ort::Status ProcessGatherNDIndices(QnnModelWrapper& qnn_model_wrapper,
 
 }  // namespace
 
+Ort::Status GatherNDOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                             const OrtNodeUnit& node_unit,
+                                             const Ort::Logger& logger) const {
+  // HTP cannot compile GatherND with rank-5 (or higher) indices, and the flattening workaround in
+  // ProcessGatherNDIndices is only valid when batch_dims == 0. Decline so the node falls back to CPU instead
+  // of passing validation and then failing at graph finalization.
+  if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP) {
+    OrtNodeAttrHelper node_helper(node_unit);
+    const int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
+    std::vector<uint32_t> indices_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[1].shape, indices_shape),
+                  "Cannot get GatherND indices shape.");
+    RETURN_IF_NOT(batch_dims == 0 || indices_shape.size() <= 4,
+                  "HTP GatherND does not support batch_dims > 0 with indices of rank > 4.");
+  }
+
+  return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);
+}
+
 Ort::Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                              const OrtNodeUnit& node_unit,
                                              const Ort::Logger& logger,
@@ -211,7 +234,8 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   RETURN_IF(indices_dims.empty(), "QNN EP: GatherND indices must have rank >= 1.");
 
   // ONNX GatherND output shape:
-  //   data[:num_batch_dims] ++ indices[:-1] ++ data[num_batch_dims + indices.back():]
+  //   indices[:-1] ++ data[num_batch_dims + indices.back():]
+  // The leading num_batch_dims dims of indices are the batch dims, so they are already part of indices[:-1].
   const auto num_batch_dims = static_cast<size_t>(batch_dims);
   const size_t index_tuple_size = indices_dims.back();
   RETURN_IF(num_batch_dims >= indices_dims.size(),
@@ -222,11 +246,7 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
 
   std::vector<uint32_t> qnn_output_shape;
 
-  // Batch dims come from data.
-  for (size_t i = 0; i < num_batch_dims && i < data_dims.size(); ++i) {
-    qnn_output_shape.push_back(data_dims[i]);
-  }
-  // All indices dims except the innermost index-tuple dim.
+  // All indices dims except the innermost index-tuple dim (this includes the batch dims).
   for (size_t i = 0; i < indices_dims.size() - 1; ++i) {
     qnn_output_shape.push_back(indices_dims[i]);
   }
