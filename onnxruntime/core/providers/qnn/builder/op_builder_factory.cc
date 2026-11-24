@@ -33,6 +33,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGatherBlockQuantizedOpBuilder("GatherBlockQuantized", *this);
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
+  CreateGridSampleOpBuilder("GridSample", *this);
   CreateGroupNormalizationOpBuilder("GroupNormalization", *this);
   CreateGroupQueryAttentionOpBuilder("GroupQueryAttention", *this);
   CreateGRUOpBuilder("GRU", *this);
@@ -101,7 +102,6 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("Gelu", *this);
   CreateSimpleOpBuilder("Greater", *this);
   CreateSimpleOpBuilder("GreaterOrEqual", *this);
-  CreateSimpleOpBuilder("GridSample", *this);
   CreateSimpleOpBuilder("HardSigmoid", *this);
   CreateSimpleOpBuilder("HardSwish", *this);
   CreateSimpleOpBuilder("LeakyRelu", *this);

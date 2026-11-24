@@ -39,34 +39,10 @@ class SimpleOpBuilder : public BaseOpBuilder {
 
  private:
   Ort::Status ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
-
-  static constexpr std::array<std::string_view, 3> gridsample_supported_modes = {"bilinear", "nearest", "linear"};
-  static constexpr std::array<std::string_view, 3> gridsample_supported_padding_modes = {"zeros", "border", "reflection"};
 };
 
 Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const {
   const std::string& op_type = node_unit.OpType();
-
-  if (op_type == "GridSample") {
-    OrtNodeAttrHelper node_helper(node_unit);
-    std::string mode = node_helper.Get("mode", "linear");
-    RETURN_IF_NOT(utils::ArrayHasString(gridsample_supported_modes, mode),
-                  ("GridSample does not support mode " + mode).c_str());
-    std::string padding_mode = node_helper.Get("padding_mode", "zeros");
-    RETURN_IF_NOT(utils::ArrayHasString(gridsample_supported_padding_modes, padding_mode),
-                  ("GridSample does not support padding_mode " + padding_mode).c_str());
-
-    // QNN HTP supports rank <= 5 for 8/16-bit fixed-point GridSample, rank <= 4 for float.
-    TensorInfo input_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
-    const bool is_fixed_point = utils::IsQuant8bit(input_info.qnn_data_type) ||
-                                utils::IsQuant16bit(input_info.qnn_data_type);
-    const size_t max_rank = is_fixed_point ? 5 : 4;
-    RETURN_IF(input_info.shape.size() > max_rank,
-              ("QNN EP does not support GridSample with input rank > " + std::to_string(max_rank) +
-               (is_fixed_point ? " (fixed-point)." : " (floating-point)."))
-                  .c_str());
-  }
 
   const auto qnn_backend_type = qnn_model_wrapper.GetQnnBackendType();
 
@@ -296,43 +272,6 @@ Ort::Status ProcessAlphaAttributeAsInput(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-Ort::Status ProcessGridSampleAttributes(QnnModelWrapper& qnn_model_wrapper,
-                                        const OrtNodeUnit& node_unit,
-                                        std::vector<std::string>& param_tensor_names) {
-  OrtNodeAttrHelper node_helper(node_unit);
-  int64_t align_corners = node_helper.Get("align_corners", static_cast<int64_t>(0));
-  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), align_corners != 0,
-                                     QNN_OP_GRID_SAMPLE_PARAM_ALIGN_CORNERS, param_tensor_names));
-
-  std::string mode = node_helper.Get("mode", "linear");
-  uint32_t mode_value = QNN_OP_GRID_SAMPLE_MODE_BILINEAR;
-  if ("linear" == mode || "bilinear" == mode) {
-    mode_value = QNN_OP_GRID_SAMPLE_MODE_BILINEAR;
-  } else if ("nearest" == mode) {
-    mode_value = QNN_OP_GRID_SAMPLE_MODE_NEAREST;
-  } else {
-    return MAKE_EP_FAIL("GridSample mode only support [linear, bilinear, nearest].");
-  }
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), mode_value,
-                                         QNN_OP_GRID_SAMPLE_PARAM_MODE, param_tensor_names));
-
-  std::string padding_mode = node_helper.Get("padding_mode", "zeros");
-  uint32_t padding_mode_value = QNN_OP_GRID_SAMPLE_PADDING_MODE_ZEROS;
-  if ("zeros" == padding_mode) {
-    padding_mode_value = QNN_OP_GRID_SAMPLE_PADDING_MODE_ZEROS;
-  } else if ("border" == padding_mode) {
-    padding_mode_value = QNN_OP_GRID_SAMPLE_PADDING_MODE_BORDER;
-  } else if ("reflection" == padding_mode) {
-    padding_mode_value = QNN_OP_GRID_SAMPLE_PADDING_MODE_REFLECTION;
-  } else {
-    return MAKE_EP_FAIL("GridSample padding_mode only support [zeros, border, reflection].");
-  }
-  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), padding_mode_value,
-                                         QNN_OP_GRID_SAMPLE_PARAM_PADDING_MODE, param_tensor_names));
-
-  return Ort::Status();
-}
-
 // Left-folds a variadic ONNX Sum/Max/Min (>=2 inputs) into a chain of fine-grained QNN ops and builds
 // the final output node itself.
 // For quantized output: input->DQ->float32->Q->output
@@ -460,7 +399,7 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   if (do_op_validation) {
     RETURN_IF_ERROR(ExplicitOpCheck(qnn_model_wrapper, node_unit));
     // Skip the op validation for DepthToSpace & SpaceToDepth if it's not NHWC data layout
-    if (node_unit.Domain() != kMSInternalNHWCDomain && (op_type == "DepthToSpace" || op_type == "SpaceToDepth" || op_type == "GridSample")) {
+    if (node_unit.Domain() != kMSInternalNHWCDomain && (op_type == "DepthToSpace" || op_type == "SpaceToDepth")) {
       return Ort::Status();
     }
 
@@ -602,10 +541,6 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                            static_cast<uint32_t>(QNN_OP_SPACE_TO_DEPTH_MODE_DCR),
                                            QNN_OP_SPACE_TO_DEPTH_PARAM_MODE, param_tensor_names));
     RETURN_IF_ERROR(PropagatePerTensorInputQuantToOutput(qnn_model_wrapper, node_unit, input_names));
-  }
-
-  if (op_type == "GridSample") {
-    RETURN_IF_ERROR(ProcessGridSampleAttributes(qnn_model_wrapper, node_unit, param_tensor_names));
   }
 
   // Variadic Sum/Max/Min with > 2 inputs.  left-folded chain of fine-grained QNN ops. The helper does its

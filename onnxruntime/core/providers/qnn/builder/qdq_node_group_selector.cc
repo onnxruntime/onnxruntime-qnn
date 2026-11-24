@@ -2155,6 +2155,7 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
         domain_str != kMSInternalNHWCDomain &&
         domain_str != kMSDomain &&
         domain_str != kMLOnnxDomain &&
+        domain_str != kOrtContribDomain &&
         domain_str != kQtiAiswDomain) {
       continue;
     }

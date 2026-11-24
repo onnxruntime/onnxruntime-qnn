@@ -32,6 +32,11 @@
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
+
+// Domain of ONNX Runtime Extensions-style contrib ops (e.g. ai.onnx.contrib:GridSample).
+// Distinct from kQtiAiswDomain ("qti_aisw").
+inline constexpr const char* kOrtContribDomain = "ai.onnx.contrib";
+
 namespace qnn {
 class QnnOpConfigWrapper;
 class QnnModelWrapper;
