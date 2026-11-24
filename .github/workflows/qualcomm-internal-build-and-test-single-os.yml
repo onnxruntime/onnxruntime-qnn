@@ -147,7 +147,7 @@ env:
 
 jobs:
   build:
-    name: "build-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && inputs.target_os != 'linux' && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    name: "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     runs-on: ["self-hosted", "${{ inputs.build_runner_os != '' && inputs.build_runner_os || inputs.target_os }}", "${{ inputs.build_runner_arch }}", "Build"]
     defaults:
       run:
