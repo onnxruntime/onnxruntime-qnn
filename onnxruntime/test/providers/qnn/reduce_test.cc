@@ -938,6 +938,12 @@ static void RunReduceLogSumExpHTPBF16Test(const TestInputDef<float>& input_def,
 
 TEST_F(QnnHTPBackendTests, ReduceLogSumExp_HTP_BF16_KeepDims) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after resolving BF16 SoC model validation and offload.
+  // The configured SoC model is rejected before graph partitioning. Forcing it to 88 permits setup,
+  // but the BF16 decomposition is not assigned to QNN EP.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
   RunReduceLogSumExpHTPBF16Test(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-5.0f, 5.0f, 6)),
                                 {1, 2},  // axes
                                 true,    // keepdims

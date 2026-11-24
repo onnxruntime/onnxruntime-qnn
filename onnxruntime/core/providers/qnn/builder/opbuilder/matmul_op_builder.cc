@@ -320,6 +320,14 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   RETURN_IF_ERROR(ProcessInput0(qnn_model_wrapper, input_info_0, org_input_0_name, input_names,
                                 logger, do_op_validation, /*use_fully_connected=*/false));
 
+  // A U16 RHS requires a U16 activation regardless of the declared output precision.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      input_info_0.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8 &&
+      input_info_1.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
+    RETURN_IF_ERROR(utils::ConvertInputToPrecision(qnn_model_wrapper, node_unit, input_names[0],
+                                                   QNN_DATATYPE_UFIXED_POINT_16, do_op_validation));
+  }
+
   // Process input 1.
   const std::string& org_input_1_name = inputs[1].name;
   std::string input_1_name = org_input_1_name;
@@ -384,10 +392,12 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   //                                             ^
   //                                             |
   //     input_1_uint16 --> Convert(int16_sym) --+
+  const Qnn_DataType_t activation_dtype =
+      qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
   if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
       !input_info_0.is_initializer &&
-      input_info_0.qnn_data_type == input_info_1.qnn_data_type &&
-      input_info_0.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
+      activation_dtype == input_info_1.qnn_data_type &&
+      activation_dtype == QNN_DATATYPE_UFIXED_POINT_16) {
     RETURN_IF_NOT(input_info_1.quant_param.IsPerTensor(),
                   "MatMul's activation inputs only support per-tensor quantization");
     const Qnn_QuantizeParams_t& quant_param = input_info_1.quant_param.Get();
@@ -861,8 +871,8 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                      op_output_shape, do_op_validation));
   } else {
     if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-      RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names,
-                                                                output_info.qnn_data_type, do_op_validation));
+      RETURN_IF_ERROR(utils::ConvertInputToPrecision(qnn_model_wrapper, node_unit, input_names[0],
+                                                     output_info.qnn_data_type, do_op_validation));
     }
     const Qnn_DataType_t activation_qnn_data_type =
         qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();

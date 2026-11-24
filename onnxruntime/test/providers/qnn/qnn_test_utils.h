@@ -912,6 +912,13 @@ void VerifyQnnEpModelAssignment(const std::string& model_data,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
                                 OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR);
 
+// Creates a session without running the malformed model and checks that QNN EP
+// declines the node during graph partitioning. RunQnnModelTest with
+// ExpectedEPNodeAssignment::None still runs inference on the CPU fallback, even
+// with verify_outputs=false. CPU kernels may reject malformed models at execution
+// time, so use this helper to check rejection without running inference.
+void VerifyMalformedNdIndexShapeIsRejected(const GetTestModelFn& build_model);
+
 // Runs a stateful QNN model in one session. With a reset input it runs true, false, true and
 // verifies that reset restores the initial state. Without one it runs twice and verifies that the
 // BlockOp default reset=false retains state. The model must have an output sensitive to retained
@@ -2179,6 +2186,20 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   } while (0)
 #endif
 
+// Skips the test on any Windows platform (_WIN32), regardless of architecture.
+// Uses AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after the skip.
+#if defined(_WIN32)
+#define QNN_SKIP_TEST_ON_WINDOWS(reason)   \
+  if (::testing::internal::AlwaysTrue()) { \
+    GTEST_SKIP() << (reason);              \
+  } else                                   \
+    static_assert(true, "")
+#else
+#define QNN_SKIP_TEST_ON_WINDOWS(reason) \
+  do {                                   \
+  } while (0)
+#endif
+
 // Skips the test on every platform EXCEPT ARM64/ARM64EC Windows.
 // The Genie execution pathway in the QNN EP is only available on ARM64 Windows
 // (_WIN32 + _M_ARM64, _M_ARM64EC, or __aarch64__). All other platforms must skip.
@@ -2202,6 +2223,17 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
     } else                                                                                             \
       static_assert(true, "");                                                                         \
   }
+
+#define SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(arch)                                                             \
+  do {                                                                                                   \
+    if (QnnHTPBackendTests::HasPlatformAttributes() &&                                                   \
+        QnnHTPBackendTests::GetPlatformAttributes().htp_arch == (arch)) {                                \
+      if (::testing::internal::AlwaysTrue()) {                                                           \
+        GTEST_SKIP() << "HTP test skipped on architecture == " + std::to_string(static_cast<int>(arch)); \
+      } else                                                                                             \
+        static_assert(true, "");                                                                         \
+    }                                                                                                    \
+  } while (0)
 
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC)) && !BUILD_QNN_EP_STATIC_LIB
 
@@ -2233,6 +2265,12 @@ inline HRESULT CreateD3D12Buffer(
 }
 
 #endif  // _WIN32 && ...
+
+// QAIRT 2.47 uses QNN API 2.36.
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 36)
+#define QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+#endif
 
 // HTP native BQ support starts from QAIRT 2.51 (QNN API 2.40).
 #if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 40)

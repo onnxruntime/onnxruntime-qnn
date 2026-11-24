@@ -205,6 +205,8 @@ Ort::Status AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_inputs[i], input_tensor_infos[i]));
     }
   }
+  RETURN_IF(input_tensor_infos.empty() || input_tensor_infos[0].shape.size() != 3,
+            "QNN EP: GRU input X must be rank 3.");
   std::vector<TensorInfo> output_tensor_infos(2);
   for (size_t i = 0; i < 2; i++) {
     if (onnx_outputs.size() > i && onnx_outputs[i].Exists()) {

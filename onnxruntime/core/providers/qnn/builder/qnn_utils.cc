@@ -7,6 +7,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <string>
 #include <utility>
@@ -411,29 +412,8 @@ std::ostream& operator<<(std::ostream& out, const Qnn_QuantizeParams_t& quantize
       out << " axis=" << lpbq.axis
           << " numBlocksPerAxis=" << lpbq.numBlocksPerAxis
           << " blockScaleBitwidth=" << lpbq.blockScaleBitwidth;
-      // For LPBQ, num_elems are not present in the quantize_params,
-      // we are using numBlocksPerAxis instead to print the first numBlocksPerAxis scale offset values
-      size_t num_elems = lpbq.numBlocksPerAxis;
-      bool truncate = num_elems > 20;
-      num_elems = truncate ? 20 : num_elems;
-      if (lpbq.scaleOffsets != nullptr) {
-        out << " scales=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << lpbq.scaleOffsets[i].scale << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")") << " offsets=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << lpbq.scaleOffsets[i].offset << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")");
-      }
-      if (lpbq.blocksScale8 != nullptr) {
-        out << " perBlockIntScales=(";
-        for (size_t i = 0; i < num_elems; i++) {
-          out << static_cast<int32_t>(lpbq.blocksScale8[i]) << (i + 1 < num_elems ? " " : "");
-        }
-        out << (truncate ? "...)" : ")");
-      }
+      // Neither LPBQ array length can be validated without the tensor's axis size.
+      // Keep this generic printer limited to scalar metadata.
     } else {
       out << " encoding not supported.";
     }
@@ -1425,6 +1405,8 @@ Ort::Status LowPowerBlockQuantizeData(gsl::span<const float> data,
                                       int64_t block_scales_axis,
                                       size_t data_block_size,
                                       gsl::span<const uint32_t> block_scales_shape) {
+  RETURN_IF_NOT(data_block_size != 0, "Data block size must be greater than zero");
+
   // transpose weight to match [K, N] where K : In Channel and N : Out Channel
   const size_t num_dims = data_shape.size();
   const size_t num_elems = ShapeSizeCalc(data_shape, 0, num_dims);
@@ -1494,7 +1476,9 @@ Ort::Status LowPowerBlockQuantizeData(gsl::span<const float> data,
 
 std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_ErrorHandle_t qnn_error_handle) {
   const char* error_msg = nullptr;
-  if (qnn_interface.errorGetMessage(qnn_error_handle, &error_msg) == QNN_SUCCESS) {
+  if (qnn_interface.errorGetMessage != nullptr &&
+      QNN_GET_ERROR_CODE(qnn_interface.errorGetMessage(qnn_error_handle, &error_msg)) == QNN_SUCCESS &&
+      error_msg != nullptr) {
     return error_msg;
   }
   return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
@@ -1637,7 +1621,12 @@ Ort::Status TwoDimensionTranspose(size_t rows,
                                   gsl::span<uint8_t> output_buffer) {
   RETURN_IF_NOT(elem_byte_size != 0, "Expected a non-zero element byte size");
 
-  const size_t num_bytes = rows * cols * elem_byte_size;
+  RETURN_IF(rows != 0 && cols > std::numeric_limits<size_t>::max() / rows,
+            "Transpose shape element count overflows size_t");
+  const size_t element_count = rows * cols;
+  RETURN_IF(element_count != 0 && elem_byte_size > std::numeric_limits<size_t>::max() / element_count,
+            "Transpose byte count overflows size_t");
+  const size_t num_bytes = element_count * elem_byte_size;
   RETURN_IF_NOT(input_buffer.size() == num_bytes && output_buffer.size() == num_bytes,
                 "Expected both transpose buffers to hold rows * cols * elem_byte_size bytes");
 
@@ -1665,6 +1654,20 @@ Ort::Status TwoDimensionTranspose(size_t rows,
       }
       break;
   }
+
+  return Ort::Status();
+}
+
+Ort::Status ValidateTwoDimensionTransposeInput(gsl::span<const uint32_t> data_shape,
+                                               size_t data_size) {
+  RETURN_IF_NOT(data_shape.size() == 2, "Expected shape of rank 2");
+
+  const size_t rows = data_shape[0];
+  const size_t cols = data_shape[1];
+  RETURN_IF(rows != 0 && cols > std::numeric_limits<size_t>::max() / rows,
+            "Transpose shape element count overflows size_t");
+  RETURN_IF_NOT(data_size == rows * cols,
+                "Transpose data size does not match rows * cols");
 
   return Ort::Status();
 }
@@ -1697,6 +1700,12 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
 
   const size_t rows = data_shape[0];
   const size_t cols = data_shape[1];
+  RETURN_IF(rows != 0 && cols > std::numeric_limits<size_t>::max() / rows,
+            "Transpose shape element count overflows size_t");
+  const size_t element_count = rows * cols;
+  RETURN_IF(element_count != 0 && elem_byte_size > std::numeric_limits<size_t>::max() / element_count,
+            "Transpose byte count overflows size_t");
+  const size_t num_bytes = element_count * elem_byte_size;
 
   if (skip_output_data_copy) {  // Only shape & dtype validation are needed, no need for real tensor
     ORT_CXX_LOG(logger,
@@ -1704,7 +1713,7 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                 "Only shape and dtype validation are required, so we can use dummy tensor to avoid heavy memcpy.");
     // Callers still size their QNN tensor from this buffer, so keep the byte count and skip only the
     // initializer read and the transpose itself.
-    transposed_data.assign(rows * cols * elem_byte_size, 0);
+    transposed_data.assign(num_bytes, 0);
     data_shape = std::move(output_shape);  // Update parameter with final transposed shape
     return Ort::Status();
   }
@@ -2154,6 +2163,41 @@ Ort::Status RequantizeBiasTensor(const std::vector<uint8_t>& original_bias_data,
   return Ort::Status();
 }
 
+Ort::Status ResolveExternalDataPath(const std::filesystem::path& model_directory,
+                                    const std::filesystem::path& relative_data_path,
+                                    std::filesystem::path& resolved_data_path) {
+  RETURN_IF(relative_data_path.empty(), "External initializer location must not be empty.");
+  RETURN_IF(relative_data_path.has_root_path(),
+            "External initializer location must be relative to the model directory.");
+
+  const std::filesystem::path normalized_relative_path = relative_data_path.lexically_normal();
+  for (const auto& component : normalized_relative_path) {
+    RETURN_IF(component == "..", "External initializer location must not leave the model directory.");
+  }
+
+  const std::filesystem::path effective_model_directory =
+      model_directory.empty() ? std::filesystem::path{"."} : model_directory;
+
+  std::error_code error_code;
+  const std::filesystem::path canonical_model_directory =
+      std::filesystem::weakly_canonical(effective_model_directory, error_code);
+  RETURN_IF(error_code, ("Failed to resolve the model directory: " + error_code.message()).c_str());
+
+  const std::filesystem::path candidate_path =
+      std::filesystem::weakly_canonical(canonical_model_directory / normalized_relative_path, error_code);
+  RETURN_IF(error_code, ("Failed to resolve the external initializer path: " + error_code.message()).c_str());
+
+  const std::filesystem::path path_relative_to_model = candidate_path.lexically_relative(canonical_model_directory);
+  RETURN_IF(path_relative_to_model.empty() || path_relative_to_model.has_root_path(),
+            "External initializer location must remain inside the model directory.");
+  for (const auto& component : path_relative_to_model) {
+    RETURN_IF(component == "..", "External initializer location must remain inside the model directory.");
+  }
+
+  resolved_data_path = candidate_path;
+  return Ort::Status();
+}
+
 Ort::Status ReadExternalData(const OrtApi& ort_api,
                              const OrtExternalInitializerInfo* initializer,
                              const std::filesystem::path& model_path,
@@ -2162,7 +2206,8 @@ Ort::Status ReadExternalData(const OrtApi& ort_api,
   int64_t offset = ort_api.ExternalInitializerInfo_GetFileOffset(initializer);
   size_t byte_size = ort_api.ExternalInitializerInfo_GetByteSize(initializer);
 
-  std::filesystem::path external_file_path = model_path.parent_path() / file_path;
+  std::filesystem::path external_file_path;
+  RETURN_IF_ERROR(ResolveExternalDataPath(model_path.parent_path(), file_path, external_file_path));
 
   unpacked_tensor.resize(byte_size);
   RETURN_IF_ERROR(ReadFileIntoBuffer(
@@ -2177,13 +2222,18 @@ Ort::Status ReadExternalData(const OrtApi& ort_api,
 Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const OrtValueInfo* initializer,
                                   const std::filesystem::path& model_path,
-                                  std::vector<uint8_t>& unpacked_tensor) {
+                                  std::vector<uint8_t>& unpacked_tensor,
+                                  std::optional<size_t> expected_byte_size) {
+  RETURN_IF(initializer == nullptr, "Initializer to unpack must not be null.");
   OrtExternalInitializerInfo* external_initializer = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer));
-  if (external_initializer) {
-    RETURN_IF_ERROR(ReadExternalData(ort_api, external_initializer, model_path, unpacked_tensor));
-    ort_api.ReleaseExternalInitializerInfo(external_initializer);
-    return Ort::Status();
+  auto external_info = std::unique_ptr<OrtExternalInitializerInfo, FuncDeleter<OrtExternalInitializerInfo>>(
+      external_initializer, FuncDeleter<OrtExternalInitializerInfo>{ort_api.ReleaseExternalInitializerInfo});
+  if (external_info) {
+    RETURN_IF(expected_byte_size.has_value() &&
+                  ort_api.ExternalInitializerInfo_GetByteSize(external_info.get()) != *expected_byte_size,
+              "Initializer byte count does not match its declared shape and element type.");
+    return ReadExternalData(ort_api, external_info.get(), model_path, unpacked_tensor);
   }
 
   const OrtTypeInfo* type_info = nullptr;

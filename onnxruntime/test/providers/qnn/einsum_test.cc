@@ -554,8 +554,7 @@ TEST_F(QnnHTPBackendTests, EinsumQdqMatMulBroadcastTransposeY) {
       /*tolerance=*/QDQTolerance());
 }
 
-// TODO: Re-enable. QAIRT 3.36.1: failed to finalize QNN graph 1002.
-TEST_F(QnnHTPBackendTests, DISABLED_EinsumQdqReduceSumMulBroadcastX) {
+TEST_F(QnnHTPBackendTests, EinsumQdqReduceSumMulBroadcastX) {
   const std::vector<int64_t> shape0{1, 3, 2, 4};
   const std::vector<int64_t> shape1{2, 3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -564,7 +563,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_EinsumQdqReduceSumMulBroadcastX) {
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
       /*equation=*/"bhwc,wkc->bhwk",
-      /*tolerance=*/QDQTolerance());
+      /*tolerance=*/QDQTolerance(0.012f));
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)

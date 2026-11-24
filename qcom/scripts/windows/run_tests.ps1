@@ -6,11 +6,25 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo")]
     [string]$Config = "Release",
     [Parameter(HelpMessage = "Path to onnx/models models")]
-    $OnnxModelsRoot = $null
+    $OnnxModelsRoot = $null,
+    [Parameter(HelpMessage = "Python executable for test helpers")]
+    [string]$PythonExe = "py",
+    [Parameter(HelpMessage = "Repo root of the extracted test payload")]
+    [string]$TestRepoRoot = "",
+    [Parameter(HelpMessage = "Path to the report manifest created by QDC bootstrap")]
+    [string]$QdcManifestPath = "",
+    [Parameter(HelpMessage = "Number of sequential provider-test processes")]
+    [ValidateSet(1, 2)]
+    [int]$ProviderTestProcesses = 1,
+    [Parameter(HelpMessage = "Exclude QNN snapshots until an ARM64 golden producer is available")]
+    [switch]$SkipQnnSnapshots
 )
 
 $RootDir = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)").Path
 $RepoRoot= (Resolve-Path -Path ("$RootDir\..\..\.."))
+if ($TestRepoRoot) {
+    $RepoRoot = (Resolve-Path -LiteralPath $TestRepoRoot).Path
+}
 
 . (Join-Path $RootDir "utils.ps1")
 
@@ -49,11 +63,59 @@ $OldBuildDirectoryBackslashesRegex = ($OldBuildDirectoryRegex -replace "/", "\\\
 $NewBuildDirectory = ($RootDir -replace "\\", "/")
 $NewBuildDirectoryBackslashes = ($NewBuildDirectory -replace "/", "\\")
 
+# CTest passes its filter on the command line, overriding GTEST_FILTER.
+# Both Snapshot and SessionSnapshot use QnnSnapshot_* suite names.
+$ProviderTestFilterPattern = '"--gtest_filter=-(?:QnnAcc_\*(?::\*QnnSnapshot_\*)?|\*QnnSnapshot_\*)"'
+$ProviderTestFilter = '"--gtest_filter=-QnnAcc_*"'
+if ($SkipQnnSnapshots) {
+    if (-not (Select-String -LiteralPath $CTestTestFile -Pattern $ProviderTestFilterPattern -Quiet)) {
+        throw "Cannot exclude QNN snapshots: the expected provider CTest filter was not found."
+    }
+    # Keep Accuracy in the ARM64 shadow lane until dedicated routing exists.
+    $ProviderTestFilter = '"--gtest_filter=-*QnnSnapshot_*"'
+    Write-Host "Excluding QNN Snapshot/SessionSnapshot tests: no ARM64 golden producer is available."
+}
+
 # Rewrite CTestTestfile.cmake
 (Get-Content $CTestTestFile) `
     -replace $OldBuildDirectoryRegex, $NewBuildDirectory `
-    -replace $OldBuildDirectoryBackslashesRegex, $NewBuildDirectoryBackslashes |
+    -replace $OldBuildDirectoryBackslashesRegex, $NewBuildDirectoryBackslashes `
+    -replace $ProviderTestFilterPattern, $ProviderTestFilter |
     Out-File -Encoding ascii $CTestTestFile
+
+# Record every JUnit output registered by CTest when bootstrap supplies a manifest.
+if ($QdcManifestPath) {
+    if (-not (Test-Path -LiteralPath $QdcManifestPath -PathType Leaf)) {
+        throw "QDC report manifest not found: $QdcManifestPath"
+    }
+    Push-Location $RootDir
+    try {
+        $CTestPlanJson = & $CTestExe --build-config $Config --show-only=json-v1
+        if ($LASTEXITCODE -ne 0) { throw "Failed to enumerate CTest reports." }
+        $CTestPlan = ($CTestPlanJson -join "`n") | ConvertFrom-Json
+        $CTestReports = @(
+            foreach ($Test in $CTestPlan.tests) {
+                foreach ($Argument in $Test.command) {
+                    if ($Argument.StartsWith("--gtest_output=xml:")) {
+                        $ReportName = [System.IO.Path]::GetFileName($Argument.Substring("--gtest_output=xml:".Length))
+                        if ($ProviderTestProcesses -eq 2 -and $ReportName -eq "onnxruntime_provider_test.exe.$Config.results.xml") {
+                            foreach ($Index in 0..1) { "onnxruntime_provider_test.exe.$Config.shard$Index.results.xml" }
+                        } else {
+                            $ReportName
+                        }
+                    }
+                }
+            }
+        )
+        if ($CTestReports.Count -eq 0) { throw "CTest did not register any JUnit reports." }
+        $Manifest = Get-Content -LiteralPath $QdcManifestPath -Raw | ConvertFrom-Json
+        $Manifest.ctest_reports = @($CTestReports | Select-Object -Unique)
+        $Manifest | Add-Member -NotePropertyName provider_test_processes -NotePropertyValue $ProviderTestProcesses -Force
+        $Manifest | ConvertTo-Json | Set-Content -LiteralPath $QdcManifestPath -Encoding UTF8
+    } finally {
+        Pop-Location
+    }
+}
 
 # Figure out if HTP is available
 if ((Get-HostArch) -eq "arm64") {
@@ -70,11 +132,38 @@ $Failed = $false
 
 Push-Location $RootDir
 Write-Host "--=-=-=- Running unit tests -=--=-=-"
-& $CTestExe --build-config $Config --verbose --timeout $TimeoutSec
-
-if (-not $?) {
+if ($ProviderTestProcesses -eq 1) {
+    & $CTestExe --build-config $Config --verbose --timeout $TimeoutSec
+    if ($LASTEXITCODE -ne 0) { $Failed = $true }
+} else {
+    # Keep the registered CTest command/filter; split the native ARM64 internal
+    # workload across two sequential processes while session cleanup is investigated.
+    $PreviousTotalShards = $env:GTEST_TOTAL_SHARDS
+    $PreviousShardIndex = $env:GTEST_SHARD_INDEX
+    $ProviderReport = Join-Path $ResultsXmlDir "onnxruntime_provider_test.exe.$Config.results.xml"
+    try {
+        $env:GTEST_TOTAL_SHARDS = "2"
+        for ($Shard = 0; $Shard -lt 2; $Shard++) {
+            $env:GTEST_SHARD_INDEX = "$Shard"
+            if (Test-Path -LiteralPath $ProviderReport) { Remove-Item -LiteralPath $ProviderReport }
+            Write-Host "Running provider-test process $($Shard + 1)/2 through CTest"
+            & $CTestExe --build-config $Config --verbose --timeout $TimeoutSec
+            if ($LASTEXITCODE -ne 0) { $Failed = $true }
+            if (Test-Path -LiteralPath $ProviderReport) {
+                $ShardReport = Join-Path $ResultsXmlDir "onnxruntime_provider_test.exe.$Config.shard$Shard.results.xml"
+                Move-Item -LiteralPath $ProviderReport -Destination $ShardReport -Force
+            } else {
+                Write-Warning "Provider-test process $($Shard + 1)/2 did not produce its XML report."
+                $Failed = $true
+            }
+        }
+    } finally {
+        $env:GTEST_TOTAL_SHARDS = $PreviousTotalShards
+        $env:GTEST_SHARD_INDEX = $PreviousShardIndex
+    }
+}
+if ($Failed) {
     Write-Host "Unit tests failed. Will exit with error after running model tests."
-    $Failed = $true
 }
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -160,7 +249,7 @@ $TestModelsViaEpPlugin = {
             # The upstream plugin runner takes a whole suite directory and has no
             # per-case skip flag. Filter QNN-owned exclusions into a temporary copy.
             $FilteredTestPath = Join-Path ([System.IO.Path]::GetTempPath()) ("qnn-model-tests-" + [guid]::NewGuid())
-            & py "${RepoRoot}\qcom\scripts\all\model_test_filter.py" `
+            & $PythonExe "${RepoRoot}\qcom\scripts\all\model_test_filter.py" `
                 --source $TestPath `
                 --destination $FilteredTestPath `
                 --suite $Suite `
@@ -178,6 +267,9 @@ $TestModelsViaEpPlugin = {
             -i "backend_type|$Backend" `
             $RunnerTestPath | Tee-Object -FilePath $ModelLog -Append | Write-Host
         $TestResult = $LASTEXITCODE -eq 0
+    } catch {
+        Write-Host "Model suite '$Suite' failed: $_"
+        $TestResult = $false
     } finally {
         if ($null -ne $FilteredTestPath -and (Test-Path -LiteralPath $FilteredTestPath)) {
             try {
@@ -189,8 +281,12 @@ $TestModelsViaEpPlugin = {
     }
 
     if (Test-Path $ModelLog) {
-        py "${RepoRoot}\qcom\scripts\all\model_test_log_to_junit_xml.py" `
+        & $PythonExe "${RepoRoot}\qcom\scripts\all\model_test_log_to_junit_xml.py" `
             $ModelLog | Out-File -FilePath $ModelXml -Encoding utf8
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Failed to convert model suite '$Suite' results."
+            $TestResult = $false
+        }
     }
 
     if (-not $TestResult) {
@@ -207,16 +303,16 @@ if (-not $?) {
 }
 
 foreach ($RunModelTests in ($TestModelsViaEpPlugin)) {
-    $Failed = $Failed -or (& $RunModelTests -Backend cpu -Suite node -TestPath "$RepoRoot\cmake\external\onnx\onnx\backend\test\data\node")
-    $Failed = $Failed -or (& $RunModelTests -Backend cpu -Suite float32)
-    $Failed = $Failed -or (& $RunModelTests -Backend $QdqBackend -Suite qdq)
+    $Failed = (& $RunModelTests -Backend cpu -Suite node -TestPath "$RepoRoot\cmake\external\onnx\onnx\backend\test\data\node") -or $Failed
+    $Failed = (& $RunModelTests -Backend cpu -Suite float32) -or $Failed
+    $Failed = (& $RunModelTests -Backend $QdqBackend -Suite qdq) -or $Failed
 
     if ($QdqBackend -ne "cpu") {
         Write-Host "-=-=-=- Running onnx/models qdq tests with context cache enabled -=-=-=-"
         # Scrub old context caches
         Get-ChildItem -Path "testdata\qdq-with-context-cache" -Recurse -Filter "*_ctx.onnx" | Remove-Item -Force
 
-        $Failed = $Failed -or (& $RunModelTests -Backend $QdqBackend -Suite qdq-with-context-cache)
+        $Failed = (& $RunModelTests -Backend $QdqBackend -Suite qdq-with-context-cache) -or $Failed
     } else {
         Write-Host "Not running onnx/models qdq tests with context cache enabled on CPU backend."
     }
@@ -229,13 +325,7 @@ foreach ($RunModelTests in ($TestModelsViaEpPlugin)) {
 # If it looks like we're running in QDC, copy logs to the directory they'll scan to find them.
 if (Test-Path "C:\Temp\TestContent") {
     $QdcLogsDir = "C:\Temp\QDC_logs"
-    if (Test-Path $QdcLogsDir) {
-        Remove-Item -Recurse -Force -Path $QdcLogsDir
-        if (-not $?) {
-            throw "Failed to clear old QDC logs dir $QdcLogsDir"
-        }
-    }
-
+    # Preserve bootstrap, Python installer and smoke-test logs collected before this script.
     New-Item -ItemType Directory -Force -Path $QdcLogsDir | Out-Null
     if (-not $?) {
         throw "Failed to create QDC logs dir $QdcLogsDir"
