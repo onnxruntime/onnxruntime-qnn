@@ -25,11 +25,13 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <unordered_map>
 
@@ -141,6 +143,88 @@ TEST(QnnUnit_BackendManagerTest, QnnSerializerConfig_CreateIr_Configure_CalledTw
   std::filesystem::remove_all(dlc_dir);
 }
 
+// Shared backend fallback contracts (no real QNN library).
+namespace {
+
+using Manager = qnn::QnnBackendManager;
+// Existing component-test convention: expose private entry points without
+// modifying production visibility or fabricating a loaded backend library.
+template <typename Tag, typename Tag::type Member>
+struct BackendFallbackMember {
+  friend typename Tag::type GetFallbackMember(Tag) { return Member; }
+};
+struct CreateDeviceTag {
+  using type = Ort::Status (Manager::*)();
+  friend type GetFallbackMember(CreateDeviceTag);
+};
+struct PlatformInfoTag {
+  using type = Ort::Status (Manager::*)();
+  friend type GetFallbackMember(PlatformInfoTag);
+};
+struct CreateContextTag {
+  using type = Ort::Status (Manager::*)(bool, bool, bool, bool, bool, uint32_t);
+  friend type GetFallbackMember(CreateContextTag);
+};
+template struct BackendFallbackMember<CreateDeviceTag, &Manager::CreateDevice>;
+template struct BackendFallbackMember<PlatformInfoTag, &Manager::GetPlatformInfo>;
+template struct BackendFallbackMember<CreateContextTag, &Manager::CreateContext>;
+
+Qnn_ErrorHandle_t device_property_result;
+int device_create_calls;
+int context_create_calls;
+bool no_hardware_context_configs;
+
+}  // namespace
+
+TEST(QnnUnit_BackendManagerFallbackTest, UnsupportedDeviceProperty_SkipsDeviceCreation) {
+  for (auto result : {QNN_PROPERTY_NOT_SUPPORTED, QNN_PROPERTY_ERROR_UNKNOWN_KEY}) {
+    SCOPED_TRACE(result);
+    device_property_result = result;
+    device_create_calls = 0;
+    OpBuilderTestContext ctx;
+    ctx.qnn_interface.propertyHasCapability = [](QnnProperty_Key_t key) {
+      EXPECT_EQ(key, QNN_PROPERTY_GROUP_DEVICE);
+      return device_property_result;
+    };
+    ctx.qnn_interface.deviceCreate = [](Qnn_LogHandle_t, const QnnDevice_Config_t**, Qnn_DeviceHandle_t*) -> Qnn_ErrorHandle_t {
+      ++device_create_calls;
+      return QNN_SUCCESS;
+    };
+    auto* manager = ctx.backend_manager.GetMutable();
+    EXPECT_TRUE((manager->*GetFallbackMember(CreateDeviceTag{}))().IsOK());
+    EXPECT_EQ(device_create_calls, 0);
+  }
+}
+
+TEST(QnnUnit_BackendManagerFallbackTest, NonNpuPlatformQuery_ReturnsExplicitError) {
+  OpBuilderTestContext ctx;
+  ctx.backend_manager.BackendType() = qnn::QnnBackendType::SERIALIZER;
+  auto* manager = ctx.backend_manager.GetMutable();
+  const auto status = (manager->*GetFallbackMember(PlatformInfoTag{}))();
+  EXPECT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("HTP backend"), std::string::npos);
+}
+
+TEST(QnnUnit_BackendManagerFallbackTest, SerializerContext_OmitsHardwareConfigsAndIsIdempotent) {
+  OpBuilderTestContext ctx;
+  ctx.backend_manager.BackendType() = qnn::QnnBackendType::SERIALIZER;
+  context_create_calls = 0;
+  no_hardware_context_configs = false;
+  ctx.qnn_interface.contextCreate = [](Qnn_BackendHandle_t, Qnn_DeviceHandle_t,
+                                       const QnnContext_Config_t** configs, Qnn_ContextHandle_t* context) -> Qnn_ErrorHandle_t {
+    ++context_create_calls;
+    no_hardware_context_configs = configs == nullptr;
+    *context = reinterpret_cast<Qnn_ContextHandle_t>(uintptr_t{1});
+    return QNN_SUCCESS;
+  };
+  ctx.qnn_interface.contextFree = [](Qnn_ContextHandle_t, Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t { return QNN_SUCCESS; };
+  auto* manager = ctx.backend_manager.GetMutable();
+  EXPECT_TRUE((manager->*GetFallbackMember(CreateContextTag{}))(false, false, false, false, false, UINT32_MAX).IsOK());
+  EXPECT_TRUE(no_hardware_context_configs);
+  EXPECT_TRUE((manager->*GetFallbackMember(CreateContextTag{}))(false, false, false, false, false, UINT32_MAX).IsOK());
+  EXPECT_EQ(context_create_calls, 1);
+}
+
 // ---------------------------------------------------------------------------
 // Group 2: SetupBackend — LoadBackend failures (no real .so needed)
 // ---------------------------------------------------------------------------
@@ -157,6 +241,36 @@ TEST(QnnUnit_BackendManagerTest, SetupBackend_InvalidPath_ReturnsError) {
   EXPECT_FALSE(status.IsOK());
   EXPECT_NE(std::string(status.GetErrorMessage()).find("Unable to load backend"),
             std::string::npos);
+}
+
+TEST(QnnUnit_BackendManagerTest, MissingThreadPowerMapping_PreAndPostAreNoOps) {
+  StubApiEnv env;
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+  const auto thread = std::this_thread::get_id();
+  // No backend/interface is initialized: these must not attempt a power vote.
+  EXPECT_TRUE(manager->SetPerThreadHtpPowerConfigs(thread, true).IsOK());
+  EXPECT_TRUE(manager->SetPerThreadHtpPowerConfigs(thread, false).IsOK());
+}
+
+TEST(QnnUnit_BackendManagerTest, RemovedThreadPowerMapping_CanBeReaddedAndDoesNotVote) {
+  StubApiEnv env;
+  auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
+  ASSERT_NE(manager, nullptr);
+  const auto thread = std::this_thread::get_id();
+  qnn::PerThreadHtpPowerConfigs_t config;
+  config.power_config_id = 1;
+  config.default_perf_mode = qnn::HtpPerformanceMode::kHtpBurst;
+  config.rpc_polling_time = 0;
+  config.rpc_control_latency = 0;
+  ASSERT_TRUE(manager->AddPerThreadHtpPowerConfigMapping(thread, config).IsOK());
+  EXPECT_FALSE(manager->AddPerThreadHtpPowerConfigMapping(thread, config).IsOK());
+  manager->RemovePerThreadHtpPowerConfigMapping(thread);
+  EXPECT_TRUE(manager->SetPerThreadHtpPowerConfigs(thread, true).IsOK());
+  EXPECT_TRUE(manager->SetPerThreadHtpPowerConfigs(thread, false).IsOK());
+  // Re-add proves Remove actually erased the entry, beyond a no-error return.
+  EXPECT_TRUE(manager->AddPerThreadHtpPowerConfigMapping(thread, config).IsOK());
+  manager->RemovePerThreadHtpPowerConfigMapping(thread);
 }
 
 // ---------------------------------------------------------------------------

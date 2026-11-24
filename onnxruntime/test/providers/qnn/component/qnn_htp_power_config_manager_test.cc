@@ -35,6 +35,7 @@
 #include <HTP/QnnHtpPerfInfrastructure.h>
 
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
+#include "core/providers/qnn/builder/qnn_htp_power_state_guard.h"
 #include "core/providers/qnn/ort_api.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
@@ -163,6 +164,30 @@ TEST(QnnUnit_HtpPowerConfigManagerTest, SetState_BalancedRun_TimeoutRelaxesHtp) 
 
   EXPECT_GT(FireTimeoutRelaxCalls(fx.manager, fx.logger), 0)
       << "With inflight_run_count_ back at 0 the TIMEOUT relax must fire.";
+}
+
+TEST(QnnUnit_HtpPowerStateGuardTest, NullManager_PrePostAndDestructorAreNoOps) {
+  const auto logger = MakeNullLogger();
+  qnn::power::HtpPerfConfig_t config = MakeBurstConfig();
+  qnn::HtpPowerStateGuard guard(nullptr, true, GraphState::RUN_START, GraphState::RUN_DONE, config, logger);
+  EXPECT_TRUE(guard.SetPreRunHtpPerfStatus().IsOK());
+  EXPECT_TRUE(guard.SetPostRunHtpPerf().IsOK());
+}
+
+TEST(QnnUnit_HtpPowerStateGuardTest, InvalidPowerId_DoesNotVoteOrLeakInFlightState) {
+  ResetStubCounters reset;
+  ManagerFixture fx;
+  const auto config = MakeBurstConfig();
+  fx.manager.SetState(GraphState::RUN_START, config, fx.logger);
+  fx.manager.SetState(GraphState::RUN_DONE, config, fx.logger);
+  const auto before = StubHtpPerfInterface::set_power_config_calls;
+  {
+    qnn::HtpPowerStateGuard guard(&fx.manager, false, GraphState::RUN_START, GraphState::RUN_DONE, config, fx.logger);
+    EXPECT_TRUE(guard.SetPreRunHtpPerfStatus().IsOK());
+    EXPECT_TRUE(guard.SetPostRunHtpPerf().IsOK());
+  }
+  EXPECT_EQ(StubHtpPerfInterface::set_power_config_calls, before);
+  EXPECT_GT(FireTimeoutRelaxCalls(fx.manager, fx.logger), 0);
 }
 
 // The leak scenario: a RUN_START increments the count, but its paired RUN_DONE
