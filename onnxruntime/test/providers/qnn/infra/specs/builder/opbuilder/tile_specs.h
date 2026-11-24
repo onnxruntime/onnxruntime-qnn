@@ -24,8 +24,6 @@ struct TileQDQSpec {
   TileBackend snapshot_backend;
   TileBackend accuracy_backend;
   ONNXTensorElementDataType qdq_dtype;
-  float scale;
-  uint32_t zero_point;
   std::vector<int64_t> input_shape;
   std::vector<float> input_data;
   std::vector<int64_t> repeats;
@@ -38,8 +36,6 @@ inline const TileQDQSpec kTileU8Rank4Spec = {
     TileBackend::HTP,
     TileBackend::HTP,
     ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
-    0.1f,
-    128,
     {1, 2, 2, 2},
     {-4.0f, -3.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f},
     {1, 2, 1, 1},
@@ -51,8 +47,6 @@ inline const TileQDQSpec kTileU16Rank4Spec = {
     TileBackend::HTP,
     TileBackend::HTP,
     ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16,
-    0.1f,
-    32768,
     {1, 2, 2, 2},
     {-4.0f, -3.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f},
     {1, 2, 1, 1},

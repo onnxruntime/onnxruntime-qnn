@@ -39,8 +39,8 @@ GetTestQDQModelFn<QuantType> BuildQDQTileOnnx(const TileQDQSpec& spec) {
     auto input_def = TestInputDef<float>(spec.input_shape, false, spec.input_data);
     MakeTestInput(builder, "input", input_def);
 
-    const QuantParams<QuantType> input_qparams{
-        spec.scale, static_cast<QuantType>(spec.zero_point)};
+    // Preserve the legacy range-derived input quantization, including rounding.
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
     const std::string input_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_in", "input",
                                   input_qparams.scale, input_qparams.zero_point,

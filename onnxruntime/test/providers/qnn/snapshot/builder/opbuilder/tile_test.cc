@@ -16,6 +16,7 @@
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 #include "test/providers/qnn/infra/specs/builder/opbuilder/tile_specs.h"
+#include "test/providers/qnn/qnn_test_utils.h"
 #include "test/providers/qnn/snapshot/snapshot.h"
 
 using namespace onnxruntime;
@@ -50,12 +51,17 @@ std::vector<int64_t> TileOutputShape(const std::vector<int64_t>& input_shape,
 }
 
 std::pair<const OrtValueInfo*, const OrtValueInfo*> RegisterQDQScaleZp(const TileQDQSpec& spec) {
-  auto scale_vi = g_mock_init_reg.AddScalarFloat("data_scale", spec.scale);
+  const TestInputDef<float> input_def(spec.input_shape, false, spec.input_data);
+  const OrtValueInfo* scale_vi = nullptr;
   const OrtValueInfo* zp_vi = nullptr;
   if (spec.qdq_dtype == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {
-    zp_vi = g_mock_init_reg.AddScalarUint8("data_zp", static_cast<uint8_t>(spec.zero_point));
+    const auto qparams = GetTestInputQuantParams<uint8_t>(input_def);
+    scale_vi = g_mock_init_reg.AddScalarFloat("data_scale", qparams.scale);
+    zp_vi = g_mock_init_reg.AddScalarUint8("data_zp", qparams.zero_point);
   } else if (spec.qdq_dtype == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16) {
-    zp_vi = g_mock_init_reg.AddScalarUint16("data_zp", static_cast<uint16_t>(spec.zero_point));
+    const auto qparams = GetTestInputQuantParams<uint16_t>(input_def);
+    scale_vi = g_mock_init_reg.AddScalarFloat("data_scale", qparams.scale);
+    zp_vi = g_mock_init_reg.AddScalarUint16("data_zp", qparams.zero_point);
   } else {
     ADD_FAILURE() << "Unsupported Tile QDQ dtype: " << spec.qdq_dtype;
   }
