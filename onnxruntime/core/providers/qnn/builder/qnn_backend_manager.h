@@ -12,6 +12,7 @@
 #include <dlfcn.h>
 #endif
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -144,6 +145,7 @@ struct QnnBackendManagerConfig {
   // Caps the reused IO buffer size at context load. 0 = SDK default.
   uint64_t reused_io_limit_mb = 0;
   bool configure_host_mode = false;
+  bool htp_context_init_acceleration = false;
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -170,6 +172,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                     PrivateConstructorTag)
       : backend_path_(config.backend_path),
         reused_io_limit_mb_(config.reused_io_limit_mb),
+        htp_context_init_acceleration_(config.htp_context_init_acceleration),
         context_priority_(config.context_priority),
         qnn_serializer_config_(config.qnn_serializer_config),
         device_id_(config.device_id),
@@ -211,11 +214,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Reads a context binary file into a buffer. Validates the file exists and is non-empty.
   // Shared between LoadCachedQnnContextFromBuffer and RecoverFromSSR to avoid duplicating
-  // file I/O logic. If io_dispatch is non-null and carries a read callback, the
-  // callback is dispatched instead of reading from disk.
+  // native file I/O logic. Callback output is owned separately by the caller.
   Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                    std::vector<char>& buffer,
-                                    const qnn::EpContextIoDispatch& io_dispatch);
+                                    std::vector<char>& buffer);
 
   // Reloads a QNN context from its binary file after an SSR event. Handles both file-mapped
   // and direct-read paths to match initial-load behavior. Always starts a new spill-fill
@@ -226,7 +227,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                   Qnn_ContextHandle_t& new_context,
                                   const qnn::EpContextIoDispatch& io_dispatch = qnn::EpContextIoDispatch());
 
-  // Builds the common context configs (priority + spill-fill) used by both binary-load paths.
+  // Builds the common context configs (priority + optional HTP configs) used by both binary-load paths.
   // first_group_handle: 0x0 for SSR (always a new group); GetQnnContext(0) for initial multi-
   // context load (joins the existing spill-fill group).
   // Adding a new config here propagates to both LoadCachedQnnContextFromBuffer and ReloadContextForSSR.
@@ -263,7 +264,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool load_from_cached_context,
       bool need_load_system_lib,
       bool share_ep_contexts,
-      int htp_share_resource_optimization,
+      uint8_t htp_share_resource_optimization,
       bool enable_file_mapped_weights,
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
@@ -398,7 +399,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool IsBackendSetup() { return backend_setup_completed_; }
 
   bool FileMappingIsEnabled() {
-    return file_mapped_weights_enabled_;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    return file_mapped_weights_enabled_ && file_mapper_ != nullptr;
+#else
+    return false;
+#endif
   }
 
   // Note that whether in host mode is meaningless if not on device.
@@ -508,6 +513,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                             uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
+
+  Ort::Status ReadContextBinFromCallback(const std::string& context_bin_filepath,
+                                         qnn::EpContextBuffer& buffer,
+                                         const qnn::EpContextIoDispatch& io_dispatch);
 
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map,
@@ -769,8 +778,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
-  int htp_share_resource_optimization_ = -1;
+  uint8_t htp_share_resource_optimization_ = 0;
   uint64_t reused_io_limit_mb_ = 0;
+  bool htp_context_init_acceleration_ = false;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   Qnn_Version_t core_api_version_ = QNN_VERSION_INIT;

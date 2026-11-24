@@ -35,6 +35,8 @@
 
 #include "test/providers/qnn/infra/qnn_test_windows_compat.h"
 
+#include "HTP/QnnHtpCommon.h"
+
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/ort_api.h"
@@ -62,6 +64,54 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeManager(
   cfg.skip_qnn_version_check = skip_version_check;
   cfg.configure_host_mode = configure_host_mode;
   return qnn::QnnBackendManager::Create(cfg, api_ptrs, logger);
+}
+
+TEST(QnnUnit_BackendManagerTest, BuildContextBinaryConfigs_ContextInitAcceleration_PreservesExistingConfigs) {
+  char group_token{};
+  const Qnn_ContextHandle_t group_handles[] = {nullptr, reinterpret_cast<Qnn_ContextHandle_t>(&group_token)};
+  for (auto group_handle : group_handles) {
+    SCOPED_TRACE(group_handle);
+    StubApiEnv env;
+    qnn::QnnBackendManagerConfig config{};
+    config.context_priority = qnn::ContextPriority::HIGH;
+    config.reused_io_limit_mb = 64;
+    config.htp_context_init_acceleration = true;
+    auto manager = qnn::QnnBackendManager::Create(config, env.api_ptrs, env.logger);
+    manager->SetQnnBackendType(QNN_BACKEND_ID_HTP);
+    qnn::QnnConfigsBuilder<QnnContext_Config_t, QnnHtpContext_CustomConfig_t> builder(
+        QNN_CONTEXT_CONFIG_INIT, QnnHtpContext_CustomConfig_t{});
+    ASSERT_TRUE(manager->BuildContextBinaryConfigs(4096, group_handle, builder).IsOK());
+    const auto* configs = builder.GetQnnConfigs();
+    ASSERT_NE(configs[0], nullptr);
+    EXPECT_EQ(configs[0]->option, QNN_CONTEXT_CONFIG_OPTION_PRIORITY);
+    EXPECT_EQ(configs[0]->priority, QNN_PRIORITY_HIGH);
+    ASSERT_NE(configs[1], nullptr);
+    ASSERT_EQ(configs[1]->option, QNN_CONTEXT_CONFIG_OPTION_CUSTOM);
+    const auto* spill = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[1]->customConfig);
+    ASSERT_NE(spill, nullptr);
+    EXPECT_EQ(spill->option, QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS);
+    EXPECT_EQ(spill->groupRegistration.firstGroupHandle, group_handle);
+    EXPECT_EQ(spill->groupRegistration.maxSpillFillBuffer, 4096u);
+    size_t end = 2;
+#ifdef QNN_HTP_REUSED_IO_LIMIT_AVAILABLE
+    ASSERT_NE(configs[end], nullptr);
+    ASSERT_EQ(configs[end]->option, QNN_CONTEXT_CONFIG_OPTION_CUSTOM);
+    const auto* reused = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[end++]->customConfig);
+    ASSERT_NE(reused, nullptr);
+    EXPECT_EQ(reused->option, QNN_HTP_CONTEXT_CONFIG_OPTION_REUSED_IO_LIMIT);
+    EXPECT_EQ(reused->reusedIoLimitMb, 64u);
+#endif
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 36)
+    ASSERT_NE(configs[end], nullptr);
+    ASSERT_EQ(configs[end]->option, QNN_CONTEXT_CONFIG_OPTION_CUSTOM);
+    const auto* acceleration = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[end++]->customConfig);
+    ASSERT_NE(acceleration, nullptr);
+    EXPECT_EQ(acceleration->option, QNN_HTP_CONTEXT_CONFIG_OPTION_INIT_ACCELERATION);
+    EXPECT_TRUE(acceleration->initAcceleration);
+#endif
+    EXPECT_EQ(configs[end], nullptr);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +202,7 @@ TEST(QnnUnit_BackendManagerTest, SetupBackend_InvalidPath_ReturnsError) {
   ASSERT_NE(manager, nullptr);
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-  auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map);
+  auto status = manager->SetupBackend(false, false, false, 0, false, nullptr, dummy_map);
 
   EXPECT_FALSE(status.IsOK());
   EXPECT_NE(std::string(status.GetErrorMessage()).find("Unable to load backend"),
@@ -431,7 +481,7 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeSerializerManager(
 // Calls SetupBackend with standard test parameters (no shared context, no rpcmem).
 static Ort::Status SetupBackendHtp(qnn::QnnBackendManager& manager) {
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-  return manager.SetupBackend(false, false, false, -1, false, nullptr, dummy_map);
+  return manager.SetupBackend(false, false, false, 0, false, nullptr, dummy_map);
 }
 
 // Fixture: probes HTP backend availability once (cached) and skips the whole
@@ -449,14 +499,21 @@ class QnnUnit_BackendManagerHtpTest : public ::testing::Test {
   }
 
  private:
-  // Probe once: create an HTP manager and run SetupBackend. Cached for the process.
+  // Probe once with SetupBackend on platforms where repeated initialization is safe.
   static bool HtpAvailable() {
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+    // The V68 ARM64 validation run crashes after this probe has initialized HTP
+    // and the first test initializes it again. The first test below is the real
+    // SetupBackend validation, so do not consume that initialization here.
+    return true;
+#else
     static const bool available = [] {
       StubApiEnv env;
       auto manager = MakeHTPManager(env.api_ptrs, env.logger);
       return manager != nullptr && SetupBackendHtp(*manager).IsOK();
     }();
     return available;
+#endif
   }
 };
 
@@ -768,7 +825,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, LoadCachedQnnContextFromBuffer_HTP_Invalid
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
   qnn::EpContextIoDispatch dummy_io_dispatch;
-  auto setup_status = manager->SetupBackend(true, true, false, -1, false, nullptr, dummy_map);
+  auto setup_status = manager->SetupBackend(true, true, false, 0, false, nullptr, dummy_map);
   ASSERT_TRUE(setup_status.IsOK()) << "SetupBackend with QnnSystem failed: " << setup_status.GetErrorMessage();
 
   char garbage[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -896,7 +953,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingEnabled
   ASSERT_NE(manager, nullptr);
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-  auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map,
+  auto status = manager->SetupBackend(false, false, false, 0, false, nullptr, dummy_map,
                                       qnn::EpContextIoDispatch(),
                                       false /*extended_udma*/, false /*prepare_only*/,
                                       true /*enable_htp_graph_splitting*/);
@@ -911,7 +968,7 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithGraphSplittingAndThre
   ASSERT_NE(manager, nullptr);
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-  auto status = manager->SetupBackend(false, false, false, -1, false, nullptr, dummy_map,
+  auto status = manager->SetupBackend(false, false, false, 0, false, nullptr, dummy_map,
                                       qnn::EpContextIoDispatch(),
                                       false /*extended_udma*/, false /*prepare_only*/,
                                       true /*enable_htp_graph_splitting*/,

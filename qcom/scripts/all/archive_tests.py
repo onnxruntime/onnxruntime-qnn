@@ -15,6 +15,22 @@ from pathlib import Path
 QCOM_ROOT = Path(__file__).parent.parent.parent
 REPO_ROOT = QCOM_ROOT.parent
 
+_TARGET_PLATFORMS = (
+    "android-aarch64",
+    "linux-x86_64",
+    "linux-x86_64_ubuntu_22_04",
+    "linux-x86_64_ubuntu_22_04-internal-symbols",
+    "linux-aarch64_manylinux_2_34",
+    "linux-aarch64_manylinux_2_34-internal-symbols",
+    "linux-aarch64_oe_gcc11_2",
+    "windows-arm64",
+    "windows-arm64-internal-symbols",
+    "windows-arm64ec",
+    "windows-arm64x",
+    "windows-x86_64",
+    "windows-x86_64-internal-symbols",
+)
+
 # Top-level files inside Release/ accepted purely by extension or exact name.
 _TOP_LEVEL_EXT_RE = re.compile(r"\.(dll|exe|cat|so|so\.[0-9.]+)$")
 _TOP_LEVEL_EXACT_NAMES = {
@@ -142,7 +158,7 @@ def _iter_msvc_redist(vc_redist_dir: Path, target_platform: str):
     'C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Redist/MSVC/14.40.33807'.
     Under it, each arch has a 'Microsoft.VC<NNN>.CRT' folder holding the runtime DLLs.
     """
-    arch_subdir = _MSVC_REDIST_ARCH_SUBDIR.get(target_platform)
+    arch_subdir = _MSVC_REDIST_ARCH_SUBDIR.get(target_platform.removesuffix("-internal-symbols"))
     if arch_subdir is None:
         logging.warning("No MSVC redist arch mapping for %s; no redist DLLs found.", target_platform)
         return
@@ -181,7 +197,7 @@ def _add_msvc_redist(zf: zipfile.ZipFile, vc_redist_dir: Path | None, target_pla
     for p in _iter_msvc_redist(vc_redist_dir, target_platform):
         zf.write(p, str(arc_root / p.name))
         bundled.add(p.name.lower())
-    required = _MSVC_REDIST_REQUIRED.get(target_platform, ())
+    required = _MSVC_REDIST_REQUIRED.get(target_platform.removesuffix("-internal-symbols"), ())
     missing = {n.lower() for n in required} - bundled
     if missing:
         raise RuntimeError(
@@ -298,17 +314,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--target-platform",
         required=True,
-        choices=[
-            "android-aarch64",
-            "linux-x86_64",
-            "linux-x86_64_ubuntu_22_04",
-            "linux-aarch64_manylinux_2_34",
-            "linux-aarch64_oe_gcc11_2",
-            "windows-arm64",
-            "windows-arm64ec",
-            "windows-arm64x",
-            "windows-x86_64",
-        ],
+        choices=_TARGET_PLATFORMS,
     )
     parser.add_argument("--qairt-sdk-root", type=Path, required=True)
     parser.add_argument(

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -91,8 +92,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
   static OrtStatus* ORT_API_CALL CreateAllocatorImpl(_In_ OrtEp* this_ptr,
                                                      _In_ const OrtMemoryInfo* memory_info,
                                                      _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept;
-  static OrtStatus* ORT_API_CALL GetDefaultMemoryDeviceImpl(
-      _In_ const OrtEp* this_ptr, _Outptr_result_maybenull_ const OrtMemoryDevice** device) noexcept;
   static OrtStatus* ORT_API_CALL SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                        _In_reads_(num_options) const char* const* option_keys,
                                                        _In_reads_(num_options) const char* const* option_values,
@@ -224,7 +223,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   const Ort::Logger logger_;
   bool context_cache_enabled_ = false;
   bool share_ep_contexts_ = false;
-  int htp_share_resource_optimization_ = -1;
+  uint8_t htp_share_resource_optimization_ = 0;
   std::string context_node_name_prefix_ = "";
   std::string context_cache_path_cfg_ = "";
   const OrtSessionOptions& session_options_;
@@ -321,6 +320,15 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // A flag to indicate whether current GetCapability call is after layout transform, flipped to true once exiting the first call.
   bool is_post_layout_transform_ = false;
+
+  // When disable_cpu_ep_fallback is set and there are unsupported nodes, session initialization will eventually fail
+  // but only after performing compile and graph transformations which in fact can be skipped. However, returning a
+  // non-OK status in GetCapability would not stop the session initialization as PluginExecutionProvider does not
+  // bypass the returned status back to caller (i.e., graph partitioner) but merely log the error message.
+  // Since PluginExecutionProvider::Compile will honor the returned status and it is executed after GetCapability in
+  // graph partitioner, this flag is used to indicate that QnnEp::Compile should return error status at the very
+  // beginning to immediately stop session initialization.
+  bool has_unsupported_nodes_wo_cpu_fallback_ = false;
 
   // Transient state captured in GetCapability() and consumed in Compile().
   // Only one model is ever in-flight per EP instance (one EP per session).

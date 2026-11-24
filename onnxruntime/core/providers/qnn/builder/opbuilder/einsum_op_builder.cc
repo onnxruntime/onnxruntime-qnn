@@ -63,6 +63,9 @@ bool IsEquationMatMul(const Equation& equation) {
   // MatMul: e.g., "ij,jk->ik"
   const auto& [term_1, term_2, result] = equation;
   const size_t num_dims = term_1.size();
+  if (term_2.size() != num_dims || result.size() != num_dims) {
+    return false;
+  }
   for (size_t i = 0; i < num_dims; ++i) {
     if (i >= num_dims - 2) {
       continue;
@@ -93,6 +96,9 @@ bool IsEquationMatMulTransposeY(const Equation& equation) {
   // MatMul with 2nd input transposed: e.g., "id,jd->ij"
   const auto& [term_1, term_2, result] = equation;
   const size_t num_dims = term_1.size();
+  if (term_2.size() != num_dims || result.size() != num_dims) {
+    return false;
+  }
   for (size_t i = 0; i < num_dims; ++i) {
     if (i >= num_dims - 2) {
       continue;
@@ -123,7 +129,7 @@ bool IsEquationMatMulTransposeAll(const Equation& equation) {
   // MatMul transpose both inputs and output, e.g., "bchq,bkhc->bkhq", "bkhq,bchk->bchq"
   const auto& [term_1, term_2, result] = equation;
   const size_t num_dims = term_1.size();
-  if (num_dims != 4) {
+  if (num_dims != 4 || term_2.size() != num_dims || result.size() != num_dims) {
     return false;
   }
   if (term_1[0] != term_2[0] || term_1[0] != result[0]) {
@@ -503,10 +509,6 @@ Ort::Status EinsumOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
       // QAIRT 3.36.1: Failed to validate on GPU.
       return MAKE_EP_FAIL((node_unit.OpType() + " unsupported equation: " + equation + " on backend GPU").c_str());
-    }
-    if (node_unit.Inputs()[0].quant_param.has_value()) {
-      // QAIRT 3.36.1: Failed to finalize QNN graph 1002.
-      return MAKE_EP_FAIL((node_unit.OpType() + " unsupported equation: " + equation + " for quantized inputs").c_str());
     }
   }
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);

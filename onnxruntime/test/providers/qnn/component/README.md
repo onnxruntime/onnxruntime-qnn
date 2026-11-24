@@ -37,12 +37,13 @@ All test code in this directory is guarded by `#if !defined(ORT_MINIMAL_BUILD) &
 |---|---|---|
 | `qnn_def_test.cc` | `QnnUnit_DefTest` | `builder/qnn_def.cc` |
 | `qnn_model_wrapper_test.cc` | `QnnUnit_ModelWrapperTest` | `builder/qnn_model_wrapper.cc` |
+| `qnn_node_group_test.cc` | `QnnUnit_FusionValidation/QnnUnit_NodeGroupFusionValidationTest` (parameterized) | `builder/qnn_node_group/qnn_node_group.cc` |
 | `qnn_quant_params_wrapper_test.cc` | `QnnUnit_QuantParamsWrapperTest` | `builder/qnn_quant_params_wrapper.cc` |
 | `qnn_model_test.cc` | `QnnUnit_ModelTest` | `builder/qnn_model.cc` |
 | `qnn_utils_test.cc` | `QnnUnit_UtilsTest` | `builder/qnn_utils.cc` |
 | `qdq_node_group_selector_test.cc` | `QnnUnit_QdqNodeGroupSelectorTest` | `qdq_node_group_selector.cc` |
 | `qnn_ep_profiler_test.cc` | `QnnUnit_EpProfilerTest` | `qnn_ep_profiler.cc` (ORT API v25+) |
-| `ep_context_io_dispatch_test.cc` | `QnnUnit_EpContextIoDispatchTest` | `builder/ep_context_io_dispatch.cc` |
+| `ep_context_io_dispatch_test.cc` | `QnnUnit_EpContextIoDispatchTest` / `QnnUnit_CallbackBufferTest` | `builder/ep_context_io_dispatch.cc` / `builder/qnn_backend_manager.cc` / `builder/onnx_ctx_model_helper.cc` (callback buffer ownership) |
 | `ort_api_test.cc` | `QnnUnit_OrtApiTest` | `ort_api.cc` |
 | `qnn_backend_manager_test.cc` | `QnnUnit_BackendManagerTest` (stub, no real lib) / `QnnUnit_BackendManagerHtpTest` (loads a real backend, skips when unavailable) | `builder/qnn_backend_manager.cc` |
 | `qnn_backend_system_dlc_plugin_test.cc` | `QnnUnit_BackendSystemDlcPluginTest` (stubbed QNN System API) / `QnnUnit_BackendSystemDlcPluginHtpTest` (loads a real backend + `libQnnSystem.so`, skips when unavailable) | `builder/qnn_backend_system_dlc_plugin.cc` |

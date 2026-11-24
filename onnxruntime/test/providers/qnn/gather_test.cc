@@ -3,15 +3,18 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <string>
 
+#include <gsl/util>
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
 namespace test {
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 // Returns a function that creates a graph with a QDQ Gather operator.
 template <typename QuantType, typename IndicesType>
@@ -353,6 +356,18 @@ static void RunOpTest(const std::string& op_type,
                   EPVerificationParams{expected_ep_assignment, ElementwiseAbsoluteVerifier(fp32_abs_err)});
 }
 
+// Integration coverage for fallback when an otherwise in-range ONNX index cannot be
+// represented by QNN's int32 indices tensor. The helper's truncation regression is
+// guarded directly by QnnUnit_NormalizeIndicesTest.
+TEST_F(QnnHTPBackendTests, GatherOp_StaticInt64IndexExceedsInt32) {
+  RunOpTest<float, int64_t>("Gather",
+                            TestInputDef<float>({2147483649LL, 0}, false, {}),
+                            TestInputDef<int64_t>({1}, true, {2147483648LL}),
+                            {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                            13,
+                            ExpectedEPNodeAssignment::None);
+}
+
 // Non-QDQ model, Gather with static input and dynamic int64 indices
 // Fails with QNN SDK 2.35.0:
 // Failed to finalize QNN graph. Error code: 1002
@@ -383,6 +398,86 @@ TEST_F(QnnHTPBackendTests, GatherOp_BoolInputOutput) {
                            {test::MakeAttribute("axis", static_cast<int64_t>(0))},
                            13,
                            ExpectedEPNodeAssignment::All);
+}
+
+// Test that a raw (unquantized, no QDQ nodes) UINT8 `data` initializer runs on HTP. Models that
+// store a lookup table as raw bytes and dequantize manually downstream (e.g.
+// Gather -> Cast(float) -> Mul(scale) -> Add(bias)) hit this path.
+// Indices are a dynamic graph input so the Gather node isn't constant-folded away before
+// reaching the QNN EP.
+TEST_F(QnnHTPBackendTests, GatherOp_RawUint8DataInput) {
+  RunOpTest<uint8_t, int32_t>("Gather",
+                              TestInputDef<uint8_t>({3, 2}, true, {10, 20, 30, 40, 50, 60}),
+                              TestInputDef<int32_t>({2, 2}, false, {0, 1, 1, 2}),
+                              {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                              13,
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Same as above, but with a dynamic (non-initializer) UINT8 `data` input.
+TEST_F(QnnHTPBackendTests, GatherOp_RawUint8DataInput_Dynamic) {
+  RunOpTest<uint8_t, int32_t>("Gather",
+                              TestInputDef<uint8_t>({3, 2}, false, {10, 20, 30, 40, 50, 60}),
+                              TestInputDef<int32_t>({2, 2}, false, {0, 1, 1, 2}),
+                              {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                              13,
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Same as GatherOp_RawUint8DataInput, but with a raw INT8 `data` initializer that includes
+// negative values, to confirm the identity re-tag preserves sign.
+TEST_F(QnnHTPBackendTests, GatherOp_RawInt8DataInput_NegativeValues) {
+  RunOpTest<int8_t, int32_t>("Gather",
+                             TestInputDef<int8_t>({3, 2}, true, {-10, 20, -30, 40, -50, 60}),
+                             TestInputDef<int32_t>({2, 2}, false, {0, 1, 1, 2}),
+                             {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                             13,
+                             ExpectedEPNodeAssignment::All);
+}
+
+// Same as GatherOp_RawUint8DataInput, but with a raw UINT16 `data` initializer.
+TEST_F(QnnHTPBackendTests, GatherOp_RawUint16DataInput) {
+  RunOpTest<uint16_t, int32_t>("Gather",
+                               TestInputDef<uint16_t>({3, 2}, true, {1000, 2000, 3000, 4000, 5000, 6000}),
+                               TestInputDef<int32_t>({2, 2}, false, {0, 1, 1, 2}),
+                               {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                               13,
+                               ExpectedEPNodeAssignment::All);
+}
+
+// Same as GatherOp_RawInt8DataInput_NegativeValues, but with a raw INT16 `data` initializer that
+// includes negative values.
+TEST_F(QnnHTPBackendTests, GatherOp_RawInt16DataInput_NegativeValues) {
+  RunOpTest<int16_t, int32_t>("Gather",
+                              TestInputDef<int16_t>({3, 2}, true, {-1000, 2000, -3000, 4000, -5000, 6000}),
+                              TestInputDef<int32_t>({2, 2}, false, {0, 1, 1, 2}),
+                              {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                              13,
+                              ExpectedEPNodeAssignment::All);
+}
+
+// Two Gather nodes share the same raw (unquantized) UINT8 `data` initializer. Exercises the
+// IsQnnTensorWrapperExist reuse path in ProcessRawNarrowIntDataInput (gather_op_builder.cc),
+// which skips re-adding the tensor wrapper for the second consumer.
+TEST_F(QnnHTPBackendTests, GatherOp_RawUint8DataInput_SharedAcrossTwoGathers) {
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInitializer<uint8_t>("data", {3, 2}, {10, 20, 30, 40, 50, 60});
+    builder.MakeInput<int32_t>("indices0", {2, 2}, {0, 1, 1, 2});
+    builder.MakeInput<int32_t>("indices1", {1, 2}, {2, 0});
+
+    builder.AddNode("gather0", "Gather", {"data", "indices0"}, {"Y0"}, kOnnxDomain,
+                    {test::MakeAttribute("axis", static_cast<int64_t>(0))});
+    builder.AddNode("gather1", "Gather", {"data", "indices1"}, {"Y1"}, kOnnxDomain,
+                    {test::MakeAttribute("axis", static_cast<int64_t>(0))});
+    builder.MakeOutput("Y0");
+    builder.MakeOutput("Y1");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(build_model, provider_options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 // Test the accuracy of a QDQ GatherND model on QNN EP. Checks if the QDQ model on QNN EP is as accurate as the QDQ model on CPU EP.
@@ -421,6 +516,91 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_IndicesDynamicInt64) {
       ExpectedEPNodeAssignment::All);
 }
 
+// Test that ordinary-rank bool GatherND runs on HTP without the high-rank indices reshape.
+TEST_F(QnnHTPBackendTests, GatherNDOp_BoolInputOutput_OrdinaryRank) {
+  RunOpTest<bool, int64_t>(
+      "GatherND",
+      TestInputDef<bool>({1, 4}, false,
+                         {false, true, false, true}),
+      TestInputDef<int64_t>({2, 2}, true,
+                            {0, 0, 0, 3}),
+      {},  // No attributes for GatherND
+      13,  // Opset version
+      ExpectedEPNodeAssignment::All);
+}
+
+// Test the high-rank indices reshape independently of bool casting, with dynamic indices.
+TEST_F(QnnHTPBackendTests, GatherNDOp_HighRankIndicesDynamic) {
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInitializer<float>("data", {1, 4}, {0.0f, 1.0f, 2.0f, 3.0f});
+    builder.MakeInput<int64_t>("indices_flat", {2, 2}, {0, 0, 0, 3});
+    builder.MakeInitializer<int64_t>("indices_shape", {5}, {1, 1, 1, 2, 2});
+    builder.AddNode("indices_reshape", "Reshape", {"indices_flat", "indices_shape"}, {"indices"});
+    builder.AddNode("gathernd", "GatherND", {"data", "indices"}, {"output"});
+    builder.MakeOutput("output");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  RunQnnModelTest(build_model, provider_options, 13,
+                  EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(1e-3f)});
+}
+
+// Test the interaction between bool casting and the high-rank indices reshape.
+TEST_F(QnnHTPBackendTests, GatherNDOp_BoolInputOutput_HighRankIndices) {
+  RunOpTest<bool, int64_t>(
+      "GatherND",
+      TestInputDef<bool>({1, 4}, false,
+                         {false, true, false, true}),
+      TestInputDef<int64_t>({1, 1, 1, 2, 2}, true,
+                            {0, 0, 0, 3}),
+      {},  // No attributes for GatherND
+      13,  // Opset version
+      ExpectedEPNodeAssignment::All);
+}
+
+// Exercises the INT64 graph-output cast after restoring the ONNX shape for high-rank indices.
+TEST_F(QnnHTPBackendTests, GatherNDOp_Int64InputOutput_HighRankIndices) {
+  RunOpTest<int64_t, int64_t>(
+      "GatherND",
+      TestInputDef<int64_t>({1, 4}, false,
+                            {0, 1, 2, 3}),
+      TestInputDef<int64_t>({1, 1, 1, 2, 2}, true,
+                            {0, 0, 0, 3}),
+      {},  // No attributes for GatherND
+      13,  // Opset version
+      ExpectedEPNodeAssignment::All);
+}
+
+// Flattening indices[:-1] is not semantics-preserving when batch_dims is non-zero. Verify that
+// high-rank indices with batch_dims > 0 remain on CPU instead of using the HTP reshape workaround.
+TEST_F(QnnHTPBackendTests, GatherNDOp_HighRankIndices_BatchDims1_FallsBack) {
+  RunOpTest<float, int64_t>(
+      "GatherND",
+      TestInputDef<float>({1, 4}, false,
+                          {0.0f, 1.0f, 2.0f, 3.0f}),
+      TestInputDef<int64_t>({1, 1, 1, 2, 1}, false,
+                            {0, 3}),
+      {test::MakeAttribute("batch_dims", static_cast<int64_t>(1))},
+      13,  // Opset version
+      ExpectedEPNodeAssignment::None);
+}
+
+// BOOL data is cast to UINT8 on HTP. Verify that this cast does not let high-rank indices with
+// batch_dims > 0 pass op validation and fail later during QNN graph finalization.
+TEST_F(QnnHTPBackendTests, GatherNDOp_BoolInputOutput_HighRankIndices_BatchDims1_FallsBack) {
+  RunOpTest<bool, int64_t>(
+      "GatherND",
+      TestInputDef<bool>({1, 4}, false,
+                         {false, true, false, true}),
+      TestInputDef<int64_t>({1, 1, 1, 2, 1}, false,
+                            {0, 3}),
+      {test::MakeAttribute("batch_dims", static_cast<int64_t>(1))},
+      13,  // Opset version
+      ExpectedEPNodeAssignment::None);
+}
+
 // Static negative int64 indices with negative values and batch_dims = 0
 TEST_F(QnnHTPBackendTests, GatherNDOp_Negative_IndicesInt64_BatchDims0) {
   RunOpTest<float, int64_t>(
@@ -452,6 +632,42 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesDynamicInt64_BatchDims0) {
       {test::MakeAttribute("batch_dims", static_cast<int64_t>(0))},
       13,
       ExpectedEPNodeAssignment::All);
+}
+
+// The data DQ and output Q must fold into GatherND; leaving them standalone makes HTP reject the graph on
+// devices without FP16 support.
+TEST_F(QnnHTPBackendTests, GatherNDQdqFoldsDataDqAndOutputQ) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / "GatherNDQdqFoldsDataDqAndOutputQ";
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  const TestInputDef<float> input_def({2, 2, 2}, false, {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f});
+  const TestInputDef<int64_t> indices_def({2, 2}, true, {0, 0, 1, 1});
+  const std::vector<ONNX_NAMESPACE::AttributeProto> attrs{
+      test::MakeAttribute("batch_dims", static_cast<int64_t>(0))};
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+
+  TestQDQModelAccuracy<uint8_t>(
+      BuildOpTestCase<float, int64_t>("GatherND_node", "GatherND", {input_def}, {indices_def}, attrs),
+      BuildQDQGatherNdTestCase<uint8_t, int64_t>(input_def, indices_def, attrs),
+      provider_options,
+      /*opset=*/13,
+      ExpectedEPNodeAssignment::All);
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertOpInQnnGraph(graph_dir, "GatherNd", 1);
+  // The graph input and output account for the only Quantize and Dequantize.
+  AssertOpInQnnGraph(graph_dir, "Quantize", 1);
+  AssertOpInQnnGraph(graph_dir, "Dequantize", 1);
 }
 
 // Two GatherND nodes share the same negative-indices initializer but consume
@@ -490,7 +706,41 @@ TEST_F(QnnHTPBackendTests, GatherNdSharedStaticNegIndicesDifferentDataShapes) {
   RunQnnModelTest(build_model, provider_options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+TEST_F(QnnHTPBackendTests, GatherNDRejectsNegativeBatchDims) {
+  VerifyMalformedNdIndexShapeIsRejected([](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("data", {2}, {1.0f, 2.0f});
+    builder.MakeInitializer<int64_t>("indices", {1, 1}, {0});
+    builder.AddNode("gathernd", "GatherND", {"data", "indices"}, {"Y"}, kOnnxDomain,
+                    {test::MakeAttribute("batch_dims", static_cast<int64_t>(-1))});
+    builder.MakeOutput("Y");
+  });
+}
+
+TEST_F(QnnHTPBackendTests, GatherNDRejectsBatchDimsAtIndicesRank) {
+  VerifyMalformedNdIndexShapeIsRejected([](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("data", {2, 2, 2},
+                             {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f});
+    builder.MakeInitializer<int64_t>("indices", {1, 1}, {0});
+    builder.AddNode("gathernd", "GatherND", {"data", "indices"}, {"Y"}, kOnnxDomain,
+                    {test::MakeAttribute("batch_dims", static_cast<int64_t>(2))});
+    builder.MakeOutput("Y");
+  });
+}
+
+// HTP supports dynamic INT64 GatherND indices. Keep this input dynamic so the
+// rejection also covers the non-initializer path through ProcessGatherNDIndices.
+TEST_F(QnnHTPBackendTests, GatherNDRejectsDynamicIndicesWithBatchDimsAtIndicesRank) {
+  VerifyMalformedNdIndexShapeIsRejected([](ModelTestBuilder& builder) {
+    builder.MakeInput<float>("data", {2, 2, 2},
+                             {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f});
+    builder.MakeInput<int64_t>("indices", {1, 1}, {0});
+    builder.AddNode("gathernd", "GatherND", {"data", "indices"}, {"Y"}, kOnnxDomain,
+                    {test::MakeAttribute("batch_dims", static_cast<int64_t>(2))});
+    builder.MakeOutput("Y");
+  });
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 

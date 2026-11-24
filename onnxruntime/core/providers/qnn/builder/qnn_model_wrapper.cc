@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <numeric>
 #include <utility>
 #include <vector>
@@ -14,6 +15,7 @@
 
 #include "core/providers/qnn/builder/op_tracing/qnn_op_tracing.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -55,7 +57,8 @@ QnnBackendType QnnModelWrapper::GetQnnBackendType() const {
   return qnn_backend_manager_.GetQnnBackendType();
 }
 
-bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
+bool QnnModelWrapper::CreateQnnGraph(QnnGraphEmitter& graph_emitter,
+                                     const Qnn_ContextHandle_t& context,
                                      const std::string& graph_name,
                                      const QnnGraph_Config_t** graph_configs) {
   if (!graph_name_.empty()) {
@@ -63,32 +66,16 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Graph" + graph_name + " already initialized.").c_str());
     return false;
   }
-  if (context == nullptr) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid Qnn context.");
-    return false;
-  }
-  if (graph_name.length() == 0) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Empty graph name.");
+  const Ort::Status status = graph_emitter.CreateGraph(context, graph_name.c_str(), graph_configs);
+  if (!status.IsOK()) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
     return false;
   }
 
-  const auto& qnn_interface = qnn_backend_manager_.GetQnnInterface();
-  auto rt = qnn_interface.graphCreate(context, graph_name.c_str(), graph_configs, &graph_);
-  if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-    rt = qnn_interface.graphRetrieve(context, graph_name.c_str(), &graph_);
-    if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
-                  ("Failed to create Qnn graph: " + graph_name + ". " +
-                   utils::FormatQnnError(qnn_interface, rt))
-                      .c_str());
-      return false;
-    }
-  }
-
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Created Qnn graph: " + graph_name).c_str());
-
+  graph_ = graph_emitter.Graph();
   graph_name_ = graph_name;
-  graph_context_ = context;
+  graph_context_ = graph_emitter.Context();
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Created Qnn graph: " + graph_name).c_str());
   return true;
 }
 
@@ -159,8 +146,27 @@ void QnnModelWrapper::SetTensorMemTypeFromSettings(QnnTensorWrapper& tensor_wrap
   SetQnnTensorMemType(tensor_wrapper.GetQnnTensor(), mem_type);
 }
 
+QnnModelWrapper::FusionValidationGuard::FusionValidationGuard(QnnModelWrapper& wrapper) : wrapper_(wrapper) {
+  if (wrapper_.active_fusion_validation_guard_ != nullptr) {
+    ORT_CXX_API_THROW("Nested fusion validation guards are not supported.", ORT_EP_FAIL);
+  }
+  wrapper_.active_fusion_validation_guard_ = this;
+}
+
+QnnModelWrapper::FusionValidationGuard::~FusionValidationGuard() noexcept {
+  if (!committed_) {
+    for (const auto& name : param_names_) {
+      wrapper_.model_params_map_.erase(name);
+    }
+    for (const auto& name : tensor_names_) {
+      wrapper_.model_tensors_map_.erase(name);
+    }
+  }
+  wrapper_.active_fusion_validation_guard_ = nullptr;
+}
+
 bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
-  // Keep a copy of tensor name sine it will be moved with the wrapper into model_tensors_map_
+  // Keep a copy of tensor name since it will be moved with the wrapper into model_tensors_map_
   std::string tensor_name = tensor_wrapper.GetName();
   if (tensor_name.length() == 0) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid tensor encountered empty name.");
@@ -174,6 +180,11 @@ bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
 
   SetTensorMemTypeFromSettings(tensor_wrapper, tensor_name);
 
+  if (active_fusion_validation_guard_ != nullptr) {
+    // Record the absent key before insertion so an allocation failure cannot
+    // leave an untracked tensor. Erasing an absent key during rollback is safe.
+    active_fusion_validation_guard_->tensor_names_.push_back(tensor_name);
+  }
   model_tensors_map_.emplace(tensor_name, std::move(tensor_wrapper));
 
   return true;
@@ -191,6 +202,10 @@ bool QnnModelWrapper::AddParamWrapper(QnnParamWrapper&& param_wrapper) {
     return true;
   }
 
+  if (active_fusion_validation_guard_ != nullptr) {
+    // As with tensors, log the absent key before the potentially throwing insertion.
+    active_fusion_validation_guard_->param_names_.push_back(param_tensor_name);
+  }
   // save created tensors for later lookup to populate graph node construction
   model_params_map_.emplace(param_tensor_name, std::move(param_wrapper));
 
@@ -478,6 +493,8 @@ bool QnnModelWrapper::ApplyBF16ConversionForValidation(const std::vector<std::st
   return true;
 }
 
+// TODO: Preserve tensors that were already BF16 before validation. Track original
+// data types so cleanup only restores tensors converted from FP32 for validation.
 void QnnModelWrapper::RestoreFP32AfterValidation(const std::vector<std::string>& input_names,
                                                  const std::vector<std::string>& output_names) {
   // Restore FP32 data types after validation
@@ -523,14 +540,14 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
 
     if (IsBF16ConversionEnabled()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "[BF16] Validation with BF16 conversion enabled");
+      // Guard partial conversion if conversion fails or throws.
+      bf16_guard = std::make_unique<BF16ConversionGuard>(this, input_names, output_names);
       if (!ApplyBF16ConversionForValidation(input_names, output_names, validation_input_names, validation_output_names)) {
         ORT_CXX_LOG(logger_,
                     ORT_LOGGING_LEVEL_ERROR,
                     ("[BF16] ApplyBF16ConversionForValidation failed for node: " + qnn_node_name).c_str());
         return false;
       }
-      // Create the guard after successful conversion
-      bf16_guard = std::make_unique<BF16ConversionGuard>(this, input_names, output_names);
     } else {
       validation_input_names = input_names;
       validation_output_names = output_names;
@@ -1206,39 +1223,59 @@ void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::st
 
 Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializer,
                                                    std::vector<uint8_t>& unpacked_tensor,
-                                                   const bool unpack_sub_byte_to_8_bit) const {
+                                                   const bool unpack_sub_byte_to_8_bit,
+                                                   std::optional<size_t> expected_byte_size) const {
+  RETURN_IF(initializer == nullptr, "Initializer to unpack must not be null.");
+  const OrtTypeInfo* type_info = nullptr;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoTypeInfo(initializer, &type_info));
+  const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
+  RETURN_IF(tensor_type_and_shape_info == nullptr, "Initializer to unpack must be a tensor.");
+  ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
+
+  size_t num_dims = 0;
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetDimensionsCount(tensor_type_and_shape_info, &num_dims));
+  std::vector<int64_t> shape(num_dims);
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetDimensions(tensor_type_and_shape_info, shape.data(), shape.size()));
+  RETURN_IF(std::any_of(shape.begin(), shape.end(), [](int64_t dim) { return dim < 0; }),
+            "Initializer shape must not contain negative dimensions.");
+  size_t num_elements = 0;
+  size_t packed_byte_size = 0;
+  try {
+    num_elements = utils::GetOnnxTensorDataSizeInBytes(shape, ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8);
+    packed_byte_size = utils::GetOnnxTensorDataSizeInBytes(num_elements, onnx_data_type);
+  } catch (const std::exception& error) {
+    return MAKE_EP_FAIL(error.what());
+  }
+  const bool is_sub_byte = onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4 ||
+                           onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 ||
+                           onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2 ||
+                           onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2;
+  const size_t output_byte_size = unpack_sub_byte_to_8_bit && is_sub_byte ? num_elements : packed_byte_size;
+  RETURN_IF(expected_byte_size.has_value() && *expected_byte_size != output_byte_size,
+            "Initializer byte count does not match the caller's expected size.");
+
   const ORTCHAR_T* model_path = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetModelPath(&ort_graph_, &model_path));
   RETURN_IF_ERROR(utils::UnpackInitializerData(api_ptrs_.ort_api,
                                                initializer,
                                                std::filesystem::path(model_path),
-                                               unpacked_tensor));
-
-  const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoTypeInfo(initializer, &type_info));
-  const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
-  ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
+                                               unpacked_tensor,
+                                               packed_byte_size));
+  RETURN_IF(unpacked_tensor.size() != packed_byte_size,
+            "Initializer byte count does not match its declared shape and element type.");
 
   // If unpack_sub_byte_to_8_bit is true, unpack 2-bit/4-bit elements to one byte each because
   // QNN HTP treats sub-byte int2/int4 as a full int8.
   if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
-    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
-    const size_t num_int4_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
-    RETURN_IF_ERROR(utils::UnpackInt4ToInt8<true>(num_int4_elems, unpacked_tensor));
+    RETURN_IF_ERROR(utils::UnpackInt4ToInt8<true>(num_elements, unpacked_tensor));
   } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4) {
-    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
-    const size_t num_uint4_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
-    RETURN_IF_ERROR(utils::UnpackInt4ToInt8<false>(num_uint4_elems, unpacked_tensor));
+    RETURN_IF_ERROR(utils::UnpackInt4ToInt8<false>(num_elements, unpacked_tensor));
   } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2) {
-    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
-    const size_t num_int2_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
-    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<true>(num_int2_elems, unpacked_tensor));
+    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<true>(num_elements, unpacked_tensor));
   } else if (unpack_sub_byte_to_8_bit && onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2) {
-    std::vector<int64_t> shape = utils::GetInitializerShape(initializer, api_ptrs_.ort_api);
-    const size_t num_uint2_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
-    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<false>(num_uint2_elems, unpacked_tensor));
+    RETURN_IF_ERROR(utils::UnpackInt2ToInt8<false>(num_elements, unpacked_tensor));
   }
 
   return Ort::Status();

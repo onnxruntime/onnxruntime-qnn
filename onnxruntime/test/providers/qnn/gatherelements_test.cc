@@ -164,7 +164,7 @@ TEST_F(QnnCPUBackendTests, GatherElems_DataF32_StaticIndicesInt32) {
       ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 //
 // HTP tests:
 //
@@ -271,15 +271,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataUint16_StaticNegIndicesInt64_Large) {
 }
 
 // Test QDQ GatherElements op on HTP backend with large number of indices.
-// TODO: Investigate inaccuracy.
-// Negative input[0] values seem to cause inaccuracies with 2M+ indices.
-// Inaccuracy detected for output 'output_0', element 131072
-// output_range=300, tolerance=0.40000000596046448%.
-// Expected val (f32@CPU_EP): 121
-// qdq@QNN_EP val: -97.999542236328125 (err: 218.99954223632812, err/output_range: 72.999847412109375%)
-// qdq@CPU_EP val: 120.99794006347656 (err: 0.0020599365234375, err/output_range: 0.0006866455078125%)
-// abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 72.999160766601562%
-TEST_F(QnnHTPBackendTests, DISABLED_GatherElems_DataUint16_StaticNegIndicesInt64_Large2) {
+TEST_F(QnnHTPBackendTests, GatherElems_DataUint16_StaticNegIndicesInt64_Large2) {
   // Input data with sequential values from -98.0f to 202.0f
   const std::vector<int64_t> input_shape = {12, 1024, 512};
   std::vector<float> input_data(12 * 1024 * 512);
@@ -314,7 +306,73 @@ TEST_F(QnnHTPBackendTests, GatherElems_DynamicInt64IndicesSupportedAsGraphInput)
       ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+// Test that a raw (unquantized, no QDQ nodes) UINT8 `data` initializer runs on HTP. Models that
+// store a lookup table as raw bytes and dequantize manually downstream (e.g.
+// GatherElements -> Cast(float) -> Mul(scale) -> Add(bias)) hit this path.
+TEST_F(QnnHTPBackendTests, GatherElems_RawUint8DataInput) {
+  RunHTPGatherElemsOpTest<uint8_t, int32_t>(
+      TestInputDef<uint8_t>({3, 3}, true, {10, 20, 30, 40, 50, 60, 70, 80, 90}),
+      TestInputDef<int32_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// HTP's GatherElements validator rejects a raw (unquantized) signed fixed-point `data` input
+// (SFIXED_POINT_8), unlike Gather which accepts the equivalent config (see
+// GatherOp_RawInt8DataInput_NegativeValues in gather_test.cc). Expect CPU EP fallback.
+TEST_F(QnnHTPBackendTests, GatherElems_RawInt8DataInput_NegativeValues) {
+  RunHTPGatherElemsOpTest<int8_t, int32_t>(
+      TestInputDef<int8_t>({3, 3}, true, {-10, 20, -30, 40, -50, 60, -70, 80, -90}),
+      TestInputDef<int32_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+      ExpectedEPNodeAssignment::None);
+}
+
+// Same as above, but with a raw UINT16 `data` initializer.
+TEST_F(QnnHTPBackendTests, GatherElems_RawUint16DataInput) {
+  RunHTPGatherElemsOpTest<uint16_t, int32_t>(
+      TestInputDef<uint16_t>({3, 3}, true, {1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000}),
+      TestInputDef<int32_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// Same as GatherElems_RawInt8DataInput_NegativeValues: HTP's GatherElements validator rejects
+// raw signed fixed-point (SFIXED_POINT_16) data too, even though Gather accepts it (see
+// GatherOp_RawInt16DataInput_NegativeValues in gather_test.cc). Expect CPU EP fallback.
+TEST_F(QnnHTPBackendTests, GatherElems_RawInt16DataInput_NegativeValues) {
+  RunHTPGatherElemsOpTest<int16_t, int32_t>(
+      TestInputDef<int16_t>({3, 3}, true, {-1000, 2000, -3000, 4000, -5000, 6000, -7000, 8000, -9000}),
+      TestInputDef<int32_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+      ExpectedEPNodeAssignment::None);
+}
+
+// Two GatherElements nodes share the same raw (unquantized) UINT8 `data` initializer. Exercises
+// the IsQnnTensorWrapperExist reuse path in ProcessRawNarrowIntDataInput (gather_op_builder.cc),
+// which skips re-adding the tensor wrapper for the second consumer.
+TEST_F(QnnHTPBackendTests, GatherElems_RawUint8DataInput_SharedAcrossTwoNodes) {
+  auto build_model = [](ModelTestBuilder& builder) {
+    builder.MakeInitializer<uint8_t>("data", {3, 3}, {10, 20, 30, 40, 50, 60, 70, 80, 90});
+    builder.MakeInput<int32_t>("indices0", {2, 3}, {1, 2, 0, 2, 0, 0});
+    builder.MakeInput<int32_t>("indices1", {1, 3}, {2, 1, 0});
+
+    builder.AddNode("gatherelems0", "GatherElements", {"data", "indices0"}, {"Y0"}, kOnnxDomain,
+                    {test::MakeAttribute("axis", static_cast<int64_t>(1))});
+    builder.AddNode("gatherelems1", "GatherElements", {"data", "indices1"}, {"Y1"}, kOnnxDomain,
+                    {test::MakeAttribute("axis", static_cast<int64_t>(1))});
+    builder.MakeOutput("Y0");
+    builder.MakeOutput("Y1");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(build_model, provider_options, 13, EPVerificationParams{ExpectedEPNodeAssignment::All});
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

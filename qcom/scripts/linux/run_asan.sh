@@ -95,7 +95,14 @@ log_info "config    : ${config}"
 # directly here to feed it through asan_filter_leaks.sh.
 # ---------------------------------------------------------------------------
 export LD_LIBRARY_PATH="${PWD}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-export ASAN_OPTIONS="halt_on_error=1:detect_leaks=1:print_stats=0"
+# GCC 11's sanitizer can record invalid dynamic TLS ranges when backend
+# libraries are loaded/unloaded, crashing LSan's tracer at process exit.
+# Work around the DTLS interceptor bug while retaining ASan and leak checks:
+# https://github.com/google/sanitizers/issues/1322
+# Dynamic TLS is no longer tracked as a leak root, so allocations reachable
+# only through it may be reported as leaks. Remove after upgrading the CI
+# sanitizer runtime to one with the glibc >= 2.25 TLS fix.
+export ASAN_OPTIONS="halt_on_error=1:detect_leaks=1:print_stats=0:intercept_tls_get_addr=0"
 export LSAN_OPTIONS="exitcode=1:suppressions=${REPO_ROOT}/tools/ci_build/lsan_suppressions.txt:print_suppressions=0"
 
 # ---------------------------------------------------------------------------

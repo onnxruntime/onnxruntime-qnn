@@ -167,7 +167,7 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     // Conv's actual compute bitwidth is always the wider of the activation's and the output's: when
     // the activation is wider, it's Converted down only after Conv (AddOpWithQuantizedOutput);
     // otherwise the activation is Converted up to the output's precision before Conv runs.
-    // See utils::ConvertActivationToOutputPrecision.
+    // See utils::ConvertInputToPrecision.
     Qnn_DataType_t declared_output_dtype = QNN_DATATYPE_FLOAT_32;
     RETURN_IF_ERROR(utils::GetQnnDataType(node_unit.Outputs()[0].quant_param.has_value(),
                                           node_unit.Outputs()[0].type, declared_output_dtype));
@@ -184,6 +184,15 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                   ("Conv's weight bitwidth (" + std::to_string(weight_bitwidth) +
                    ") exceeds its compute bitwidth (" + std::to_string(compute_bitwidth) + ")")
                       .c_str());
+
+    // V68 HTP only supports a16w8 among the 16-bit-activation combos, not a16w16 (unlike later
+    // HTP archs). Reject here so EP doesn't commit to this op in GetCapability and only discover
+    // the failure during QNN's own graph validation. An unset arch (NONE, e.g. AI Hub conversion)
+    // is not V68, so it's left to backend validation.
+    const int act_bitwidth = utils::FixedPointBitWidth(act_dtype_check);
+    RETURN_IF_NOT(qnn_model_wrapper.GetHtpArch() != QNN_HTP_DEVICE_ARCH_V68 ||
+                      act_bitwidth != 16 || weight_bitwidth != 16,
+                  "QNN EP: Conv a16w16 is not supported on V68 HTP (only a16w8).");
 
     // checking for per-channel quantization
     const auto& input_1 = inputs[1];  // weight
@@ -333,8 +342,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     // 2. Convert the activation to the output's precision before Conv consumes it, so Conv computes and emits
     // natively at declared_output_dtype. A 16-bit activation feeding an 8-bit output is left to
     // AddOpWithQuantizedOutput, which computes Conv at 16-bit and narrows only the output.
-    RETURN_IF_ERROR(utils::ConvertActivationToOutputPrecision(qnn_model_wrapper, input_names, declared_output_dtype,
-                                                              do_op_validation));
+    RETURN_IF_ERROR(utils::ConvertInputToPrecision(qnn_model_wrapper, node_unit, input_names[0], declared_output_dtype,
+                                                   do_op_validation));
     act_dtype = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]).GetTensorDataType();
   }
 

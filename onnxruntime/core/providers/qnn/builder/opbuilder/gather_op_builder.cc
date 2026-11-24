@@ -2,9 +2,11 @@
 // Licensed under the MIT License.
 
 #include <cassert>
+#include <optional>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/normalize_indices_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
@@ -15,9 +17,13 @@ namespace qnn {
 // 1) GatherElements on HTP with BOOL input: BOOL -> Cast(U8) -> GatherElements(U8) -> Cast(BOOL).
 // 2) Gather with int64 inputs: inputs gets Cast(INT32) in ProcessInt64Tensors;
 //    if ONNX graph output is int64, cast back after Gather.
-// 2.1) Gather with static int64 indices: negative indices get fixed and int64 gets reinterpreted as uint32
-//      in ProcessAttributesAndOutputs, and Cast is added if output is int64.
+// 2.1) Gather with static int64 indices: ProcessInputs normalizes negative values and converts
+//      representable values to int32; output int64 values are converted back after Gather.
 // 3) Gather with rank mismatch: Gather -> Reshape -> (optional output cast).
+// 4) Gather on HTP with a raw (unquantized) narrow-int `data` input (UINT8/INT8/UINT16/INT16):
+//    re-tag the tensor as the equivalent QNN fixed-point type with an identity scale/offset
+//    (1.0f, 0) instead of a plain integer type, since HTP's Gather validator rejects raw
+//    narrow-int data but accepts quantized fixed-point data. See ProcessRawNarrowIntDataInput.
 
 class GatherOpBuilder : public BaseOpBuilder {
  public:
@@ -65,40 +71,6 @@ Ort::Status GatherOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   }
 
   return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);
-}
-
-// Makes negative indices positive and converts int64 indices to another integer type (typically int32 or uint32).
-// The input and output are both represented as byte arrays.
-template <typename SrcType, typename DstType>
-static bool MakeStaticIndicesPositiveAndValidate(const std::vector<uint8_t>& onnx_bytes,
-                                                 int64_t input0_axis_dim,
-                                                 /*out*/ std::vector<uint8_t>& qnn_bytes,
-                                                 /*out*/ bool* has_negative_indices) {
-  const size_t num_elems = onnx_bytes.size() / sizeof(SrcType);
-  gsl::span<const SrcType> onnx_indices{reinterpret_cast<const SrcType*>(onnx_bytes.data()), num_elems};
-
-  qnn_bytes.resize(num_elems * sizeof(DstType));
-  gsl::span<DstType> qnn_indices{reinterpret_cast<DstType*>(qnn_bytes.data()), num_elems};
-
-  for (size_t i = 0; i < num_elems; i++) {
-    SrcType onnx_index = onnx_indices[i];
-
-    // Try to make a negative index positive by adding rank.
-    if (onnx_index < 0) {
-      if (has_negative_indices != nullptr) {
-        *has_negative_indices = true;
-      }
-      onnx_index += static_cast<SrcType>(input0_axis_dim);
-    }
-
-    if (onnx_index < 0 || static_cast<int64_t>(onnx_index) >= input0_axis_dim) {
-      return false;  // QNN does not support out-of-bounds indices.
-    }
-
-    qnn_indices[i] = static_cast<DstType>(onnx_index);
-  }
-
-  return true;
 }
 
 // Gets the size of input0 on the axis dimension.
@@ -154,22 +126,21 @@ static Ort::Status ProcessIndicesInput(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor, onnx_indices_bytes));
 
     if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
-      RETURN_IF_NOT((MakeStaticIndicesPositiveAndValidate<int64_t, int32_t>(onnx_indices_bytes, input0_axis_dim,
-                                                                            qnn_indices_bytes,
-                                                                            &has_negative_indices)),
-                    "QNN does not support negative index values for Gather* ops");
+      RETURN_IF_NOT((utils::NormalizeIndicesBytes<int64_t>(
+                        onnx_indices_bytes, [input0_axis_dim](size_t) { return input0_axis_dim; },
+                        qnn_indices_bytes, has_negative_indices)),
+                    "QNN does not support out-of-range index values for Gather* ops");
       indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
     } else if (indices_info.qnn_data_type == QNN_DATATYPE_INT_32) {
-      RETURN_IF_NOT((MakeStaticIndicesPositiveAndValidate<int32_t, int32_t>(onnx_indices_bytes, input0_axis_dim,
-                                                                            qnn_indices_bytes,
-                                                                            &has_negative_indices)),
-                    "QNN does not support negative index values for Gather* ops");
+      RETURN_IF_NOT((utils::NormalizeIndicesBytes<int32_t>(
+                        onnx_indices_bytes, [input0_axis_dim](size_t) { return input0_axis_dim; },
+                        qnn_indices_bytes, has_negative_indices)),
+                    "QNN does not support out-of-range index values for Gather* ops");
     } else {
       qnn_indices_bytes = std::move(onnx_indices_bytes);
     }
   }
 
-  std::vector<uint32_t> cast_output_shape(indices_info.shape);
   // If static indices have negative values, use a deterministic neg-to-pos tensor name
   // that is stable across graph passes and unique per Gather: input0 + axis size.
   // Note: Using 'GetUniqueName' here causes replication of same indices across passes.
@@ -178,39 +149,65 @@ static Ort::Status ProcessIndicesInput(QnnModelWrapper& qnn_model_wrapper,
                    "_" + gather_input0_name;
   }
 
-  if (qnn_model_wrapper.IsQnnTensorWrapperExist(indices_name)) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                ("Tensor already added, skip it: " + indices_name).c_str());
-  } else {
-    const Qnn_TensorType_t tensor_type = indices_info.is_initializer
-                                             ? QNN_TENSOR_TYPE_STATIC
-                                             : qnn_model_wrapper.GetTensorType(indices_name);
-    QnnTensorWrapper input_tensorwrapper(indices_name,
-                                         tensor_type,
-                                         indices_info.qnn_data_type, QnnQuantParamsWrapper(),
-                                         std::move(indices_info.shape),
-                                         std::move(qnn_indices_bytes));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+  return utils::AddNormalizedIndicesTensor(qnn_model_wrapper, std::move(indices_info), indices_name,
+                                           std::move(qnn_indices_bytes), logger, input_names,
+                                           do_op_validation);
+}
+
+// Returns the QNN fixed-point counterpart for `onnx_type` if it is one of the raw/unquantized
+// narrow-int types that QNN's HTP backend rejects as a Gather `data` input (UINT8/INT8/UINT16/
+// INT16), or QNN_DATATYPE_UNDEFINED otherwise. BOOL is handled separately via an explicit Cast
+// node (see needs_bool_cast below) since HTP's Gather does not support BOOL at all, quantized or
+// not. A plain Qnn_DataType_t sentinel is used instead of std::optional because GCC's
+// -Werror=maybe-uninitialized spuriously flags std::optional<Qnn_DataType_t> reads at -O3.
+static Qnn_DataType_t GetRawNarrowIntIdentityQuantType(ONNXTensorElementDataType onnx_type) {
+  switch (onnx_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+      return QNN_DATATYPE_UFIXED_POINT_8;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      return QNN_DATATYPE_SFIXED_POINT_8;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+      return QNN_DATATYPE_UFIXED_POINT_16;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
+      return QNN_DATATYPE_SFIXED_POINT_16;
+    default:
+      return QNN_DATATYPE_UNDEFINED;
+  }
+}
+
+// QNN HTP's Gather rejects a `data` input that is a raw (unquantized) narrow-int tensor -- it
+// only accepts float or a genuinely quantized fixed-point type. Some ONNX graphs store a lookup
+// table as raw narrow-int bytes and dequantize it manually after Gather (e.g. a token-embedding
+// table: Gather -> Cast(float) -> Mul(scale) -> Add(bias)) instead of using QDQ nodes. For these,
+// add the tensor with the equivalent QNN fixed-point type and an identity scale/offset (1.0f, 0)
+// instead of the plain integer type -- this only changes the QNN-visible type tag, not the
+// underlying bytes, since dequantizing with scale=1/offset=0 reproduces the original byte value.
+static Ort::Status ProcessRawNarrowIntDataInput(QnnModelWrapper& qnn_model_wrapper,
+                                                const OrtNodeUnitIODef& input0,
+                                                Qnn_DataType_t identity_quant_type,
+                                                std::vector<std::string>& input_names) {
+  const std::string& input0_name = input0.name;
+  if (qnn_model_wrapper.IsQnnTensorWrapperExist(input0_name)) {
+    input_names.push_back(input0_name);
+    return Ort::Status();
   }
 
-  // B. Insert QNN Cast op to convert dynamic indices from int64 to int32.
-  auto& input_tensorwrapper = qnn_model_wrapper.GetQnnTensorWrapper(indices_name);
+  TensorInfo input0_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input0, input0_info));
 
-  std::string indices_casted_name{indices_name};
-  // Check QNN Tensor data type.
-  if (input_tensorwrapper.GetTensorDataType() == QNN_DATATYPE_INT_64) {
-    assert(!indices_info.is_initializer);
-    indices_casted_name += "_int32";
-    RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(utils::UniqueNameGenerator().New(indices_name, QNN_OP_CAST),
-                                                  indices_name,
-                                                  indices_casted_name,
-                                                  QNN_TENSOR_TYPE_NATIVE,
-                                                  QNN_DATATYPE_INT_32,
-                                                  QnnQuantParamsWrapper(),
-                                                  std::move(cast_output_shape),
-                                                  do_op_validation));
+  std::vector<uint8_t> unpacked_tensor;
+  if (input0_info.is_initializer) {
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input0_info.initializer_tensor, unpacked_tensor));
   }
-  input_names.push_back(indices_casted_name);
+
+  QnnTensorWrapper input_tensorwrapper(input0_name,
+                                       qnn_model_wrapper.GetTensorType(input0_name),
+                                       identity_quant_type,
+                                       QnnQuantParamsWrapper::PerTensor(1.0f, 0),
+                                       std::move(input0_info.shape),
+                                       std::move(unpacked_tensor));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+  input_names.push_back(input0_name);
   return Ort::Status();
 }
 
@@ -221,7 +218,20 @@ Ort::Status GatherOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                            bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
   RETURN_IF(inputs.size() != 2, ("QNN EP: " + node_unit.OpType() + " operator must have two inputs").c_str());
-  RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
+
+  // Raw (unquantized) narrow-int `data` input on HTP: re-tag with an identity-quantized type
+  // instead of the plain integer type QNN's Gather validator rejects (see
+  // ProcessRawNarrowIntDataInput and GetRawNarrowIntIdentityQuantType above).
+  const Qnn_DataType_t raw_narrow_int_identity_type =
+      (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP && !inputs[0].quant_param.has_value())
+          ? GetRawNarrowIntIdentityQuantType(inputs[0].type)
+          : QNN_DATATYPE_UNDEFINED;
+  if (raw_narrow_int_identity_type != QNN_DATATYPE_UNDEFINED) {
+    RETURN_IF_ERROR(ProcessRawNarrowIntDataInput(qnn_model_wrapper, inputs[0], raw_narrow_int_identity_type,
+                                                 input_names));
+  } else {
+    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
+  }
 
   // Gather/GatherElements on HTP BE don't support BOOL input. Add Cast node to convert BOOL to UINT8.
   const bool needs_bool_cast = (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
@@ -259,6 +269,16 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   const bool needs_bool_cast = (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
                                 node_unit.Inputs()[0].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL);
 
+  // Raw (unquantized) narrow-int `data` input on HTP: GatherElements' output has the same
+  // element type as `data` (it's a lookup, not a cast), so it needs the same identity-quantized
+  // retagging used for input0 in ProcessInputs and for Gather's output below. Mutually exclusive
+  // with needs_bool_cast since they key off disjoint ONNX types.
+  const Qnn_DataType_t raw_narrow_int_identity_type =
+      (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP &&
+       !node_unit.Inputs()[0].quant_param.has_value())
+          ? GetRawNarrowIntIdentityQuantType(node_unit.Inputs()[0].type)
+          : QNN_DATATYPE_UNDEFINED;
+
   // Create QNN 'axis' parameter. dtype differs by op: Gather->INT_32, GatherElements->UINT_32.
   // axis_value is kept in scope as uint32_t for the GatherElements output shape computation below.
   std::vector<std::string> param_tensor_names;
@@ -274,9 +294,33 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   }
 
   if (is_gather_elems) {
-    if (!needs_bool_cast) {
+    if (!needs_bool_cast && raw_narrow_int_identity_type == QNN_DATATYPE_UNDEFINED) {
       return ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), std::move(param_tensor_names),
                             logger, do_op_validation, GetQnnOpType(node_unit.OpType()));
+    }
+
+    if (raw_narrow_int_identity_type != QNN_DATATYPE_UNDEFINED) {
+      // Raw narrow-int flow for GatherElements on HTP: no Cast node needed (the underlying bytes
+      // are unchanged), just retag the output with the same identity-quantized type as input0.
+      const auto& gather_output = node_unit.Outputs()[0];
+      const auto& output_name = gather_output.name;
+      std::vector<uint32_t> output_shape;
+      RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(gather_output.shape, output_shape), "Cannot get shape");
+      const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+      Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+
+      QnnTensorWrapper output_wrapper(output_name, tensor_type, raw_narrow_int_identity_type,
+                                      QnnQuantParamsWrapper::PerTensor(1.0f, 0), std::move(output_shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)), "Failed to add tensor.");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    GetQnnOpType(node_unit.OpType()),
+                                                    std::move(input_names),
+                                                    {output_name},
+                                                    std::move(param_tensor_names),
+                                                    do_op_validation),
+                    "Failed to add node.");
+      return Ort::Status();
     }
 
     // 1. BOOL input flow for GatherElements on HTP:
@@ -350,6 +394,15 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   ONNXTensorElementDataType gather_output_type = gather_output.type;
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
   RETURN_IF_ERROR(utils::GetQnnDataType(quantize_param.IsQuantized(), gather_output_type, qnn_data_type));
+
+  // Raw (unquantized) narrow-int `data` input on HTP: Gather's output has the same element type
+  // as `data` (it's a lookup, not a cast), so re-tag the output with the same identity-quantized
+  // type used for input0 in ProcessInputs, instead of the plain integer type. (Computed above,
+  // shared with the GatherElements branch.)
+  if (raw_narrow_int_identity_type != QNN_DATATYPE_UNDEFINED) {
+    qnn_data_type = raw_narrow_int_identity_type;
+    quantize_param = QnnQuantParamsWrapper::PerTensor(1.0f, 0);
+  }
 
   if (!needs_bool_cast && quantize_param.IsPerTensor()) {
     // Make sure the output quantization parameters are equal to the input.

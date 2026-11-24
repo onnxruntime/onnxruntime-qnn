@@ -115,6 +115,14 @@ TEST(QnnUnit_Clip_ComponentTest, Clip_Dynamic_MinMax_Unsupported) {
 // do_op_validation=false against a stub wrapper — validation and dispatch are
 // orthogonal, so coupling them would obscure which concern a failure belongs to.
 TEST(QnnUnit_Clip_ComponentTest, Clip_BackendValidation_Htp) {
+#if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
+  // The Linux ARM64 CI runner uses HTP V68. Its real backend validator reports
+  // QNN_ERROR_NOT_SUPPORTED for the FP16 precision path used by this FP32 Clip
+  // validation case ("The SocModel doesn't support FP16"). Keep the real
+  // validation coverage on platforms that support it; V68 cannot exercise it.
+  GTEST_SKIP() << "HTP V68 does not support FP16 Clip backend validation";
+#endif
+
   QnnRealHtpBackendContext backend;
   if (!backend.IsValid()) GTEST_SKIP() << "libQnnHtp.so not available";
 
@@ -388,6 +396,28 @@ TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_NonQuant_UnsupportedDtype) {
   g_mock_init_reg.Add("min", spec);
   RunClipMinMaxDispatchFail(MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL,
                                           std::vector<int64_t>{}));
+}
+
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_RejectsEmptyInitializer) {
+  g_mock_init_reg.clear();
+  MockInitSpec min;
+  min.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  min.dims = {0};
+  g_mock_init_reg.Add("min", std::move(min));
+
+  OpBuilderTestContext ctx;
+  SetupMockInitRegistryStubs(ctx);
+  auto wrapper = MakeStubWrapper(ctx);
+  auto data = MakeMockIODef("data", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, std::vector<int64_t>{1, 4});
+  auto empty_min = MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, std::vector<int64_t>{0});
+  auto output = MakeMockIODef("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, std::vector<int64_t>{1, 4});
+  auto node = MakeMockNodeUnit("Clip", {data, empty_min}, {output}, "clip_empty_initializer");
+  const auto* builder = GetOpBuilder("Clip");
+  ASSERT_NE(builder, nullptr);
+  const auto status = builder->AddToModelBuilder(*wrapper, node, ctx.ort_logger, false);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("expected size"), std::string::npos)
+      << status.GetErrorMessage();
 }
 
 // Note: the quantized default-error path (lines 91-94) is unreachable — the

@@ -325,7 +325,7 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     provider_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
   // By default, 8 is used, which will impact time to run all
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
@@ -485,6 +485,22 @@ void VerifyQnnEpModelAssignment(const std::string& model_data,
   ScopedOrtSession scoped(std::move(registered_ep_device),
                           Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
   ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), registration_name, expected_ep_assignment));
+}
+
+void VerifyMalformedNdIndexShapeIsRejected(const GetTestModelFn& build_model) {
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, build_model);
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  TryEnableQNNSaver(provider_options);
+
+  ASSERT_NO_FATAL_FAILURE(VerifyQnnEpModelAssignment(model->model_data, "InvalidNDIndexShape", provider_options,
+                                                     ExpectedEPNodeAssignment::None));
 }
 
 void VerifyQnnStatefulResetBehavior(const GetTestModelFn& build_test_case,
