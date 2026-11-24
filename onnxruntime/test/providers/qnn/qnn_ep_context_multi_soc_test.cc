@@ -67,7 +67,8 @@ void CompileModelWithPerSocOptions(const ProviderOptions& per_soc_options,
 
 }  // namespace
 
-TEST_F(QnnHTPBackendTests, EPContextMultiSoc_DefaultHtpConfigs) {
+// TODO: Re-enable after the QAIRT 2.53 HTP SOC/ARCH device-config ABI mismatch is resolved.
+TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_DefaultHtpConfigs) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "68,73,81";
 #ifdef _WIN32
@@ -79,7 +80,8 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_DefaultHtpConfigs) {
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, EPContextMultiSoc_DefaultHtpConfigs_NonEmbed) {
+// TODO: Re-enable after the QAIRT 2.53 HTP SOC/ARCH device-config ABI mismatch is resolved.
+TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_DefaultHtpConfigs_NonEmbed) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "68,73,81";
 #ifdef _WIN32
@@ -106,7 +108,8 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArchOnly_SocModelUnknown) {
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, EPContextMultiSoc_SocModelOnly) {
+// TODO: Re-enable after the QAIRT 2.53 HTP SOC/ARCH device-config ABI mismatch is resolved.
+TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_SocModelOnly) {
   ProviderOptions per_soc_options;
 #ifdef _WIN32
   per_soc_options["soc_model"] = "37,60,88";
@@ -117,7 +120,8 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_SocModelOnly) {
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, EPContextMultiSoc_SingleHtpConfigs) {
+// TODO: Re-enable after the QAIRT 2.53 HTP SOC/ARCH device-config ABI mismatch is resolved.
+TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_SingleHtpConfigs) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "68,73,81";
 #ifdef _WIN32
@@ -130,7 +134,8 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_SingleHtpConfigs) {
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, EPContextMultiSoc_MultipleHtpConfigs) {
+// TODO: Re-enable after the QAIRT 2.53 HTP SOC/ARCH device-config ABI mismatch is resolved.
+TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_MultipleHtpConfigs) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "68,73,81";
 #ifdef _WIN32
@@ -163,7 +168,8 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_MismatchHtpArchSocModel) {
   }
 }
 
-TEST_F(QnnHTPBackendTests, EPContextMultiSoc_Legacy) {
+// TODO: Re-enable after the QAIRT 2.53 HTP SOC/ARCH device-config ABI mismatch is resolved.
+TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_Legacy) {
   ProviderOptions per_soc_options;
   per_soc_options["htp_arch"] = "73";
 #ifdef _WIN32
@@ -175,7 +181,8 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_Legacy) {
   CompileModelWithPerSocOptions(per_soc_options);
 }
 
-TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArch_68_73_81_NotAllArchSupported) {
+// TODO: Re-enable after the QAIRT 2.53 HTP SOC/ARCH device-config ABI mismatch is resolved.
+TEST_F(QnnHTPBackendTests, DISABLED_EPContextMultiSoc_HtpArch_68_73_81_NotAllArchSupported) {
   QNN_SKIP_TEST_ON_LINUX_X86_64("Skip as unable to deliberately fallback on Linux x86.");
 
   ModelTestBuilder helper;
