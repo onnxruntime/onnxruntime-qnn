@@ -384,7 +384,7 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   // -----------------------------------------------------------------------------------------
   //                      half_pixel |  Resize(QNN < 2.20)        X            RNN     X
   //              pytorch_half_pixel |  Resize(QNN < 2.20)        X             X      X
-  //                   align_corners |  Resize(QNN < 2.20)  Resize(QNN 2.20)   RNN     X
+  //                   align_corners |  Resize(QNN < 2.20)  Resize(QNN 2.20)   RNN (rank 4)     X
   //                      asymmetric |  Resize(QNN < 2.20)        X            RNN     X
   //   tf_half_pixel_for_nn          |       X (CPU fallback)     X           RNN      X
   //                                   (only nearest+floor admitted; others fall back to CPU)
@@ -413,6 +413,10 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
         RETURN_IF(nearest_mode == "round_prefer_ceil" && transformation_mode != "align_corners",
                   "QNN EP: Resize on the NPU only supports 'round_prefer_ceil' if "
                   "transformation mode is 'align_corners'");
+
+        RETURN_IF(nearest_mode == "floor" && transformation_mode == "align_corners",
+                  "QNN EP: Resize on NPU does not support combination of "
+                  "nearest_mode: floor with transformation_mode: align_corners");
 #else
         RETURN_IF_NOT(nearest_mode == "round_prefer_floor" || nearest_mode == "floor",
                       ("QNN EP: Resize on the NPU does not support nearest_mode " + nearest_mode).c_str());

@@ -734,6 +734,25 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestAlignCornersRoundPreferCeil) {
                               ExpectedEPNodeAssignment::All);
 }
 
+// Test rank-3 QDQ Resize mode: "nearest", coordinate_transformation_mode: "align_corners", nearest_mode: "floor".
+// Non-rank-4 input uses QNN's Resize op, and HTP only supports align_corners with round_prefer_ceil (backend
+// error 3110). IsOpSupported must reject it so the node falls back to CPU instead of failing at node creation.
+TEST_F(QnnHTPBackendTests, ResizeU8_Rank3NearestAlignCornersFloor_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 16}, false, input_data),
+                              {1, 3, 32}, "nearest", "align_corners", "floor",
+                              ExpectedEPNodeAssignment::None);
+}
+
+// Test rank-5 QDQ Resize mode: "nearest", coordinate_transformation_mode: "align_corners", nearest_mode: "floor".
+// Same as the rank-3 case above: must fall back to CPU.
+TEST_F(QnnHTPBackendTests, ResizeU8_Rank5NearestAlignCornersFloor_Unsupported) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 96);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 2, 4, 4}, false, input_data),
+                              {1, 3, 2, 8, 8}, "nearest", "align_corners", "floor",
+                              ExpectedEPNodeAssignment::None);
+}
+
 // Test 2x QDQ Resize mode: "nearest", coordinate_transformation_mode: "asymmetric", nearest_mode: "ceil"
 // Maps to QNN's ResizeNearestNeighbor operator.
 TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestAsymmetricCeil_Unsupported) {
