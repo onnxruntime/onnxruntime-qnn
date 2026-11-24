@@ -694,6 +694,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Mean||
 |ai.onnx:Min||
 |ai.onnx:Mod||
+|ai.onnx:Multinomial|Prototype: HTP only, positive static rank-2 FLOAT/FLOAT16 logits, `sample_size=1`, INT32/INT64 output. Logits must be finite and within the backend FP16 range. Centered logits are bounded before Exp to preserve FP16 underflow for large negative values. HTP uniform sampling has 8-bit precision; RNG state and distribution across executions require validation before production use.|
 |ai.onnx:Mul||
 |ai.onnx:Neg||
 |ai.onnx:NonMaxSuppression|max_output_boxes_per_class, iou_threshold, and score_threshold must be static constants; max_output_boxes_per_class must be > 0; center_point_box must be 0 (diagonal corners); GPU backend not supported|
