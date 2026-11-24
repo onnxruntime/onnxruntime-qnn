@@ -69,10 +69,12 @@ size_t GetElementSizeByType(const Qnn_DataType_t& data_type) {
       {QNN_DATATYPE_FLOAT_64, 8},
       {QNN_DATATYPE_BFLOAT_16, 2},
       {QNN_DATATYPE_BOOL_8, 1},
+      {QNN_DATATYPE_SFIXED_POINT_2, sizeof(Int2x4)},
       {QNN_DATATYPE_SFIXED_POINT_4, sizeof(Int4x2)},
       {QNN_DATATYPE_SFIXED_POINT_8, 1},
       {QNN_DATATYPE_SFIXED_POINT_16, 2},
       {QNN_DATATYPE_SFIXED_POINT_32, 4},
+      {QNN_DATATYPE_UFIXED_POINT_2, sizeof(UInt2x4)},
       {QNN_DATATYPE_UFIXED_POINT_4, sizeof(Int4x2)},
       {QNN_DATATYPE_UFIXED_POINT_8, 1},
       {QNN_DATATYPE_UFIXED_POINT_16, 2},
@@ -164,8 +166,11 @@ size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorEl
 
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_type) {
   SafeInt<size_t> safe_num_elements = num_elements;
+  if (element_type == QNN_DATATYPE_SFIXED_POINT_2 || element_type == QNN_DATATYPE_UFIXED_POINT_2) {
+    return (safe_num_elements + 3) / 4;  // 4 int2 values packed per byte
+  }
   if (element_type == QNN_DATATYPE_SFIXED_POINT_4 || element_type == QNN_DATATYPE_UFIXED_POINT_4) {
-    return (safe_num_elements + 1) / 2;
+    return (safe_num_elements + 1) / 2;  // 2 int4 values packed per byte
   }
   return (safe_num_elements * GetElementSizeByType(element_type));
 }
@@ -306,6 +311,12 @@ std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type) {
       break;
     case QNN_DATATYPE_BOOL_8:
       out << "QNN_DATATYPE_BOOL_8";
+      break;
+    case QNN_DATATYPE_SFIXED_POINT_2:
+      out << "QNN_DATATYPE_SFIXED_POINT_2";
+      break;
+    case QNN_DATATYPE_UFIXED_POINT_2:
+      out << "QNN_DATATYPE_UFIXED_POINT_2";
       break;
     case QNN_DATATYPE_SFIXED_POINT_4:
       out << "QNN_DATATYPE_SFIXED_POINT_4";

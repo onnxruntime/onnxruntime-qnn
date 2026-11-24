@@ -63,6 +63,10 @@ void CreateAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations
 void CreateBatchNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateBernoulliOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateBufferOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateQnnEncQuantizeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateQnnEncDequantizeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateOnnxQuantizeLinearOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateOnnxDequantizeLinearOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateCastOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateClipOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateConcatOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

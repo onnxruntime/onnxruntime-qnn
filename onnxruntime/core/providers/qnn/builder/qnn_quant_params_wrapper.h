@@ -64,6 +64,29 @@ class QnnQuantParamsWrapper {
                                             uint32_t bitwidth,
                                             gsl::span<const uint32_t> block_sizes);
 
+  // QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET_MAPPED (INT2 per-channel)
+  static QnnQuantParamsWrapper BwAxisScaleOffsetMapped(gsl::span<const float> scales,
+                                                       gsl::span<const int32_t> offsets,
+                                                       int32_t axis,
+                                                       uint32_t bitwidth,
+                                                       Qnn_QuantizationEncodingMapping_t mapping);
+
+  // QNN_QUANTIZATION_ENCODING_BW_BLOCK_MAPPED (INT2 block quantization)
+  static QnnQuantParamsWrapper BwBlockMapped(gsl::span<const float> scales,
+                                             gsl::span<const int32_t> offsets,
+                                             gsl::span<const uint32_t> block_sizes,
+                                             uint32_t bitwidth,
+                                             Qnn_QuantizationEncodingMapping_t mapping);
+
+  // QNN_QUANTIZATION_ENCODING_BW_BLOCKWISE_EXPANSION_MAPPED (INT2 two-level)
+  static QnnQuantParamsWrapper BwBlockwiseExpansionMapped(gsl::span<const float> per_channel_float_scales,
+                                                          gsl::span<const uint8_t> per_block_int_scales,
+                                                          gsl::span<const int32_t> offsets,
+                                                          int32_t axis,
+                                                          uint32_t block_scale_bitwidth,
+                                                          uint32_t bitwidth,
+                                                          Qnn_QuantizationEncodingMapping_t mapping);
+
   Qnn_QuantizeParams_t& Get() { return params_; }
   const Qnn_QuantizeParams_t& Get() const { return params_; }
 
@@ -121,10 +144,26 @@ class QnnQuantParamsWrapper {
             params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK);
   }
 
+  bool IsBwAxisScaleOffsetMapped() const {
+    return params_.encodingDefinition == QNN_DEFINITION_DEFINED &&
+           params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET_MAPPED;
+  }
+
+  bool IsBwBlockMapped() const {
+    return params_.encodingDefinition == QNN_DEFINITION_DEFINED &&
+           params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_BLOCK_MAPPED;
+  }
+
+  bool IsBwBlockwiseExpansionMapped() const {
+    return params_.encodingDefinition == QNN_DEFINITION_DEFINED &&
+           params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_BLOCKWISE_EXPANSION_MAPPED;
+  }
+
   // Returns the number of per-channel scale entries stored in this wrapper.
   // Valid for LPBQ (BLOCKWISE_EXPANSION) and per-channel (AXIS_SCALE_OFFSET / BW_AXIS_SCALE_OFFSET)
   // encodings. Returns 0 for per-tensor or unquantized encodings.
   uint32_t GetPerChannelScalesSize() const { return per_channel_scales_size_; }
+  uint32_t GetNumBlocks() const { return num_blocks_; }
 
   // Get a copy of scales. Works for both per-tensor and per-channel.
   Ort::Status GetScales(/*out*/ std::vector<float>& scales) const;
@@ -238,6 +277,13 @@ class QnnQuantParamsWrapper {
 
   // Store BwFloatBlockEncoding scale offset data.
   std::unique_ptr<Qnn_FloatScaleOffset_t[]> bw_float_block_encoding_scale_offsets_data_;
+
+  // Storage for the mapped encoding structs (BW_AXIS_SCALE_OFFSET_MAPPED, BW_BLOCK_MAPPED,
+  // BW_BLOCKWISE_EXPANSION_MAPPED). Each holds the heap-allocated QNN struct whose pointer
+  // is stored in params_.
+  std::unique_ptr<char[]> bw_axis_scale_offset_mapped_data_;
+  std::unique_ptr<char[]> bw_block_mapped_data_;
+  std::unique_ptr<char[]> bw_blockwise_expansion_mapped_data_;
 };
 
 }  // namespace qnn

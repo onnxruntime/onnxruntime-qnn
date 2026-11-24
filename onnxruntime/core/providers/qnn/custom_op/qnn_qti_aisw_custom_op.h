@@ -19,6 +19,8 @@ inline constexpr const char* kQtiAiswDomain = "qti_aisw";
 inline constexpr const char* kQtiAiswBufferOpType = "Buffer";
 inline constexpr const char* kQtiAiswStatefulLstmOpType = "StatefulLstm";
 inline constexpr const char* kQtiAiswStatefulGruOpType = "StatefulGru";
+inline constexpr const char* kQtiAiswQnnQuantizeOpType = "QnnQuantize";
+inline constexpr const char* kQtiAiswQnnDequantizeOpType = "QnnDequantize";
 
 inline constexpr size_t kQtiAiswBufferResetInputIndex = 1;
 inline constexpr size_t kQtiAiswStatefulLstmResetInputIndex = 8;
@@ -27,8 +29,9 @@ inline constexpr size_t kQtiAiswStatefulGruResetInputIndex = 6;
 // The qti_aisw block ops that the QNN EP supports. Extend this list when adding a new block op:
 // the factory registers a QtiAiswPlaceholderOp per op type, and the matching op builder must be
 // registered in op_builder_factory.cc.
-inline constexpr std::array<const char*, 3> kQtiAiswBlockOpTypes = {
-    kQtiAiswBufferOpType, kQtiAiswStatefulLstmOpType, kQtiAiswStatefulGruOpType};
+inline constexpr std::array<const char*, 5> kQtiAiswBlockOpTypes = {
+    kQtiAiswBufferOpType, kQtiAiswStatefulLstmOpType, kQtiAiswStatefulGruOpType,
+    kQtiAiswQnnQuantizeOpType, kQtiAiswQnnDequantizeOpType};
 
 namespace qnn {
 
@@ -85,6 +88,106 @@ struct QtiAiswPlaceholderOp
 
   OrtStatusPtr KernelComputeV2(void* op_kernel, OrtKernelContext* context) const {
     return static_cast<QnnUdoPlaceholderKernel*>(op_kernel)->ComputeV2(context);
+  }
+
+ private:
+  std::string op_type_;
+  std::string ep_type_;
+};
+
+// Specialized placeholder for qti_aisw::QnnQuantize.
+// 1-input / 1-output schema with InferOutputShape that reads the node's output_dtype attribute
+// so ORT knows the concrete quantized type for shape/type propagation downstream.
+struct QtiAiswQnnQuantizePlaceholderOp
+    : Ort::CustomOpBase<QtiAiswQnnQuantizePlaceholderOp, QnnUdoPlaceholderKernel, /*WithStatus=*/true> {
+  QtiAiswQnnQuantizePlaceholderOp(std::string op_type, std::string ep_type)
+      : op_type_(std::move(op_type)), ep_type_(std::move(ep_type)) {}
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(QtiAiswQnnQuantizePlaceholderOp);
+
+  const char* GetName() const { return op_type_.c_str(); }
+  const char* GetExecutionProviderType() const { return ep_type_.c_str(); }
+
+  size_t GetInputTypeCount() const { return 1; }
+  ONNXTensorElementDataType GetInputType(size_t /*index*/) const {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+  }
+  OrtCustomOpInputOutputCharacteristic GetInputCharacteristic(size_t /*index*/) const {
+    return OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_OPTIONAL;
+  }
+
+  size_t GetOutputTypeCount() const { return 1; }
+  ONNXTensorElementDataType GetOutputType(size_t /*index*/) const {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+  }
+  OrtCustomOpInputOutputCharacteristic GetOutputCharacteristic(size_t /*index*/) const {
+    return OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_OPTIONAL;
+  }
+
+  OrtStatusPtr CreateKernelV2(const OrtApi& /*api*/, const OrtKernelInfo* /*info*/,
+                              void** op_kernel) const {
+    *op_kernel = std::make_unique<QnnUdoPlaceholderKernel>(op_type_).release();
+    return nullptr;
+  }
+  OrtStatusPtr KernelComputeV2(void* op_kernel, OrtKernelContext* context) const {
+    return static_cast<QnnUdoPlaceholderKernel*>(op_kernel)->ComputeV2(context);
+  }
+
+  // The QDQ generation script stores value_info as FLOAT for all quantized tensors
+  // (regardless of actual dtype like int2/int32). Always use FLOAT here to stay consistent.
+  // The actual QNN encoding type is derived from output_dtype attr in QnnEncQuantizeOpBuilder.
+  static OrtStatusPtr InferOutputShape(Ort::ShapeInferContext& ctx) {
+    if (ctx.GetInputCount() == 0) return nullptr;
+    Ort::Status status = ctx.SetOutputShape(0, ctx.GetInputShape(0));
+    return status.IsOK() ? nullptr : status.release();
+  }
+
+ private:
+  std::string op_type_;
+  std::string ep_type_;
+};
+
+// Specialized placeholder for qti_aisw::QnnDequantize.
+// 1-input / 1-output schema with InferOutputShape that always emits float so ORT propagates
+// shapes through DQ nodes to downstream ops (e.g. Relu) without "Cannot get shape" failures.
+struct QtiAiswQnnDequantizePlaceholderOp
+    : Ort::CustomOpBase<QtiAiswQnnDequantizePlaceholderOp, QnnUdoPlaceholderKernel, /*WithStatus=*/true> {
+  QtiAiswQnnDequantizePlaceholderOp(std::string op_type, std::string ep_type)
+      : op_type_(std::move(op_type)), ep_type_(std::move(ep_type)) {}
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(QtiAiswQnnDequantizePlaceholderOp);
+
+  const char* GetName() const { return op_type_.c_str(); }
+  const char* GetExecutionProviderType() const { return ep_type_.c_str(); }
+
+  size_t GetInputTypeCount() const { return 1; }
+  ONNXTensorElementDataType GetInputType(size_t /*index*/) const {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+  }
+  OrtCustomOpInputOutputCharacteristic GetInputCharacteristic(size_t /*index*/) const {
+    return OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_OPTIONAL;
+  }
+
+  size_t GetOutputTypeCount() const { return 1; }
+  ONNXTensorElementDataType GetOutputType(size_t /*index*/) const {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  }
+  OrtCustomOpInputOutputCharacteristic GetOutputCharacteristic(size_t /*index*/) const {
+    return OrtCustomOpInputOutputCharacteristic::INPUT_OUTPUT_OPTIONAL;
+  }
+
+  OrtStatusPtr CreateKernelV2(const OrtApi& /*api*/, const OrtKernelInfo* /*info*/,
+                              void** op_kernel) const {
+    *op_kernel = std::make_unique<QnnUdoPlaceholderKernel>(op_type_).release();
+    return nullptr;
+  }
+  OrtStatusPtr KernelComputeV2(void* op_kernel, OrtKernelContext* context) const {
+    return static_cast<QnnUdoPlaceholderKernel*>(op_kernel)->ComputeV2(context);
+  }
+
+  // DQ always dequantizes back to float; SetOutputShape defaults to FLOAT when type is omitted.
+  static OrtStatusPtr InferOutputShape(Ort::ShapeInferContext& ctx) {
+    if (ctx.GetInputCount() == 0) return nullptr;
+    Ort::Status status = ctx.SetOutputShape(0, ctx.GetInputShape(0));
+    return status.IsOK() ? nullptr : status.release();
   }
 
  private:

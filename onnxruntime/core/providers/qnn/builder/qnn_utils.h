@@ -162,8 +162,15 @@ inline bool IsQuant4bit(Qnn_DataType_t qnn_data_type) {
          qnn_data_type == QNN_DATATYPE_SFIXED_POINT_4;
 }
 
-// Bit width (4, 8, 16) of a fixed-point QNN type, or 0 if not fixed-point.
+// Returns true if the QNN data type is a 2-bit fixed-point quantized type.
+inline bool IsQuant2bit(Qnn_DataType_t qnn_data_type) {
+  return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_2 ||
+         qnn_data_type == QNN_DATATYPE_SFIXED_POINT_2;
+}
+
+// Bit width (2, 4, 8, 16) of a fixed-point QNN type, or 0 if not fixed-point.
 inline int FixedPointBitWidth(Qnn_DataType_t qnn_data_type) {
+  if (IsQuant2bit(qnn_data_type)) return 2;
   if (IsQuant4bit(qnn_data_type)) return 4;
   if (IsQuant8bit(qnn_data_type)) return 8;
   if (IsQuant16bit(qnn_data_type)) return 16;
@@ -279,7 +286,13 @@ Ort::Status GetQminQmax(const Qnn_DataType_t qnn_data_type,
                         T& qmin,
                         T& qmax,
                         bool symmetric = false) {
-  if (qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8) {
+  if (qnn_data_type == QNN_DATATYPE_SFIXED_POINT_2) {
+    qmin = static_cast<T>(-2 + static_cast<int32_t>(symmetric));
+    qmax = static_cast<T>(1);
+  } else if (qnn_data_type == QNN_DATATYPE_UFIXED_POINT_2) {
+    qmin = static_cast<T>(0);
+    qmax = static_cast<T>(3);
+  } else if (qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8) {
     qmin = static_cast<T>(std::numeric_limits<int8_t>::min() + static_cast<int8_t>(symmetric));
     qmax = static_cast<T>(std::numeric_limits<int8_t>::max());
   } else if (qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8) {

@@ -2195,7 +2195,8 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
 
 // Implementation of GetQDQNodeUnits for OrtGraph
 std::pair<std::vector<std::unique_ptr<OrtNodeUnit>>, std::unordered_map<const OrtNode*, const OrtNodeUnit*>>
-GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& logger) {
+GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& logger,
+                   bool disable_qdq_fusion) {
   std::vector<std::unique_ptr<OrtNodeUnit>> node_unit_holder;
   std::unordered_map<const OrtNode*, const OrtNodeUnit*> node_unit_map;
 
@@ -2219,25 +2220,27 @@ GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& log
     }
   };
 
-  // Get QDQ NodeUnits first
-  QDQ::OrtSelectorManager selector_mgr;
+  // Get QDQ NodeUnits first (skipped when disable_qdq_fusion is set)
+  if (!disable_qdq_fusion) {
+    QDQ::OrtSelectorManager selector_mgr;
 
-  const auto qdq_selections = selector_mgr.GetOrtQDQSelections(graph, ort_api, logger);
-  for (const auto& qdq_selection : qdq_selections) {
-    auto qdq_unit = std::make_unique<OrtNodeUnit>(graph, qdq_selection, ort_api);
+    const auto qdq_selections = selector_mgr.GetOrtQDQSelections(graph, ort_api, logger);
+    for (const auto& qdq_selection : qdq_selections) {
+      auto qdq_unit = std::make_unique<OrtNodeUnit>(graph, qdq_selection, ort_api);
 
-    // Fill the node to node_unit map for all nodes in the QDQ Group
-    add_node_unit_to_map(qdq_selection.dq_nodes, qdq_unit.get());
-    add_node_unit_to_map(qdq_selection.q_nodes, qdq_unit.get());
-    add_node_unit_to_map({qdq_selection.target_node}, qdq_unit.get());
-    if (qdq_selection.redundant_clip_node) {
-      add_node_unit_to_map({qdq_selection.redundant_clip_node}, qdq_unit.get());
+      // Fill the node to node_unit map for all nodes in the QDQ Group
+      add_node_unit_to_map(qdq_selection.dq_nodes, qdq_unit.get());
+      add_node_unit_to_map(qdq_selection.q_nodes, qdq_unit.get());
+      add_node_unit_to_map({qdq_selection.target_node}, qdq_unit.get());
+      if (qdq_selection.redundant_clip_node) {
+        add_node_unit_to_map({qdq_selection.redundant_clip_node}, qdq_unit.get());
+      }
+      if (qdq_selection.output_reshape_node) {
+        add_node_unit_to_map({qdq_selection.output_reshape_node}, qdq_unit.get());
+      }
+
+      node_unit_holder.push_back(std::move(qdq_unit));
     }
-    if (qdq_selection.output_reshape_node) {
-      add_node_unit_to_map({qdq_selection.output_reshape_node}, qdq_unit.get());
-    }
-
-    node_unit_holder.push_back(std::move(qdq_unit));
   }
 
   // Get the left over single-node OrtNodeUnit.

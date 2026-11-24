@@ -112,9 +112,21 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   {
     Ort::CustomOpDomain qti_aisw_domain{kQtiAiswDomain};
     for (const char* op_type : kQtiAiswBlockOpTypes) {
-      qti_aisw_op_objects_.push_back(
-          std::make_unique<qnn::QtiAiswPlaceholderOp>(op_type, ep_name_));
-      qti_aisw_domain.Add(qti_aisw_op_objects_.back().get());
+      if (op_type == kQtiAiswQnnQuantizeOpType) {
+        // QnnQuantize: InferOutputShape reads output_dtype attr for the concrete int type.
+        qti_aisw_quantize_op_objects_.push_back(
+            std::make_unique<qnn::QtiAiswQnnQuantizePlaceholderOp>(op_type, ep_name_));
+        qti_aisw_domain.Add(qti_aisw_quantize_op_objects_.back().get());
+      } else if (op_type == kQtiAiswQnnDequantizeOpType) {
+        // QnnDequantize: InferOutputShape always emits float so downstream ops see a float shape.
+        qti_aisw_dequantize_op_objects_.push_back(
+            std::make_unique<qnn::QtiAiswQnnDequantizePlaceholderOp>(op_type, ep_name_));
+        qti_aisw_domain.Add(qti_aisw_dequantize_op_objects_.back().get());
+      } else {
+        qti_aisw_op_objects_.push_back(
+            std::make_unique<qnn::QtiAiswPlaceholderOp>(op_type, ep_name_));
+        qti_aisw_domain.Add(qti_aisw_op_objects_.back().get());
+      }
     }
     custom_op_domains_.push_back(std::move(qti_aisw_domain));
   }

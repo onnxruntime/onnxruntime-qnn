@@ -1316,6 +1316,13 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                       false,
                                                       logger_);
 
+  const bool disable_qdq_fusion_opt = ParseBoolOption(ort_api,
+                                                      session_options_,
+                                                      FormatEPConfigKey("disable_qdq_fusion"),
+                                                      false,
+                                                      logger_);
+  model_settings_.disable_qdq_fusion = disable_qdq_fusion_opt;
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,
@@ -2471,7 +2478,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   std::vector<std::unique_ptr<OrtNodeUnit>> node_unit_holder;
   std::unordered_map<const OrtNode*, const OrtNodeUnit*> node_unit_map;
 
-  std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(ep->ort_api, graph, ep->logger_);
+  std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(ep->ort_api, graph, ep->logger_,
+                                                                 ep->model_settings_.disable_qdq_fusion);
 
   // Analyze nodes for QNN support
   std::vector<const OrtNode*> supported_nodes;

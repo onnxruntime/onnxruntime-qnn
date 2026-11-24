@@ -18,6 +18,8 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateBatchNormalizationOpBuilder("BatchNormalization", *this);
   CreateBernoulliOpBuilder("Bernoulli", *this);
   CreateBufferOpBuilder("Buffer", *this);
+  CreateQnnEncQuantizeOpBuilder("QnnQuantize", *this);
+  CreateQnnEncDequantizeOpBuilder("QnnDequantize", *this);
   CreateCastOpBuilder("Cast", *this);
   CreateCastOpBuilder("CastLike", *this);
   CreateClipOpBuilder("Clip", *this);
@@ -91,7 +93,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("Atan", *this);
   CreateSimpleOpBuilder("Ceil", *this);
   CreateSimpleOpBuilder("Cos", *this);
-  CreateSimpleOpBuilder("DequantizeLinear", *this);
+  CreateOnnxDequantizeLinearOpBuilder("DequantizeLinear", *this);
   CreateSimpleOpBuilder("DepthToSpace", *this);
   CreateSimpleOpBuilder("Div", *this);
   CreateSimpleOpBuilder("Elu", *this);
@@ -117,7 +119,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("Or", *this);
   CreateSimpleOpBuilder("Pow", *this);
   CreateSimpleOpBuilder("PRelu", *this);
-  CreateSimpleOpBuilder("QuantizeLinear", *this);
+  CreateOnnxQuantizeLinearOpBuilder("QuantizeLinear", *this);
   CreateSimpleOpBuilder("Relu", *this);
   CreateSimpleOpBuilder("Round", *this);
   CreateScatterElementsOpBuilder("ScatterElements", *this);

@@ -95,8 +95,12 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   std::vector<Ort::CustomOpDomain> custom_op_domains_;
   // Placeholder ops built from ORT_QNN_CUSTOM_OP_DOMAINS (env-var UDO ops).
   std::vector<std::unique_ptr<qnn::QnnUdoPlaceholderOp>> custom_op_objects_;
-  // Placeholder ops for the qti_aisw block ops.
+  // Placeholder ops for the qti_aisw block ops (Buffer, StatefulLstm, StatefulGru).
   std::vector<std::unique_ptr<qnn::QtiAiswPlaceholderOp>> qti_aisw_op_objects_;
+  // Placeholder op for QnnQuantize — InferOutputShape reads output_dtype attr.
+  std::vector<std::unique_ptr<qnn::QtiAiswQnnQuantizePlaceholderOp>> qti_aisw_quantize_op_objects_;
+  // Placeholder op for QnnDequantize — InferOutputShape always emits float.
+  std::vector<std::unique_ptr<qnn::QtiAiswQnnDequantizePlaceholderOp>> qti_aisw_dequantize_op_objects_;
 };
 
 }  // namespace onnxruntime

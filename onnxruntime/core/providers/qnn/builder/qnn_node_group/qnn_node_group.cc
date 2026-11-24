@@ -237,9 +237,12 @@ static Ort::Status GetQnnNodeGroupsImpl(/*out*/ std::vector<std::unique_ptr<IQnn
       continue;  // Already handled this node unit
     }
 
-    std::unique_ptr<IQnnNodeGroup> fused_node_group = TryQnnFusions(qnn_model_wrapper, *node_unit,
-                                                                    node_to_node_unit, node_unit_to_qnn_node_group,
-                                                                    logger);
+    const bool disable_qdq_fusion = qnn_model_wrapper.GetModelSettings().disable_qdq_fusion;
+    std::unique_ptr<IQnnNodeGroup> fused_node_group = disable_qdq_fusion
+        ? nullptr
+        : TryQnnFusions(qnn_model_wrapper, *node_unit,
+                        node_to_node_unit, node_unit_to_qnn_node_group,
+                        logger);
 
     if (fused_node_group) {
       const size_t index = qnn_node_groups.size();

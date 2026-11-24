@@ -1001,9 +1001,10 @@ Ort::Status QnnModelWrapper::AddCastNode(const std::string& cast_node_name,
 }
 
 namespace {
-// Returns true when dt is any QNN SFIXED_POINT or UFIXED_POINT variant (4/8/16/32-bit).
+// Returns true when dt is any QNN SFIXED_POINT or UFIXED_POINT variant (2/4/8/16/32-bit).
 bool IsQnnFixedPointType(Qnn_DataType_t dt) {
-  return dt == QNN_DATATYPE_SFIXED_POINT_4 || dt == QNN_DATATYPE_UFIXED_POINT_4 ||
+  return dt == QNN_DATATYPE_SFIXED_POINT_2 || dt == QNN_DATATYPE_UFIXED_POINT_2 ||
+         dt == QNN_DATATYPE_SFIXED_POINT_4 || dt == QNN_DATATYPE_UFIXED_POINT_4 ||
          dt == QNN_DATATYPE_SFIXED_POINT_8 || dt == QNN_DATATYPE_UFIXED_POINT_8 ||
          dt == QNN_DATATYPE_SFIXED_POINT_16 || dt == QNN_DATATYPE_UFIXED_POINT_16 ||
          dt == QNN_DATATYPE_SFIXED_POINT_32 || dt == QNN_DATATYPE_UFIXED_POINT_32;

@@ -45,6 +45,7 @@ struct ModelSettings {
   bool enable_block_quant_weight_optimization = false;
   bool use_native_matmul = false;
   bool enable_htp_monolithic_lstm = false;
+  bool disable_qdq_fusion = false;
   OpAffinityMap op_affinity;  // default-constructed = unconfigured; always safe to query.
 };
 

@@ -27,6 +27,13 @@ QnnQuantParamsWrapper::QnnQuantParamsWrapper(const QnnQuantParamsWrapper& other)
   } else if (other.IsBlockQuantized()) {
     block_encoding_tensor_rank_ = other.block_encoding_tensor_rank_;
     num_scaleoffsets = other.num_blocks_;
+  } else if (other.IsBwAxisScaleOffsetMapped()) {
+    num_scaleoffsets = other.per_channel_scales_size_;
+  } else if (other.IsBwBlockMapped()) {
+    block_encoding_tensor_rank_ = other.block_encoding_tensor_rank_;
+    num_scaleoffsets = other.num_blocks_;
+  } else if (other.IsBwBlockwiseExpansionMapped()) {
+    num_scaleoffsets = other.per_channel_scales_size_;
   }
   Ort::Status status = Init(other.params_, num_scaleoffsets, block_encoding_tensor_rank_);
   assert(status.IsOK());  // Expect other QnnQuantParamsWrapper to always have a supported quantization encoding.
@@ -40,6 +47,13 @@ QnnQuantParamsWrapper& QnnQuantParamsWrapper::operator=(const QnnQuantParamsWrap
     } else if (other.IsBlockQuantized()) {
       block_encoding_tensor_rank_ = other.block_encoding_tensor_rank_;
       num_scaleoffsets = other.num_blocks_;
+    } else if (other.IsBwAxisScaleOffsetMapped()) {
+      num_scaleoffsets = other.per_channel_scales_size_;
+    } else if (other.IsBwBlockMapped()) {
+      block_encoding_tensor_rank_ = other.block_encoding_tensor_rank_;
+      num_scaleoffsets = other.num_blocks_;
+    } else if (other.IsBwBlockwiseExpansionMapped()) {
+      num_scaleoffsets = other.per_channel_scales_size_;
     }
     Ort::Status status = Init(other.params_, num_scaleoffsets, block_encoding_tensor_rank_);
     assert(status.IsOK());  // Expect other QnnQuantParamsWrapper to always have a supported quantization encoding.
@@ -258,6 +272,158 @@ QnnQuantParamsWrapper QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>
   return qp;
 }
 
+// Per-channel, 2-bit mapped quantization (BW_AXIS_SCALE_OFFSET_MAPPED).
+QnnQuantParamsWrapper QnnQuantParamsWrapper::BwAxisScaleOffsetMapped(
+    gsl::span<const float> scales,
+    gsl::span<const int32_t> offsets,
+    int32_t axis,
+    uint32_t bitwidth,
+    Qnn_QuantizationEncodingMapping_t mapping) {
+  assert(offsets.empty() || offsets.size() == scales.size());
+  const uint32_t num_elems = static_cast<uint32_t>(scales.size());
+
+  QnnQuantParamsWrapper qp;
+  qp.params_.encodingDefinition = QNN_DEFINITION_DEFINED;
+  qp.params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET_MAPPED;
+
+  const size_t struct_bytes = sizeof(Qnn_BwAxisScaleOffsetMapped_t);
+  constexpr std::uintptr_t struct_align = alignof(Qnn_BwAxisScaleOffsetMapped_t);
+  qp.bw_axis_scale_offset_mapped_data_ = std::make_unique<char[]>(struct_bytes + struct_align);
+  Qnn_BwAxisScaleOffsetMapped_t* ptr = ALIGN_PTR_UP(qp.bw_axis_scale_offset_mapped_data_.get(),
+                                                    struct_align, Qnn_BwAxisScaleOffsetMapped_t*);
+  ptr->bitwidth = bitwidth;
+  ptr->axis = axis;
+  ptr->mapping = mapping;
+  ptr->numElements = num_elems;
+
+  if (num_elems > 0) {
+    qp.per_channel_scales_size_ = num_elems;
+    const size_t num_scale_bytes = num_elems * sizeof(float);
+    const size_t num_zp_bytes = num_elems * sizeof(int32_t);
+    constexpr std::uintptr_t align = alignof(float);
+    qp.per_channel_data_ = std::make_unique<char[]>(num_scale_bytes + num_zp_bytes + align);
+    char* scales_begin = ALIGN_PTR_UP(qp.per_channel_data_.get(), align, char*);
+    char* zps_begin = scales_begin + num_scale_bytes;
+
+    std::memcpy(scales_begin, scales.data(), num_scale_bytes);
+    ptr->scales = reinterpret_cast<float*>(scales_begin);
+
+    if (!offsets.empty()) {
+      std::memcpy(zps_begin, offsets.data(), num_zp_bytes);
+      ptr->offsets = reinterpret_cast<int32_t*>(zps_begin);
+    } else {
+      ptr->offsets = nullptr;
+    }
+  } else {
+    ptr->scales = nullptr;
+    ptr->offsets = nullptr;
+  }
+
+  qp.params_.bwAxisScaleOffsetMappedEncoding = ptr;
+  return qp;
+}
+
+// Block quantization, 2-bit mapped (BW_BLOCK_MAPPED).
+QnnQuantParamsWrapper QnnQuantParamsWrapper::BwBlockMapped(gsl::span<const float> scales,
+                                                           gsl::span<const int32_t> offsets,
+                                                           gsl::span<const uint32_t> block_sizes,
+                                                           uint32_t bitwidth,
+                                                           Qnn_QuantizationEncodingMapping_t mapping) {
+  assert(scales.size() == offsets.size());
+  assert(block_sizes.size() > 0);
+
+  QnnQuantParamsWrapper qp;
+  qp.num_blocks_ = static_cast<uint32_t>(scales.size());
+  qp.params_.encodingDefinition = QNN_DEFINITION_DEFINED;
+  qp.params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BW_BLOCK_MAPPED;
+
+  const size_t struct_bytes = sizeof(Qnn_BwBlockMapped_t);
+  constexpr std::uintptr_t struct_align = alignof(Qnn_BwBlockMapped_t);
+  qp.bw_block_mapped_data_ = std::make_unique<char[]>(struct_bytes + struct_align);
+  Qnn_BwBlockMapped_t* ptr = ALIGN_PTR_UP(qp.bw_block_mapped_data_.get(), struct_align, Qnn_BwBlockMapped_t*);
+  ptr->bitwidth = bitwidth;
+  ptr->mapping = mapping;
+
+  qp.block_encoding_tensor_rank_ = static_cast<uint32_t>(block_sizes.size());
+  qp.block_encoding_axis_data_ = std::make_unique<uint32_t[]>(qp.block_encoding_tensor_rank_);
+  std::memcpy(qp.block_encoding_axis_data_.get(), block_sizes.data(),
+              static_cast<size_t>(qp.block_encoding_tensor_rank_) * sizeof(uint32_t));
+  ptr->blockSize = qp.block_encoding_axis_data_.get();
+
+  if (qp.num_blocks_ > 0) {
+    qp.block_encoding_scale_offsets_data_ = std::make_unique<Qnn_ScaleOffset_t[]>(qp.num_blocks_);
+    for (size_t i = 0; i < qp.num_blocks_; ++i) {
+      qp.block_encoding_scale_offsets_data_[i].scale = scales[i];
+      qp.block_encoding_scale_offsets_data_[i].offset = offsets[i];
+    }
+    ptr->scaleOffset = qp.block_encoding_scale_offsets_data_.get();
+  } else {
+    ptr->scaleOffset = nullptr;
+  }
+
+  qp.params_.bwBlockMappedEncoding = ptr;
+  return qp;
+}
+
+// Two-level blockwise expansion, 2-bit mapped (BW_BLOCKWISE_EXPANSION_MAPPED).
+QnnQuantParamsWrapper QnnQuantParamsWrapper::BwBlockwiseExpansionMapped(
+    gsl::span<const float> per_channel_float_scales,
+    gsl::span<const uint8_t> per_block_int_scales,
+    gsl::span<const int32_t> offsets,
+    int32_t axis,
+    uint32_t block_scale_bitwidth,
+    uint32_t bitwidth,
+    Qnn_QuantizationEncodingMapping_t mapping) {
+  assert(per_channel_float_scales.size() == offsets.size());
+  const uint32_t num_elems = static_cast<uint32_t>(per_channel_float_scales.size());
+
+  QnnQuantParamsWrapper qp;
+  qp.params_.encodingDefinition = QNN_DEFINITION_DEFINED;
+  qp.params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BW_BLOCKWISE_EXPANSION_MAPPED;
+
+  const size_t struct_bytes = sizeof(Qnn_BwBlockwiseExpansionMapped_t);
+  constexpr std::uintptr_t struct_align = alignof(Qnn_BwBlockwiseExpansionMapped_t);
+  qp.bw_blockwise_expansion_mapped_data_ = std::make_unique<char[]>(struct_bytes + struct_align);
+  Qnn_BwBlockwiseExpansionMapped_t* ptr = ALIGN_PTR_UP(qp.bw_blockwise_expansion_mapped_data_.get(),
+                                                       struct_align, Qnn_BwBlockwiseExpansionMapped_t*);
+  ptr->bitwidth = bitwidth;
+  ptr->mapping = mapping;
+  ptr->axis = axis;
+  ptr->blockScaleBitwidth = block_scale_bitwidth;
+  ptr->blockScaleStorageType = QNN_BLOCKWISE_EXPANSION_BITWIDTH_SCALE_STORAGE_8;
+
+  if (num_elems > 0) {
+    qp.per_channel_scales_size_ = num_elems;
+    const size_t num_bytes = num_elems * sizeof(Qnn_ScaleOffset_t);
+    constexpr std::uintptr_t align = alignof(Qnn_ScaleOffset_t);
+    qp.per_channel_data_ = std::make_unique<char[]>(num_bytes + align);
+    Qnn_ScaleOffset_t* aligned_dst = ALIGN_PTR_UP(qp.per_channel_data_.get(), align, Qnn_ScaleOffset_t*);
+    for (size_t i = 0; i < num_elems; i++) {
+      aligned_dst[i].scale = per_channel_float_scales[i];
+      aligned_dst[i].offset = offsets[i];
+    }
+    ptr->scaleOffsets = aligned_dst;
+  } else {
+    ptr->scaleOffsets = nullptr;
+  }
+
+  ptr->numBlocksPerAxis = static_cast<uint32_t>(per_block_int_scales.size()) / num_elems;
+
+  {
+    const size_t num_bytes = per_block_int_scales.size() * sizeof(uint8_t);
+    constexpr std::uintptr_t align = alignof(uint8_t);
+    qp.block_scales_data_ = std::make_unique<uint8_t[]>(num_bytes + align);
+    uint8_t* aligned_dst = ALIGN_PTR_UP(qp.block_scales_data_.get(), align, uint8_t*);
+    for (size_t i = 0; i < per_block_int_scales.size(); i++) {
+      aligned_dst[i] = per_block_int_scales[i];
+    }
+    ptr->blocksScale8 = aligned_dst;
+  }
+
+  qp.params_.bwBlockwiseExpansionMappedEncoding = ptr;
+  return qp;
+}
+
 // Get a copy of scales. Works for both per-tensor and per-channel.
 Ort::Status QnnQuantParamsWrapper::GetScales(/*out*/ std::vector<float>& scales) const {
   RETURN_IF_NOT(params_.encodingDefinition == QNN_DEFINITION_DEFINED, "Unquantized qparams does not have scales");
@@ -330,6 +496,9 @@ Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, cons
   block_encoding_axis_data_.reset();
   block_encoding_scale_offsets_data_.reset();
   bw_float_block_encoding_scale_offsets_data_.reset();
+  bw_axis_scale_offset_mapped_data_.reset();
+  bw_block_mapped_data_.reset();
+  bw_blockwise_expansion_mapped_data_.reset();
   per_channel_scales_size_ = 0;
   block_encoding_tensor_rank_ = 0;
   num_blocks_ = 0;
@@ -492,6 +661,117 @@ Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, cons
 
       break;
     }
+    case QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET_MAPPED: {
+      assert(params.bwAxisScaleOffsetMappedEncoding != nullptr);
+      const uint32_t num_elems = params.bwAxisScaleOffsetMappedEncoding->numElements;
+
+      params_.encodingDefinition = params.encodingDefinition;
+      params_.quantizationEncoding = params.quantizationEncoding;
+
+      const size_t struct_bytes = sizeof(Qnn_BwAxisScaleOffsetMapped_t);
+      constexpr std::uintptr_t struct_align = alignof(Qnn_BwAxisScaleOffsetMapped_t);
+      bw_axis_scale_offset_mapped_data_ = std::make_unique<char[]>(struct_bytes + struct_align);
+      Qnn_BwAxisScaleOffsetMapped_t* ptr = ALIGN_PTR_UP(bw_axis_scale_offset_mapped_data_.get(),
+                                                        struct_align, Qnn_BwAxisScaleOffsetMapped_t*);
+      *ptr = *params.bwAxisScaleOffsetMappedEncoding;
+
+      if (num_elems > 0) {
+        per_channel_scales_size_ = num_elems;
+        const size_t num_scale_bytes = num_elems * sizeof(float);
+        const size_t num_zp_bytes = num_elems * sizeof(int32_t);
+        constexpr std::uintptr_t align = alignof(float);
+        per_channel_data_ = std::make_unique<char[]>(num_scale_bytes + num_zp_bytes + align);
+        char* scales_begin = ALIGN_PTR_UP(per_channel_data_.get(), align, char*);
+        char* zps_begin = scales_begin + num_scale_bytes;
+
+        std::memcpy(scales_begin, params.bwAxisScaleOffsetMappedEncoding->scales, num_scale_bytes);
+        ptr->scales = reinterpret_cast<float*>(scales_begin);
+
+        if (params.bwAxisScaleOffsetMappedEncoding->offsets != nullptr) {
+          std::memcpy(zps_begin, params.bwAxisScaleOffsetMappedEncoding->offsets, num_zp_bytes);
+          ptr->offsets = reinterpret_cast<int32_t*>(zps_begin);
+        } else {
+          ptr->offsets = nullptr;
+        }
+      } else {
+        ptr->scales = nullptr;
+        ptr->offsets = nullptr;
+      }
+
+      params_.bwAxisScaleOffsetMappedEncoding = ptr;
+      break;
+    }
+    case QNN_QUANTIZATION_ENCODING_BW_BLOCK_MAPPED: {
+      assert(params.bwBlockMappedEncoding != nullptr);
+      assert(tensor_rank > 0);
+
+      params_.encodingDefinition = params.encodingDefinition;
+      params_.quantizationEncoding = params.quantizationEncoding;
+
+      const size_t struct_bytes = sizeof(Qnn_BwBlockMapped_t);
+      constexpr std::uintptr_t struct_align = alignof(Qnn_BwBlockMapped_t);
+      bw_block_mapped_data_ = std::make_unique<char[]>(struct_bytes + struct_align);
+      Qnn_BwBlockMapped_t* ptr = ALIGN_PTR_UP(bw_block_mapped_data_.get(), struct_align, Qnn_BwBlockMapped_t*);
+      *ptr = *params.bwBlockMappedEncoding;
+
+      block_encoding_tensor_rank_ = static_cast<uint32_t>(tensor_rank);
+      block_encoding_axis_data_ = std::make_unique<uint32_t[]>(block_encoding_tensor_rank_);
+      std::memcpy(block_encoding_axis_data_.get(), params.bwBlockMappedEncoding->blockSize,
+                  block_encoding_tensor_rank_ * sizeof(uint32_t));
+      ptr->blockSize = block_encoding_axis_data_.get();
+
+      num_blocks_ = static_cast<uint32_t>(num_scaleoffsets);
+      if (num_blocks_ > 0) {
+        block_encoding_scale_offsets_data_ = std::make_unique<Qnn_ScaleOffset_t[]>(num_blocks_);
+        for (size_t i = 0; i < num_blocks_; ++i) {
+          block_encoding_scale_offsets_data_[i] = params.bwBlockMappedEncoding->scaleOffset[i];
+        }
+        ptr->scaleOffset = block_encoding_scale_offsets_data_.get();
+      } else {
+        ptr->scaleOffset = nullptr;
+      }
+
+      params_.bwBlockMappedEncoding = ptr;
+      break;
+    }
+    case QNN_QUANTIZATION_ENCODING_BW_BLOCKWISE_EXPANSION_MAPPED: {
+      assert(params.bwBlockwiseExpansionMappedEncoding != nullptr);
+      assert(num_scaleoffsets > 0);
+
+      params_.encodingDefinition = params.encodingDefinition;
+      params_.quantizationEncoding = params.quantizationEncoding;
+
+      per_channel_scales_size_ = static_cast<uint32_t>(num_scaleoffsets);
+
+      const size_t struct_bytes = sizeof(Qnn_BwBlockwiseExpansionMapped_t);
+      constexpr std::uintptr_t struct_align = alignof(Qnn_BwBlockwiseExpansionMapped_t);
+      bw_blockwise_expansion_mapped_data_ = std::make_unique<char[]>(struct_bytes + struct_align);
+      Qnn_BwBlockwiseExpansionMapped_t* ptr = ALIGN_PTR_UP(bw_blockwise_expansion_mapped_data_.get(),
+                                                           struct_align, Qnn_BwBlockwiseExpansionMapped_t*);
+      *ptr = *params.bwBlockwiseExpansionMappedEncoding;
+
+      {
+        const size_t so_num_bytes = num_scaleoffsets * sizeof(Qnn_ScaleOffset_t);
+        constexpr std::uintptr_t so_align = alignof(Qnn_ScaleOffset_t);
+        per_channel_data_ = std::make_unique<char[]>(so_num_bytes + so_align);
+        Qnn_ScaleOffset_t* so_dst = ALIGN_PTR_UP(per_channel_data_.get(), so_align, Qnn_ScaleOffset_t*);
+        std::memcpy(so_dst, params.bwBlockwiseExpansionMappedEncoding->scaleOffsets, so_num_bytes);
+        ptr->scaleOffsets = so_dst;
+      }
+
+      {
+        const size_t bs_num_elems = num_scaleoffsets * params.bwBlockwiseExpansionMappedEncoding->numBlocksPerAxis;
+        const size_t bs_num_bytes = bs_num_elems * sizeof(uint8_t);
+        constexpr std::uintptr_t bs_align = alignof(uint8_t);
+        block_scales_data_ = std::make_unique<uint8_t[]>(bs_num_bytes + bs_align);
+        uint8_t* bs_dst = ALIGN_PTR_UP(block_scales_data_.get(), bs_align, uint8_t*);
+        std::memcpy(bs_dst, params.bwBlockwiseExpansionMappedEncoding->blocksScale8, bs_num_bytes);
+        ptr->blocksScale8 = bs_dst;
+      }
+
+      params_.bwBlockwiseExpansionMappedEncoding = ptr;
+      break;
+    }
     default:
       return MAKE_EP_FAIL(("Unsupported QNN quantization encoding: " +
                            std::to_string(params.quantizationEncoding))
@@ -645,26 +925,7 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
     params_.axisScaleOffsetEncoding.numScaleOffsets = static_cast<uint32_t>(num_elems);
     params_.axisScaleOffsetEncoding.scaleOffset = data_span.data();
   } else if (is_block_quant) {
-    if (!qnn_model_wrapper.GetModelSettings().enable_block_quant_weight_optimization) {
-      ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Block quant weight optimization disabled, BQ path is adopted as-is"));
-      return Ort::Status();
-    }
-    // ONNX block quantization -> QNN LPBQ (BLOCKWISE_EXPANSION) conversion only supported for 4-bit.
-    if (io_def.type != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) {
-      ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
-                  ("BQ to LPBQ conversion only supported for int4 weights, falling back to BQ path"));
-      return Ort::Status();
-    }
-    // LPBQ requires symmetric quantization (all zero-points must be zero).
-    for (const int32_t zp : zero_points) {
-      if (zp != 0) {
-        ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
-                    ("BQ to LPBQ conversion requires symmetric quantization, falling back to BQ path"));
-        return Ort::Status();
-      }
-    }
-
+    // Common setup needed by both LPBQ and fallback Block() path.
     std::vector<uint32_t> io_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(io_def.shape, io_shape), "Cannot get shape");
     const int32_t io_rank = static_cast<int32_t>(io_shape.size());
@@ -673,72 +934,107 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
     constexpr int64_t DEFAULT_QDQ_AXIS = 1;
     int64_t axis = ort_quant_params->axis.value_or(DEFAULT_QDQ_AXIS);
     if (axis < 0) axis += io_rank;
-    RETURN_IF_NOT(axis == 0 || axis == 1,
-                  "Only axis 0 or 1 is supported for block quantization LPBQ conversion");
+    RETURN_IF_NOT(axis >= 0 && axis < io_rank, "Quantization axis out of range for block quantization");
 
-    // Get scale tensor shape to determine block/channel dimensions.
-    // Scale tensor may be rank 2 (e.g., MatMul/Gemm) or higher rank (e.g., Conv with rank-4 weights).
-    // Only the first two dimensions (indexed by axis and 1 - axis) are used for LPBQ conversion.
-    const std::vector<int64_t> scale_shape =
-        utils::GetInitializerShape(ort_quant_params->scale, qnn_model_wrapper.GetOrtApi());
-    // MatMulNBits can sometimes produce rank-1 scales; other ops (MatMul, Conv, Gemm) always use rank-2+.
-    // We derive N from the weight tensor's dimension depending on axis dimension.
-    std::vector<int64_t> effective_scale_shape = scale_shape;
-    if (scale_shape.size() == 1 && !io_shape.empty() && io_rank > 1 && io_shape[1 - axis] > 0) {
-      const int64_t n = static_cast<int64_t>(io_shape[1 - axis]);
-      if (scale_shape[0] % n == 0) {
-        effective_scale_shape = {n, scale_shape[0] / n};
-      }
-    }
-    RETURN_IF_NOT(effective_scale_shape.size() >= 2 && effective_scale_shape.size() <= 4,
-                  "Block quantization scale tensors must have rank between 2 and 4 for LPBQ conversion");
-    RETURN_IF_NOT(effective_scale_shape[0] > 0 && effective_scale_shape[1] > 0,
-                  "Block quantization scale tensor dimensions must be positive");
-    RETURN_IF_NOT(effective_scale_shape[0] * effective_scale_shape[1] == static_cast<int64_t>(scales.size()),
-                  "Block quantization scale tensor shape product must equal number of scales");
+    const int64_t block_size = ort_quant_params->block_size.value();
 
-    // Scale shape: [num_blocks_per_channel, num_channels] when axis=0
-    //              [num_channels, num_blocks_per_channel] when axis=1
-    const uint32_t num_blocks_per_channel = static_cast<uint32_t>(effective_scale_shape[axis]);
-    const uint32_t num_channels = static_cast<uint32_t>(effective_scale_shape[1 - axis]);
+    // block_sizes for Block(): blockSize[axis]=block_size, blockSize[d!=axis]=1.
+    // blockSize[d]=1 makes num_blocks_d = dim_d (one block per element along that axis).
+    std::vector<uint32_t> block_sizes(static_cast<size_t>(io_rank), 1u);
+    block_sizes[static_cast<size_t>(axis)] = static_cast<uint32_t>(block_size);
 
-    // The conversion algorithm expects scales in block-major order [num_blocks, num_channels].
-    // If axis=1 the raw tensor is channel-major [num_channels, num_blocks]; transpose it.
-    std::vector<float> bq_scales_bm;
-    if (axis == 0) {
-      bq_scales_bm = std::move(scales);
-    } else {
-      // Transpose [num_channels, num_blocks] -> [num_blocks, num_channels]
-      bq_scales_bm.resize(scales.size());
-      for (uint32_t c = 0; c < num_channels; ++c) {
-        for (uint32_t b = 0; b < num_blocks_per_channel; ++b) {
-          bq_scales_bm[static_cast<size_t>(b) * num_channels + c] =
-              scales[static_cast<size_t>(c) * num_blocks_per_channel + b];
+    // Build int32 offsets for Block() fallback.
+    const bool no_zero_points = zero_points.empty();
+    std::vector<int32_t> block_offsets =
+        no_zero_points ? std::vector<int32_t>(scales.size(), 0) : zero_points;
+    RETURN_IF_NOT(block_offsets.size() == scales.size(),
+                  "Block quant: zero-point count must match scale count");
+
+    // Determine whether BQ->LPBQ conversion is applicable.
+    const bool try_lpbq =
+        qnn_model_wrapper.GetModelSettings().enable_block_quant_weight_optimization &&
+        io_def.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4 &&
+        std::all_of(zero_points.begin(), zero_points.end(), [](int32_t zp) { return zp == 0; });
+
+    bool lpbq_success = false;
+
+    if (try_lpbq && (axis == 0 || axis == 1)) {
+      // Get scale tensor shape to determine block/channel dimensions.
+      // Scale tensor may be rank 2 (e.g., MatMul/Gemm) or higher rank (e.g., Conv with rank-4 weights).
+      // Only the first two dimensions (indexed by axis and 1 - axis) are used for LPBQ conversion.
+      const std::vector<int64_t> scale_shape =
+          utils::GetInitializerShape(ort_quant_params->scale, qnn_model_wrapper.GetOrtApi());
+      // MatMulNBits can sometimes produce rank-1 scales; other ops (MatMul, Conv, Gemm) always use rank-2+.
+      // We derive N from the weight tensor's dimension depending on axis dimension.
+      std::vector<int64_t> effective_scale_shape = scale_shape;
+      if (scale_shape.size() == 1 && !io_shape.empty() && io_rank > 1 && io_shape[1 - axis] > 0) {
+        const int64_t n = static_cast<int64_t>(io_shape[1 - axis]);
+        if (scale_shape[0] % n == 0) {
+          effective_scale_shape = {n, scale_shape[0] / n};
         }
       }
+      RETURN_IF_NOT(effective_scale_shape.size() >= 2 && effective_scale_shape.size() <= 4,
+                    "Block quantization scale tensors must have rank between 2 and 4 for LPBQ conversion");
+      RETURN_IF_NOT(effective_scale_shape[0] > 0 && effective_scale_shape[1] > 0,
+                    "Block quantization scale tensor dimensions must be positive");
+      RETURN_IF_NOT(effective_scale_shape[0] * effective_scale_shape[1] == static_cast<int64_t>(scales.size()),
+                    "Block quantization scale tensor shape product must equal number of scales");
+
+      // Scale shape: [num_blocks_per_channel, num_channels] when axis=0
+      //              [num_channels, num_blocks_per_channel] when axis=1
+      const uint32_t num_blocks_per_channel = static_cast<uint32_t>(effective_scale_shape[axis]);
+      const uint32_t num_channels = static_cast<uint32_t>(effective_scale_shape[1 - axis]);
+
+      // The conversion algorithm expects scales in block-major order [num_blocks, num_channels].
+      // If axis=1 the raw tensor is channel-major [num_channels, num_blocks]; transpose it.
+      std::vector<float> bq_scales_bm;
+      if (axis == 0) {
+        bq_scales_bm = scales;
+      } else {
+        // Transpose [num_channels, num_blocks] -> [num_blocks, num_channels]
+        bq_scales_bm.resize(scales.size());
+        for (uint32_t c = 0; c < num_channels; ++c) {
+          for (uint32_t b = 0; b < num_blocks_per_channel; ++b) {
+            bq_scales_bm[static_cast<size_t>(b) * num_channels + c] =
+                scales[static_cast<size_t>(c) * num_blocks_per_channel + b];
+          }
+        }
+      }
+
+      // Apply BQ -> LPBQ algorithm
+      std::vector<float> per_channel_scales;
+      std::vector<uint8_t> per_block_int_scales;
+      std::vector<int32_t> lpbq_offsets;
+      const uint32_t lpbq_bitwidth = 4u;
+      Ort::Status status = utils::ConvertBlockQuantScalesToLpbq(bq_scales_bm, zero_points, num_blocks_per_channel,
+                                                                num_channels, lpbq_bitwidth, per_channel_scales,
+                                                                per_block_int_scales, lpbq_offsets);
+      if (status.IsOK()) {
+        // QNN LPBQ axis = the non-block axis in the weight tensor.
+        // For ONNX axis=0 (block axis=0): QNN axis=1; for axis=1: QNN axis=0.
+        const int64_t qnn_axis = 1 - axis;
+        *this = QnnQuantParamsWrapper::LowPowerBlockwise(per_channel_scales, per_block_int_scales, lpbq_offsets,
+                                                         qnn_axis, /*block_scale_bitwidth=*/4);  // LPBQ conversion only supports INT4;
+                                                                                                 // guarded by the check at the start of this block
+        lpbq_success = true;
+      } else {
+        ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
+                    ("BQ to LPBQ conversion failed, falling back to Block() encoding: " +
+                     std::string(status.GetErrorMessage())).c_str());
+      }
+    } else {
+      if (!try_lpbq) {
+        ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Block quant LPBQ conversion not applicable, using Block() encoding"));
+      } else {
+        ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Block quant axis is not 0 or 1, LPBQ not supported, using Block() encoding"));
+      }
     }
 
-    // Apply BQ -> LPBQ algorithm
-    std::vector<float> per_channel_scales;
-    std::vector<uint8_t> per_block_int_scales;
-    std::vector<int32_t> lpbq_offsets;
-    const uint32_t bitwidth = 4u;
-    Ort::Status status = utils::ConvertBlockQuantScalesToLpbq(bq_scales_bm, zero_points, num_blocks_per_channel,
-                                                              num_channels, bitwidth, per_channel_scales,
-                                                              per_block_int_scales, lpbq_offsets);
-    if (!status.IsOK()) {
-      ORT_CXX_LOG(qnn_model_wrapper.GetLogger(), ORT_LOGGING_LEVEL_VERBOSE,
-                  ("BQ to LPBQ conversion failed, falling back to BQ path: " + std::string(status.GetErrorMessage())).c_str());
-      return Ort::Status();
+    if (!lpbq_success) {
+      *this = QnnQuantParamsWrapper::Block(scales, block_offsets, block_sizes);
     }
-
-    // QNN LPBQ axis = the non-block axis in the weight tensor.
-    // For ONNX axis=0 (block axis=0): QNN axis=1; for axis=1: QNN axis=0.
-    const int64_t qnn_axis = 1 - axis;
-
-    *this = QnnQuantParamsWrapper::LowPowerBlockwise(per_channel_scales, per_block_int_scales, lpbq_offsets,
-                                                     qnn_axis, /*block_scale_bitwidth=*/4);  // LPBQ conversion only supports INT4;
-                                                                                             // guarded by the check at the start of this block
   } else {
     return MAKE_EP_FAIL("Unexpected tensor kind for QuantParamsWrapper::Init()");
   }
