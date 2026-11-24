@@ -30,6 +30,7 @@ std::unique_ptr<QnnModelWrapper> MakeStubWrapper(OpBuilderTestContext& ctx) {
 
 }  // namespace
 
+// Common validation: reject dynamic repeats before backend validation.
 TEST(QnnUnit_Tile_ComponentTest, Tile_DynamicRepeats_Unsupported) {
   const IOpBuilder* builder = GetOpBuilder("Tile");
   ASSERT_NE(builder, nullptr);
