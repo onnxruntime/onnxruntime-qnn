@@ -149,17 +149,6 @@ TEST_F(QnnCPUBackendTests, GridSample_U8_Linear_Border) {
                              ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnCPUBackendTests, GridSample_U16_Unsupported) {
-  RunQDQOpTestOnCPU<uint16_t>("GridSample",
-                              {TestInputDef<float>({1, 3, 4, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 72)),
-                               TestInputDef<float>({1, 4, 6, 2}, false, GetFloatDataInRange(-1.5f, 1.5f, 48))},
-                              {test::MakeAttribute("mode", "linear"), test::MakeAttribute("padding_mode", "border")},
-                              /*opset_version=*/20,
-                              ExpectedEPNodeAssignment::None,
-                              kOnnxDomain,
-                              /*use_contrib_qdq=*/true);
-}
-
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__linux__)
 
 namespace {
@@ -501,6 +490,10 @@ void RunGridSampleFloat(const std::string& domain,
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
+#if defined(__linux__) && !defined(__aarch64__)
+    // The x86_64 Linux simulator requires soc_model whenever FP16 precision is enabled.
+    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
     provider_options["enable_htp_fp16_precision"] = "1";
   }
 

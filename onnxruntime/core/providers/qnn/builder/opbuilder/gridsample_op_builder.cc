@@ -246,7 +246,7 @@ Ort::Status GridSampleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrap
 
   // The QNN CPU backend rejects 16-bit fixed-point GridSample and its Transposes (backendValidateOpConfig error
   // 3110). Validation is skipped for the ONNX domain, so reject here; otherwise pass 2 fails the session.
-  // Verified by QnnCPUBackendTests.GridSample_U16_Probe; u8 rank 5 passes on CPU (GridSample_U8_Rank5_Probe).
+  // u8 passes on CPU (QnnCPUBackendTests.GridSample_U8_Linear_Border).
   if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::CPU) {
     RETURN_IF(utils::IsQuant16bit(input_info.qnn_data_type),
               "QNN EP does not support 16-bit quantized GridSample on CPU backend.");
