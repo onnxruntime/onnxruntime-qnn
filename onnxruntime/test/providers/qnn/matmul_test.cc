@@ -5,6 +5,7 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -885,7 +886,10 @@ static void RunDynamicInput1QuantErrorTest(const char* test_name,
   }
   AssertOpInQnnGraph(graph_dir, "Convert", expected_convert_count);
   if (expected_convert_count != 0) {
-    AssertConvertOutputDataType(graph_dir, expected_convert_type);
+    const std::string expected_output_name =
+        shape_1.size() == 1 ? "qdq_in1_q_out_reshape_convert" : "qdq_in1_q_out_convert";
+    AssertOpOutputInQnnGraph(graph_dir, "Convert", expected_convert_type,
+                             std::nullopt, expected_output_name);
   }
 }
 
