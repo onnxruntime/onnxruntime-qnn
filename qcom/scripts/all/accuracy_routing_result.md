@@ -2,7 +2,7 @@
 
 The standalone internal-symbol Snapshot runner exports `accuracy_routing.json` by passing
 `--emit-routing-result=<path>` to `run_snapshot_accuracy.sh`. The runner exports
-its existing operator-group selection on exit. Exporting does not change its
+its testcase-level selection on exit. Exporting does not change its
 test filter or exit code. Output preparation and export failures log a warning
 and retain the original test execution. Reused local output files are cleared
 when preparation succeeds, and new results are replaced atomically.
@@ -45,7 +45,7 @@ run ID, and attempt against the expected producer run.
 | Field | Meaning |
 |---|---|
 | `evidence_granularity` | `testcase`; evidence is paired by exact suite variant and testcase name |
-| `decision_granularity` | `operator_group` for the legacy two-pass runner, `none` for active provider observation; neither grants target skip authorization |
+| `decision_granularity` | `testcase` for the routed runner, `none` for provider observation; neither grants target skip authorization |
 | `producer` | Checkout SHA, Actions identity, actual build QAIRT/ORT versions, and downloaded golden profile |
 | `golden_manifest` | Versions and profile read from the golden store; missing data is represented by null |
 | `versions_match` | Both build versions match the manifest and the manifest supplies a profile |
@@ -62,10 +62,10 @@ suite by preserving the variant suffix and exact testcase name. If both tiers
 contain that same case, both identities are listed. Cases without an exact
 pair are `unmapped`; another case or variant cannot supply their evidence.
 
-`accuracy_decisions[].runner_action` is `run`, `skip`, `unknown` (selection did not
-complete), or `out_of_scope` (no in-scope Snapshot group). It describes observed
-Linux group selection. A paired case may match while its group still runs due
-to drift in another case. It does not grant target-platform eligibility. Evidence status
+`accuracy_decisions[].runner_action` is `run`, `skip`, or `unknown` (selection did not
+complete). It describes observed Linux testcase selection. An independently
+matched case can skip even when another case in the same operator drifts.
+Unpaired Accuracy cases remain in the full scoped run set. It does not grant target-platform eligibility. Evidence status
 is independently `match`, `drift`, `untrusted`, or `unmapped`; a Linux skip with
 missing or incompatible metadata remains untrusted for consumption.
 
@@ -111,6 +111,25 @@ consumer reports this proposed skip list while all target Accuracy tests run;
 enforcement is a separate change.
 
 This exporter supplies testcase evidence, not a target-authorized skip list.
+
+## Local execution policy
+
+The shared runner starts from all registered Accuracy cases in the requested
+operator filter. Compare mode skips a case only when every registered exact
+Snapshot pair is a trusted match and the golden versions/profile are valid.
+Missing, skipped, malformed, or unmapped evidence retains execution. Selection
+failure falls back to the full scoped Accuracy filter. Artifact publication
+failure does not change selection. `--force-accuracy` and `--generate-goldens`
+always run the full scoped Accuracy universe.
+
+Coverage already routes per testcase through `accuracy_gate.py`. Its
+`generate_coverage.sh --force-accuracy` option bypasses routing while retaining
+Snapshot execution, for full coverage baselines. This change removes shared
+runner operator-group skip decisions; operator filters remain scope selectors.
+
+Schema version 1 retains the same fields but now reports testcase decision
+granularity. Consumers must explicitly support that value and continue to
+derive target eligibility from evidence and reviewed policy.
 
 The current `linux-x86_64-htp-simulator` namespace does not establish a v73
 execution profile. `producer.target_htp_arch` is therefore null. Windows ARM64

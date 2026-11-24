@@ -33,6 +33,7 @@ config="RelWithDebInfo"
 output_dir=""
 test_filter=""
 skip_snapshot=false
+force_accuracy=false
 skip_accuracy=false
 
 # Three-phase split for COVERAGE. All three phases run the same instrumented
@@ -94,12 +95,15 @@ for arg in "$@"; do
         --skip-snapshot)
             skip_snapshot=true
             ;;
+        --force-accuracy)
+            force_accuracy=true
+            ;;
         --skip-accuracy)
             skip_accuracy=true
             ;;
         -h|--help)
             cat <<EOF
-Usage: $(basename "${BASH_SOURCE[0]}") --build-dir=<path> [--config=<cfg>] [--output-dir=<path>] [--test-filter=<str>] [--skip-snapshot] [--skip-accuracy]
+Usage: $(basename "${BASH_SOURCE[0]}") --build-dir=<path> [--config=<cfg>] [--output-dir=<path>] [--test-filter=<str>] [--skip-snapshot] [--skip-accuracy] [--force-accuracy]
 
   --build-dir=<path>    Required. Build root (e.g. build/linux-x86_64).
   --config=<cfg>        Optional. Build configuration subdirectory.  Default: RelWithDebInfo
@@ -107,6 +111,7 @@ Usage: $(basename "${BASH_SOURCE[0]}") --build-dir=<path> [--config=<cfg>] [--ou
   --test-filter=<str>   Optional. Override the three-phase split with a single GTest
                         filter run (legacy behavior). When set, --skip-snapshot and
                         --skip-accuracy are ignored.
+  --force-accuracy      Optional. Run full Accuracy even when Snapshots match.
   --skip-snapshot       Optional. Skip the snapshot phase (re-run builder +
                         golden compare).
   --skip-accuracy       Optional. Skip the numerical accuracy phase.
@@ -355,7 +360,7 @@ else
         # Route accuracy per-case from the snapshot results + golden manifest. Only
         # when snapshot actually ran this invocation; if it was skipped the JSON may
         # be stale/absent, so keep the safe full-run baseline.
-        if [ "${skip_snapshot}" != true ]; then
+        if [ "${skip_snapshot}" != true ] && [ "${force_accuracy}" != true ]; then
             accuracy_filter="$(compute_accuracy_filter)"
             log_info "--- Accuracy gate selected filter: ${accuracy_filter} ---"
         fi

@@ -34,6 +34,8 @@ def parse_test_list(text: str) -> list[tuple[str, str]]:
 
 
 def snapshot_status(case: dict) -> str:
+    if case.get("errors") not in (None, [], 0):
+        return "untrusted"
     failures = case.get("failures", [])
     if not isinstance(failures, list) or any(
         not isinstance(failure, dict) or not isinstance(failure.get("failure"), str) for failure in failures
@@ -53,6 +55,8 @@ def load_snapshot_cases(path: Path) -> dict[tuple[str, str], str]:
     result = {}
     data = json.loads(path.read_text(encoding="utf-8"))
     for suite in data["testsuites"]:
+        if suite.get("errors", 0):
+            raise ValueError("Snapshot suite contains errors")
         for case in suite.get("testsuite", []):
             identity = (suite["name"], case["name"])
             if identity in result:
@@ -87,6 +91,10 @@ def export_result(args: argparse.Namespace) -> dict:
         statuses = load_snapshot_cases(args.snapshot_json)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         statuses = {}
+    # A nonzero process exit without any recorded failed case is incomplete
+    # execution evidence, even if the report contains some passing cases.
+    if args.snapshot_exit and not any(status != "match" for status in statuses.values()):
+        statuses = {}
 
     manifest = read_manifest(args.manifest)
     versions_match = bool(
@@ -96,9 +104,7 @@ def export_result(args: argparse.Namespace) -> dict:
         and args.ort_version == manifest.get("ort_version")
         and manifest.get("golden_profile")
     )
-    target_groups = set(filter(None, args.target_groups.split(",")))
     snapshots = []
-    groups = set()
     paired_snapshots: dict[tuple[str, str], list[dict]] = {}
     for suite, name in snapshot_cases:
         match = SNAPSHOT_GROUP.fullmatch(suite)
@@ -106,7 +112,6 @@ def export_result(args: argparse.Namespace) -> dict:
             raise ValueError(f"Unrecognized Snapshot suite: {suite}")
         record = {"test_id": f"{suite}.{name}", "status": statuses.get((suite, name), "untrusted")}
         snapshots.append(record)
-        groups.add(match[1])
         accuracy_suite = f"QnnAcc_{match[1]}_Accuracy{match[2] or ''}Test"
         paired_snapshots.setdefault((accuracy_suite, name), []).append(record)
 
@@ -115,7 +120,6 @@ def export_result(args: argparse.Namespace) -> dict:
         match = ACCURACY_GROUP.fullmatch(suite)
         if not match:
             raise ValueError(f"Unrecognized Accuracy suite: {suite}")
-        group = match[1]
         evidence = paired_snapshots.get((suite, name), [])
         if not evidence:
             status = "unmapped"
@@ -125,13 +129,9 @@ def export_result(args: argparse.Namespace) -> dict:
             status = "match"
         else:
             status = "untrusted"
-        # This records Linux group selection only. Target consumers use exact
-        # testcase evidence and reviewed policy, not this action, to allow skips.
-        action = "run" if group in target_groups else "skip"
+        action = "skip" if status == "match" and args.mode == "compare" else "run"
         if not args.selection_complete:
             action = "unknown"
-        elif group not in groups:
-            action = "out_of_scope"
         decisions.append(
             {
                 "accuracy_test_id": f"{suite}.{name}",
@@ -143,7 +143,7 @@ def export_result(args: argparse.Namespace) -> dict:
 
     return {
         "evidence_granularity": "testcase",
-        "decision_granularity": "operator_group",
+        "decision_granularity": "testcase",
         "producer": {
             "source_commit_sha": args.source_commit,
             "repository": os.environ.get("GITHUB_REPOSITORY"),
@@ -185,13 +185,16 @@ def main() -> None:
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--qairt-version", default="")
     parser.add_argument("--ort-version", default="")
-    parser.add_argument("--target-groups", default="")
+    parser.add_argument("--emit-filter-file", type=Path)
     parser.add_argument("--mode", choices=("compare", "force_accuracy", "generate_goldens"), required=True)
     parser.add_argument("--selection-complete", action="store_true")
     parser.add_argument("--runner-exit", type=int, required=True)
     parser.add_argument("--snapshot-exit", type=int, required=True)
     args = parser.parse_args()
     result = export_result(args)
+    if args.emit_filter_file:
+        selected = [case["accuracy_test_id"] for case in result["accuracy_decisions"] if case["runner_action"] == "run"]
+        args.emit_filter_file.write_text(":".join(selected) or "QnnAcc_ZZZ_NoCasesSelected.None", encoding="utf-8")
     write_routing_result(result, args.output)
 
 
