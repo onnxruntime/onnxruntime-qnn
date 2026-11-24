@@ -1477,7 +1477,9 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpMatMulUseSymmetricUint16_WarnsForC
            TestCase{"1", nullptr, "htp", "unknown"},
            TestCase{"1", "69", "htp", "v69"},
            TestCase{"1", "73", "htp", nullptr},
+#if !QNN_ARCH_ARM64 || defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
            TestCase{"1", "73,69", "htp", "v69"},
+#endif
            TestCase{"1", "69", "htp", nullptr, "SM8550"},
            TestCase{"1", nullptr, "cpu", nullptr}}) {
     SCOPED_TRACE(test_case.option ? test_case.option : "default");
