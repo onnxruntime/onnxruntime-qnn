@@ -4,7 +4,6 @@
 // Standalone C++ reference sample for running a QNN UDO (User-Defined Op).
 //
 // Demonstrates the MyAdd UDO (output = input + constant) on:
-//   - QNN CPU backend  (fp32 model, no QDQ wrapping)
 //   - QNN HTP backend  (QDQ uint8 model, DQ -> MyAdd -> Q fusion)
 //
 // Before running, export the custom-op domain so the QNN EP factory registers
@@ -20,13 +19,9 @@
 //       -o run_udo_sample
 //
 // Usage:
-//   # CPU backend
-//   LD_LIBRARY_PATH=<qnn_sdk>/lib/x86_64-linux-clang:<ort_lib> \
-//   ./run_udo_sample cpu myadd_fp32.onnx /path/to/libMyAddOpPackage_cpu.so
-//
 //   # HTP backend (x86 simulator or on-device)
 //   LD_LIBRARY_PATH=<qnn_sdk>/lib/x86_64-linux-clang:<ort_lib> \
-//   ./run_udo_sample htp myadd_qdq.onnx /path/to/libMyAddOpPackage_htp.so
+//   ./run_udo_sample htp myadd_qdq.onnx /path/to/libQnnMyAddOpPackage.so
 
 #include <algorithm>
 #include <cmath>
@@ -71,40 +66,6 @@ static std::vector<float> make_input() {
   return v;
 }
 
-static void run_cpu(const std::string& model_path, const std::string& pkg_path) {
-  printf("\n=== QNN CPU backend ===\n");
-
-  Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "UDOSampleCPU");
-  Ort::SessionOptions so;
-
-  // Register QNN EP and configure with op_packages.
-  // ORT_QNN_CUSTOM_OP_DOMAINS (set in the environment before this process started)
-  // handles the custom-domain schema registration automatically.
-  std::string op_packages = "MyAdd:" + pkg_path + ":MyAddOpPackageInterfaceProvider";
-  AppendQnnEp(env, so, {{"backend_type", "cpu"}, {"op_packages", op_packages}});
-
-  Ort::Session session(env, model_path.c_str(), so);
-
-  // Run inference with float32 input in [-1, 1].
-  auto input = make_input();
-  std::vector<int64_t> shape = {1, kElements};
-  auto mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-  auto in_tensor = Ort::Value::CreateTensor<float>(mem, input.data(), input.size(),
-                                                   shape.data(), shape.size());
-  const char* in_names[] = {"input"};
-  const char* out_names[] = {"output"};
-  auto outputs = session.Run(Ort::RunOptions{}, in_names, &in_tensor, 1, out_names, 1);
-
-  // Verify output ≈ input + constant.
-  const float* out = outputs[0].GetTensorData<float>();
-  float max_err = 0.0f;
-  for (int i = 0; i < kElements; ++i)
-    max_err = std::max(max_err, std::fabs(out[i] - (input[i] + kConstant)));
-
-  printf("Max absolute error vs (input + %.1f): %.2e\n", kConstant, max_err);
-  fputs(max_err <= 1e-4f ? "PASS\n" : "FAIL: error exceeds threshold\n", stdout);
-}
-
 static void run_htp(const std::string& model_path, const std::string& pkg_path) {
   printf("\n=== QNN HTP backend ===\n");
 
@@ -145,13 +106,12 @@ static void run_htp(const std::string& model_path, const std::string& pkg_path) 
 }
 
 int main(int argc, char* argv[]) {
-  if (argc < 4) {
+  if (argc != 4) {
     fprintf(stderr,
             "Usage:\n"
             "  export ORT_QNN_CUSTOM_OP_DOMAINS=\"example:MyAdd\"\n"
-            "  %s cpu  <model.onnx> <libMyAddOpPackage_cpu.so>\n"
-            "  %s htp  <model.onnx> <libMyAddOpPackage_htp.so>\n",
-            argv[0], argv[0]);
+            "  %s htp  <model.onnx> <libQnnMyAddOpPackage.so>\n",
+            argv[0]);
     return 1;
   }
 
@@ -160,12 +120,10 @@ int main(int argc, char* argv[]) {
   std::string pkg = argv[3];
 
   try {
-    if (backend == "cpu")
-      run_cpu(model, pkg);
-    else if (backend == "htp")
+    if (backend == "htp")
       run_htp(model, pkg);
     else {
-      fprintf(stderr, "Unknown backend '%s'. Use 'cpu' or 'htp'.\n", backend.c_str());
+      fprintf(stderr, "Unknown backend '%s'. Use 'htp'.\n", backend.c_str());
       return 1;
     }
   } catch (const Ort::Exception& e) {
