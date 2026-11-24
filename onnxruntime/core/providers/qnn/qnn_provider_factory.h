@@ -4,6 +4,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
@@ -17,6 +18,10 @@ namespace onnxruntime {
 class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
+  ~QnnEpFactory();
+
+  void RetainCompilerBackend(const std::shared_ptr<qnn::QnnBackendManager>& manager) const;
+  std::shared_ptr<qnn::QnnBackendManager> GetCompilerBackend() const;
 
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
     return host_accessible_memory_info_.get();
@@ -82,6 +87,9 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
+  mutable std::mutex compiler_backend_mutex_;
+  // Keep one warmed-up HTP backend alive across compiler sessions.
+  mutable std::shared_ptr<qnn::QnnBackendManager> compiler_backend_;
 
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
   // Retain synthesized hardware devices for every successful discovery call.

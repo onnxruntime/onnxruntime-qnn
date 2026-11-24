@@ -1568,6 +1568,15 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
         static_cast<const ApiPtrs&>(*this), logger_);
   }
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  retain_compiler_backend_ = prepare_only_ && enable_htp_cross_device_prepare &&
+                             !enable_multi_soc_ep_context_ && !share_ep_contexts_ &&
+                             htp_share_resource_optimization_ != 1;
+  if (enable_htp_cross_device_prepare && !reusing_shared_backend_manager) {
+    qnn_backend_manager_->SetHostBackendAnchor(factory_.GetCompilerBackend());
+  }
+#endif
+
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
 
@@ -3255,7 +3264,23 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (ep->prepare_only_) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
                 "prepare_only mode: context saved. Releasing QNN device resources.");
+#if defined(_WIN32)
+    if (ep->callback_ETWSink_provider_) {
+      qnn::QnnTelemetry::Instance().UnregisterInternalCallback(ep->callback_ETWSink_provider_);
+      ep->callback_ETWSink_provider_ = nullptr;
+    }
+#endif
     ep->qnn_models_.clear();
+    if (ep->retain_compiler_backend_ &&
+        ep->qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::HTP &&
+        ep->qnn_backend_manager_->GetQnnSerializerConfig() == nullptr) {
+      // Drop model resources, but preserve HTP's warmed-up Prepare state across
+      // sessions so subsequent compilations do not reload a DLL after lockdown.
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->ReleaseContext());
+      ep->factory_.RetainCompilerBackend(ep->qnn_backend_manager_);
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                  "prepare_only mode: compiler backend retained until EP unregistration.");
+    }
     ep->qnn_backend_manager_.reset();
   }
 

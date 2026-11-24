@@ -164,6 +164,26 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
 }
 
+QnnEpFactory::~QnnEpFactory() {
+  // The manager owns its backend DLL references. Release it while the factory's
+  // logger and other resources are still available for backend teardown.
+  compiler_backend_.reset();
+}
+
+void QnnEpFactory::RetainCompilerBackend(const std::shared_ptr<qnn::QnnBackendManager>& manager) const {
+  std::lock_guard<std::mutex> lock(compiler_backend_mutex_);
+  if (!compiler_backend_) {
+    // The warmup session's logger is destroyed before the factory.
+    manager->ResetLogger(OrtLoggingManager::GetDefaultLogger());
+    compiler_backend_ = manager;
+  }
+}
+
+std::shared_ptr<qnn::QnnBackendManager> QnnEpFactory::GetCompilerBackend() const {
+  std::lock_guard<std::mutex> lock(compiler_backend_mutex_);
+  return compiler_backend_;
+}
+
 // Returns the name for the EP. Each unique factory configuration must have a unique name.
 // Ex: a factory that supports NPU should have a different than a factory that supports GPU.
 const char* ORT_API_CALL QnnEpFactory::GetNameImpl(const OrtEpFactory* this_ptr) noexcept {
