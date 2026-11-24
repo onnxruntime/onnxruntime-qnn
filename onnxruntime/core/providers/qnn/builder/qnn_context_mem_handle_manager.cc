@@ -61,6 +61,7 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* memory_address,
 
     // register a new mem handle
     Qnn_MemDescriptor_t mem_descriptor = QNN_MEM_DESCRIPTOR_INIT;
+    QnnMemHtp_Descriptor_t htp_mem_descriptor{};
     mem_descriptor.memShape.dimSize = qnn_tensor_dims;
     mem_descriptor.memShape.numDim = qnn_tensor_rank;
     mem_descriptor.memShape.shapeConfig = nullptr;
@@ -104,7 +105,6 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* memory_address,
         HtpSharedMemoryAllocator::SharedMemoryInfo shared_memory_info{};
         RETURN_IF_ERROR(HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfo(memory_address, shared_memory_info));
 
-        QnnMemHtp_Descriptor_t htp_mem_descriptor{};
         htp_mem_descriptor.type = QNN_HTP_MEM_SHARED_BUFFER;
         htp_mem_descriptor.size = shared_memory_info.total_size;
         htp_mem_descriptor.sharedBufferConfig.fd = shared_memory_info.fd;
