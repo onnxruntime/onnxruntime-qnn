@@ -364,7 +364,8 @@ static bool ParseBoolOption(const OrtApi& ort_api,
                             const OrtSessionOptions& session_options,
                             const std::string& key,
                             bool default_value,
-                            const Ort::Logger& logger) {
+                            const Ort::Logger& logger,
+                            OrtLoggingLevel invalid_value_log_severity = ORT_LOGGING_LEVEL_VERBOSE) {
   bool result = default_value;
   std::string value_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options, key, default_value ? "1" : "0", value_str);
@@ -375,8 +376,10 @@ static bool ParseBoolOption(const OrtApi& ort_api,
     result = false;
   } else {
     ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Invalid value for " + key + " (" + value_str + "). Only 0 or 1 allowed.").c_str());
+                invalid_value_log_severity,
+                ("Invalid value for " + key + " (" + value_str + "). Only 0 or 1 allowed. Using default value " +
+                 (default_value ? "1" : "0") + ".")
+                    .c_str());
   }
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("User specified " + key + ": " + (result ? "1" : "0")).c_str());
 
@@ -1313,7 +1316,38 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                       logger_);
 
   model_settings_.htp_matmul_use_symmetric_uint16 = ParseBoolOption(
-      ort_api, session_options_, FormatEPConfigKey("htp_matmul_use_symmetric_uint16"), false, logger_);
+      ort_api,
+      session_options_,
+      FormatEPConfigKey("htp_matmul_use_symmetric_uint16"),
+      false,
+      logger_,
+      ORT_LOGGING_LEVEL_WARNING);
+
+  const auto configured_backend = InferBackendTypeFromPath(backend_path);
+  if (model_settings_.htp_matmul_use_symmetric_uint16 &&
+      (!configured_backend || qnn::IsNpuBackend(*configured_backend))) {
+    const auto warn_if_unsupported_arch = [this](QnnHtpDevice_Arch_t configured_arch) {
+      if (configured_arch >= QNN_HTP_DEVICE_ARCH_V73) {
+        return;
+      }
+      const std::string arch_name = configured_arch == QNN_HTP_DEVICE_ARCH_NONE
+                                        ? "unknown"
+                                        : "v" + std::to_string(configured_arch);
+      const std::string warning =
+          "htp_matmul_use_symmetric_uint16 requires HTP v73 or newer, but the configured HTP architecture is " +
+          arch_name +
+          ". The option will only apply if the backend resolves HTP v73 or newer; "
+          "otherwise, the default range heuristic is used.";
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, warning.c_str());
+    };
+    if (enable_multi_soc_ep_context_) {
+      for (const auto configured_arch : htp_arch_per_soc_) {
+        warn_if_unsupported_arch(configured_arch);
+      }
+    } else {
+      warn_if_unsupported_arch(htp_arch);
+    }
+  }
 
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,

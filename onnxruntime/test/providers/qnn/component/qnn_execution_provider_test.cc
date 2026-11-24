@@ -1351,10 +1351,10 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_UseNativeMatMulInvalidValue_LogsVerbo
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpMatMulUseSymmetricUint16_ParsesValues) {
-  for (const char* value : {static_cast<const char*>(nullptr), "0", "1", "invalid"}) {
+  for (const char* value : {static_cast<const char*>(nullptr), "0", "1", "2"}) {
     SCOPED_TRACE(value ? value : "default");
     EpStubContext ctx;
-    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.log_severity = ORT_LOGGING_LEVEL_WARNING;
     if (value) {
       ctx.session_config[EPKey("htp_matmul_use_symmetric_uint16")] = value;
     }
@@ -1362,10 +1362,76 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpMatMulUseSymmetricUint16_ParsesVal
     auto ep = MakeEp(*factory, ctx);
     EXPECT_EQ(GetModelSettingsForTest(*ep).htp_matmul_use_symmetric_uint16,
               value && std::string(value) == "1");
-    if (value && std::string(value) == "invalid") {
-      ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
-                   "Invalid value for ep.qnnexecutionprovider.htp_matmul_use_symmetric_uint16");
+    size_t invalid_value_logs = 0;
+    for (const auto& record : ctx.log_records) {
+      if (record.message.find("Invalid value for ep.qnnexecutionprovider.htp_matmul_use_symmetric_uint16") !=
+          std::string::npos) {
+        ++invalid_value_logs;
+        EXPECT_EQ(record.severity, ORT_LOGGING_LEVEL_WARNING);
+        EXPECT_NE(record.message.find("(" + std::string(value ? value : "") + ")"), std::string::npos);
+        EXPECT_NE(record.message.find("Only 0 or 1 allowed. Using default value 0."), std::string::npos);
+      }
     }
+    const bool invalid_value = value && std::string(value) != "0" && std::string(value) != "1";
+    EXPECT_EQ(invalid_value_logs, invalid_value ? 1u : 0u);
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpMatMulUseSymmetricUint16_WarnsForConfiguredArchitecture) {
+  struct TestCase {
+    const char* option;
+    const char* arch;
+    const char* backend;
+    const char* warning_arch;
+    const char* soc_model = nullptr;
+  };
+  for (const auto& test_case : {
+           TestCase{"0", nullptr, "htp", nullptr},
+           TestCase{"1", nullptr, "htp", "unknown"},
+           TestCase{"1", "69", "htp", "v69"},
+           TestCase{"1", "73", "htp", nullptr},
+           TestCase{"1", "73,69", "htp", "v69"},
+           TestCase{"1", "69", "htp", nullptr, "SM8550"},
+           TestCase{"1", nullptr, "cpu", nullptr}}) {
+    SCOPED_TRACE(test_case.option ? test_case.option : "default");
+    SCOPED_TRACE(test_case.arch ? test_case.arch : "unspecified");
+    SCOPED_TRACE(test_case.backend);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_WARNING;
+    ctx.session_config[EPKey("backend_type")] = test_case.backend;
+    if (test_case.option) {
+      ctx.session_config[EPKey("htp_matmul_use_symmetric_uint16")] = test_case.option;
+    }
+    if (test_case.arch) {
+      ctx.session_config[EPKey("htp_arch")] = test_case.arch;
+      if (std::string(test_case.arch).find(',') != std::string::npos) {
+        ctx.session_config[kOrtSessionOptionEpContextEnable] = "1";
+        ctx.session_config[EPKey("enable_htp_cross_device_prepare")] = "1";
+      }
+    }
+    if (test_case.soc_model) {
+      ctx.session_config[EPKey("soc_model")] = test_case.soc_model;
+    }
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    EXPECT_EQ(GetModelSettingsForTest(*ep).htp_matmul_use_symmetric_uint16,
+              test_case.option && std::string(test_case.option) == "1");
+    size_t warning_count = 0;
+    for (const auto& record : ctx.log_records) {
+      if (record.severity != ORT_LOGGING_LEVEL_WARNING ||
+          record.message.find("htp_matmul_use_symmetric_uint16") == std::string::npos) {
+        continue;
+      }
+      ++warning_count;
+      if (test_case.warning_arch) {
+        EXPECT_NE(record.message.find(std::string("configured HTP architecture is ") + test_case.warning_arch),
+                  std::string::npos);
+      }
+      EXPECT_NE(record.message.find("requires HTP v73 or newer"), std::string::npos);
+      EXPECT_NE(record.message.find("only apply if the backend resolves HTP v73 or newer"), std::string::npos);
+      EXPECT_NE(record.message.find("otherwise, the default range heuristic is used"), std::string::npos);
+    }
+    EXPECT_EQ(warning_count, test_case.warning_arch ? 1u : 0u);
   }
 }
 

@@ -252,11 +252,14 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |`"htp_matmul_use_symmetric_uint16"`|Description|
 |---|---|
 |`"0"`|Default. For MatMul with two dynamic uint16 inputs, use the existing range-based heuristic to convert an asymmetric right-hand input to uint8 or symmetric uint16.|
-|`"1"`|Prefer conversion to symmetric uint16 for the dynamic asymmetric right-hand input, preserving 16-bit precision even when the heuristic selects uint8. Requires HTP v73 or newer; older or unspecified architectures retain the default heuristic.|
+|`"1"`|Prefer conversion to symmetric uint16 for the dynamic asymmetric right-hand input, preserving 16-bit precision even when the heuristic selects uint8. Requires HTP v73 or newer; older or unresolved architectures retain the default heuristic.|
 
-When enabled, the EP logs a warning for an eligible MatMul if the resolved HTP architecture is unknown or below v73,
-and uses the default range heuristic. The check uses the backend's resolved architecture, which may be detected
-automatically on a physical device when `htp_arch` is unset.
+Only `"0"` and `"1"` are accepted; any other explicit value logs a warning and falls back to `"0"`.
+
+When enabled for an HTP or unrecognized backend library, the EP warns during option parsing if the configured HTP
+architecture is unknown or below v73. This warning does not disable the option: the backend may discover a supported
+architecture on a physical device when `htp_arch` is unset. The conversion decision uses the resolved architecture
+and retains the default range heuristic if it remains unknown or below v73.
 
 |`"enable_htp_shared_memory_allocator"`|Description|
 |---|---|
