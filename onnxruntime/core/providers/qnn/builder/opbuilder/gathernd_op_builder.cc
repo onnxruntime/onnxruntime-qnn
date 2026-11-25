@@ -147,6 +147,17 @@ Ort::Status GatherNDOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                   "Cannot get GatherND indices shape.");
     RETURN_IF_NOT(batch_dims == 0 || indices_shape.size() <= 4,
                   "HTP GatherND does not support batch_dims > 0 with indices of rank > 4.");
+
+    // batch_dims > 0 with a scalar gathered element (batch_dims + index tuple size == data rank, e.g. data
+    // [1,550], indices [1,100,1]): HTP accepts the corrected output shape but returns wrong values (only the
+    // first is correct, the rest are zeros), so this would silently corrupt results instead of falling back.
+    // Decline until a workaround is validated.
+    std::vector<uint32_t> data_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, data_shape),
+                  "Cannot get GatherND data shape.");
+    RETURN_IF_NOT(batch_dims == 0 || indices_shape.empty() ||
+                      static_cast<size_t>(batch_dims) + indices_shape.back() < data_shape.size(),
+                  "HTP GatherND does not support batch_dims > 0 with a scalar gathered element.");
   }
 
   return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);

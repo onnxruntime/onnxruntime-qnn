@@ -694,6 +694,48 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_BatchDims1) {
       ExpectedEPNodeAssignment::All);
 }
 
+// batch_dims > 0 with a scalar gathered element (batch_dims + index tuple size == data rank). HTP accepts the
+// corrected output shape but returns wrong values (only the first element is correct, the rest are zeros), so
+// these must stay on CPU until a workaround is validated.
+TEST_F(QnnHTPBackendTests, GatherNDOp_BatchDims1_ScalarElement_FallsBack) {
+  // data [1, 550], indices [1, 100, 1] -> output [1, 100]
+  std::vector<float> data(550);
+  for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<float>(i) * 0.01f + 1.0f;
+  std::vector<int64_t> indices(100);
+  for (size_t i = 0; i < indices.size(); ++i) indices[i] = static_cast<int64_t>((i * 7) % 550);
+  RunOpTest<float, int64_t>(
+      "GatherND",
+      TestInputDef<float>({1, 550}, false, data),
+      TestInputDef<int64_t>({1, 100, 1}, true, indices),
+      {test::MakeAttribute("batch_dims", static_cast<int64_t>(1))},
+      13,
+      ExpectedEPNodeAssignment::None);
+}
+
+TEST_F(QnnHTPBackendTests, GatherNDOp_BatchDims1_ScalarElement_MultiBatch_FallsBack) {
+  // data [3, 4], indices [3, 2, 1] -> output [3, 2]
+  RunOpTest<float, int64_t>(
+      "GatherND",
+      TestInputDef<float>({3, 4}, false, GetSequentialFloatData({3, 4}, 1.0f, 1.0f)),
+      TestInputDef<int64_t>({3, 2, 1}, true, {0, 3, 1, 2, 3, 0}),
+      {test::MakeAttribute("batch_dims", static_cast<int64_t>(1))},
+      13,
+      ExpectedEPNodeAssignment::None);
+}
+
+TEST_F(QnnHTPBackendTests, GatherNDOp_BatchDims2_ScalarElement_FallsBack) {
+  // data [2, 3, 4], indices [2, 3, 2, 1] -> output [2, 3, 2]
+  // (When indices carry only the batch dims, e.g. [2, 3, 1], HTP returns correct values, so an extra
+  // dimension between the batch dims and the index tuple is needed to reproduce the bug.)
+  RunOpTest<float, int64_t>(
+      "GatherND",
+      TestInputDef<float>({2, 3, 4}, false, GetSequentialFloatData({2, 3, 4}, 1.0f, 1.0f)),
+      TestInputDef<int64_t>({2, 3, 2, 1}, true, {0, 3, 1, 2, 3, 0, 1, 2, 3, 0, 2, 1}),
+      {test::MakeAttribute("batch_dims", static_cast<int64_t>(2))},
+      13,
+      ExpectedEPNodeAssignment::None);
+}
+
 // The data DQ and output Q must fold into GatherND; leaving them standalone makes HTP reject the graph on
 // devices without FP16 support.
 TEST_F(QnnHTPBackendTests, GatherNDQdqFoldsDataDqAndOutputQ) {
