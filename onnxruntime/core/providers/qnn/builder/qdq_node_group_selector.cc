@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/qdq_node_group_selector.h"
 
+#include <algorithm>
 #include <iostream>
 #include <string>
 
@@ -665,8 +666,108 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
   return num_absorbed_outputs == q_nodes.size();
 }
 
-// True if the Q and DQ zero-points are equal: same initializer, both absent, or equal scalar values.
-// An absent zero-point is treated as 0 (ONNX default).
+// Reads every element of an 8/16/32-bit integer zero-point initializer into `values`.
+// Other element types (e.g. packed int4) fall back to the scalar reader when they hold one element.
+bool ReadZeroPointValues(const OrtApi& ort_api, const OrtValue* zp_init, std::vector<int64_t>& values) {
+  OrtTensorTypeAndShapeInfo* zp_info = nullptr;
+  if (ort_api.GetTensorTypeAndShape(zp_init, &zp_info) != nullptr) return false;
+  ONNXTensorElementDataType zp_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+  size_t count = 0;
+  OrtStatus* status = ort_api.GetTensorElementType(zp_info, &zp_type);
+  if (status == nullptr) {
+    status = ort_api.GetTensorShapeElementCount(zp_info, &count);
+  }
+  ort_api.ReleaseTensorTypeAndShapeInfo(zp_info);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return false;
+  }
+
+  void* data = nullptr;
+  if (ort_api.GetTensorMutableData(const_cast<OrtValue*>(zp_init), &data) != nullptr || data == nullptr) {
+    return false;
+  }
+
+  const auto copy = [&](auto* typed) {
+    values.assign(typed, typed + count);
+    return true;
+  };
+  switch (zp_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+      return copy(static_cast<const uint8_t*>(data));
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      return copy(static_cast<const int8_t*>(data));
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+      return copy(static_cast<const uint16_t*>(data));
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
+      return copy(static_cast<const int16_t*>(data));
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
+      return copy(static_cast<const int32_t*>(data));
+    default: {
+      if (count != 1) return false;
+      int64_t zp = 0;
+      Qnn_DataType_t unused_type = QNN_DATATYPE_UNDEFINED;
+      if (!GetZeroPointValue(ort_api, zp_init, zp, unused_type)) return false;
+      values.assign(1, zp);
+      return true;
+    }
+  }
+}
+
+// Reads an integer attribute of `node`, returning `default_value` if it is absent or unreadable.
+int64_t ReadIntAttribute(const OrtApi& ort_api, const OrtNode* node, const char* name, int64_t default_value) {
+  const OrtOpAttr* attr = nullptr;
+  OrtStatus* status = ort_api.Node_GetAttributeByName(node, name, &attr);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return default_value;
+  }
+  if (attr == nullptr) return default_value;
+  int64_t value = default_value;
+  size_t size = 0;
+  status = ort_api.ReadOpAttr(attr, ORT_OP_ATTR_INT, &value, sizeof(value), &size);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return default_value;
+  }
+  return value;
+}
+
+// Per-channel/blocked Q and DQ must quantize along the same axis with the same block size.
+// The axis is normalized against the rank of the node's data input when it is known.
+bool IsQDQAxisEqual(const OrtApi& ort_api, const OrtNode* q_node, const OrtNode* dq_node,
+                    const std::vector<const OrtValueInfo*>& q_inputs,
+                    const std::vector<const OrtValueInfo*>& dq_inputs) {
+  const auto normalized_axis = [&](const OrtNode* node, const OrtValueInfo* data) {
+    int64_t axis = ReadIntAttribute(ort_api, node, "axis", 1);
+    std::vector<int64_t> shape;
+    if (axis < 0 && data != nullptr && GetValueInfoShape(ort_api, data, shape) && !shape.empty()) {
+      axis += static_cast<int64_t>(shape.size());
+    }
+    return axis;
+  };
+  return normalized_axis(q_node, q_inputs[0]) == normalized_axis(dq_node, dq_inputs[0]) &&
+         ReadIntAttribute(ort_api, q_node, "block_size", 0) == ReadIntAttribute(ort_api, dq_node, "block_size", 0);
+}
+
+// Number of elements in the scale initializer named `scale_name` (0 if it cannot be read).
+size_t GetScaleElementCount(const OrtGraph* graph, const OrtApi& ort_api, const char* scale_name) {
+  const OrtValue* init = GetConstantInitializer(graph, ort_api, scale_name);
+  if (init == nullptr) return 0;
+  OrtTensorTypeAndShapeInfo* info = nullptr;
+  if (ort_api.GetTensorTypeAndShape(init, &info) != nullptr) return 0;
+  size_t count = 0;
+  OrtStatus* status = ort_api.GetTensorShapeElementCount(info, &count);
+  ort_api.ReleaseTensorTypeAndShapeInfo(info);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return 0;
+  }
+  return count;
+}
+
+// True if the Q and DQ zero-points are equal: same initializer, both absent, or equal values in every
+// element (per-channel zero-points included). An absent zero-point is treated as all zeros (ONNX default).
 bool IsQDQZeroPointEqual(const OrtGraph* graph, const OrtApi& ort_api,
                          const std::vector<const OrtValueInfo*>& q_inputs,
                          const std::vector<const OrtValueInfo*>& dq_inputs) {
@@ -686,19 +787,25 @@ bool IsQDQZeroPointEqual(const OrtGraph* graph, const OrtApi& ort_api,
     }
   }
 
-  const auto read_zero_point = [&](const OrtValueInfo* vi, int64_t& zero_point) {
-    if (vi == nullptr) {
-      zero_point = 0;
-      return true;
-    }
+  // An empty vector stands for an absent zero-point (all zeros).
+  const auto read_zero_points = [&](const OrtValueInfo* vi, std::vector<int64_t>& values) {
+    values.clear();
+    if (vi == nullptr) return true;
     const OrtValue* init = GetInitializerFromValueInfo(graph, ort_api, vi);
-    Qnn_DataType_t unused_type = QNN_DATATYPE_UNDEFINED;
-    return init != nullptr && GetZeroPointValue(ort_api, init, zero_point, unused_type);
+    return init != nullptr && ReadZeroPointValues(ort_api, init, values);
+  };
+  const auto all_zero = [](const std::vector<int64_t>& v) {
+    return std::all_of(v.begin(), v.end(), [](int64_t x) { return x == 0; });
   };
 
-  int64_t q_zp = 0;
-  int64_t dq_zp = 0;
-  return read_zero_point(q_zp_vi, q_zp) && read_zero_point(dq_zp_vi, dq_zp) && q_zp == dq_zp;
+  std::vector<int64_t> q_zp;
+  std::vector<int64_t> dq_zp;
+  if (!read_zero_points(q_zp_vi, q_zp) || !read_zero_points(dq_zp_vi, dq_zp)) {
+    return false;
+  }
+  if (q_zp_vi == nullptr) return all_zero(dq_zp);
+  if (dq_zp_vi == nullptr) return all_zero(q_zp);
+  return q_zp == dq_zp;
 }
 
 // Helper function to check if a QDQ pair is supported (same scale and same zero-point)
@@ -843,7 +950,16 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
     ort_api.ReleaseTensorTypeAndShapeInfo(dq_tensor_info);
   }
 
-  return same_scale && IsQDQZeroPointEqual(graph, ort_api, q_inputs, dq_inputs);
+  if (!same_scale || !IsQDQZeroPointEqual(graph, ort_api, q_inputs, dq_inputs)) {
+    return false;
+  }
+
+  // Equal per-channel parameters only describe the same encoding when applied along the same axis.
+  if (GetScaleElementCount(graph, ort_api, q_scale_name) > 1 &&
+      !IsQDQAxisEqual(ort_api, q_node, dq_node, q_inputs, dq_inputs)) {
+    return false;
+  }
+  return true;
 }
 
 }  // namespace
