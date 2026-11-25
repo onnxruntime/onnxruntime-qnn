@@ -181,8 +181,8 @@ TEST_F(QnnHTPBackendTests, Multinomial_Int64_DownstreamCast) {
                        ONNX_NAMESPACE::TensorProto_DataType_INT64, true);
 }
 
-// Enable as a production-readiness gate after verifying HTP RNG state advances
-// between executions. The prototype does not promise that property yet.
+// Diagnostic for HTP RNG advancement between executions. Disabled because
+// an advancing random stream is outside this sampler's supported contract.
 TEST_F(QnnHTPBackendTests, DISABLED_Multinomial_RandomnessAcrossRuns) {
   CheckRandomnessAcrossRuns("htp");
 }
