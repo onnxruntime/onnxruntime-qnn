@@ -94,6 +94,7 @@ void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistratio
 void CreateMaxRoiPoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMeanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateModOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateMultinomialOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateNonMaxSuppressionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateNonZeroOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateOneHotOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
