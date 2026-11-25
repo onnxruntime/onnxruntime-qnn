@@ -369,6 +369,13 @@ block()
     # uniform across all TUs in a binary. Suppress the define so the genie TUs match
     # the rest of the test binary.
     target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_BUILD)
+    if(QNN_SDK_VERSION_MAJOR AND QNN_SDK_VERSION_MINOR)
+      # Provide SDK version macros to the MatMulNBits tests.
+      set_property(SOURCE "${TEST_SRC_DIR}/providers/qnn/matmulnbits_test.cc"
+        APPEND PROPERTY COMPILE_DEFINITIONS
+        QNN_SDK_VERSION_MAJOR=${QNN_SDK_VERSION_MAJOR}
+        QNN_SDK_VERSION_MINOR=${QNN_SDK_VERSION_MINOR})
+    endif()
     # Accuracy tests exercise QNN through the public plugin EP API and do not
     # require direct access to QNN EP-internal symbols.
     target_compile_definitions(onnxruntime_provider_test PRIVATE QNN_EP_ENABLE_ACCURACY_TESTS=1)
