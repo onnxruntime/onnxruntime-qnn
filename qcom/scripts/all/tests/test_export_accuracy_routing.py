@@ -73,6 +73,7 @@ PASS = {"status": "RUN", "result": "COMPLETED"}
 def test_evidence_status_is_separate_from_observed_selection(tmp_path, case, manifest, targets, expected):
     result = export(tmp_path, snapshot(case), manifest, ("--selection-complete", f"--target-groups={targets}"))
     decision, unmapped = result["accuracy_decisions"]
+    assert "schema_version" not in result
     assert decision["status"] == expected
     assert decision["runner_action"] == ("run" if targets else "skip")
     assert decision["snapshot_test_ids"] == [SNAPSHOT + ".Case"]

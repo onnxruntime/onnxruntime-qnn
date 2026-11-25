@@ -142,7 +142,6 @@ def export_result(args: argparse.Namespace) -> dict:
         )
 
     return {
-        "schema_version": 1,
         "evidence_granularity": "testcase",
         "decision_granularity": "operator_group",
         "producer": {
@@ -170,7 +169,7 @@ def export_result(args: argparse.Namespace) -> dict:
 
 
 def write_routing_result(result: dict, output: Path) -> None:
-    """Finalize the versioned artifact digest and atomically publish its JSON."""
+    """Finalize the artifact digest and atomically publish its JSON."""
     payload = json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
     result["payload_sha256"] = hashlib.sha256(payload).hexdigest()
     output.parent.mkdir(parents=True, exist_ok=True)

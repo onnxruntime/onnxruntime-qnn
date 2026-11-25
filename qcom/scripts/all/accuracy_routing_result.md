@@ -1,4 +1,4 @@
-# Accuracy Routing Result, Version 1
+# Accuracy Routing Result
 
 The standalone internal-symbol Snapshot runner exports `accuracy_routing.json` by passing
 `--emit-routing-result=<path>` to `run_snapshot_accuracy.sh`. The runner exports
@@ -44,7 +44,6 @@ run ID, and attempt against the expected producer run.
 
 | Field | Meaning |
 |---|---|
-| `schema_version` | `1`; other versions require an explicit consumer implementation |
 | `evidence_granularity` | `testcase`; evidence is paired by exact suite variant and testcase name |
 | `decision_granularity` | `operator_group` for the legacy two-pass runner, `none` for active provider observation; neither grants target skip authorization |
 | `producer` | Checkout SHA, Actions identity, actual build QAIRT/ORT versions, and downloaded golden profile |
@@ -84,10 +83,16 @@ the independently observed runner action.
 ## Initial Consumer Boundary
 
 This change publishes results only. It supplies no Windows consumer or target
-skip policy. A later consumer must validate identity, schema, mode, successful
+skip policy. A later consumer must validate identity, required fields and types, mode, successful
 execution, complete selection, versions, profile, and the registered target
 universe, then join evidence to a reviewed target policy. Missing or incompatible
 evidence must retain target Accuracy execution.
+
+The initial contract requires producer and consumer scripts from the same
+checkout SHA and artifacts from the expected workflow run and attempt. It does
+not support consuming artifacts produced by another script revision. There is
+no separate schema-version field or cross-version compatibility policy;
+provenance and required-field validation remain mandatory.
 
 ### Testcase-level target skip rule
 

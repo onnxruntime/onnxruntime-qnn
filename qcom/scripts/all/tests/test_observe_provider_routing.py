@@ -175,6 +175,7 @@ sys.exit({validation_exit})
     result_path = Path(output.read_text().strip().split("=", 1)[1])
     assert "steps.linux_provider_observation.outputs.routing_result_path" in upload["with"]["path"]
     result = json.loads(result_path.read_text())
+    assert "schema_version" not in result
     assert result["mode"] == "provider_observation"
     assert result["decision_granularity"] == "none"
     assert result["provider_validation_exit_code"] == validation_exit

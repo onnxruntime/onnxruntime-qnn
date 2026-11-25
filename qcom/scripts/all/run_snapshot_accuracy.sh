@@ -99,7 +99,7 @@ Options:
                             tests to verify the new graph structure is numerically correct.
   --force-accuracy          Always run accuracy tests regardless of snapshot outcome.
   --emit-routing-result=<path>
-                            Export observed routing selection as versioned JSON.
+                            Export observed routing selection as JSON.
   --filter=<group1,group2,...>
                             Scope both passes to these test groups only.
                             Group name = op segment, i.e. QnnSnapshot_<Group>_OpBuilder...Test.
