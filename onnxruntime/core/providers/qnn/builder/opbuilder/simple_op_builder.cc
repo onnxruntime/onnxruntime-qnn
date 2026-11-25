@@ -6,11 +6,76 @@
 #include "core/providers/qnn/builder/opbuilder/folded_static_utils.h"
 #include "core/providers/qnn/builder/opbuilder/mixed_precision_convert_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/qnn_node_group/dq_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
+
+namespace {
+
+// Returns true if a standalone DequantizeLinear can be evaluated AOT and replaced by a STATIC
+// float32 tensor (see FoldConstantDequantizeLinear): its data input is constant, its output is float32,
+// is not a graph output, and fits the folded-tensor size cap. The size cap is checked here so an oversized
+// tensor is rejected in GetCapability instead of failing at build time.
+bool CanFoldDQToStaticFloat(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) {
+  if (!CanFoldConstantQdq(qnn_model_wrapper, node_unit)) {
+    return false;
+  }
+
+  const OrtNodeUnitIODef& output_def = node_unit.Outputs()[0];
+  if (output_def.type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || qnn_model_wrapper.IsGraphOutput(output_def.name)) {
+    return false;
+  }
+
+  std::vector<uint32_t> shape;
+  if (!QnnModelWrapper::GetOnnxShape(output_def.shape, shape)) {
+    return false;
+  }
+  size_t num_bytes = sizeof(float);
+  for (uint32_t dim : shape) {
+    if (dim != 0 && num_bytes > kFoldedStaticMaxBytes / dim) {
+      return false;
+    }
+    num_bytes *= dim;
+  }
+  return true;
+}
+
+// Returns true if every consumer of the node's output is Gemm input B.
+// Folding is limited to these consumers, which are verified to accept a folded STATIC tensor.
+bool AllConsumersAreGemmInputB(const OrtNodeUnit& node_unit) {
+  const auto consumers = Ort::ConstNode(&node_unit.GetNode()).GetOutputs()[0].GetConsumers();
+  if (consumers.empty()) {
+    return false;
+  }
+  for (const auto& consumer : consumers) {
+    if (consumer.node == nullptr || Ort::ConstNode(consumer.node).GetOperatorType() != "Gemm" ||
+        consumer.index != 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// QNN EP does not lower a standalone per-channel DequantizeLinear to a QNN Dequantize op (see
+// ExplicitOpCheck); such a DQ is folded instead when both conditions above hold. Checked in both the
+// validation and build passes so they make the same decision.
+bool ShouldFoldPerChannelDQ(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) {
+  if (node_unit.OpType() != "DequantizeLinear" || node_unit.Inputs().empty()) {
+    return false;
+  }
+  bool is_per_channel = false;
+  int64_t axis = 0;
+  if (!qnn_model_wrapper.IsPerChannelQuantized(node_unit.Inputs()[0], is_per_channel, axis).IsOK() ||
+      !is_per_channel) {
+    return false;
+  }
+  return CanFoldDQToStaticFloat(qnn_model_wrapper, node_unit) && AllConsumersAreGemmInputB(node_unit);
+}
+
+}  // namespace
 
 // Operator which only need to handle node inputs & outputs, no attributes or no need to handle attributes
 class SimpleOpBuilder : public BaseOpBuilder {
@@ -145,6 +210,11 @@ Ort::Status SimpleOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                            const Ort::Logger& logger,
                                            std::vector<std::string>& input_names,
                                            bool do_op_validation) const {
+  // A folded DQ creates no QNN op, so its quantized input is not added to the graph.
+  if (ShouldFoldPerChannelDQ(qnn_model_wrapper, node_unit)) {
+    return Ort::Status();
+  }
+
   RETURN_IF_ERROR(BaseOpBuilder::ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation));
 
   // Only HTP was validated for this Convert; the relaxed selectors are backend-agnostic, so guard here.
@@ -451,6 +521,15 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                          std::vector<std::string>&& input_names,
                                                          const Ort::Logger& logger,
                                                          bool do_op_validation) const {
+  // Fold the DQ into a STATIC float32 tensor instead of creating a QNN op. Nothing to validate: the fold
+  // only reads constant data.
+  if (ShouldFoldPerChannelDQ(qnn_model_wrapper, node_unit)) {
+    if (!do_op_validation) {
+      RETURN_IF_ERROR(FoldConstantDequantizeLinear(qnn_model_wrapper, node_unit));
+    }
+    return Ort::Status();
+  }
+
   if (input_names.size() < 1) {
     return Ort::Status();
   }

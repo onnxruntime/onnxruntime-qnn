@@ -456,6 +456,106 @@ TEST_F(QnnHTPBackendTests, GemmMixedPrecisionU8ActivationU16OutputBias) {
                                                            QNN_DATATYPE_UFIXED_POINT_16);
 }
 
+// Builds Gemm(A, DQ(B), C) -> Q -> DQ where A is a float graph input (not quantized) and B is a constant
+// weight with per-channel quantization along the output-channel axis. The Gemm is not part of a QDQ node
+// unit, so the weight DQ is standalone. With `with_weight_q`, B is a float initializer followed by a
+// per-channel Q and DQ, which ORT constant-folds to an initializer before QNN EP sees it.
+template <typename WeightQType, typename OutputQType>
+static GetTestQDQModelFn<OutputQType> BuildFloatAPerChannelDQWeightGemmTestCase(
+    const std::vector<TestInputDef<float>>& input_defs,
+    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+    bool trans_b,
+    bool with_weight_q) {
+  return [input_defs, attrs, trans_b, with_weight_q](ModelTestBuilder& builder,
+                                                     std::vector<QuantParams<OutputQType>>& output_qparams) {
+    MakeTestInput(builder, "A", input_defs[0]);
+
+    // Output channels are N: axis 1 of B [K, N] (transB=0), or axis 0 of B [N, K] (transB=1).
+    const int64_t axis = trans_b ? 0 : 1;
+    const auto weight_shape = input_defs[1].GetShape();
+    std::vector<float> weight_scales;
+    std::vector<WeightQType> weight_zero_points;
+    GetTestInputQuantParamsPerChannel<WeightQType>(input_defs[1], weight_scales, weight_zero_points, axis,
+                                                   /*symmetric=*/true);
+    const std::vector<ONNX_NAMESPACE::AttributeProto> axis_attr{test::MakeAttribute("axis", axis)};
+
+    if (with_weight_q) {
+      builder.MakeInitializer<float>("B_fp32", weight_shape, input_defs[1].GetRawData());
+      builder.AddQuantizeLinearNode<WeightQType>("B_q_node", "B_fp32", weight_scales, weight_zero_points, "B_q",
+                                                 axis_attr);
+    } else {
+      std::vector<WeightQType> quantized_weights(SizeOfShape(weight_shape));
+      QuantizeValues<float, WeightQType>(input_defs[1].GetRawData(), quantized_weights, weight_shape,
+                                         weight_scales, weight_zero_points, axis);
+      builder.MakeInitializer<WeightQType>("B_q", weight_shape, quantized_weights);
+    }
+    builder.AddDequantizeLinearNode<WeightQType>("B_dq", "B_q", weight_scales, weight_zero_points, "B",
+                                                 axis_attr);
+
+    MakeTestInput(builder, "C", input_defs[2]);
+    builder.AddNode("gemm", "Gemm", {"A", "B", "C"}, {"Y"}, "", attrs);
+
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, "qdq_out", "Y", output_qparams[0].scale,
+                                                       output_qparams[0].zero_point);
+  };
+}
+
+// The standalone per-channel weight DQ must be folded into a STATIC weight inside the QNN graph. Before the
+// fix it ran on CPU and its output became an extra QNN graph input.
+static void RunFloatAPerChannelDQWeightGemmTest(const char* test_name, bool trans_b, bool with_weight_q) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / (std::string("GemmFloatAPerChannelDQ_") + test_name);
+  fs::remove_all(graph_dir);
+  ASSERT_TRUE(fs::create_directories(graph_dir));
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+#ifdef __linux__
+  provider_options["htp_arch"] = "73";
+#endif
+
+  // transA=1: A is [K, M]. B is [K, N] (transB=0) or [N, K] (transB=1). K=16, M=4, N=8.
+  const std::vector<int64_t> weight_shape = trans_b ? std::vector<int64_t>{8, 16} : std::vector<int64_t>{16, 8};
+  const std::vector<TestInputDef<float>> input_defs{
+      TestInputDef<float>({16, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 64)),
+      TestInputDef<float>(weight_shape, true, GetFloatDataInRange(-0.5f, 0.5f, 128)),
+      TestInputDef<float>({8}, true, GetFloatDataInRange(-0.5f, 0.5f, 8))};
+  const std::vector<ONNX_NAMESPACE::AttributeProto> attrs{
+      test::MakeAttribute("transA", static_cast<int64_t>(1)),
+      test::MakeAttribute("transB", static_cast<int64_t>(trans_b ? 1 : 0))};
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>("gemm_node", "Gemm", input_defs, {}, attrs),
+                       BuildFloatAPerChannelDQWeightGemmTestCase<int8_t, uint16_t>(input_defs, attrs, trans_b,
+                                                                                   with_weight_q),
+                       provider_options,
+                       /*opset=*/21,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance());
+
+  if (::testing::Test::IsSkipped()) {
+    return;
+  }
+  AssertQnnGraphInputCount(graph_dir, 1);
+  AssertOpInQnnGraph(graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(graph_dir, "Dequantize", 1);  // Output DQ only; the weight DQ is folded.
+}
+
+TEST_F(QnnHTPBackendTests, Gemm_FloatA_PerChannelDQWeight_Folded) {
+  RunFloatAPerChannelDQWeightGemmTest("Folded", /*trans_b=*/false, /*with_weight_q=*/false);
+}
+
+TEST_F(QnnHTPBackendTests, Gemm_FloatA_PerChannelDQWeight_TransB_Folded) {
+  RunFloatAPerChannelDQWeightGemmTest("TransB_Folded", /*trans_b=*/true, /*with_weight_q=*/false);
+}
+
+TEST_F(QnnHTPBackendTests, Gemm_FloatA_PerChannelDQWeight_WithWeightQ_Folded) {
+  RunFloatAPerChannelDQWeightGemmTest("WithWeightQ_Folded", /*trans_b=*/false, /*with_weight_q=*/true);
+}
+
 // Test 8-bit QDQ Gemm with dynamic inputs A and Bias. The B input is an initializer.
 TEST_F(QnnHTPBackendTests, Gemm_Dynamic_A_Static_B_Dynamic_Bias_U8) {
   std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
