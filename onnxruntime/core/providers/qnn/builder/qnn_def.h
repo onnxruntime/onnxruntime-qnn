@@ -268,6 +268,20 @@ struct OnnxTensorInfo {
   const std::vector<int64_t> shape_;
 };
 
+// A declared graph input that no node consumes; ORT leaves these out of fused nodes.
+struct UnconsumedGraphInput {
+  std::string name;
+  ONNXTensorElementDataType data_type;
+  std::vector<int64_t> shape;
+};
+
+// Graph I/O as declared by the ONNX model.
+struct OnnxGraphIo {
+  std::vector<std::string> inputs;
+  std::vector<std::string> outputs;
+  std::vector<UnconsumedGraphInput> unconsumed_inputs;
+};
+
 // Book-keeping for graph input or output tensors.
 struct GraphInputOutputInfo {
   std::vector<std::string> names;

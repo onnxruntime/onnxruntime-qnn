@@ -45,6 +45,8 @@ struct QnnModelContext {
 
   // Non-null when tracing is enabled; ComposeGraph writes one OpTraceInfo here.
   OpTraceInfo* op_trace_output = nullptr;
+
+  const std::vector<UnconsumedGraphInput>* unconsumed_inputs = nullptr;
 };
 
 class QnnModel {
@@ -220,6 +222,7 @@ class QnnModel {
   QnnBackendManager* qnn_backend_manager_ = nullptr;
   std::unique_ptr<QnnGraphEmitter> qnn_graph_emitter_;
   GraphInputOutputInfo graph_inputs_;
+  std::vector<UnconsumedGraphInput> unbound_graph_inputs_;
   GraphInputOutputInfo graph_outputs_;
   std::vector<QnnTensorInfo> qnn_input_infos_;
   std::vector<QnnTensorInfo> qnn_output_infos_;
