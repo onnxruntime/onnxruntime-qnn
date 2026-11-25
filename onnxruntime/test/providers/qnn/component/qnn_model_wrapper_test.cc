@@ -1931,6 +1931,7 @@ OrtStatus* StubValueInfoGetExternalNull(const OrtValueInfo*,
   *info = nullptr;
   return nullptr;
 }
+
 OrtStatus* StubGetValueInfoTypeInfo(const OrtValueInfo*,
                                     const OrtTypeInfo** type_info) noexcept {
   *type_info = reinterpret_cast<const OrtTypeInfo*>(&g_type_info_sentinel);
@@ -1970,6 +1971,13 @@ OrtStatus* StubGetTensorData(const OrtValue*, const void** out) noexcept {
 
 // Installs all unpack stubs on ctx.
 void SetupUnpackStubs(QnnModelWrapperTestContext& ctx) {
+  // C++ API wrappers and Ort::Status use the global API, including when tests
+  // route tensor metadata lookups through this stub table.
+  const auto& api = Ort::GetApi();
+  ctx.stub_ort_api.CreateStatus = api.CreateStatus;
+  ctx.stub_ort_api.GetErrorCode = api.GetErrorCode;
+  ctx.stub_ort_api.GetErrorMessage = api.GetErrorMessage;
+  ctx.stub_ort_api.ReleaseStatus = api.ReleaseStatus;
   ctx.stub_ort_api.Graph_GetModelPath = StubGraphGetModelPathEmpty;
   ctx.stub_ort_api.ValueInfo_GetExternalInitializerInfo = StubValueInfoGetExternalNull;
   ctx.stub_ort_api.GetValueInfoTypeInfo = StubGetValueInfoTypeInfo;
@@ -2101,6 +2109,7 @@ class QnnUnit_InitializerByteSizeTest : public ::testing::TestWithParam<Initiali
 }  // namespace
 
 TEST_P(QnnUnit_InitializerByteSizeTest, RejectsMismatchedExternalBytesBeforeReadingFile) {
+  OrtGlobalApiOverride api_guard(&ctx_.stub_ort_api);
   for (const size_t byte_size : {size_t{0}, GetParam().packed_bytes.size() - 1, GetParam().packed_bytes.size() + 1}) {
     SCOPED_TRACE(byte_size);
     g_external_initializer_byte_size = byte_size;
@@ -2115,6 +2124,7 @@ TEST_P(QnnUnit_InitializerByteSizeTest, RejectsMismatchedExternalBytesBeforeRead
 }
 
 TEST_P(QnnUnit_InitializerByteSizeTest, AcceptsValidExternalBytesInBothUnpackingModes) {
+  OrtGlobalApiOverride api_guard(&ctx_.stub_ort_api);
   WriteExternalBytes();
   ASSERT_FALSE(::testing::Test::HasFatalFailure());
   for (const bool expand_sub_byte : {false, true}) {
@@ -2130,6 +2140,7 @@ TEST_P(QnnUnit_InitializerByteSizeTest, AcceptsValidExternalBytesInBothUnpacking
 }
 
 TEST_P(QnnUnit_InitializerByteSizeTest, AcceptsValidEmbeddedBytesInBothUnpackingModes) {
+  OrtGlobalApiOverride api_guard(&ctx_.stub_ort_api);
   ctx_.stub_ort_api.ValueInfo_GetExternalInitializerInfo = StubValueInfoGetExternalNull;
   for (const bool expand_sub_byte : {false, true}) {
     SCOPED_TRACE(expand_sub_byte);
@@ -2143,6 +2154,7 @@ TEST_P(QnnUnit_InitializerByteSizeTest, AcceptsValidEmbeddedBytesInBothUnpacking
 }
 
 TEST_P(QnnUnit_InitializerByteSizeTest, RejectsCallerSizeMismatchForEmbeddedAndExternalData) {
+  OrtGlobalApiOverride api_guard(&ctx_.stub_ort_api);
   for (const bool external : {false, true}) {
     SCOPED_TRACE(external);
     ctx_.stub_ort_api.ValueInfo_GetExternalInitializerInfo = external
@@ -2232,14 +2244,17 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ShapeApiFailure_PropagatesE
   QnnModelWrapperTestContext ctx;
   SetupUnpackStubs(ctx);
   ctx.stub_ort_api.GetDimensionsCount = [](const OrtTensorTypeAndShapeInfo*, size_t*) noexcept -> OrtStatus* {
-    return Ort::Status("shape lookup failed", ORT_FAIL).release();
+    return Ort::Status("shape lookup failed", ORT_INVALID_ARGUMENT).release();
   };
   auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
-  std::vector<uint8_t> bytes;
-  const auto status = wrapper->UnpackInitializerData(
-      reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel), bytes);
+  std::vector<uint8_t> bytes{0xAA};
+  Ort::Status status;
+  ASSERT_NO_THROW(status = wrapper->UnpackInitializerData(
+                      reinterpret_cast<const OrtValueInfo*>(&g_type_info_sentinel), bytes));
   ASSERT_FALSE(status.IsOK());
+  EXPECT_EQ(status.GetErrorCode(), ORT_INVALID_ARGUMENT);
   EXPECT_EQ(std::string(status.GetErrorMessage()), "shape lookup failed");
+  EXPECT_EQ(bytes, (std::vector<uint8_t>{0xAA}));
 }
 
 TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalAllocationException_ReleasesMetadata) {
@@ -2253,6 +2268,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalAllocationException
   g_external_initializer_path = "qnn_initializer_allocation_exception.bin";
   QnnModelWrapperTestContext ctx;
   SetupExternalUnpackStubs(ctx);
+  OrtGlobalApiOverride api_guard(&ctx.stub_ort_api);
   auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
   std::vector<uint8_t> bytes;
   EXPECT_THROW(wrapper->UnpackInitializerData(
@@ -2274,6 +2290,7 @@ TEST(QnnUnit_ModelWrapperTest, UnpackInitializerData_ExternalApiError_Propagates
     EXPECT_EQ(*info, nullptr);
     return Ort::Status("external metadata lookup failed", ORT_FAIL).release();
   };
+  OrtGlobalApiOverride api_guard(&ctx.stub_ort_api);
   auto wrapper = ctx.CreateWrapper(qnn::ModelSettings{});
   std::vector<uint8_t> bytes{0xAB};
   const auto status = wrapper->UnpackInitializerData(
