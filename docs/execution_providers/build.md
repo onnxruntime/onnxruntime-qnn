@@ -202,6 +202,76 @@ python qcom/build_and_test.py test_ort_linux_x86_64
 python qcom/build_and_test.py test_ort_linux_aarch64_manylinux_2_34
 ```
 
+#### Reproducing Linux Internal-Symbol CI Failures
+
+Canonical Linux pull-request validation uses internal-symbol builds. The GitHub Actions UI
+continues to show its stable job names (for example,
+`build-linux-x86_64_ubuntu_22_04-py3.12`), rather than the underlying task
+names. To reproduce a failure locally, use the corresponding
+`*_internal_symbols` tasks on the same commit and with the same QAIRT SDK as
+the failing CI run. Do not reuse output from a normal (non-internal-symbol)
+build.
+
+For the Linux x86-64 Ubuntu 22.04 validation, run the same archive and test
+tasks as CI:
+
+```bash
+python3 qcom/build_and_test.py \
+  --qairt-sdk "$QAIRT_SDK_ROOT" \
+  --target-py-version 3.12 \
+  --config Release \
+  archive_ort_linux_x86_64_ubuntu_22_04_internal_symbols
+
+python3 qcom/build_and_test.py \
+  --qairt-sdk "$QAIRT_SDK_ROOT" \
+  --target-py-version 3.12 \
+  --config Release \
+  test_ort_linux_x86_64_ubuntu_22_04_internal_symbols --only
+```
+
+The build output is isolated at
+`build/linux-x86_64_ubuntu_22_04-internal-symbols/Release/`.
+
+Linux ARM64 validation builds on an x86-64 Docker runner and tests on a native
+ARM64 runner. To reproduce it, first create the archive on the Docker-capable
+x86-64 host:
+
+```bash
+python3 qcom/build_and_test.py \
+  --qairt-sdk "$QAIRT_SDK_ROOT" \
+  --target-py-version 3.12 \
+  --config Release \
+  archive_ort_linux_aarch64_manylinux_2_34_internal_symbols
+```
+
+Copy `build/onnxruntime-tests-linux-aarch64_manylinux_2_34-internal-symbols.tar.bz2`
+and the same `onnxruntime-testdata.tar.bz2` used by CI to the native ARM64
+test host. At the repository root, extract the test archive first, then the
+testdata:
+
+```bash
+tar -xjf build/onnxruntime-tests-linux-aarch64_manylinux_2_34-internal-symbols.tar.bz2
+
+python3 qcom/scripts/all/extract_testdata.py \
+  --target-platform linux-aarch64_manylinux_2_34-internal-symbols \
+  --config Release \
+  --archive build/onnxruntime-testdata.tar.bz2
+```
+
+Then run:
+
+```bash
+python3 qcom/build_and_test.py \
+  --target-py-version 3.12 \
+  --config Release \
+  create_venv \
+  test_ort_linux_aarch64_manylinux_2_34_internal_symbols --only
+```
+
+For a single failing GTest, begin with the complete flow above. Then preserve
+the failing CI command's environment and apply its `--gtest_filter` to
+`onnxruntime_provider_test` in the internal-symbol build directory.
+
 ### Device Testing
 
 #### Test on Locally Connected Devices

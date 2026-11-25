@@ -155,6 +155,17 @@ For equivalent behavior, replace `enable_vtcm_backup_buffer_sharing='1'` with `h
 |---|---|
 |Size in MB (string)|Tells QNN HTP the maximum I/O your app actually keeps registered at any one time, instead of assuming every graph's I/O is live at once. Used for memory estimation and DSP PD placement when loading a context binary; a tighter value can avoid PD placement failures (QNN error 1002). See [Reused IO Limit](#reused-io-limit) below for how to choose a value (it differs between the per-context and group paths). Defaults to "0" (QNN estimates using the total I/O size of all graphs in the context). Requires QAIRT 2.45 or later (QNN API >= 2.34).|
 
+|`"htp_context_init_acceleration"`|Description|
+|---|---|
+|'0'|Initialization acceleration is disabled by default.|
+|'1'|This option enables acceleration for HTP cached-context initialization. It requires a build with QAIRT SDK 2.47 or later.|
+
+Enabling this option is expected to shorten initialization time. However, if other graphs are running inference during initialization, it may degrade their inference performance. It is recommended to disable this option in this situation.
+
+Invalid values for this option are ignored.
+
+When `htp_share_resource_optimization` is set to "1" or "2", initialization optimizations are already enabled, so this option is not required.
+
 |`"htp_performance_mode"`|Description|
 |---|---|
 |'burst'|Burst performance mode.|
@@ -229,7 +240,7 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |`"enable_htp_matmul_lut"`|Description|
 |---|---|
 |`"0"`|Disable the HTP MatMul LUT kernel optimization.|
-|`"1"`|Default. Enable the HTP MatMul LUT kernel optimization. Available only on Windows with QAIRT 2.51 or later.|
+|`"1"`|Default. Enable the HTP MatMul LUT kernel optimization. Available on Windows and Linux x86_64 with QAIRT 2.51 or later.|
 
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|

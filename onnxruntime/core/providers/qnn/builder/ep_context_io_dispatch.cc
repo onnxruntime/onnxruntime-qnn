@@ -194,11 +194,14 @@ bool EpContextIoDispatch::HasSourceReadCallback() const noexcept {
 #endif
 }
 
-Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<char>& out,
+Ort::Status EpContextIoDispatch::Read(const std::string& file_name, EpContextBuffer& out,
                                       [[maybe_unused]] const std::string& validated_external_path) const {
   RETURN_IF_NOT(HasReadCallback(), "EPContext read callback is unavailable.");
 
-  Ort::AllocatorWithDefaultOptions allocator;
+  const auto& ort_api = Ort::GetApi();
+  OrtAllocator* allocator = nullptr;
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetAllocatorWithDefaultOptions(&allocator));
+
   void* data = nullptr;
   size_t data_size = 0;
   OrtStatus* s = nullptr;
@@ -230,14 +233,12 @@ Ort::Status EpContextIoDispatch::Read(const std::string& file_name, std::vector<
   }
   if (data == nullptr || data_size == 0) {
     if (data != nullptr) {
-      allocator.Free(data);
+      allocator->Free(allocator, data);
     }
-    return Ort::Status(
-        ("OrtReadNamedBufferFunc returned invalid buffer for " + file_name).c_str(), ORT_FAIL);
+    return MAKE_FAIL(
+        ("OrtReadNamedBufferFunc returned invalid buffer for " + file_name).c_str());
   }
-  auto free_output = gsl::finally([&] { allocator.Free(data); });
-  std::vector<char> plaintext(static_cast<char*>(data), static_cast<char*>(data) + data_size);
-  out = std::move(plaintext);
+  out.Adopt(data, data_size, allocator);
   return Ort::Status();
 }
 
@@ -265,7 +266,7 @@ EpContextIoDispatch::EpContextIoDispatch() noexcept {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& /*session_options*/,
                                          const OrtApiRuntimeCapabilities& /*runtime_capabilities*/,
-                                         const Ort::Logger* logger,
+                                         const Ort::Logger* /*logger*/,
                                          bool map_decrypt_source) noexcept
     : map_decrypt_source_(map_decrypt_source) {}
 
@@ -274,7 +275,7 @@ bool EpContextIoDispatch::HasWriteCallback() const noexcept { return false; }
 bool EpContextIoDispatch::HasSourceReadCallback() const noexcept { return false; }
 
 Ort::Status EpContextIoDispatch::Read(const std::string& /*file_name*/,
-                                      std::vector<char>& /*out*/,
+                                      EpContextBuffer& /*out*/,
                                       const std::string& /*validated_external_path*/) const {
   return MAKE_EP_FAIL("EPContext encryption unavailable in this build.");
 }

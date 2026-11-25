@@ -216,9 +216,9 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   // via the file-mapping path below.
   if (io_dispatch.HasReadCallback()) {
     const std::string context_binary_path_str = context_binary_path.u8string();
-    std::vector<char> decrypted;
+    qnn::EpContextBuffer decrypted;
     RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted, context_binary_path_str));
-    // Keep the decoded buffer alive through context creation and graph metadata use.
+    // Keep the callback allocation alive through context creation and graph metadata use.
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(decrypted.data(),
                                                                static_cast<uint64_t>(decrypted.size()),
                                                                context_binary_path_str,
