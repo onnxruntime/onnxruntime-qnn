@@ -28,13 +28,35 @@ inline std::string GetGoldenRootDir() {
 
 // Remove or neutralize fields that are not stable across test runs.
 inline nlohmann::json& NormalizeQnnJSONGraph(nlohmann::json& graph) {
+  const auto erase_tensor_ids = [](nlohmann::json& tensors) {
+    if (!tensors.is_object()) return;
+
+    for (auto& tensor : tensors.items()) {
+      if (tensor.value().is_object()) {
+        tensor.value().erase("id");
+      }
+    }
+  };
+
   auto graph_it = graph.find("graph");
   if (graph_it != graph.end() && graph_it->is_object()) {
     auto tensors_it = graph_it->find("tensors");
-    if (tensors_it != graph_it->end() && tensors_it->is_object()) {
-      for (auto& tensor : tensors_it->items()) {
-        if (tensor.value().is_object()) {
-          tensor.value().erase("id");
+    if (tensors_it != graph_it->end()) {
+      erase_tensor_ids(*tensors_it);
+    }
+
+    auto nodes_it = graph_it->find("nodes");
+    if (nodes_it != graph_it->end() && nodes_it->is_object()) {
+      for (auto& node : nodes_it->items()) {
+        if (!node.value().is_object()) continue;
+
+        auto tensor_params_it = node.value().find("tensor_params");
+        if (tensor_params_it == node.value().end() || !tensor_params_it->is_object()) continue;
+
+        for (auto& tensor_param : tensor_params_it->items()) {
+          if (tensor_param.value().is_object()) {
+            erase_tensor_ids(tensor_param.value());
+          }
         }
       }
     }

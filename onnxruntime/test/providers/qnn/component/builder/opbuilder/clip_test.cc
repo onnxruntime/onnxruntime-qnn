@@ -398,6 +398,28 @@ TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_NonQuant_UnsupportedDtype) {
                                           std::vector<int64_t>{}));
 }
 
+TEST(QnnUnit_Clip_ComponentTest, ProcessClipMinMax_RejectsEmptyInitializer) {
+  g_mock_init_reg.clear();
+  MockInitSpec min;
+  min.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  min.dims = {0};
+  g_mock_init_reg.Add("min", std::move(min));
+
+  OpBuilderTestContext ctx;
+  SetupMockInitRegistryStubs(ctx);
+  auto wrapper = MakeStubWrapper(ctx);
+  auto data = MakeMockIODef("data", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, std::vector<int64_t>{1, 4});
+  auto empty_min = MakeMockIODef("min", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, std::vector<int64_t>{0});
+  auto output = MakeMockIODef("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, std::vector<int64_t>{1, 4});
+  auto node = MakeMockNodeUnit("Clip", {data, empty_min}, {output}, "clip_empty_initializer");
+  const auto* builder = GetOpBuilder("Clip");
+  ASSERT_NE(builder, nullptr);
+  const auto status = builder->AddToModelBuilder(*wrapper, node, ctx.ort_logger, false);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(std::string(status.GetErrorMessage()).find("expected size"), std::string::npos)
+      << status.GetErrorMessage();
+}
+
 // Note: the quantized default-error path (lines 91-94) is unreachable — the
 // `if (input.quant_param.has_value())` branch is gated by
 // MakeMockQDQIODef, and GetTensorInfo only assigns SFIXED/UFIXED_POINT_{8,16,32}

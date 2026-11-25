@@ -167,6 +167,11 @@ static void RunSeluHTPBF16Test(const std::vector<TestInputDef<float>>& input_def
 
 TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after fixing BF16 Selu offload.
+  // The current decomposition falls back to CPU.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
   RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
                      {},
                      ExpectedEPNodeAssignment::All,
@@ -175,6 +180,11 @@ TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {
 
 TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_CustomAlphaGamma) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC))
+  // TODO: Re-enable on Windows ARM64 HTP v81 after fixing BF16 Selu offload.
+  // The current decomposition falls back to CPU.
+  SKIP_HTP_TEST_ON_ARCH_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V81);
+#endif
   RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
                      {test::MakeAttribute("alpha", 1.0f),
                       test::MakeAttribute("gamma", 2.0f)},
