@@ -32,6 +32,9 @@ std::vector<ONNX_NAMESPACE::AttributeProto> MakeAveragePoolAttributes(const Aver
 }
 
 TestInputDef<float> MakeAveragePoolInput(const AveragePoolSpec& spec) {
+  if (spec.use_random_input) {
+    return TestInputDef<float>(spec.input_shape, false, spec.input_min, spec.input_max);
+  }
   if (!spec.input_data.empty()) return TestInputDef<float>(spec.input_shape, false, spec.input_data);
   const int64_t count = std::accumulate(spec.input_shape.begin(), spec.input_shape.end(), int64_t{1}, std::multiplies<>{});
   return TestInputDef<float>(spec.input_shape, false, GetFloatDataInRange(spec.input_min, spec.input_max, count));

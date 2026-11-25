@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <numeric>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -32,6 +33,9 @@ std::vector<ONNX_NAMESPACE::AttributeProto> MakeAveragePoolAttributes(const Aver
 }
 
 TestInputDef<float> MakeAveragePoolInput(const AveragePoolSpec& spec) {
+  if (spec.use_random_input) {
+    return TestInputDef<float>(spec.input_shape, false, spec.input_min, spec.input_max);
+  }
   if (!spec.input_data.empty()) return TestInputDef<float>(spec.input_shape, false, spec.input_data);
   const int64_t count = std::accumulate(spec.input_shape.begin(), spec.input_shape.end(), int64_t{1}, std::multiplies<>{});
   return TestInputDef<float>(spec.input_shape, false, GetFloatDataInRange(spec.input_min, spec.input_max, count));
@@ -44,8 +48,27 @@ GetTestModelFn BuildAveragePoolSessionModel(const AveragePoolSpec& spec) {
     return BuildOpTestCase<float>("averagepool", spec.op_type, {input}, {}, attrs);
   }
   auto build_qdq = BuildQDQOpTestCase<uint8_t>("averagepool", spec.op_type, {input}, {}, attrs);
-  return [build_qdq](ModelTestBuilder& builder) {
-    std::vector<QuantParams<uint8_t>> output_qparams(1);
+  auto build_f32 = BuildOpTestCase<float>("averagepool", spec.op_type, {input}, {}, attrs);
+  return [build_f32, build_qdq](ModelTestBuilder& builder) {
+    // Match TestQDQModelAccuracy: derive output QDQ from the CPU float reference.
+    ModelTestBuilder f32_builder;
+    build_f32(f32_builder);
+    for (const auto& [domain, version] :
+         std::unordered_map<std::string, int>{{"", 18}, {kMSDomain, 1}}) {
+      auto* opset = f32_builder.model_.add_opset_import();
+      opset->set_domain(domain);
+      opset->set_version(version);
+    }
+    f32_builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+    std::string model_data;
+    ASSERT_TRUE(f32_builder.model_.SerializeToString(&model_data));
+    std::vector<Ort::Value> outputs;
+    InferenceModelCPU(model_data, "averagepool_snapshot_f32", f32_builder.feeds_, outputs);
+    ASSERT_EQ(outputs.size(), 1u);
+    const auto info = outputs[0].GetTensorTypeAndShapeInfo();
+    ASSERT_EQ(info.GetElementType(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
+    const gsl::span<const float> values(outputs[0].GetTensorData<float>(), info.GetElementCount());
+    std::vector<QuantParams<uint8_t>> output_qparams{GetDataQuantParams<uint8_t>(values)};
     build_qdq(builder, output_qparams);
   };
 }

@@ -3,7 +3,7 @@
 //
 // Accuracy tests paired with MaxPool session snapshots.
 
-#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS && QNN_EP_ACCURACY_UT
+#if !defined(ORT_MINIMAL_BUILD) && QNN_EP_ENABLE_ACCURACY_TESTS
 
 #include <cstdint>
 #include <functional>
@@ -34,6 +34,9 @@ std::vector<ONNX_NAMESPACE::AttributeProto> MakeMaxPoolAttributes(const MaxPoolS
 }
 
 TestInputDef<float> MakeMaxPoolInput(const MaxPoolSpec& spec) {
+  if (spec.use_random_input) {
+    return TestInputDef<float>(spec.input_shape, false, -10.0f, 10.0f);
+  }
   const int64_t element_count = std::accumulate(spec.input_shape.begin(), spec.input_shape.end(),
                                                 int64_t{1}, std::multiplies<>{});
   return TestInputDef<float>(spec.input_shape, false,
@@ -123,4 +126,4 @@ INSTANTIATE_TEST_SUITE_P(
 }  // namespace test
 }  // namespace onnxruntime
 
-#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS && QNN_EP_ACCURACY_UT
+#endif  // !defined(ORT_MINIMAL_BUILD) && QNN_EP_ENABLE_ACCURACY_TESTS

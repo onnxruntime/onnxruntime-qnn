@@ -29,6 +29,8 @@ struct MaxPoolSpec {
   bool use_contrib_qdq;
   float qdq_tolerance;
   bool expect_single_qnn_subgraph;
+  // Use ModelTestBuilder random input (seed 2345), as in the legacy case.
+  bool use_random_input = false;
 };
 
 // The first group maps 1:1 to enabled QnnHTPBackendTests MaxPool cases in
@@ -37,22 +39,22 @@ struct MaxPoolSpec {
 // pipeline and are intentionally out of scope. GlobalMaxPool is a separate
 // ONNX op and has its own migration inventory.
 inline const std::vector<MaxPoolSpec> kMaxPoolSpecs = {
-    {"MaxPool_U8_Global", {1, 2, 3, 3}, {3, 3}, {3, 3}, {0, 0, 0, 0}, "NOTSET", 0, MaxPoolDataType::UInt8, false, 0.0f, false},
-    {"MaxPool_U8_LargeInput", {1, 125, 8, 56}, {2, 2}, {2, 2}, {0, 0, 0, 0}, "NOTSET", 0, MaxPoolDataType::UInt8, false, 0.0f, false},
+    {"MaxPool_U8_Global", {1, 2, 3, 3}, {3, 3}, {3, 3}, {0, 0, 0, 0}, "NOTSET", 0, MaxPoolDataType::UInt8, false, 0.0f, false, true},
+    {"MaxPool_U8_LargeInput", {1, 125, 8, 56}, {2, 2}, {2, 2}, {0, 0, 0, 0}, "NOTSET", 0, MaxPoolDataType::UInt8, false, 0.0f, false, true},
     {"MaxPool_F32_Rank3_ReshapeFusion", {1, 3, 3}, {3}, {3}, {0, 0}, "NOTSET", 0, MaxPoolDataType::Float, false, 0.0f, true},
-    {"MaxPool_U8_Rank3_Stride1", {1, 3, 3}, {3}, {1}, {1, 1}, "NOTSET", 0, MaxPoolDataType::UInt8, false, 0.0f, false},
-    {"MaxPool_U8_Rank3", {1, 3, 3}, {3}, {3}, {0, 0}, "NOTSET", 0, MaxPoolDataType::UInt8, false, 0.0f, false},
-    {"MaxPool_U8_Rank3_Ceil", {1, 3, 3}, {3}, {3}, {0, 0}, "NOTSET", 1, MaxPoolDataType::UInt8, false, 0.0f, false},
-    {"MaxPool_U8_Rank3_Ceil_Valid", {1, 3, 3}, {3}, {3}, {0, 0}, "VALID", 1, MaxPoolDataType::UInt8, false, 0.0f, false},
-    {"MaxPool_U8_Rank3_Ceil_SameUpper", {1, 3, 3}, {3}, {3}, {0, 0}, "SAME_UPPER", 1, MaxPoolDataType::UInt8, false, 0.0f, false},
-    {"MaxPool_U8_Rank3_Ceil_SameLower", {1, 3, 3}, {3}, {3}, {0, 0}, "SAME_LOWER", 1, MaxPoolDataType::UInt8, false, 0.0f, false},
-    {"MaxPool_U8_Rank4_Ceil", {1, 2, 3, 3}, {3, 3}, {3, 3}, {0, 0, 0, 0}, "NOTSET", 1, MaxPoolDataType::UInt8, false, 0.0f, false},
-    {"MaxPool_U8_LargeInput_Ceil", {1, 128, 16, 113}, {2, 2}, {2, 2}, {0, 0, 0, 0}, "NOTSET", 1, MaxPoolDataType::UInt8, false, 0.0f, false},
-    {"MaxPool_U8_LargeInput_AutoPadValid", {1, 160, 14, 20}, {2, 2}, {2, 2}, {0, 0, 0, 0}, "VALID", 0, MaxPoolDataType::UInt8, false, 0.0f, false},
-    {"MaxPool_U8_LargeInput_OnePads", {1, 64, 384, 576}, {3, 3}, {2, 2}, {1, 1, 1, 1}, "NOTSET", 0, MaxPoolDataType::UInt8, false, 0.00417f, false},
-    {"MaxPool_U16_LargeInput_OnePads", {1, 64, 384, 576}, {3, 3}, {2, 2}, {1, 1, 1, 1}, "NOTSET", 0, MaxPoolDataType::UInt16, true, 0.0f, false},
-    {"MaxPool_U8_AutoPad_SameLower_LegacyShape", {1, 3, 16, 24}, {2, 2}, {2, 2}, {}, "SAME_LOWER", 0, MaxPoolDataType::UInt8, true, 0.0f, false},
-    {"MaxPool_U8_AutoPad_SameUpper_LegacyShape", {1, 3, 16, 24}, {2, 2}, {2, 2}, {}, "SAME_UPPER", 0, MaxPoolDataType::UInt8, true, 0.0f, false},
+    {"MaxPool_U8_Rank3_Stride1", {1, 3, 3}, {3}, {1}, {1, 1}, "NOTSET", 0, MaxPoolDataType::UInt8, false, 0.0f, false, true},
+    {"MaxPool_U8_Rank3", {1, 3, 3}, {3}, {3}, {0, 0}, "NOTSET", 0, MaxPoolDataType::UInt8, false, 0.0f, false, true},
+    {"MaxPool_U8_Rank3_Ceil", {1, 3, 3}, {3}, {3}, {0, 0}, "NOTSET", 1, MaxPoolDataType::UInt8, false, 0.0f, false, true},
+    {"MaxPool_U8_Rank3_Ceil_Valid", {1, 3, 3}, {3}, {3}, {0, 0}, "VALID", 1, MaxPoolDataType::UInt8, false, 0.0f, false, true},
+    {"MaxPool_U8_Rank3_Ceil_SameUpper", {1, 3, 3}, {3}, {3}, {0, 0}, "SAME_UPPER", 1, MaxPoolDataType::UInt8, false, 0.0f, false, true},
+    {"MaxPool_U8_Rank3_Ceil_SameLower", {1, 3, 3}, {3}, {3}, {0, 0}, "SAME_LOWER", 1, MaxPoolDataType::UInt8, false, 0.0f, false, true},
+    {"MaxPool_U8_Rank4_Ceil", {1, 2, 3, 3}, {3, 3}, {3, 3}, {0, 0, 0, 0}, "NOTSET", 1, MaxPoolDataType::UInt8, false, 0.0f, false, true},
+    {"MaxPool_U8_LargeInput_Ceil", {1, 128, 16, 113}, {2, 2}, {2, 2}, {0, 0, 0, 0}, "NOTSET", 1, MaxPoolDataType::UInt8, false, 0.0f, false, true},
+    {"MaxPool_U8_LargeInput_AutoPadValid", {1, 160, 14, 20}, {2, 2}, {2, 2}, {0, 0, 0, 0}, "VALID", 0, MaxPoolDataType::UInt8, false, 0.0f, false, true},
+    {"MaxPool_U8_LargeInput_OnePads", {1, 64, 384, 576}, {3, 3}, {2, 2}, {1, 1, 1, 1}, "NOTSET", 0, MaxPoolDataType::UInt8, false, 0.00417f, false, true},
+    {"MaxPool_U16_LargeInput_OnePads", {1, 64, 384, 576}, {3, 3}, {2, 2}, {1, 1, 1, 1}, "NOTSET", 0, MaxPoolDataType::UInt16, true, 0.0f, false, true},
+    {"MaxPool_U8_AutoPad_SameLower_LegacyShape", {1, 3, 16, 24}, {2, 2}, {2, 2}, {}, "SAME_LOWER", 0, MaxPoolDataType::UInt8, true, 0.0f, false, true},
+    {"MaxPool_U8_AutoPad_SameUpper_LegacyShape", {1, 3, 16, 24}, {2, 2}, {2, 2}, {}, "SAME_UPPER", 0, MaxPoolDataType::UInt8, true, 0.0f, false, true},
 
     // Additional coverage: odd spatial dimensions make SAME_UPPER and
     // SAME_LOWER resolve to distinct leading and trailing pads.

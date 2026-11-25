@@ -34,6 +34,9 @@ std::vector<ONNX_NAMESPACE::AttributeProto> MakeMaxPoolAttributes(const MaxPoolS
 }
 
 TestInputDef<float> MakeMaxPoolInput(const MaxPoolSpec& spec) {
+  if (spec.use_random_input) {
+    return TestInputDef<float>(spec.input_shape, false, -10.0f, 10.0f);
+  }
   const int64_t element_count = std::accumulate(spec.input_shape.begin(), spec.input_shape.end(),
                                                 int64_t{1}, std::multiplies<>{});
   return TestInputDef<float>(spec.input_shape, false,

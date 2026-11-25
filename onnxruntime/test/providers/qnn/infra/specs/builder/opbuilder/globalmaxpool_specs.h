@@ -21,6 +21,8 @@ struct GlobalMaxPoolSpec {
   std::vector<int64_t> input_shape;
   GlobalMaxPoolDataType data_type;
   bool use_contrib_qdq;
+  // Use ModelTestBuilder random input (seed 2345), as in the legacy case.
+  bool use_random_input = false;
 };
 
 // Maps 1:1 to enabled QnnHTPBackendTests GlobalMaxPool cases in
@@ -30,10 +32,10 @@ struct GlobalMaxPoolSpec {
 inline const std::vector<GlobalMaxPoolSpec> kGlobalMaxPoolSpecs = {
     {"GlobalMaxPool_U8", {1, 2, 3, 3}, GlobalMaxPoolDataType::UInt8, false},
     {"GlobalMaxPool_U16", {1, 2, 3, 3}, GlobalMaxPoolDataType::UInt16, true},
-    {"GlobalMaxPool_U8_LargeInput", {1, 128, 16, 113}, GlobalMaxPoolDataType::UInt8, false},
-    {"GlobalMaxPool_U8_LargeInput2", {1, 64, 384, 576}, GlobalMaxPoolDataType::UInt8, false},
+    {"GlobalMaxPool_U8_LargeInput", {1, 128, 16, 113}, GlobalMaxPoolDataType::UInt8, false, true},
+    {"GlobalMaxPool_U8_LargeInput2", {1, 64, 384, 576}, GlobalMaxPoolDataType::UInt8, false, true},
     {"GlobalMaxPool_U8_Rank3", {1, 8, 5}, GlobalMaxPoolDataType::UInt8, false},
-    {"GlobalMaxPool_U8_Rank3LargeInput", {1, 8400, 80}, GlobalMaxPoolDataType::UInt8, false},
+    {"GlobalMaxPool_U8_Rank3LargeInput", {1, 8400, 80}, GlobalMaxPoolDataType::UInt8, false, true},
     {"GlobalMaxPool_U16_Rank3", {1, 8, 5}, GlobalMaxPoolDataType::UInt16, true},
 };
 
