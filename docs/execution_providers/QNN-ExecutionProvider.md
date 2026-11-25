@@ -676,7 +676,9 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:GlobalMaxPool||
 |ai.onnx:Greater||
 |ai.onnx:GreaterOrEqual||
-|ai.onnx:GridSample||
+|ai.onnx:GridSample|mode: bilinear/linear, nearest (bicubic/cubic not supported); padding_mode: zeros, border, reflection; align_corners 0/1. Input and grid must have equal rank 4 or 5. HTP: rank 5 only for 8/16-bit quantized, float limited to rank 4. CPU: fp32 and uint8 QDQ only, rank 4.|
+|ai.onnx.contrib:GridSample|INT attributes: mode 0 (bilinear) or 1 (nearest); padding_mode 0 (zeros), 1 (border) or 2 (reflection); align_corners 0/1. String-typed attributes and mode 2 are rejected. Input is NCHW or NCDHW and the grid is channel-last; the builder inserts the layout transposes. Input and grid must have equal rank 4 or 5. HTP: rank 5 only for 8/16-bit quantized, float limited to rank 4. QDQ node groups are supported. The op must be registered with ORT for the model to load.|
+|com.microsoft:GridSample|Same attributes as ai.onnx:GridSample (string mode/padding_mode; bicubic not supported). Rank 4 only. The builder inserts the layout transposes. HTP: float and 8/16-bit quantized.|
 |ai.onnx:GRU|layout=0 (batch-first) only; fixed-length sequences; default activations (sigmoid/tanh); no clip; no initial hidden/cell state from ONNX|
 |ai.onnx:GroupNormalization||
 |ai.onnx:HardSigmoid||

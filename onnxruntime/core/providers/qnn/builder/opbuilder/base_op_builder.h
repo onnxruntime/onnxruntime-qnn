@@ -175,7 +175,6 @@ class BaseOpBuilder : public IOpBuilder {
         {"GlobalMaxPool", QNN_OP_POOL_MAX_2D},
         {"Greater", QNN_OP_ELEMENT_WISE_GREATER},
         {"GreaterOrEqual", QNN_OP_ELEMENT_WISE_GREATER_EQUAL},
-        {"GridSample", QNN_OP_GRID_SAMPLE},
         {"GroupNormalization", QNN_OP_GROUP_NORM},
         {"HardSigmoid", QNN_OP_ELEMENT_WISE_NEURON},
         {"HardSwish", QNN_OP_ELEMENT_WISE_NEURON},
