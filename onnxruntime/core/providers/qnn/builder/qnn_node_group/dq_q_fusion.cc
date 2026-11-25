@@ -62,6 +62,8 @@ Ort::Status ResolvePerChannelAxis(const QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
+}  // namespace
+
 bool CanFoldConstantQdq(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) {
   if (node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return false;
@@ -118,6 +120,8 @@ Ort::Status FoldConstantDequantizeLinear(QnnModelWrapper& qnn_model_wrapper, con
                 "Failed to add folded DequantizeLinear output tensor.");
   return Ort::Status();
 }
+
+namespace {
 
 Ort::Status FoldConstantQuantizeLinear(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) {
   const auto& input_def = node_unit.Inputs()[0];

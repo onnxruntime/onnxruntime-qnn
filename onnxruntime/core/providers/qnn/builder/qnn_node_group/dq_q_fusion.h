@@ -16,6 +16,18 @@ namespace qnn {
 class QnnModelWrapper;
 
 /// <summary>
+/// Returns true if `node_unit` is a standalone DequantizeLinear or QuantizeLinear whose data input is a
+/// constant initializer or an already-folded STATIC tensor.
+/// </summary>
+bool CanFoldConstantQdq(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit);
+
+/// <summary>
+/// Evaluates a constant DequantizeLinear (per-tensor or per-channel) on the host and registers its output
+/// as a STATIC float32 tensor under the DQ output name. No QNN node is created.
+/// </summary>
+Ort::Status FoldConstantDequantizeLinear(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit);
+
+/// <summary>
 /// Represents a fusion of a DQ -> Q sequence that converts from one quantization type (e.g., uint8_t) to
 /// another (e.g., uint16_t). This is translated into a QNN Convert operator, which is much faster than individual
 /// ops. The DQ and Q are standalone NodeUnits that are not part of a QDQ node unit.
