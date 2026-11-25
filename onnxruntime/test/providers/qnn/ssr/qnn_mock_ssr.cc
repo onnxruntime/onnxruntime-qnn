@@ -207,7 +207,9 @@ Qnn_ErrorHandle_t QnnContext_createFromBinary(Qnn_BackendHandle_t backendHandle,
       backendHandle, deviceHandle, config, binaryBuffer, binaryBufferSize, context, profileHandle);
 }
 
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+// QnnContext_createFromBinaryWithCallback was added in QNN API 2.28 (QAIRT 2.37).
+// Gate on API availability rather than the EP's file-mapping feature macro.
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 28)
 // Intercepts contextCreateFromBinaryWithCallback: records whether it was called during
 // SSR recovery (g_ssr_fired == true).  Calls before SSR are the initial load and are
 // not counted.
@@ -241,7 +243,7 @@ Qnn_ErrorHandle_t QnnContext_createFromBinaryWithCallback(
       backendHandle, deviceHandle, config, callbacks, binaryBuffer, binaryBufferSize,
       context, profileHandle, reserved);
 }
-#endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#endif  // QNN API >= 2.28
 
 #endif  // defined(_WIN32)
 
@@ -294,7 +296,7 @@ extern "C" Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** p
     mock_interface.QNN_INTERFACE_VER_NAME.graphRetrieve = QnnGraph_retrieve;
     mock_interface.QNN_INTERFACE_VER_NAME.graphFinalize = QnnGraph_finalize;
     mock_interface.QNN_INTERFACE_VER_NAME.contextCreateFromBinary = QnnContext_createFromBinary;
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 28)
     // Intercept contextCreateFromBinaryWithCallback to detect file mapping during recovery.
     mock_interface.QNN_INTERFACE_VER_NAME.contextCreateFromBinaryWithCallback =
         QnnContext_createFromBinaryWithCallback;
