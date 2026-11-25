@@ -117,6 +117,8 @@ struct FakeOrtValue {
   alignas(8) unsigned char int_bytes[8] = {};
   // Payload of a 1-D float tensor (e.g. a per-channel scale), see MakeFloats. Empty for scalars.
   std::vector<float> float_values;
+  // Payload of a 1-D uint8 tensor (e.g. a per-channel zero-point), see MakeUint8s. Empty for scalars.
+  std::vector<uint8_t> uint8_values;
 
   const OrtValue* AsOrtValue() const { return reinterpret_cast<const OrtValue*>(this); }
 
@@ -126,6 +128,15 @@ struct FakeOrtValue {
     r.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
     r.shape = {static_cast<int64_t>(v.size())};
     r.float_values = std::move(v);
+    return r;
+  }
+
+  // 1-D uint8 tensor, e.g. a per-channel quantization zero-point.
+  static FakeOrtValue MakeUint8s(std::vector<uint8_t> v) {
+    FakeOrtValue r;
+    r.elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+    r.shape = {static_cast<int64_t>(v.size())};
+    r.uint8_values = std::move(v);
     return r;
   }
 
@@ -516,6 +527,9 @@ inline void InstallFakeGraphApiStubs(OrtApi& api) {
                                          : static_cast<void*>(fov->float_values.data());
         break;
       case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+        *out = fov->uint8_values.empty() ? static_cast<void*>(fov->int_bytes)
+                                         : static_cast<void*>(fov->uint8_values.data());
+        break;
       case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
       case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
       case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
