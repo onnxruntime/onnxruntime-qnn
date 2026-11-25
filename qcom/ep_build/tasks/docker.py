@@ -126,6 +126,8 @@ class DockerBuildAndTestTask(DockerRunTask):
             "TMPDIR": str(DOCKER_REPO_ROOT / "build" / "docker-tmp"),
             "UV_LINK_MODE": "copy",
         }
+        if "ORT_QNN_BUILD_UDO_OP_PACKAGES" in os.environ:
+            env["ORT_QNN_BUILD_UDO_OP_PACKAGES"] = os.environ["ORT_QNN_BUILD_UDO_OP_PACKAGES"]
         # TMPDIR must exist or tempfile silently falls back to /tmp.
         (REPO_ROOT / "build" / "docker-tmp").mkdir(parents=True, exist_ok=True)
 
