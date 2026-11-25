@@ -62,10 +62,12 @@ GetTestModelFn MultinomialCase(int64_t dtype, int64_t samples, bool seed, bool f
 }
 
 void CheckOneClassSamples(const GetTestModelFn& build, const char* backend, int64_t dtype, bool downstream = false) {
+  const auto provider_options = MultinomialOptions(backend);
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
   std::unique_ptr<ModelAndBuilder> model;
   CreateModelInMemory(model, build, 13);
   std::vector<Ort::Value> outputs;
-  InferenceModel(model->model_data, "Multinomial", MultinomialOptions(backend), ExpectedEPNodeAssignment::All,
+  InferenceModel(model->model_data, "Multinomial", provider_options, ExpectedEPNodeAssignment::All,
                  model->builder.feeds_, outputs);
   ASSERT_EQ(outputs.size(), 1u);
   EXPECT_EQ(outputs[0].GetTensorTypeAndShapeInfo().GetShape(), (std::vector<int64_t>{3, 1}));
@@ -106,6 +108,8 @@ void CheckDequantizedSamples(const GetTestModelFn& build) {
 // This is a stochastic property test, not a CPU/QNN sequence comparison.
 // A fixed stream replaying each Run will put all 256 samples in one bucket.
 void CheckRandomnessAcrossRuns(const char* backend) {
+  const auto provider_options = MultinomialOptions(backend);
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
   std::unique_ptr<ModelAndBuilder> model;
   CreateModelInMemory(model, [](ModelTestBuilder& builder) {
     builder.MakeInput<float>("logits", {1, 4}, std::vector<float>(4, 0.0f));
@@ -115,7 +119,7 @@ void CheckRandomnessAcrossRuns(const char* backend) {
   Ort::SessionOptions options;
   options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
   RegisteredEpDeviceUniquePtr ep;
-  RegisterQnnEpLibrary(ep, options, kQnnExecutionProvider, MultinomialOptions(backend));
+  RegisterQnnEpLibrary(ep, options, kQnnExecutionProvider, provider_options);
   ScopedOrtSession scoped(std::move(ep), Ort::Session(*ort_env, model->model_data.data(), model->model_data.size(), options));
   const char* input_names[]{"logits"};
   const char* output_names[]{"out"};
