@@ -1185,6 +1185,34 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpNumCoresMalformed_Succeeds) {
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_ERROR, "Ignoring malformed");
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, HtpContextInitAcceleration_ValidatesOption) {
+  {
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("htp_context_init_acceleration")] = "1";
+    auto factory = MakeFactory(ctx);
+    EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+#if QNN_API_VERSION_MAJOR > 2 || \
+    (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 36)
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 "User specified " + EPKey("htp_context_init_acceleration") + ": 1");
+#else
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING,
+                 "htp_context_init_acceleration is not supported with QAIRT SDK < 2.47. "
+                 "Ignoring the option.");
+#endif
+  }
+  {
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("htp_context_init_acceleration")] = "invalid";
+    auto factory = MakeFactory(ctx);
+    EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 "Invalid value for " + EPKey("htp_context_init_acceleration"));
+  }
+}
+
 TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpGraphSplitting_Default_Succeeds) {
   // Default (not set) must not log any graph-splitting warnings or errors.
   // VERBOSE is intentionally captured so the severity filter below can verify

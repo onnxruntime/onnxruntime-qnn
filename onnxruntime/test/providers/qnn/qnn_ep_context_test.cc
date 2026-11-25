@@ -1690,6 +1690,57 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   ASSERT_EQ(std::remove(qnn_ctx_bin.c_str()), 0);
 }
 
+#ifdef QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpInitAcceleration_LoadsSucceeds) {
+#if defined(__linux__) && !defined(__aarch64__)
+  GTEST_SKIP() << "htp_context_init_acceleration is not supported by the x86_64 HTP emulator.";
+#endif
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const ProviderOptions provider_options = {{"backend_type", "htp"},
+                                            {"offload_graph_io_quantization", "0"},
+                                            {"disable_file_mapped_weights", "1"},
+                                            {"num_graph_prepare_threads", "1"}};
+  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
+
+  for (const char* embed_mode : {"0", "1"}) {
+    SCOPED_TRACE(embed_mode);
+    const std::string context_model_file = std::string("htp_init_acceleration_") + embed_mode + "_ctx.onnx";
+    const std::string context_bin_file = std::string("htp_init_acceleration_") + embed_mode + "_ctx_qnn.bin";
+    std::remove(context_model_file.c_str());
+    std::remove(context_bin_file.c_str());
+    {
+      Ort::SessionOptions so;
+      so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+      so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, embed_mode);
+      so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+      RegisteredEpDeviceUniquePtr registered_ep_device;
+      RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+      ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
+    }
+    ASSERT_TRUE(std::filesystem::exists(context_model_file));
+    if (std::string(embed_mode) == "0") {
+      ASSERT_TRUE(std::filesystem::exists(context_bin_file));
+    }
+
+    {
+      ProviderOptions loading_provider_options(provider_options);
+      loading_provider_options["htp_context_init_acceleration"] = "1";
+      Ort::SessionOptions so;
+      RegisteredEpDeviceUniquePtr registered_ep_device;
+      RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, loading_provider_options);
+      ScopedOrtSession scoped(std::move(registered_ep_device),
+                              Ort::Session(*ort_env, std::filesystem::path(context_model_file).c_str(), so));
+    }
+
+    if (std::string(embed_mode) == "0") {
+      CleanUpCtxFile(context_model_file);
+    } else {
+      EXPECT_TRUE(std::filesystem::remove(context_model_file));
+    }
+  }
+}
+#endif  // QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+
 // htp_reused_io_limit_mb: a valid numeric value is accepted when preparing and loading an AOT context.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_HtpReusedIoLimitMbValid_LoadsSucceeds) {
 #if QNN_API_VERSION_MAJOR < 2 || \
@@ -4135,7 +4186,8 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeRespected) {
 
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
-TEST_F(QnnHTPBackendTests, CrossDevicePrepare) {
+// TODO: Re-enable after the QAIRT 2.53 HTP SOC/ARCH device-config ABI mismatch is resolved.
+TEST_F(QnnHTPBackendTests, DISABLED_CrossDevicePrepare) {
 #ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
   // Use AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after GTEST_SKIP().
   if (::testing::internal::AlwaysTrue()) {

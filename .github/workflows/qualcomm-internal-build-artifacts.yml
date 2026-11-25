@@ -50,6 +50,10 @@ on:
         description: "If true, build a Windows ARM64 RelWithDebInfo archive."
         type: boolean
         default: false
+      publish_mode:
+        description: "Artifact mode: maven builds and tests Android only; non_maven excludes Android; all uses the build flags."
+        type: string
+        default: all
 
   workflow_dispatch:
     inputs: *common_inputs
@@ -60,7 +64,7 @@ jobs:
     secrets: inherit
 
   build-android-aarch64:
-    if: ${{ inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
+    if: ${{ inputs.publish_mode == 'maven' || (inputs.publish_mode != 'non_maven' && (inputs.build_android_aarch64 || inputs.build_android_aarch64_aar)) }}
     needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -75,20 +79,21 @@ jobs:
       run_tests: false
       upload_test_archive: true
       upload_wheel: false
-      build_aar: ${{ inputs.build_android_aarch64_aar }}
-      upload_aar: ${{ inputs.build_android_aarch64_aar }}
+      build_aar: ${{ inputs.publish_mode == 'maven' || inputs.build_android_aarch64_aar }}
+      upload_aar: ${{ inputs.publish_mode == 'maven' || inputs.build_android_aarch64_aar }}
 
   test-android-aarch64:
-    if: ${{ inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
+    if: ${{ inputs.publish_mode == 'maven' || (inputs.publish_mode != 'non_maven' && (inputs.build_android_aarch64 || inputs.build_android_aarch64_aar)) }}
     needs: [build-android-aarch64]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
     with:
       target_os: android
       target_arch: aarch64
+      testdata_archive_artifact_name: testdata-zip
 
   build-linux-aarch64-manylinux_2_34:
-    if: ${{ toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
+    if: ${{ inputs.publish_mode != 'maven' && toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
     strategy:
       matrix:
@@ -110,7 +115,7 @@ jobs:
       upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
 
   build-linux-aarch64-oe-gcc11_2:
-    if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
+    if: ${{ inputs.publish_mode != 'maven' && inputs.build_linux_aarch64_oe_gcc11_2 }}
     needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -125,7 +130,7 @@ jobs:
       upload_wheel: false
 
   build-linux-x86_64-ubuntu-22-04:
-    if: ${{ toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
+    if: ${{ inputs.publish_mode != 'maven' && toJSON(fromJSON(inputs.linux_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
     strategy:
       matrix:
@@ -147,7 +152,7 @@ jobs:
       upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_target_py_vsns)[0] }}
 
   build-windows:
-    if: ${{ toJSON(fromJSON(inputs.windows_target_archs)) != '[]' && toJSON(fromJSON(inputs.windows_target_py_vsns)) != '[]' }}
+    if: ${{ inputs.publish_mode != 'maven' && toJSON(fromJSON(inputs.windows_target_archs)) != '[]' && toJSON(fromJSON(inputs.windows_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
     strategy:
       matrix:
@@ -179,6 +184,7 @@ jobs:
       upload_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
 
   build-windows-arm64x:
+    if: ${{ inputs.publish_mode != 'maven' }}
     needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -199,7 +205,7 @@ jobs:
       upload_pdb_archive: true
 
   setup-debug-matrix:
-    if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
+    if: ${{ inputs.publish_mode != 'maven' && (inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo) }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
@@ -218,7 +224,7 @@ jobs:
 
   build-windows-arm64-debug-builds:
     needs: [archive-testdata, setup-debug-matrix]
-    if: ${{ inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo }}
+    if: ${{ inputs.publish_mode != 'maven' && (inputs.build_windows_arm64_debug || inputs.build_windows_arm64_relwithdebinfo) }}
     name: build-windows-arm64-${{ matrix.suffix }}
     strategy:
       matrix: ${{ fromJSON(needs.setup-debug-matrix.outputs.matrix) }}
