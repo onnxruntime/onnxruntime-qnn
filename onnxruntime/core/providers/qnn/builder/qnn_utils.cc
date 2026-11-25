@@ -7,6 +7,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <string>
 #include <utility>
@@ -176,6 +177,28 @@ size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType
   }
   SafeInt<size_t> num_elements = std::accumulate(shape.begin(), shape.end(), SafeInt<size_t>{1}, std::multiplies<>{});
   return GetQnnTensorDataSizeInBytes(num_elements, element_type);
+}
+
+Ort::Status GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape,
+                                        Qnn_DataType_t element_type,
+                                        size_t& data_size) {
+  size_t num_elements = 1;
+  for (uint32_t dim : shape) {
+    size_t next_num_elements = 0;
+    RETURN_IF_NOT(SafeMultiply(num_elements, static_cast<size_t>(dim), next_num_elements),
+                  "QNN tensor element count overflow.");
+    num_elements = next_num_elements;
+  }
+
+  if (element_type == QNN_DATATYPE_SFIXED_POINT_4 || element_type == QNN_DATATYPE_UFIXED_POINT_4) {
+    data_size = num_elements / 2 + num_elements % 2;
+    return Ort::Status();
+  }
+
+  const size_t element_size = GetElementSizeByType(element_type);
+  RETURN_IF_NOT(SafeMultiply(num_elements, element_size, data_size),
+                "QNN tensor byte size overflow.");
+  return Ort::Status();
 }
 
 size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor) {
@@ -1475,7 +1498,9 @@ Ort::Status LowPowerBlockQuantizeData(gsl::span<const float> data,
 
 std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_ErrorHandle_t qnn_error_handle) {
   const char* error_msg = nullptr;
-  if (qnn_interface.errorGetMessage(qnn_error_handle, &error_msg) == QNN_SUCCESS) {
+  if (qnn_interface.errorGetMessage != nullptr &&
+      QNN_GET_ERROR_CODE(qnn_interface.errorGetMessage(qnn_error_handle, &error_msg)) == QNN_SUCCESS &&
+      error_msg != nullptr) {
     return error_msg;
   }
   return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
@@ -2219,13 +2244,16 @@ Ort::Status ReadExternalData(const OrtApi& ort_api,
 Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const OrtValueInfo* initializer,
                                   const std::filesystem::path& model_path,
-                                  std::vector<uint8_t>& unpacked_tensor) {
+                                  std::vector<uint8_t>& unpacked_tensor,
+                                  std::optional<size_t> expected_byte_size) {
+  RETURN_IF(initializer == nullptr, "Initializer to unpack must not be null.");
   OrtExternalInitializerInfo* external_initializer = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer));
   if (external_initializer) {
-    RETURN_IF_ERROR(ReadExternalData(ort_api, external_initializer, model_path, unpacked_tensor));
-    ort_api.ReleaseExternalInitializerInfo(external_initializer);
-    return Ort::Status();
+    const Ort::ExternalInitializerInfo external_info(external_initializer);
+    RETURN_IF(expected_byte_size.has_value() && external_info.GetByteSize() != *expected_byte_size,
+              "Initializer byte count does not match its declared shape and element type.");
+    return ReadExternalData(ort_api, external_info, model_path, unpacked_tensor);
   }
 
   const OrtTypeInfo* type_info = nullptr;

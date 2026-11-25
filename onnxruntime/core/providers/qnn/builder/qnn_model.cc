@@ -32,8 +32,9 @@ namespace qnn {
 namespace {
 
 bool IsQnnSsrError(Qnn_ErrorHandle_t status) {
-  return status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION ||
-         status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL;
+  const auto error_code = QNN_GET_ERROR_CODE(status);
+  return error_code == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION ||
+         error_code == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL;
 }
 
 Ort::Status LogUnrecoverableSsrError(const Ort::Logger& logger, const std::string& error_message) {
@@ -842,9 +843,10 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
     }
 #endif
-    if (execute_status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL) {
+    if (QNN_GET_ERROR_CODE(execute_status) == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL) {
       return LogUnrecoverableSsrError(
-          logger, "NPU crashed. Fatal SSR communication failure. Error code: " + std::to_string(execute_status));
+          logger, "NPU crashed. Fatal SSR communication failure. " +
+                      utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status));
     }
 
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
@@ -861,22 +863,24 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
           ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
         }
 #endif
-        return Ort::Status("NPU crashed again after SSR recovery.", QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+        const std::string message = "NPU crashed again after SSR recovery. " +
+                                    utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status);
+        return Ort::Status(message.c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
       }
-      if (QNN_GRAPH_NO_ERROR == execute_status) {
+      if (QNN_GRAPH_NO_ERROR == QNN_GET_ERROR_CODE(execute_status)) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "SSR recovery succeeded.");
       }
     } else {
       // No context binary filepath — either JIT mode or embed_mode=1.
       // SSR recovery requires a context binary on disk to reload from, so skip recovery.
-      return LogUnrecoverableSsrError(logger,
-                                      "NPU crashed. SSR detected. Recovery not supported"
-                                      " (no context binary on disk — JIT or embed_mode=1). Error code: " +
-                                          std::to_string(execute_status));
+      return LogUnrecoverableSsrError(
+          logger, "NPU crashed. SSR detected. Recovery not supported"
+                  " (no context binary on disk — JIT or embed_mode=1). " +
+                      utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status));
     }
   }
 
-  if (QNN_GRAPH_NO_ERROR != execute_status) {
+  if (QNN_GRAPH_NO_ERROR != QNN_GET_ERROR_CODE(execute_status)) {
     return MAKE_EP_FAIL(("QNN graph execute error. " +
                          utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status))
                             .c_str());

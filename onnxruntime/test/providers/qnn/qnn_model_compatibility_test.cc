@@ -577,7 +577,8 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_MultiSoc_Override
 #endif  // !defined(_M_ARM64) && !defined(_M_ARM64EC) && !defined(__aarch64__)
 
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
-TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility_HostModeNoHnrd) {
+// TODO: Re-enable after the QAIRT 2.53 HTP SOC/ARCH device-config ABI mismatch is resolved.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_GetCompatibility_HostModeNoHnrd) {
 #ifndef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
   // Use AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after GTEST_SKIP().
   if (::testing::internal::AlwaysTrue()) {

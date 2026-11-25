@@ -129,6 +129,9 @@ size_t GetOnnxTensorDataSizeInBytes(gsl::span<const int64_t> shape, ONNXTensorEl
 
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_data_type);
 size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType_t element_data_type);
+Ort::Status GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape,
+                                        Qnn_DataType_t element_data_type,
+                                        size_t& data_size);
 size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor);
 
 bool QnnTensorHasDynamicShape(const Qnn_Tensor_t& tensor);
@@ -827,11 +830,14 @@ Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
     return Ort::Status();
   }
 
+  const auto input = gsl::make_span(data);
+  auto output = gsl::make_span(transposed_data);
+
   for (size_t row = 0; row < rows; row++) {
     for (size_t col = 0; col < cols; col++) {
       const size_t src_index = (row * cols + col);
       const size_t dst_index = (col * rows + row);
-      transposed_data[dst_index] = data[src_index];
+      output[dst_index] = input[src_index];
     }
   }
 
@@ -1110,10 +1116,13 @@ Ort::Status ResolveExternalDataPath(const std::filesystem::path& model_directory
                                     const std::filesystem::path& relative_data_path,
                                     std::filesystem::path& resolved_data_path);
 
+// expected_byte_size checks external storage before allocating or reading it.
+// QnnModelWrapper also validates the size returned for embedded initializers.
 Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const OrtValueInfo* initializer,
                                   const std::filesystem::path& model_path,
-                                  std::vector<uint8_t>& unpacked_tensor);
+                                  std::vector<uint8_t>& unpacked_tensor,
+                                  std::optional<size_t> expected_byte_size = std::nullopt);
 
 /*
    Converts a pointer into a string

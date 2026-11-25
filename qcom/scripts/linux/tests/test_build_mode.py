@@ -44,6 +44,19 @@ def build_repo(tmp_path: Path) -> Path:
     all_scripts.mkdir()
     (all_scripts / "python_test_files.txt").touch()
     (all_scripts / "fetch_cmake_deps.py").touch()
+    (all_scripts / "archive_tests.py").write_text(
+        """import argparse
+import json
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--config")
+parser.add_argument("--target-platform")
+parser.add_argument("--qairt-sdk-root")
+args = parser.parse_args()
+Path("archive-call.json").write_text(json.dumps(vars(args)))
+"""
+    )
     tools = tmp_path / "fake-tools"
     tools.mkdir()
     (tools / "ctest").touch()
@@ -89,7 +102,12 @@ if args.build:
 
 
 def run_build(
-    repo: Path, mode: str, *, fail: bool = False, build_dir_suffix: str | None = None
+    repo: Path,
+    mode: str,
+    *,
+    fail: bool = False,
+    build_dir_suffix: str | None = None,
+    task_mode: str = "build",
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ | {
         "PATH": f"{repo / 'fake-tools'}{os.pathsep}{os.environ['PATH']}",
@@ -105,7 +123,7 @@ def run_build(
         "--target-platform=linux",
         "--target-arch=x86_64",
         "--config=RelWithDebInfo",
-        "--mode=build",
+        f"--mode={task_mode}",
         "--no-use-cache",
         f"--qairt-sdk-root={repo / 'fake-qairt'}",
         *MODE_FLAGS[mode],
@@ -244,6 +262,42 @@ def test_internal_symbol_test_task_uses_isolated_build_directory(tmp_path: Path)
     assert "--build-dir-suffix=internal-symbols" in command
 
 
+@pytest.mark.parametrize(
+    ("task_name", "mode"),
+    [
+        ("_build_ort_linux_x86_64_ubuntu_22_04_internal_symbols", "build"),
+        ("archive_ort_linux_x86_64_ubuntu_22_04_internal_symbols", "archive"),
+        ("test_ort_linux_x86_64_ubuntu_22_04_internal_symbols", "test"),
+    ],
+)
+def test_ubuntu_22_04_internal_symbol_tasks_use_isolated_build_directory(
+    tmp_path: Path, task_name: str, mode: str
+) -> None:
+    task_library = TaskLibrary(
+        python_executable=Path(sys.executable),
+        venv_path=tmp_path / "venv",
+        config="Release",
+        target_py_version="3.12",
+        ort_prebuilt_root=None,
+        qairt_sdk_root=None,
+        docker_ccache_root=None,
+        build_nuget=False,
+        build_archive=False,
+        build_aar=False,
+    )
+    plan = Plan()
+    getattr(task_library, task_name)(plan)
+
+    planned_tasks = []
+    plan.for_each(lambda step_id, task: planned_tasks.append((step_id, task)))
+    assert len(planned_tasks) == 1
+    command = planned_tasks[0][1].executables_and_args[0]
+    assert f"--mode={mode}" in command
+    assert "--target-arch=x86_64_ubuntu_22_04" in command
+    assert "--enable-qnn-internal-test-symbols" in command
+    assert "--build-dir-suffix=internal-symbols" in command
+
+
 def test_build_dir_suffix_uses_isolated_directory(build_repo: Path) -> None:
     result = run_build(build_repo, "internal", build_dir_suffix="internal-symbols")
     assert result.returncode == 0, result.stderr
@@ -251,6 +305,18 @@ def test_build_dir_suffix_uses_isolated_directory(build_repo: Path) -> None:
     root = build_repo / "build/linux-x86_64-internal-symbols"
     assert (root / "RelWithDebInfo/built-mode.json").is_file()
     assert not (build_repo / "build/linux-x86_64").exists()
+
+
+def test_archive_uses_suffixed_target_platform(build_repo: Path) -> None:
+    result = run_build(
+        build_repo,
+        "internal",
+        build_dir_suffix="internal-symbols",
+        task_mode="archive",
+    )
+    assert result.returncode == 0, result.stderr
+    archive_call = json.loads((build_repo / "archive-call.json").read_text())
+    assert archive_call["target_platform"] == "linux-x86_64-internal-symbols"
 
 
 @pytest.mark.parametrize("suffix", ["../escape", "bad suffix", "/absolute"])
