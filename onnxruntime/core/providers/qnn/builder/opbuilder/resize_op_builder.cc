@@ -378,16 +378,41 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   // Translation matrix of ONNX Resize w/ "nearest" mode on HTP backend.
   // Table entries correspond to the QNN operator used for the given configuration
   // (Resize = QNN Resize op, RNN = QNN ResizeNearestNeighbor op, X = Unsupported).
+  // Entries marked with '*' are accepted by this EP, but the HTP output was observed to not match ORT CPU.
   //
+  // Rank 4 (ResizeNearestNeighbor). Only (ceil | round_prefer_floor) + asymmetric is rejected below.
   //                                                   nearest_mode:
-  // coordinate_transformation_mode: | round_prefer_floor  round_prefer_ceil  floor  ceil
+  // coordinate_transformation_mode: | round_prefer_floor  round_prefer_ceil  floor   ceil
   // -----------------------------------------------------------------------------------------
-  //                      half_pixel |  Resize(QNN < 2.20)        X            RNN     X
-  //              pytorch_half_pixel |  Resize(QNN < 2.20)        X             X      X
-  //                   align_corners |  Resize(QNN < 2.20)  Resize(QNN 2.20)   RNN     X
-  //                      asymmetric |  Resize(QNN < 2.20)        X            RNN     X
-  //   tf_half_pixel_for_nn          |       X (CPU fallback)     X           RNN      X
-  //                                   (only nearest+floor admitted; others fall back to CPU)
+  //                      half_pixel |       RNN*              RNN            RNN*    RNN*
+  //              pytorch_half_pixel |       RNN               RNN*           RNN*    RNN*
+  //                   align_corners |       RNN*              RNN            RNN*    RNN*
+  //                      asymmetric |        X                RNN*           RNN      X
+  //   tf_half_pixel_for_nn          |        X                 X             RSS      X
+  //                                   (RSS = QNN Resize + StridedSlice; tf_half_pixel_for_nn admits nearest+floor
+  //                                    only, others fall back to CPU)
+  //
+  // Rank 3 and 5 (QNN Resize op, QNN API >= 2.14). Only round_prefer_ceil and floor are admitted;
+  // round_prefer_ceil needs align_corners, and floor is rejected with align_corners (HTP error 3110)
+  // and pytorch_half_pixel. Every other cell falls back to CPU.
+  //                                                   nearest_mode:
+  // coordinate_transformation_mode: | round_prefer_floor  round_prefer_ceil  floor   ceil
+  // -----------------------------------------------------------------------------------------
+  //                      half_pixel |        X                 X            Resize*   X
+  //              pytorch_half_pixel |        X                 X              X       X
+  //                   align_corners |        X              Resize            X       X
+  //                      asymmetric |        X                 X            Resize    X
+  //   tf_half_pixel_for_nn          |        X                 X              X       X   (rank-4 only)
+  //
+  // Note on '*': observed with uint8 QDQ models on HTP; the cause has not been verified. The node is accepted
+  // but the output differs from ORT CPU at the .5 tie coordinates. The unit tests that reproduce the mismatch
+  // are skipped by default (see SKIP_IF_HTP_OUTPUT_MISMATCHES_CPU in resize_test.cc). Exception: the
+  // rank-4 half_pixel + round_prefer_floor test uses a 2x scale, which has no ties, so it passes.
+  //
+  // Test coverage (resize_test.cc, QnnHTPBackendTests): every rank-4 cell has a test. At ranks 3 and 5 all
+  // cells marked X are checked at rank 3 (each must fall back to CPU) and align_corners + floor is also
+  // checked at rank 5. The three admitted rank 3/5 cells (align_corners + round_prefer_ceil, asymmetric + floor,
+  // half_pixel + floor) are run on HTP at both ranks; the first two match ORT CPU, half_pixel + floor does not.
 
   if (interp_mode == "nearest") {
     const std::string nearest_mode = GetOnnxAttr(node_helper, onnx_nearest_mode_attr);
@@ -413,6 +438,10 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
         RETURN_IF(nearest_mode == "round_prefer_ceil" && transformation_mode != "align_corners",
                   "QNN EP: Resize on the NPU only supports 'round_prefer_ceil' if "
                   "transformation mode is 'align_corners'");
+
+        RETURN_IF(nearest_mode == "floor" && transformation_mode == "align_corners",
+                  "QNN EP: Resize on NPU does not support combination of "
+                  "nearest_mode: floor with transformation_mode: align_corners");
 #else
         RETURN_IF_NOT(nearest_mode == "round_prefer_floor" || nearest_mode == "floor",
                       ("QNN EP: Resize on the NPU does not support nearest_mode " + nearest_mode).c_str());
