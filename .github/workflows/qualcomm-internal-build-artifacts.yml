@@ -183,7 +183,7 @@ jobs:
       # consume the archive uploaded by the first Python-version build.
       # Windows x86_64 validates locally once; ARM64 retains its cross-runner tests.
       run_tests: ${{ (matrix.target_arch == 'arm64' || matrix.target_arch == 'x86_64') && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      build_test_same_runner: ${{ matrix.target_arch != 'arm64' }}
+      build_test_same_runner: ${{ matrix.target_arch == 'x86_64' }}
       test_wheel: false
       # For each arch, upload the test archive with the first Python version we encounter
       upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
