@@ -31,6 +31,17 @@ namespace qnn {
 
 namespace {
 
+bool IsQnnSsrError(Qnn_ErrorHandle_t status) {
+  const auto error_code = QNN_GET_ERROR_CODE(status);
+  return error_code == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION ||
+         error_code == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL;
+}
+
+Ort::Status LogUnrecoverableSsrError(const Ort::Logger& logger, const std::string& error_message) {
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, error_message.c_str());
+  return Ort::Status(error_message.c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+}
+
 // Resolves the correct I/O order for a QNN fused subgraph, preferring ONNX declaration order.
 // For each ONNX-declared name, tries `tensor_name_overrides_reversed` first (handles renames),
 // then a direct match. Fallback to fused_order if any name is unresolvable. Appends partition-
@@ -826,12 +837,18 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 #endif
   RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
 
-  if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == QNN_GET_ERROR_CODE(execute_status)) {
+  if (IsQnnSsrError(execute_status)) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
     if (ort_profiler) {
       ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
     }
 #endif
+    if (QNN_GET_ERROR_CODE(execute_status) == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL) {
+      return LogUnrecoverableSsrError(
+          logger, "NPU crashed. Fatal SSR communication failure. " +
+                      utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status));
+    }
+
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
                 "NPU crashed. SSR detected during QNN graph execute.");
     if (!context_bin_filepath_.empty()) {
@@ -840,7 +857,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 
       // Retry once with fresh context and re-bound tensors.
       RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
-      if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == QNN_GET_ERROR_CODE(execute_status)) {
+      if (IsQnnSsrError(execute_status)) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
         if (ort_profiler) {
           ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
@@ -856,12 +873,11 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     } else {
       // No context binary filepath — either JIT mode or embed_mode=1.
       // SSR recovery requires a context binary on disk to reload from, so skip recovery.
-      std::ostringstream oss;
-      oss << "NPU crashed. SSR detected. Recovery not supported"
-             " (no context binary on disk — JIT or embed_mode=1). "
-          << utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status);
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-      return Ort::Status(oss.str().c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+      return LogUnrecoverableSsrError(
+          logger,
+          "NPU crashed. SSR detected. Recovery not supported"
+          " (no context binary on disk — JIT or embed_mode=1). " +
+              utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status));
     }
   }
 
