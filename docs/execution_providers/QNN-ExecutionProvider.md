@@ -16,6 +16,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Qualcomm AI Hub](#qualcomm-ai-hub)
 - [Configuration Options](#configuration-options)
 - [Flexible Context Binary (FCB) / multi-SoC EP context](#flexible-context-binary-fcb--multi-soc-ep-context)
+- [Zero-copy with app-owned host memory (HTP, Windows)](#zero-copy-with-app-owned-host-memory-htp-windows)
 - [Supported ONNX operators](#supported-onnx-operators)
 - [QTI AISW block operators](#qti-aisw-block-operators)
 - [Running a model with QNN EP's HTP backend (Python)](#running-a-model-with-qnn-eps-htp-backend-python)
@@ -630,6 +631,66 @@ result = session.run(None, {"input": input_data}, run_options)
 del session
 ort.unregister_execution_provider_library(ep_registration_name)
 ```
+
+## Zero-copy with app-owned host memory (HTP, Windows)
+
+By default, QNN HTP copies graph inputs and outputs between ORT buffers and NPU-shared buffers on every run. To skip that copy for buffers the application already owns (for example, buffers from `malloc`), import them once through the ORT interop API using `ORT_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION`:
+
+```c++
+const OrtApi& api = Ort::GetApi();
+const OrtInteropApi& interop = Ort::GetInteropApi();
+// Each call returns an OrtStatus*; check it (for example with Ort::ThrowOnError) as shown for the first call.
+OrtExternalResourceImporter* importer = nullptr;
+Ort::ThrowOnError(interop.CreateExternalResourceImporterForDevice(qnn_npu_ep_device, &importer));
+
+void* buffer = _aligned_malloc(size_bytes /* multiple of the page size */, page_size);
+OrtExternalMemoryDescriptor desc{ORT_API_VERSION, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION,
+                                 buffer, size_bytes, /*offset_bytes*/ 0};
+OrtExternalMemoryHandle* mem = nullptr;
+Ort::ThrowOnError(interop.ImportMemory(importer, &desc, &mem));  // maps the buffer into the NPU address space once
+
+OrtExternalTensorDescriptor tensor_desc{ORT_API_VERSION, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                                        shape, rank, /*offset_bytes*/ 0};
+OrtValue* value = nullptr;
+Ort::ThrowOnError(interop.CreateTensorFromMemory(importer, mem, &tensor_desc, &value));
+// Bind `value` as a session input or output and call Run() as often as needed.
+
+// Teardown: release the OrtValue, then the import handle, then free the buffer.
+api.ReleaseValue(value);
+interop.ReleaseExternalMemoryHandle(mem);
+interop.ReleaseExternalResourceImporter(importer);
+_aligned_free(buffer);
+```
+
+- QNN EP registers the buffer with FastRPC (`remote_register_buf_attr2`) when it is imported. On the first run in each QNN context it registers a QNN memory handle for each tensor address. Later runs reuse those handles, so steady-state runs do no copying and no registration.
+- Releasing the import handle deregisters the QNN memory handles in every context still alive, and then removes the FastRPC mapping. If a session is destroyed first, its handles are released together with its QNN context.
+- The tensor's `OrtMemoryInfo` is `QnnHtpShared` (CPU, `HOST_ACCESSIBLE`). CPU EP nodes can read it directly, and `enable_htp_shared_memory_allocator` is not required. Sessions loaded from an EPContext model can bind imported memory too, whether or not the model was compiled with that option.
+- Releasing an import while a session using it is being destroyed on another thread is safe: each QNN memory handle is deregistered exactly once, by whichever finishes first, and always before the FastRPC mapping is removed. A context keeps no record of handles whose memory has been released beyond its next registration.
+- Requirements:
+  - Windows on Snapdragon with the HTP backend. Use an NPU `OrtEpDevice`. `CanImportMemory` reports which handle types the device type accepts (see the table below). FastRPC (`libcdsprpc`) is loaded on the first import, so a missing or too-old FastRPC library is reported by `ImportMemory`.
+  - The buffer address and size must be multiples of the OS page size (4 KiB on Windows on Snapdragon; query it with `GetSystemInfo`). Imports must not overlap each other.
+  - Memory that FastRPC already maps cannot be imported: memory from the `QnnHtpShared` allocator, or the app's own `rpcmem_alloc` buffers. Bind those directly.
+  - `OrtExternalMemoryDescriptor::offset_bytes` may be non-zero. The whole `[buffer, buffer + size_bytes)` range is mapped, and tensors start at `buffer + offset_bytes` plus the tensor's own `offset_bytes`.
+- Lifetime:
+  - The buffer must stay valid until its import handle is released.
+  - Do not release the handle while a `Run()` that uses it is in progress.
+  - Release every import handle before unregistering the QNN EP library (`UnregisterExecutionProviderLibrary`), because the handle's release code lives in that library. When the library's last EP factory is released, QNN EP logs an error and releases any imports still outstanding, so their FastRPC mappings do not leak. Those handles must not be used or released afterwards.
+- Binding the same address again:
+  - In each QNN context, the first tensor bound at an address fixes its registration (QNN memory handles are registered with that tensor's shape and data type). A later tensor at the same address reuses it if it is no larger, whatever its shape, data type or graph port. A larger tensor is rejected; bind it at a different address, or release and re-import the buffer.
+  - On HTP, a reused registration works for graph inputs and outputs of another shape or data type, or a smaller size.
+- Buffers that are not imported continue to use the copy path.
+
+Which memory an importer accepts depends on the `OrtEpDevice` it was created for. `CanImportMemory` returns false for any other combination, and `ImportMemory` fails with `ORT_INVALID_ARGUMENT`:
+
+| `OrtEpDevice` type | QNN backend | `D3D12_RESOURCE` | `HOST_ALLOCATION` |
+|---|---|---|---|
+| NPU | HTP | No | Yes |
+| GPU | GPU | Yes (registered as `QNN_MEM_TYPE_DX12`) | No |
+
+Limitations:
+- A D3D12 resource allocated on the GPU cannot be imported to the HTP backend, because HTP does not accept DX12 memory. To share a buffer between GPU and NPU, use memory the CPU can address and import it to the NPU as `HOST_ALLOCATION`.
+- Intermediate tensors at boundaries between QNN and CPU EP partitions are allocated by ORT, not by the application, so they cannot be imported. They are copied on each run.
+- Subsystem restart (SSR) has not been validated with imported memory. After SSR, QNN EP registers new QNN memory handles in the recovered context using the FastRPC mapping made at import time. If `Run()` fails after SSR, release the import handles and import the buffers again.
 
 ## Supported ONNX operators
 

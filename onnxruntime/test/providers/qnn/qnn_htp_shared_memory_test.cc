@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -11,7 +12,14 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
+
+#if defined(_WIN32)
+#include <malloc.h>
+
+#include <filesystem>
+#endif
 
 #include "gsl/gsl"
 #include "onnxruntime_cxx_api.h"
@@ -1518,6 +1526,578 @@ TEST_F(QnnHTPBackendTests, io_binding_qnn_htp_shared_offset) {
     binding.ClearBoundOutputs();
   }
 }
+
+#if defined(_WIN32)
+// ---------------------------------------------------------------------------
+// App-owned host allocations imported with ORT_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION.
+// The buffer is registered with FastRPC once at import time and its QNN mem handle is retained across runs.
+// ---------------------------------------------------------------------------
+namespace {
+
+constexpr size_t kImportAlignment = 4096;
+constexpr std::string_view kLogSubstrImportedRegistration = "imported host memory";
+
+struct AlignedFree {
+  void operator()(void* p) const { _aligned_free(p); }
+};
+
+// Owns an importer plus page-aligned buffers imported through it.
+class HostImport {
+ public:
+  explicit HostImport(const OrtEpDevice* ep_device) {
+    Ort::ThrowOnError(Ort::GetInteropApi().CreateExternalResourceImporterForDevice(ep_device, &importer_));
+  }
+  ~HostImport() {
+    ReleaseHandles();
+    Ort::GetInteropApi().ReleaseExternalResourceImporter(importer_);
+  }
+
+  bool CanImport() const {
+    bool supported = false;
+    Ort::ThrowOnError(Ort::GetInteropApi().CanImportMemory(
+        importer_, ORT_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION, &supported));
+    return supported;
+  }
+
+  // Imports a new page-aligned buffer of kImportAlignment bytes. Returns its index, or -1 on import failure.
+  int ImportBuffer() {
+    imports_.reserve(imports_.size() + 1);  // so publishing the record below cannot throw
+
+    ImportedBuffer entry;
+    entry.buffer.reset(_aligned_malloc(kImportAlignment, kImportAlignment));
+    if (entry.buffer == nullptr) {
+      last_error_ = "_aligned_malloc failed";
+      return -1;
+    }
+    memset(entry.buffer.get(), 0, kImportAlignment);
+
+    OrtExternalMemoryDescriptor desc{};
+    desc.version = ORT_API_VERSION;
+    desc.handle_type = ORT_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION;
+    desc.native_handle = entry.buffer.get();
+    desc.size_bytes = kImportAlignment;
+    // From here `entry` owns the handle, so any failure releases it before freeing the buffer.
+    if (OrtStatus* status = Ort::GetInteropApi().ImportMemory(importer_, &desc, &entry.handle); status != nullptr) {
+      last_error_ = Ort::GetApi().GetErrorMessage(status);
+      Ort::GetApi().ReleaseStatus(status);
+      return -1;
+    }
+    imports_.push_back(std::move(entry));  // capacity reserved above
+    return static_cast<int>(imports_.size() - 1);
+  }
+
+  // Creates a tensor of any type and shape over imported buffer `index`, `offset` bytes in. Several tensors may share
+  // one buffer.
+  Ort::Value CreateTensor(int index, ONNXTensorElementDataType type, const std::vector<int64_t>& shape,
+                          size_t offset = 0) {
+    OrtExternalTensorDescriptor tensor_desc{};
+    tensor_desc.version = ORT_API_VERSION;
+    tensor_desc.element_type = type;
+    tensor_desc.shape = shape.data();
+    tensor_desc.rank = shape.size();
+    tensor_desc.offset_bytes = offset;
+    OrtValue* raw_value = nullptr;
+    Ort::ThrowOnError(Ort::GetInteropApi().CreateTensorFromMemory(importer_, imports_.at(index).handle, &tensor_desc,
+                                                                  &raw_value));
+    return Ort::Value{raw_value};
+  }
+
+  std::byte* Data(int index) { return static_cast<std::byte*>(imports_.at(index).buffer.get()); }
+
+  // Imports a new page-aligned buffer and returns a float tensor over it, `tensor_offset` bytes into the buffer.
+  // Returns nullptr on import failure.
+  float* ImportFloatTensor(const std::array<int64_t, 2>& shape, Ort::Value& value, size_t tensor_offset = 0) {
+    const size_t count = static_cast<size_t>(shape[0] * shape[1]);
+    EXPECT_LE(tensor_offset + count * sizeof(float), kImportAlignment);
+    const int index = ImportBuffer();
+    if (index < 0) {
+      return nullptr;
+    }
+    value = CreateTensor(index, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {shape[0], shape[1]}, tensor_offset);
+    return reinterpret_cast<float*>(Data(index) + tensor_offset);
+  }
+
+  // Releases each import handle (deregisters QNN mem handles, then FastRPC), then frees its buffer.
+  void ReleaseHandles() { imports_.clear(); }
+
+  const std::string& LastError() const { return last_error_; }
+
+ private:
+  // One import: releases the handle before freeing the buffer it maps.
+  struct ImportedBuffer {
+    ImportedBuffer() = default;
+    ImportedBuffer(ImportedBuffer&& other) noexcept
+        : buffer{std::move(other.buffer)}, handle{std::exchange(other.handle, nullptr)} {}
+    ImportedBuffer& operator=(ImportedBuffer&&) = delete;
+    ImportedBuffer(const ImportedBuffer&) = delete;
+    ImportedBuffer& operator=(const ImportedBuffer&) = delete;
+    ~ImportedBuffer() {
+      if (handle != nullptr) {
+        Ort::GetInteropApi().ReleaseExternalMemoryHandle(handle);
+      }
+      // `buffer` is freed after this body runs.
+    }
+
+    std::unique_ptr<void, AlignedFree> buffer;
+    OrtExternalMemoryHandle* handle = nullptr;
+  };
+
+  OrtExternalResourceImporter* importer_ = nullptr;
+  std::vector<ImportedBuffer> imports_;
+  std::string last_error_;
+};
+
+// One QNN context executes each imported buffer's mem handle, registered for one tensor's shape and data type, with
+// tensors of other shapes, data types and smaller sizes, as graph inputs and outputs. The model has four independent
+// Add(x, x) branches; buffers are moved between its ports from run to run.
+TEST_F(QnnHTPBackendTests, host_allocation_import_registration_reused_across_shapes_and_types) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  constexpr auto kFloat = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  constexpr auto kInt32 = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
+  struct Port {
+    std::string input;
+    std::string output;
+    ONNXTensorElementDataType type;
+    std::vector<int64_t> shape;
+  };
+  // 24-, 24-, 24- and 8-byte ports.
+  const std::vector<Port> ports = {
+      {"X", "Y", kFloat, {3, 2}}, {"XR", "YR", kFloat, {6}}, {"XI", "YI", kInt32, {6}}, {"XS", "YS", kFloat, {2}}};
+
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, [&ports](ModelTestBuilder& builder) {
+    for (const auto& port : ports) {
+      if (port.type == kFloat) {
+        builder.MakeInput<float>(port.input, port.shape, std::vector<float>(SizeOfShape(port.shape)));
+        builder.MakeOutput<float>(port.output, port.shape);
+      } else {
+        builder.MakeInput<int32_t>(port.input, port.shape, std::vector<int32_t>(SizeOfShape(port.shape)));
+        builder.MakeOutput<int32_t>(port.output, port.shape);
+      }
+      builder.AddNode("add_" + port.input, "Add", {port.input, port.input}, {port.output}, kOnnxDomain);
+    }
+  });
+
+  ProviderOptions options = MakeHtpOptions(/*enable_shared_memory*/ false);
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
+  ASSERT_NE(registered_ep_device, nullptr);
+  HostImport import{registered_ep_device.get()};
+  ASSERT_TRUE(import.CanImport());
+  Ort::Session session{*ort_env, model->model_data.data(), model->model_data.size(), so};
+
+  // Input buffers P..U and output buffers OY..OYS; each is registered by the first port it is bound to.
+  enum Buffer { P,
+                Q,
+                R,
+                S,
+                T,
+                U,
+                OY,
+                OYR,
+                OYI,
+                OYS,
+                kNumBuffers };
+  std::vector<int> buffers;
+  for (int b = 0; b < kNumBuffers; ++b) {
+    buffers.push_back(import.ImportBuffer());
+    ASSERT_GE(buffers.back(), 0) << import.LastError();
+  }
+
+  struct Run {
+    const char* label;
+    std::array<Buffer, 4> inputs;   // buffers for X, XR, XI, XS
+    std::array<Buffer, 4> outputs;  // buffers for Y, YR, YI, YS
+  };
+  const std::array<Buffer, 4> default_outputs = {OY, OYR, OYI, OYS};
+  const std::vector<Run> runs = {
+      {"baseline: first registrations", {P, Q, R, S}, default_outputs},
+      {"inputs: reshape, retype, reshape + retype", {Q, R, P, T}, default_outputs},
+      {"inputs: reshape + retype, reshape, retype", {R, P, Q, S}, default_outputs},
+      {"input: smaller tensor than the registration", {Q, R, U, P}, default_outputs},
+      {"outputs: reshape, retype, reshape + retype", {P, Q, R, S}, {OYR, OYI, OY, OYS}},
+      {"output: smaller tensor than the registration", {P, R, U, S}, {OY, OYR, OYI, Q}},
+  };
+
+  for (size_t r = 0; r < runs.size(); ++r) {
+    SCOPED_TRACE(runs[r].label);
+    Ort::IoBinding binding(session);
+    std::vector<Ort::Value> values;
+    std::vector<std::vector<double>> expected(ports.size());
+    for (size_t p = 0; p < ports.size(); ++p) {
+      const Port& port = ports[p];
+      const size_t count = SizeOfShape(port.shape);
+      std::byte* in = import.Data(buffers[runs[r].inputs[p]]);
+      std::byte* out = import.Data(buffers[runs[r].outputs[p]]);
+      for (size_t i = 0; i < count; ++i) {
+        const int v = static_cast<int>(10 * r + i + 1);  // new values every run catch a stale binding
+        expected[p].push_back(2.0 * v);
+        if (port.type == kFloat) {
+          reinterpret_cast<float*>(in)[i] = static_cast<float>(v);
+          reinterpret_cast<float*>(out)[i] = -777.0f;
+        } else {
+          reinterpret_cast<int32_t*>(in)[i] = v;
+          reinterpret_cast<int32_t*>(out)[i] = -777;
+        }
+      }
+      values.push_back(import.CreateTensor(buffers[runs[r].inputs[p]], port.type, port.shape));
+      binding.BindInput(port.input.c_str(), values.back());
+      values.push_back(import.CreateTensor(buffers[runs[r].outputs[p]], port.type, port.shape));
+      binding.BindOutput(port.output.c_str(), values.back());
+    }
+
+    ASSERT_NO_THROW(session.Run(Ort::RunOptions{}, binding));
+    for (size_t p = 0; p < ports.size(); ++p) {
+      const std::byte* out = import.Data(buffers[runs[r].outputs[p]]);
+      for (size_t i = 0; i < expected[p].size(); ++i) {
+        const double got = ports[p].type == kFloat ? reinterpret_cast<const float*>(out)[i]
+                                                   : reinterpret_cast<const int32_t*>(out)[i];
+        EXPECT_NEAR(got, expected[p][i], 0.5) << ports[p].output << " index " << i;
+      }
+    }
+    binding.ClearBoundInputs();
+    binding.ClearBoundOutputs();
+  }
+
+  // Every port of every run was bound by mem handle; nothing fell back to clientBuf.
+  EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 8 * runs.size());
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u);
+  EXPECT_EQ(capture.CountContaining(kLogSubstrFallbackWarning), 0u);
+  // One registration per buffer (10); reuse never re-registers. (Registration logs go to the backend manager's
+  // logger, which may not be the session logger, so this is an upper bound.)
+  EXPECT_LE(capture.CountContaining(kLogSubstrImportedRegistration), static_cast<size_t>(kNumBuffers));
+}
+
+// mul_1.onnx computes Y = X * W, where W is the initializer {1, 2, 3, 4, 5, 6}.
+float Mul1Weight(int i) { return static_cast<float>(i + 1); }
+
+struct ImportedHostMemoryRunOptions {
+  bool enable_shared_memory_allocator = false;
+  bool release_handles_before_session = true;
+  int num_runs = 2;
+  size_t tensor_offset = 0;      // byte offset of each tensor inside its imported buffer
+  int num_sessions = 1;          // sessions sharing the same imported buffers (one QNN context each)
+  bool from_ep_context = false;  // load the sessions from an EPContext model compiled with the same options
+
+  // Chainable setters (designated initializers need C++20; the test target builds as C++17).
+  ImportedHostMemoryRunOptions& SharedMemoryAllocator(bool v) {
+    enable_shared_memory_allocator = v;
+    return *this;
+  }
+  ImportedHostMemoryRunOptions& ReleaseHandlesBeforeSession(bool v) {
+    release_handles_before_session = v;
+    return *this;
+  }
+  ImportedHostMemoryRunOptions& NumRuns(int v) {
+    num_runs = v;
+    return *this;
+  }
+  ImportedHostMemoryRunOptions& TensorOffset(size_t v) {
+    tensor_offset = v;
+    return *this;
+  }
+  ImportedHostMemoryRunOptions& NumSessions(int v) {
+    num_sessions = v;
+    return *this;
+  }
+  ImportedHostMemoryRunOptions& FromEpContext(bool v) {
+    from_ep_context = v;
+    return *this;
+  }
+};
+
+// Compiles mul_1.onnx into an embedded EPContext model at `ctx_path` with `options`. Uses its own EP registration,
+// released before returning.
+void CompileMul1EpContextModel(const ProviderOptions& options, const std::filesystem::path& ctx_path) {
+  std::filesystem::remove(ctx_path);
+  Ort::SessionOptions gen_so;
+  gen_so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  gen_so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.string().c_str());
+  gen_so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+  RegisteredEpDeviceUniquePtr gen_ep_device;
+  RegisterQnnHtpSharedMemoryEp(gen_ep_device, gen_so, options);
+  {
+    Ort::Session gen_session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", gen_so};
+  }
+  ASSERT_TRUE(std::filesystem::exists(ctx_path));
+}
+
+// Runs mul_1 `num_runs` times per session on imported host buffers and checks results and zero-copy binding. X
+// changes on every run so a stale binding would be caught.
+void RunMulWithImportedHostMemory(const ImportedHostMemoryRunOptions& opts) {
+  const int num_runs = opts.num_runs;
+  ProviderOptions options = MakeHtpOptions(opts.enable_shared_memory_allocator);
+
+  // An EPContext binary is prepared with graph I/O as RAW unless the shared-memory option is on; it is executed as
+  // MEMHANDLE either way.
+  const std::filesystem::path ctx_path =
+      opts.enable_shared_memory_allocator ? "./testdata/host_import_mul_1_shared_ctx.onnx"
+                                          : "./testdata/host_import_mul_1_ctx.onnx";
+  if (opts.from_ep_context) {
+    CompileMul1EpContextModel(options, ctx_path);
+    if (::testing::Test::HasFatalFailure()) {
+      return;
+    }
+  }
+  auto remove_ctx = gsl::finally([&]() {
+    if (opts.from_ep_context) {
+      std::filesystem::remove(ctx_path);
+    }
+  });
+
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
+  ASSERT_NE(registered_ep_device, nullptr);
+
+  auto import = std::make_unique<HostImport>(registered_ep_device.get());
+  // The QNN HTP device always reports HOST_ALLOCATION import, so a failed import is a real failure, not a skip.
+  ASSERT_TRUE(import->CanImport());
+
+  const std::array<int64_t, 2> shape = {3, 2};
+  Ort::Value bound_x{nullptr};
+  Ort::Value bound_y{nullptr};
+  float* x = import->ImportFloatTensor(shape, bound_x, opts.tensor_offset);
+  ASSERT_NE(x, nullptr) << import->LastError();
+  float* y = import->ImportFloatTensor(shape, bound_y, opts.tensor_offset);
+  ASSERT_NE(y, nullptr) << import->LastError();
+
+  std::vector<std::unique_ptr<Ort::Session>> sessions;
+  std::vector<Ort::IoBinding> bindings;
+  for (int s = 0; s < opts.num_sessions; ++s) {
+    sessions.push_back(opts.from_ep_context
+                           ? std::make_unique<Ort::Session>(*ort_env, ctx_path.c_str(), so)
+                           : std::make_unique<Ort::Session>(*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so));
+    bindings.emplace_back(*sessions.back());
+    bindings.back().BindInput("X", bound_x);
+    bindings.back().BindOutput("Y", bound_y);
+  }
+
+  for (int run = 0; run < num_runs; ++run) {
+    for (int s = 0; s < opts.num_sessions; ++s) {
+      for (int i = 0; i < 6; ++i) {
+        x[i] = static_cast<float>(i + 1 + run + s);
+      }
+      sessions[s]->Run(Ort::RunOptions{}, bindings[s]);
+      for (int i = 0; i < 6; ++i) {
+        const float expected = x[i] * Mul1Weight(i);
+        EXPECT_NEAR(y[i], expected, 0.5f) << " session " << s << " run " << run << " index " << i;
+      }
+    }
+  }
+
+  auto scoped_dump = gsl::finally([&]() {
+    if (::testing::Test::HasFailure()) {
+      std::lock_guard<std::mutex> g{capture.mtx};
+      for (const auto& m : capture.messages) {
+        if (m.find("Qnn_Tensor_t") != std::string::npos || m.find("mem handle") != std::string::npos) {
+          std::cerr << "  " << m << "\n";
+        }
+      }
+    }
+  });
+
+  EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), static_cast<size_t>(2 * num_runs * opts.num_sessions));
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u);
+  EXPECT_EQ(capture.CountContaining(kLogSubstrFallbackWarning), 0u);
+  // At most one QNN registration per imported tensor; later runs reuse it. (Registration logs go to the backend
+  // manager's logger, which may not be the session logger, so this only guards against re-registration.
+  // Exactly-once registration is covered by QnnUnit_HostAllocationImportBackendTest.)
+  EXPECT_LE(capture.CountContaining(kLogSubstrImportedRegistration), static_cast<size_t>(2 * opts.num_sessions));
+
+  for (auto& binding : bindings) {
+    binding.ClearBoundInputs();
+    binding.ClearBoundOutputs();
+  }
+  bindings.clear();
+  bound_x = Ort::Value{nullptr};
+  bound_y = Ort::Value{nullptr};
+  if (opts.release_handles_before_session) {
+    import->ReleaseHandles();
+    sessions.clear();
+  } else {
+    sessions.clear();
+    import->ReleaseHandles();
+  }
+  import.reset();
+}
+
+}  // namespace
+
+TEST_F(QnnHTPBackendTests, host_allocation_import_retains_registration_across_runs) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  // The option is off, so graph I/O is built as RAW and bound as MEMHANDLE at execute time.
+  RunMulWithImportedHostMemory(ImportedHostMemoryRunOptions{}.SharedMemoryAllocator(false).NumRuns(3));
+}
+
+TEST_F(QnnHTPBackendTests, host_allocation_import_session_destroyed_before_release) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunMulWithImportedHostMemory(ImportedHostMemoryRunOptions{}.ReleaseHandlesBeforeSession(false));
+}
+
+TEST_F(QnnHTPBackendTests, host_allocation_import_coexists_with_shared_memory_allocator) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunMulWithImportedHostMemory(ImportedHostMemoryRunOptions{}.SharedMemoryAllocator(true));
+}
+
+// The tensor starts inside the imported buffer, so QNN registers it at a non-zero offset in the FastRPC mapping.
+TEST_F(QnnHTPBackendTests, host_allocation_import_tensor_at_offset) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunMulWithImportedHostMemory(ImportedHostMemoryRunOptions{}.TensorOffset(256));
+}
+
+// Two sessions (two QNN contexts) bind the same imports; each context registers its own mem handles.
+TEST_F(QnnHTPBackendTests, host_allocation_import_shared_by_two_sessions) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunMulWithImportedHostMemory(ImportedHostMemoryRunOptions{}.NumSessions(2));
+  RunMulWithImportedHostMemory(ImportedHostMemoryRunOptions{}.ReleaseHandlesBeforeSession(false).NumSessions(2));
+}
+
+// Sessions loaded from a cached EPContext model, compiled with the shared-memory option off (graph I/O prepared as
+// RAW) and on (prepared as MEMHANDLE).
+TEST_F(QnnHTPBackendTests, host_allocation_import_from_ep_context) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunMulWithImportedHostMemory(ImportedHostMemoryRunOptions{}.SharedMemoryAllocator(false).FromEpContext(true));
+  RunMulWithImportedHostMemory(ImportedHostMemoryRunOptions{}.SharedMemoryAllocator(true).FromEpContext(true));
+}
+
+// A CPU consumer reads a QNN output written into imported memory directly, and writes its own output into imported
+// memory: QNN (Y = X * W) -> CPU EP (Z = Y * W).
+void RunQnnThenCpuOnImportedHostMemory(bool enable_shared_memory_allocator) {
+  ProviderOptions options = MakeHtpOptions(enable_shared_memory_allocator);
+  LogCapture capture;
+  Ort::SessionOptions qnn_so;
+  AttachLogCapture(qnn_so, capture);
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, qnn_so, options);
+  ASSERT_NE(registered_ep_device, nullptr);
+
+  HostImport import{registered_ep_device.get()};
+  ASSERT_TRUE(import.CanImport());
+  const std::array<int64_t, 2> shape = {3, 2};
+  Ort::Value bound_x{nullptr};
+  Ort::Value bound_y{nullptr};
+  Ort::Value bound_z{nullptr};
+  float* x = import.ImportFloatTensor(shape, bound_x);
+  float* y = import.ImportFloatTensor(shape, bound_y);
+  float* z = import.ImportFloatTensor(shape, bound_z);
+  ASSERT_TRUE(x != nullptr && y != nullptr && z != nullptr) << import.LastError();
+
+  Ort::Session qnn_session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", qnn_so};
+  Ort::SessionOptions cpu_so;  // CPU EP only
+  Ort::Session cpu_session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", cpu_so};
+
+  Ort::IoBinding qnn_binding(qnn_session);
+  qnn_binding.BindInput("X", bound_x);
+  qnn_binding.BindOutput("Y", bound_y);
+  Ort::IoBinding cpu_binding(cpu_session);
+  cpu_binding.BindInput("X", bound_y);
+  cpu_binding.BindOutput("Y", bound_z);
+
+  for (int run = 0; run < 2; ++run) {
+    for (int i = 0; i < 6; ++i) {
+      x[i] = static_cast<float>(i + 1 + run);
+    }
+    qnn_session.Run(Ort::RunOptions{}, qnn_binding);
+    cpu_session.Run(Ort::RunOptions{}, cpu_binding);
+    for (int i = 0; i < 6; ++i) {
+      EXPECT_NEAR(y[i], x[i] * Mul1Weight(i), 0.5f) << " run " << run << " index " << i;
+      EXPECT_NEAR(z[i], y[i] * Mul1Weight(i), 0.5f) << " run " << run << " index " << i;
+    }
+  }
+  // The QNN session bound both tensors as MEMHANDLE (the CPU session logs to the default logger).
+  EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 4u);
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u);
+
+  qnn_binding.ClearBoundInputs();
+  qnn_binding.ClearBoundOutputs();
+  cpu_binding.ClearBoundInputs();
+  cpu_binding.ClearBoundOutputs();
+}
+
+TEST_F(QnnHTPBackendTests, host_allocation_import_consumed_by_cpu_ep) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  RunQnnThenCpuOnImportedHostMemory(/*enable_shared_memory_allocator*/ false);
+  RunQnnThenCpuOnImportedHostMemory(/*enable_shared_memory_allocator*/ true);
+}
+
+// Reuse of one registration across graph ports: in one QNN context, run 0 binds X at buffer A and Y at buffer B, and
+// run 1 swaps them, so each buffer's registration (made for one port) is executed with the other port.
+TEST_F(QnnHTPBackendTests, host_allocation_import_buffer_rebound_to_other_port) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions options = MakeHtpOptions(/*enable_shared_memory*/ false);
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
+  ASSERT_NE(registered_ep_device, nullptr);
+
+  HostImport import{registered_ep_device.get()};
+  ASSERT_TRUE(import.CanImport());
+  const std::array<int64_t, 2> shape = {3, 2};
+  Ort::Value a{nullptr};
+  Ort::Value b{nullptr};
+  float* a_data = import.ImportFloatTensor(shape, a);
+  float* b_data = import.ImportFloatTensor(shape, b);
+  ASSERT_TRUE(a_data != nullptr && b_data != nullptr) << import.LastError();
+
+  Ort::Session session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+  for (int run = 0; run < 2; ++run) {
+    float* in = run == 0 ? a_data : b_data;
+    float* out = run == 0 ? b_data : a_data;
+    for (int i = 0; i < 6; ++i) {
+      in[i] = static_cast<float>(i + 1 + run);
+    }
+    Ort::IoBinding binding(session);
+    binding.BindInput("X", run == 0 ? a : b);
+    binding.BindOutput("Y", run == 0 ? b : a);
+    session.Run(Ort::RunOptions{}, binding);
+    for (int i = 0; i < 6; ++i) {
+      EXPECT_NEAR(out[i], in[i] * Mul1Weight(i), 0.5f) << " run " << run << " index " << i;
+    }
+    binding.ClearBoundInputs();
+    binding.ClearBoundOutputs();
+  }
+  EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 4u);
+  EXPECT_EQ(capture.CountContaining(kLogSubstrClientBuf), 0u);
+}
+
+// Plain malloc buffers that are not imported keep the copy (clientBuf) path.
+TEST_F(QnnHTPBackendTests, host_allocation_not_imported_uses_clientbuf) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ProviderOptions options = MakeHtpOptions(/*enable_shared_memory*/ false);
+  LogCapture capture;
+  Ort::SessionOptions so;
+  AttachLogCapture(so, capture);
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
+  Ort::Session session{*ort_env, ORT_MODEL_FOLDER "mul_1.onnx", so};
+
+  const std::array<int64_t, 2> shape = {3, 2};
+  std::array<float, 6> input = {1, 2, 3, 4, 5, 6};
+  std::array<float, 6> output{};
+  auto cpu_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
+  Ort::Value bound_x = Ort::Value::CreateTensor(cpu_info, input.data(), input.size(), shape.data(), shape.size());
+  Ort::Value bound_y = Ort::Value::CreateTensor(cpu_info, output.data(), output.size(), shape.data(), shape.size());
+  Ort::IoBinding binding(session);
+  binding.BindInput("X", bound_x);
+  binding.BindOutput("Y", bound_y);
+  session.Run(Ort::RunOptions{}, binding);
+
+  for (size_t i = 0; i < input.size(); ++i) {
+    EXPECT_NEAR(output[i], input[i] * Mul1Weight(static_cast<int>(i)), 0.5f);
+  }
+  EXPECT_EQ(capture.CountContaining(kLogSubstrMemHandle), 0u);
+  EXPECT_GE(capture.CountContaining(kLogSubstrClientBuf), 2u);
+}
+#endif  // defined(_WIN32)
 
 #endif  // !defined(ORT_MINIMAL_BUILD) && !BUILD_QNN_EP_STATIC_LIB && ARM64
 
