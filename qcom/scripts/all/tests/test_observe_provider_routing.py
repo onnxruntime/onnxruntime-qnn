@@ -67,7 +67,9 @@ def test_active_caller_exports_fresh_report_without_rerunning_tests(
     upload = next(step for step in steps if step.get("name") == "Upload Linux snapshot routing result")
     assert evaluate(prepare["if"], inputs)
     assert evaluate(baseline["if"], inputs)
-    assert not evaluate(baseline["env"]["QNN_UT_TWO_PASS_SNAPSHOT_ACCURACY"], inputs)
+    assert "QNN_UT_TWO_PASS_SNAPSHOT_ACCURACY" not in baseline.get("env", {})
+    assert not any(step.get("id") == "linux_snapshot_routing" for step in steps)
+    assert "prepare_snapshot_goldens.sh" not in WORKFLOW.read_text()
     for override in (
         {"qnn_internal_test_symbols": False},
         {"target_arch": "aarch64_manylinux_2_34"},

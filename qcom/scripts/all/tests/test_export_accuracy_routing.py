@@ -343,15 +343,14 @@ raise SystemExit(int({drift!r}) if is_snapshot else {accuracy_exit})
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX workflow shell fixture")
 @pytest.mark.parametrize("preparation_fails", [False, True])
-@pytest.mark.parametrize("test_exit", [0, 1])
-def test_ci_directory_preparation_preserves_test_execution(tmp_path, preparation_fails, test_exit):
+def test_ci_observation_directory_preparation_and_scoped_cleanup(tmp_path, preparation_fails):
     workflow_path = RUNNER.parents[3] / ".github/workflows/qualcomm-internal-build-and-test-single-os.yml"
     workflow = yaml.safe_load(workflow_path.read_text())
     steps = workflow["jobs"]["build"]["steps"]
-    step = next(item for item in steps if item.get("id") == "linux_snapshot_routing")
+    step = next(item for item in steps if item.get("id") == "linux_observation_directory")
     upload = next(item for item in steps if item.get("name") == "Upload Linux snapshot routing result")
     cleanup = next(item for item in steps if item.get("name") == "Clean up routing output directory")
-    assert "steps.linux_snapshot_routing.outputs.routing_result_path" in upload["with"]["path"]
+    assert upload["with"]["path"] == "${{ steps.linux_provider_observation.outputs.routing_result_path }}"
     assert "outputs.routing_result_path != ''" in upload["if"]
     assert "always()" in cleanup["if"]
 
@@ -376,7 +375,7 @@ def test_ci_directory_preparation_preserves_test_execution(tmp_path, preparation
         "BUILD_DIR_ARCH": "x86_64-internal-symbols",
         "BUILD_CONFIG_DIR": "Release",
         "FAKE_EXECUTION_LOG": str(execution_log),
-        "FAKE_TEST_EXIT": str(test_exit),
+        "FAKE_TEST_EXIT": "0",
     }
     result = subprocess.run(
         ["/bin/bash", "-e", "-o", "pipefail", "-c", step["run"]],
@@ -385,19 +384,17 @@ def test_ci_directory_preparation_preserves_test_execution(tmp_path, preparation
         text=True,
         check=False,
     )
-    assert result.returncode == test_exit
-    arguments = execution_log.read_text().splitlines()
-    assert arguments[0] == "qcom/scripts/all/run_snapshot_accuracy.sh"
-    assert arguments[1] == f"--build-dir={tmp_path}/build/linux-x86_64-internal-symbols/Release"
+    assert result.returncode == 0
+    assert not execution_log.exists()  # preparation must not invoke a test runner
     if preparation_fails:
-        assert len(arguments) == 2
         assert not github_output.exists()
-        assert "Routing directory preparation failed" in result.stdout
+        assert "Could not prepare routing observation" in result.stdout
     else:
-        directory = Path(github_output.read_text().strip().split("=", 1)[1])
+        outputs = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+        directory = Path(outputs["routing_dir"])
+        assert outputs["ready"] == "true"
         assert directory.parent == tmp_path
         assert directory.name.startswith("qnn-routing-123-2-")
-        assert arguments[2] == f"--emit-routing-result={directory}/accuracy_routing.json"
         cleanup_env = env | {"QNN_ROUTING_OUTPUT_DIR": str(directory)}
         unrelated = tmp_path / "keep.txt"
         unrelated.write_text("unrelated")

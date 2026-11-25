@@ -1,14 +1,16 @@
 # Accuracy Routing Result, Version 1
 
-The Linux internal-symbol Snapshot lane exports `accuracy_routing.json` by passing
+The standalone internal-symbol Snapshot runner exports `accuracy_routing.json` by passing
 `--emit-routing-result=<path>` to `run_snapshot_accuracy.sh`. The runner exports
 its existing operator-group selection on exit. Exporting does not change its
 test filter or exit code. Output preparation and export failures log a warning
 and retain the original test execution. Reused local output files are cleared
 when preparation succeeds, and new results are replaced atomically.
 
-The active `x86_64_ubuntu_22_04` internal-symbol caller uses ordinary provider
-CTest validation, not the legacy `x86_64` two-pass shadow runner. Its publisher
+The active `x86_64_ubuntu_22_04` internal-symbol CI caller uses ordinary provider
+CTest validation. The unused Linux-only `x86_64` shadow preparation and two-pass
+execution branches have been removed from the single-os workflow; standalone
+build/test commands and the separate golden producer remain supported. Its publisher
 reads the newly generated `onnxruntime_provider_test.<config>.results.xml` through
 `observe_provider_routing.py`; it does not execute Snapshot or Accuracy tests
 again. The previous report is removed before validation so an interrupted

@@ -180,8 +180,6 @@ jobs:
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
           ${{ (inputs.upload_test_archive || (inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner)) && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
 
-      # Artifactory credentials are also used to obtain version-aligned snapshot
-      # goldens before the Linux x86_64 internal-symbol shadow test runs.
       - name: Setup JFrog CLI
         if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: jfrog/setup-jfrog-cli@v5
@@ -191,16 +189,6 @@ jobs:
         env:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
-
-      - name: Enable aligned snapshot goldens for Linux x86_64 shadow validation
-        if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && inputs.run_tests && inputs.build_test_same_runner }}
-        run: |
-          golden_dir="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/snapshot-goldens"
-          rm -rf -- "${golden_dir}"
-          bash qcom/scripts/linux/prepare_snapshot_goldens.sh \
-            --build-dir="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/${BUILD_CONFIG_DIR}" \
-            --golden-dir="${golden_dir}" \
-            --golden-profile="linux-x86_64-htp-simulator"
 
       - name: Upload Linux internal-symbol test inputs
         if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner }}
@@ -255,11 +243,6 @@ jobs:
           --target-py-version ${{inputs.target_py_vsn}}
           --config ${{ inputs.build_config }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }} --only
-        env:
-          # The two-pass runner below owns snapshot and accuracy execution for
-          # this lane; the baseline ctest run retains all other provider tests.
-          QNN_UT_TWO_PASS_SNAPSHOT_ACCURACY: ${{ inputs.target_os == 'linux' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && '1' || '' }}
-
       - name: Export active Linux provider Snapshot evidence
         id: linux_provider_observation
         if: ${{ !cancelled() && steps.linux_observation_directory.outputs.ready == 'true' && (steps.platform_validation.outcome == 'success' || steps.platform_validation.outcome == 'failure') }}
@@ -279,34 +262,19 @@ jobs:
             echo "::warning::Provider observation export failed; retaining the original validation result."
           fi
 
-      - name: Validate Linux x86_64 QNN snapshots and routed accuracy
-        id: linux_snapshot_routing
-        if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && inputs.run_tests && inputs.build_test_same_runner }}
-        run: |
-          routing_args=()
-          if routing_dir=$(mktemp -d "${RUNNER_TEMP}/qnn-routing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX"); then
-            printf 'routing_dir=%s\n' "${routing_dir}" >> "${GITHUB_OUTPUT}" || echo "::warning::Could not record routing directory for cleanup."
-            routing_args+=(--emit-routing-result="${routing_dir}/accuracy_routing.json")
-          else
-            echo "::warning::Routing directory preparation failed; continuing tests without artifact publication."
-          fi
-          bash qcom/scripts/all/run_snapshot_accuracy.sh \
-            --build-dir="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/${BUILD_CONFIG_DIR}" \
-            "${routing_args[@]}"
-
       - name: Upload Linux snapshot routing result
-        if: ${{ !cancelled() && (steps.linux_provider_observation.outputs.routing_result_path != '' || steps.linux_snapshot_routing.outputs.routing_result_path != '') }}
+        if: ${{ !cancelled() && steps.linux_provider_observation.outputs.routing_result_path != '' }}
         uses: actions/upload-artifact@v7
         with:
           name: qnn-routing-linux-x86_64-${{ inputs.build_config }}-py${{ inputs.target_py_vsn }}-${{ github.run_attempt }}
           retention-days: 7
-          path: ${{ steps.linux_provider_observation.outputs.routing_result_path || steps.linux_snapshot_routing.outputs.routing_result_path }}
+          path: ${{ steps.linux_provider_observation.outputs.routing_result_path }}
           if-no-files-found: warn
 
       - name: Clean up routing output directory
-        if: ${{ always() && (steps.linux_observation_directory.outputs.routing_dir != '' || steps.linux_snapshot_routing.outputs.routing_dir != '') }}
+        if: ${{ always() && steps.linux_observation_directory.outputs.routing_dir != '' }}
         env:
-          QNN_ROUTING_OUTPUT_DIR: ${{ steps.linux_observation_directory.outputs.routing_dir || steps.linux_snapshot_routing.outputs.routing_dir }}
+          QNN_ROUTING_OUTPUT_DIR: ${{ steps.linux_observation_directory.outputs.routing_dir }}
         run: |
           rm -rf -- "${QNN_ROUTING_OUTPUT_DIR}" || echo "::warning::Routing directory cleanup failed."
 
