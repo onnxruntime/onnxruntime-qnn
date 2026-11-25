@@ -74,11 +74,11 @@ on:
         default: false
         type: boolean
       upload_test_archive:
-        description: "If true, build a test archive and include is as an artifact."
+        description: "If true, build and publish the test archive to Artifactory; internal-symbol Actions handoff is separate."
         default: false
         type: boolean
       upload_wheel:
-        description: "If true, include the wheel as a workflow artifact."
+        description: "If true, publish the wheel to Artifactory; target_py_vsn controls wheel generation."
         default: true
         type: boolean
       build_nuget:
@@ -212,7 +212,7 @@ jobs:
           if-no-files-found: error
 
       # Use the existing archive layout and include MSVC runtime DLLs for QDC.
-      # These test-only archives stay in temporary Actions storage.
+      # Actions handles the Windows test handoff; upload_test_archive controls Artifactory publication.
       - name: Pack Windows ARM64 internal-symbol test inputs
         if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols && !inputs.build_test_same_runner }}
         run: >
@@ -481,7 +481,7 @@ jobs:
   windows-arm64-validation:
     # Preserve the existing Windows ARM64 test check name for self-hosted validation.
     name: "test-windows-arm64-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
-    if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && !inputs.build_test_same_runner && inputs.qnn_internal_test_symbols && github.event.pull_request.head.repo.fork != true }}
+    if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && !inputs.build_test_same_runner && (inputs.qnn_internal_test_symbols || inputs.upload_test_archive) && github.event.pull_request.head.repo.fork != true }}
     needs: [build, test]
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     timeout-minutes: 5
