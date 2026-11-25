@@ -222,8 +222,9 @@ jobs:
         id: linux_observation_directory
         if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.target_arch == 'x86_64_ubuntu_22_04' && inputs.qnn_internal_test_symbols && inputs.run_tests && inputs.build_test_same_runner }}
         run: |
-          # mktemp replaces XXXXXX with random characters for an isolated directory.
-          if routing_dir=$(mktemp -d "${RUNNER_TEMP}/qnn-routing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX"); then
+          routing_dir="${RUNNER_TEMP}/qnn-routing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Create a fresh directory; never reuse or delete an existing path.
+          if mkdir -- "${routing_dir}"; then
             printf 'routing_dir=%s\n' "${routing_dir}" >> "${GITHUB_OUTPUT}" || echo "::warning::Could not record observation directory."
             if rm -f -- "${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/${BUILD_CONFIG_DIR}/onnxruntime_provider_test.${BUILD_CONFIG_DIR}.results.xml"; then
               printf 'ready=true\n' >> "${GITHUB_OUTPUT}" || echo "::warning::Could not enable observation output."
@@ -243,6 +244,7 @@ jobs:
           --target-py-version ${{inputs.target_py_vsn}}
           --config ${{ inputs.build_config }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }} --only
+
       - name: Export active Linux provider Snapshot evidence
         id: linux_provider_observation
         if: ${{ !cancelled() && steps.linux_observation_directory.outputs.ready == 'true' && (steps.platform_validation.outcome == 'success' || steps.platform_validation.outcome == 'failure') }}

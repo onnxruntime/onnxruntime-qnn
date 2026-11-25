@@ -361,9 +361,9 @@ def test_ci_observation_directory_preparation_and_scoped_cleanup(tmp_path, prepa
     fake_bash.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$FAKE_EXECUTION_LOG"\nexit "$FAKE_TEST_EXIT"\n')
     fake_bash.chmod(0o755)
     if preparation_fails:
-        fake_mktemp = fake_bin / "mktemp"
-        fake_mktemp.write_text("#!/bin/sh\nexit 73\n")
-        fake_mktemp.chmod(0o755)
+        fake_mkdir = fake_bin / "mkdir"
+        fake_mkdir.write_text("#!/bin/sh\nexit 73\n")
+        fake_mkdir.chmod(0o755)
     github_output = tmp_path / "github_output"
     env = os.environ | {
         "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
@@ -394,7 +394,7 @@ def test_ci_observation_directory_preparation_and_scoped_cleanup(tmp_path, prepa
         directory = Path(outputs["routing_dir"])
         assert outputs["ready"] == "true"
         assert directory.parent == tmp_path
-        assert directory.name.startswith("qnn-routing-123-2-")
+        assert directory.name == "qnn-routing-123-2"
         cleanup_env = env | {"QNN_ROUTING_OUTPUT_DIR": str(directory)}
         unrelated = tmp_path / "keep.txt"
         unrelated.write_text("unrelated")

@@ -133,6 +133,21 @@ sys.exit({validation_exit})
     assert prepared.returncode == 0, prepared.stderr
     assert not report.exists()
     directory = dict(line.split("=", 1) for line in output.read_text().splitlines())["routing_dir"]
+    assert Path(directory).name == "qnn-routing-123-2"
+    sentinel = Path(directory) / "keep.txt"
+    sentinel.write_text("existing directory contents")
+    collision_output = tmp_path / "collision-output"
+    collision = subprocess.run(
+        ["bash", "-e", "-c", prepare["run"]],
+        check=False,
+        env=env | {"GITHUB_OUTPUT": str(collision_output)},
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    assert collision.returncode == 0
+    assert not collision_output.exists()  # no ready/path output means no export or cleanup ownership
+    assert sentinel.read_text() == "existing directory contents"
     command = re.sub(r"\$\{\{(.*?)\}\}", lambda match: str(evaluate("${{" + match[1] + "}}", inputs)), baseline["run"])
     tested = subprocess.run(
         ["bash", "-e", "-c", command], check=False, env=env, cwd=REPO, capture_output=True, text=True

@@ -27,8 +27,9 @@ CTest filter. Without explicit golden metadata, Accuracy evidence remains
 untrusted. Consumers must retain target execution for this observation mode.
 Enabling active testcase routing is separate from publishing its observations.
 
-CI creates a unique directory under `RUNNER_TEMP`, named with the run ID,
-attempt, and a random suffix. Only a successful export emits the
+CI creates a directory under `RUNNER_TEMP`, named `qnn-routing-<run-id>-<attempt>`.
+If that path already exists, preparation warns and disables observation rather
+than reusing or deleting it. Normal validation still runs. Only a successful export emits the
 `routing_result_path` step output used by the upload action. Preparation or
 export failure therefore cannot publish a previous result. An `always()` cleanup
 step removes only the current directory after upload; cleanup failure warns.
