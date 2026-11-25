@@ -183,7 +183,7 @@ void QnnContextBinaryMultiPartitionTestBody(bool single_ep_node = true) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
@@ -283,7 +283,7 @@ static void CreateTestModel(test::GetTestModelFn graph_builder,
   }
 
   // Keep IR version consistent with other QNN ABI tests.
-  test_model.builder->model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  test_model.builder->model_.set_ir_version(kTestModelIRVersion);
 }
 
 // Helper that checks that a compiled model has the expected number of EPContext nodes.
@@ -1032,7 +1032,7 @@ void EpCtxCpuNodeWithExternalIniFileTestBody(bool expect_external_ini_file, bool
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   // Keep ONNX model + external initializer file in testdata folder so it can be resolved via
   // kOrtSessionOptionsModelExternalInitializersFileFolderPath.
@@ -1148,7 +1148,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -1200,7 +1200,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected2) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -1254,7 +1254,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationNoOverWrite) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -1386,7 +1386,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGeneration2InputTypes) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -1445,7 +1445,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGeneration2InputsOrderIssue) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
@@ -1512,7 +1512,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_QnnContextGenerationNodeNamePrefix) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
@@ -1895,7 +1895,7 @@ std::string CreateQnnCtxModelWithNonEmbedMode(std::string external_bin_path) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  builder.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   builder.model_.SerializeToString(&model_data);
@@ -2122,7 +2122,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  builder.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   builder.model_.SerializeToString(&model_data);
@@ -2182,7 +2182,7 @@ static void CreateQdqModel(const std::string& model_file_name) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   // Serialize to file
 #if defined(_WIN32)
@@ -3293,7 +3293,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_CtxFileWritten) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
@@ -3331,7 +3331,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_ErrorsWhenContextCacheNotSet) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
@@ -3374,7 +3374,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
@@ -3453,7 +3453,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_DefaultThreads_CompileSucceeds)
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
@@ -3492,7 +3492,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingDisabled_NoRegression) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
@@ -3541,7 +3541,7 @@ TEST_F(QnnHTPBackendTests, GraphSplittingEnabled_WithNumPrepareThreads_Execution
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
@@ -3691,7 +3691,7 @@ TEST_F(QnnHTPBackendTests, EPContext_Fp16ClampOverflow_RoundTrip) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
@@ -3781,7 +3781,7 @@ static void CreateFloatModel(const std::string& model_file_name) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   const std::wstring model_file_name_w(model_file_name.begin(), model_file_name.end());
   std::ofstream model_ofs(model_file_name_w, std::ios::binary);
@@ -3973,7 +3973,7 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_PathA_InferenceWorks) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
@@ -4023,7 +4023,7 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_PathB_PersistsAndRuns) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
@@ -4080,7 +4080,7 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_MutuallyExclusive) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
@@ -4121,7 +4121,7 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_ContextDisabledWithFilePath_Throws) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
@@ -4159,7 +4159,7 @@ TEST_F(QnnHTPBackendTests, PrepareAndLoad_EmbedModeRespected) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());

@@ -128,7 +128,7 @@ TEST(QnnEP, TestDisableCPUFallback_TryingToRunOnQnnCPU) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -1052,7 +1052,7 @@ static int CountScatterElementsMaxDlcFiles(const std::filesystem::path& qnn_dlc_
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);

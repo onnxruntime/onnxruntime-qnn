@@ -23,7 +23,10 @@ import logging
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tarfile
+import tempfile
 import time
 import zipfile
 from dataclasses import dataclass
@@ -49,6 +52,7 @@ DOWNLOAD_BACKOFF_BASE_SECONDS = float(os.environ.get("ORT_BUILD_DOWNLOAD_BACKOFF
 
 __all__ = [
     "OrtCoreDep",
+    "_generate_onnx_node_tests",
     "download_and_verify",
     "parse_deps_txt",
     "stage_sources",
@@ -140,6 +144,96 @@ def download_and_verify(url: str, sha1: str, cache_path: Path) -> Path:
     raise RuntimeError(f"Failed to download {url} after {DOWNLOAD_ATTEMPTS} attempt(s).") from last_error
 
 
+# Embedded script that runs inside the ONNX-capable venv/interpreter to generate node test cases.
+# Kept as a string so archive_testdata.py remains stdlib-only on the outer interpreter.
+_ONNX_NODE_GEN_SCRIPT = """\
+import sys
+import shutil
+from pathlib import Path
+
+try:
+    import numpy as np
+    from onnx import TensorProto, numpy_helper
+    from onnx.backend.test.case.node import collect_testcases
+except ImportError as exc:
+    print(f"ERROR: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+output_dir = Path(sys.argv[1])
+if output_dir.exists():
+    shutil.rmtree(output_dir)
+output_dir.mkdir(parents=True)
+
+cases = collect_testcases()
+for case in cases:
+    test_dir = output_dir / case.name
+    test_dir.mkdir(exist_ok=True)
+    (test_dir / "model.onnx").write_bytes(case.model.SerializeToString())
+    graph_inputs = list(case.model.graph.input)
+    graph_outputs = list(case.model.graph.output)
+    for i, (inputs, outputs) in enumerate(case.data_sets):
+        ds_dir = test_dir / f"test_data_set_{i}"
+        ds_dir.mkdir(exist_ok=True)
+        for j, val in enumerate(inputs):
+            name = graph_inputs[j].name if j < len(graph_inputs) else f"input_{j}"
+            with open(ds_dir / f"input_{j}.pb", "wb") as f:
+                if isinstance(val, TensorProto):
+                    f.write(val.SerializeToString())
+                elif isinstance(val, list):
+                    f.write(numpy_helper.from_list(val, name).SerializeToString())
+                elif isinstance(val, dict):
+                    f.write(numpy_helper.from_dict(val, name).SerializeToString())
+                else:
+                    f.write(numpy_helper.from_array(np.asarray(val), name).SerializeToString())
+        for j, val in enumerate(outputs):
+            name = graph_outputs[j].name if j < len(graph_outputs) else f"output_{j}"
+            with open(ds_dir / f"output_{j}.pb", "wb") as f:
+                if isinstance(val, TensorProto):
+                    f.write(val.SerializeToString())
+                elif isinstance(val, list):
+                    f.write(numpy_helper.from_list(val, name).SerializeToString())
+                elif isinstance(val, dict):
+                    f.write(numpy_helper.from_dict(val, name).SerializeToString())
+                else:
+                    f.write(numpy_helper.from_array(np.asarray(val), name).SerializeToString())
+
+print(f"Generated {len(cases)} ONNX node test cases to {output_dir}", flush=True)
+"""
+
+
+def _generate_onnx_node_tests(output_dir: Path) -> bool:
+    """Generate ONNX node test data via the installed onnx Python package (subprocess).
+
+    ONNX >= 1.23.0 removed the static node/ test corpus from the source tree; this
+    function regenerates it on-the-fly using onnx.backend.test.case.node.collect_testcases().
+    The generator runs in a subprocess so archive_testdata.py stays stdlib-only.
+
+    By default the current interpreter (sys.executable) is used. Set the environment
+    variable ARCHIVE_TESTDATA_ONNX_PYTHON to an interpreter path that has onnx installed
+    when the system Python does not (e.g. a CI venv created before invoking this script).
+
+    Returns True on success, False if onnx is not importable in the current interpreter.
+    """
+    onnx_python = os.environ.get("ARCHIVE_TESTDATA_ONNX_PYTHON") or sys.executable
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write(_ONNX_NODE_GEN_SCRIPT)
+        script = f.name
+    try:
+        result = subprocess.run(
+            [onnx_python, script, str(output_dir)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logging.warning("ONNX node test generation failed:\n%s", result.stderr.strip())
+            return False
+        logging.info("%s", result.stdout.strip())
+        return True
+    finally:
+        Path(script).unlink(missing_ok=True)
+
+
 # Maps each handle name to its source path. Handle names must match MAPPING in extract_testdata.py.
 _HANDLES = {
     "testdata": "ort_core_src/onnxruntime/test/testdata",
@@ -151,7 +245,11 @@ _HANDLES = {
 
 def stage_sources(stage_root: Path, ort_core_src: Path, onnx_src: Path) -> None:
     """Copy the 4 source trees into stage_root under their handle names.
-    Existing stage_root contents are removed first."""
+    Existing stage_root contents are removed first.
+
+    For the 'node' handle, if the directory is absent from the ONNX submodule (removed
+    in ONNX >= 1.23.0), it is regenerated via the installed onnx Python package.
+    """
     if stage_root.exists():
         shutil.rmtree(stage_root)
     stage_root.mkdir(parents=True)
@@ -163,6 +261,18 @@ def stage_sources(stage_root: Path, ort_core_src: Path, onnx_src: Path) -> None:
         else:
             raise AssertionError(f"unknown handle root in {rel}")
         if not src.is_dir():
+            if handle == "node":
+                # ONNX >= 1.23.0 removed the static node/ test corpus (PR #7959).
+                # Regenerate it on-the-fly using the installed onnx Python package.
+                logging.info(
+                    "node/ absent from ONNX submodule (ONNX >= 1.23.0); "
+                    "generating test cases via onnx Python package..."
+                )
+                gen_dir = stage_root.parent / "_node_gen"
+                if _generate_onnx_node_tests(gen_dir):
+                    shutil.copytree(gen_dir, stage_root / handle)
+                    shutil.rmtree(gen_dir, ignore_errors=True)
+                    continue
             raise FileNotFoundError(f"Source for handle {handle!r} missing: {src}")
         shutil.copytree(src, stage_root / handle)
 

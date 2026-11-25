@@ -201,7 +201,7 @@ static void CreateTestModel(test::GetTestModelFn graph_builder,
   }
 
   // Keep IR version consistent with other QNN ABI tests.
-  test_model.builder->model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  test_model.builder->model_.set_ir_version(kTestModelIRVersion);
 }
 
 // EmbedFalse with no callback registered — verify legacy disk-write path is undisturbed.
@@ -981,7 +981,7 @@ static void CreateFloatModel(const std::string& model_file_name) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  helper.model_.set_ir_version(kTestModelIRVersion);
 
   const std::wstring model_file_name_w(model_file_name.begin(), model_file_name.end());
   std::ofstream model_ofs(model_file_name_w, std::ios::binary);
