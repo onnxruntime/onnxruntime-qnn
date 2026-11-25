@@ -15,6 +15,10 @@ on:
         description: "If true, include a verbose version string in wheel file names."
         type: boolean
         default: true
+      run_windows_arm64_qdc:
+        description: "If true, also validate the Windows ARM64 test archive on QDC."
+        type: boolean
+        default: false
       skip_publish_qa:
         description: "If true, don't publish QA artifacts."
         type: boolean
@@ -47,6 +51,7 @@ jobs:
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
+      run_windows_arm64_qdc: ${{ inputs.run_windows_arm64_qdc }}
       build_android_aarch64: true
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: true
