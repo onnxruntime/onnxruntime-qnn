@@ -9,7 +9,7 @@ when preparation succeeds, and new results are replaced atomically.
 
 The active `x86_64_ubuntu_22_04` internal-symbol caller uses ordinary provider
 CTest validation, not the legacy `x86_64` two-pass shadow runner. Its publisher
-reads the newly generated `onnxruntime_provider_test.results.xml` through
+reads the newly generated `onnxruntime_provider_test.<config>.results.xml` through
 `observe_provider_routing.py`; it does not execute Snapshot or Accuracy tests
 again. The previous report is removed before validation so an interrupted
 invocation cannot publish stale evidence. Missing or malformed reports and

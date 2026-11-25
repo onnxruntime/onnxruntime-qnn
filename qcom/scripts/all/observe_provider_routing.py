@@ -49,11 +49,12 @@ def read_provider_xml(path: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, required=True)
+    parser.add_argument("--config", choices=("Release", "RelWithDebInfo", "Debug"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--validation-exit", type=int, required=True)
     args = parser.parse_args()
     build_dir = args.build_dir.resolve()
-    report = build_dir / "onnxruntime_provider_test.results.xml"
+    report = build_dir / f"onnxruntime_provider_test.{args.config}.results.xml"
     snapshot_data = read_provider_xml(report)
     repo = Path(__file__).resolve().parents[3]
     env = os.environ | {"LD_LIBRARY_PATH": str(build_dir) + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")}
