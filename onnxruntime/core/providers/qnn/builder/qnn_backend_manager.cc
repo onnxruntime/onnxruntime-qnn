@@ -497,6 +497,14 @@ Ort::Status QnnBackendManager::SetGlobalConfig() {
 #ifdef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
   QnnGlobalConfig_t machine_type_config = QNN_GLOBAL_CONFIG_INIT;
   if (configure_host_mode_) {
+    // QNN forbids setting global config after backend creation. A retained HOST
+    // backend for this same loaded library already applied the only HTP global
+    // setting; each compilation still creates its own device and context.
+    if (host_backend_anchor_ && host_backend_anchor_->backend_initialized_ &&
+        host_backend_anchor_->configure_host_mode_ &&
+        host_backend_anchor_->backend_lib_handle_ == backend_lib_handle_) {
+      return Ort::Status();
+    }
     machine_type_config.option = QNN_GLOBAL_CONFIG_OPTION_MACHINE_TYPE;
     machine_type_config.machineType = QNN_GLOBAL_CONFIG_OPTION_MACHINE_TYPE_HOST;
     configs.push_back(&machine_type_config);

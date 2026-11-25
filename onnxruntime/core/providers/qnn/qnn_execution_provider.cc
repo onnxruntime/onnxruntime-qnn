@@ -290,20 +290,8 @@ static void ParseVtcmSize(const std::string& vtcm_size_in_mb_string,
 static void ParseHtpArchitecture(const std::string& htp_arch_string,
                                  QnnHtpDevice_Arch_t& qnn_htp_arch,
                                  const Ort::Logger& logger) {
-  if (htp_arch_string.empty() || htp_arch_string == "0") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
-  } else if (htp_arch_string == "68") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V68;
-  } else if (htp_arch_string == "69") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V69;
-  } else if (htp_arch_string == "73") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V73;
-  } else if (htp_arch_string == "75") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V75;
-  } else if (htp_arch_string == "79") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V79;
-  } else if (htp_arch_string == "81") {
-    qnn_htp_arch = QNN_HTP_DEVICE_ARCH_V81;
+  if (const auto architecture = qnn::soc::ParseHtpArchitecture(htp_arch_string)) {
+    qnn_htp_arch = static_cast<QnnHtpDevice_Arch_t>(*architecture);
   } else {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("Invalid HTP architecture: " + htp_arch_string).c_str());
   }
@@ -1596,6 +1584,15 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                      htp_context_init_acceleration},
         static_cast<const ApiPtrs&>(*this), logger_);
   }
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  retain_compiler_backend_ = prepare_only_ && enable_htp_cross_device_prepare &&
+                             !enable_multi_soc_ep_context_ && !share_ep_contexts_ &&
+                             !htp_share_resource_optimization_;
+  if (enable_htp_cross_device_prepare && !reusing_shared_backend_manager) {
+    qnn_backend_manager_->SetHostBackendAnchor(factory_.GetCompilerBackend());
+  }
+#endif
 
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
@@ -3327,6 +3324,16 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     }
 #endif
     ep->qnn_models_.clear();
+    if (ep->retain_compiler_backend_ &&
+        ep->qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::HTP &&
+        ep->qnn_backend_manager_->GetQnnSerializerConfig() == nullptr) {
+      // Drop model resources, but preserve HTP's warmed-up Prepare state across
+      // sessions so subsequent compilations do not reload a DLL after lockdown.
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->ReleaseContext());
+      ep->factory_.RetainCompilerBackend(ep->qnn_backend_manager_);
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                  "prepare_only mode: compiler backend retained until EP unregistration.");
+    }
     ep->qnn_backend_manager_.reset();
   }
 

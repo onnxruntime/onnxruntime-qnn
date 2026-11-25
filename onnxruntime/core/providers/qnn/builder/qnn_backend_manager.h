@@ -409,6 +409,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Note that whether in host mode is meaningless if not on device.
   bool IsBackendHostMode() const { return configure_host_mode_; }
 
+  void SetHostBackendAnchor(const std::shared_ptr<QnnBackendManager>& manager) {
+    host_backend_anchor_ = manager;
+  }
+
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   Qnn_ErrorHandle_t MapDmaData(Qnn_ContextBinaryDataRequest_t request,
                                Qnn_ContextBinaryDmaDataResponse_t* response,
@@ -811,6 +815,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // op validation falls back to the serializer's generic checks (see SetupBackend).
   bool skip_backend_op_validation_ = false;
   bool configure_host_mode_ = false;
+  // Keeps the initialized HOST backend alive while later managers use its global config.
+  std::shared_ptr<QnnBackendManager> host_backend_anchor_;
 
   power::HtpPowerConfigManager htp_power_config_manager_;
 
