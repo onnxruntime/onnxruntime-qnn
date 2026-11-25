@@ -1015,6 +1015,13 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                                   logger_);
   model_settings_.enable_htp_monolithic_lstm = htp_graph_configs_.enable_htp_monolithic_lstm;
 
+  static constexpr const char* kEnableHtpPersistentBuffer = "enable_htp_persistent_buffer";
+  model_settings_.enable_htp_persistent_buffer = ParseBoolOption(ort_api,
+                                                                 session_options_,
+                                                                 FormatEPConfigKey(kEnableHtpPersistentBuffer),
+                                                                 false,
+                                                                 logger_);
+
   // HTP fp16 clamp overflow. Default false. On HTP Arch v79+ (e.g. Glymur/v81),
   // fp16 Conv accumulator overflow becomes NaN and propagates to the output
   // (pre-v79 kept it finite). When true, saturate such overflow to the fp16 max
