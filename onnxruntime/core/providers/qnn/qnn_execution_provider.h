@@ -28,6 +28,7 @@
 #include "core/providers/qnn/cache_compatibility/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
+#include "core/providers/qnn/shared_context.h"
 #include "core/providers/qnn/qnn_node_compute_info_base.h"
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
@@ -120,6 +121,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                        std::vector<qnn::UnsupportedNodeInfo>& unsupported_nodes) const;
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
+
+  void AcquireSharedContext(const OrtGraph* graph);
 
   OrtStatus* CompileOnnxModel(const OrtGraph** graphs,
                               const OrtNode** fused_nodes,
@@ -246,9 +249,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // QNN-related.
   std::shared_ptr<qnn::QnnBackendManager> qnn_backend_manager_;
-  // Identifies models parked by this EP independently of a backend manager that may be shared
-  // by multiple sessions. SharedContext uses it only as an opaque, stable identity.
-  const std::shared_ptr<const void> shared_qnn_model_owner_ = std::make_shared<char>();
+  std::unique_lock<std::mutex> shared_context_lock_;
+  std::string shared_context_key_;
   std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models_;
 
   // Configurations for HTP backend.

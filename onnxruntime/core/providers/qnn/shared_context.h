@@ -15,7 +15,28 @@ namespace onnxruntime {
 
 class SharedContext {
  public:
-  using QnnModelOwnerToken = std::shared_ptr<const void>;
+  SharedContext() = default;
+  ~SharedContext() = default;
+
+  // Keep manager selection and model consumption together during initialization.
+  std::unique_lock<std::mutex> GetInitializationLock() {
+    return std::unique_lock<std::mutex>(initialization_mutex_);
+  }
+
+  std::shared_ptr<qnn::QnnBackendManager> FindSharedQnnBackendManager(
+      const std::string& context_key, const std::vector<std::string>& names,
+      const std::shared_ptr<qnn::QnnBackendManager>& candidate) {
+    const std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& entry : shared_qnn_models_) {
+      if (entry.context_key == context_key && entry.producer->IsContextSharingCompatible(*candidate) &&
+          std::all_of(names.begin(), names.end(), [&](const std::string& name) {
+            return FindSharedQnnModel(name, entry.producer, context_key) != shared_qnn_models_.end();
+          })) {
+        return entry.producer;
+      }
+    }
+    return nullptr;
+  }
 
   static SharedContext& GetInstance() {
     static SharedContext instance_;
@@ -29,17 +50,19 @@ class SharedContext {
   }
 
   bool HasSharedQnnModel(const std::string& model_name,
-                         const std::shared_ptr<qnn::QnnBackendManager>& producer) {
+                         const std::shared_ptr<qnn::QnnBackendManager>& producer,
+                         const std::string& context_key) {
     const std::lock_guard<std::mutex> lock(mtx_);
-    auto it = FindSharedQnnModel(model_name, producer);
+    auto it = FindSharedQnnModel(model_name, producer, context_key);
     return it != shared_qnn_models_.end();
   }
 
   std::unique_ptr<qnn::QnnModel> GetSharedQnnModel(
       const std::string& model_name,
-      const std::shared_ptr<qnn::QnnBackendManager>& producer) {
+      const std::shared_ptr<qnn::QnnBackendManager>& producer,
+      const std::string& context_key) {
     const std::lock_guard<std::mutex> lock(mtx_);
-    auto it = FindSharedQnnModel(model_name, producer);
+    auto it = FindSharedQnnModel(model_name, producer, context_key);
     if (it == shared_qnn_models_.end()) {
       return nullptr;
     }
@@ -48,17 +71,26 @@ class SharedContext {
     return qnn_model;
   }
 
+  // The caller holds the initialization lock until it consumes the model.
+  qnn::QnnModel* PeekSharedQnnModel(const std::string& model_name,
+                                    const std::shared_ptr<qnn::QnnBackendManager>& producer,
+                                    const std::string& context_key) {
+    const std::lock_guard<std::mutex> lock(mtx_);
+    const auto it = FindSharedQnnModel(model_name, producer, context_key);
+    return it != shared_qnn_models_.end() ? it->qnn_model.get() : nullptr;
+  }
+
   bool SetSharedQnnModel(std::vector<std::unique_ptr<qnn::QnnModel>>&& shared_qnn_models,
                          const std::shared_ptr<qnn::QnnBackendManager>& producer,
-                         const QnnModelOwnerToken& owner_token,
+                         const std::string& context_key,
                          std::string& duplicate_graph_names) {
     const std::lock_guard<std::mutex> lock(mtx_);
     bool graph_exist = false;
     for (auto& shared_qnn_model : shared_qnn_models) {
       auto& model_name = shared_qnn_model->Name();
-      auto it = FindSharedQnnModel(model_name, producer);
+      auto it = FindSharedQnnModel(model_name, producer, context_key);
       if (it == shared_qnn_models_.end()) {
-        shared_qnn_models_.push_back(SharedQnnModel{std::move(shared_qnn_model), producer, owner_token});
+        shared_qnn_models_.push_back(SharedQnnModel{std::move(shared_qnn_model), producer, context_key});
       } else {
         duplicate_graph_names.append(model_name + " ");
         graph_exist = true;
@@ -68,12 +100,20 @@ class SharedContext {
     return graph_exist;
   }
 
-  void RemoveSharedQnnModels(const QnnModelOwnerToken& owner_token) {
-    const std::lock_guard<std::mutex> lock(mtx_);
-    shared_qnn_models_.erase(
-        std::remove_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
-                       [&owner_token](const SharedQnnModel& entry) { return entry.owner_token == owner_token; }),
-        shared_qnn_models_.end());
+  void RemoveSharedQnnModels(const std::shared_ptr<qnn::QnnBackendManager>& producer,
+                             const std::string& context_key) {
+    std::vector<std::unique_ptr<qnn::QnnModel>> removed;
+    {
+      const std::lock_guard<std::mutex> lock(mtx_);
+      for (auto it = shared_qnn_models_.begin(); it != shared_qnn_models_.end();) {
+        if (it->producer == producer && it->context_key == context_key) {
+          removed.push_back(std::move(it->qnn_model));
+          it = shared_qnn_models_.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
   }
 
   bool SetSharedQnnBackendManager(std::shared_ptr<qnn::QnnBackendManager>& qnn_backend_manager) {
@@ -118,21 +158,20 @@ class SharedContext {
   struct SharedQnnModel {
     std::unique_ptr<qnn::QnnModel> qnn_model;
     std::shared_ptr<qnn::QnnBackendManager> producer;
-    QnnModelOwnerToken owner_token;
+    std::string context_key;
   };
 
   // The caller must hold mtx_ while finding or using the returned iterator.
   std::vector<SharedQnnModel>::iterator FindSharedQnnModel(
       const std::string& model_name,
-      const std::shared_ptr<qnn::QnnBackendManager>& producer) {
+      const std::shared_ptr<qnn::QnnBackendManager>& producer,
+      const std::string& context_key) {
     return std::find_if(shared_qnn_models_.begin(), shared_qnn_models_.end(),
-                        [&model_name, &producer](const SharedQnnModel& entry) {
-                          return entry.producer == producer && entry.qnn_model->Name() == model_name;
+                        [&model_name, &producer, &context_key](const SharedQnnModel& entry) {
+                          return entry.producer == producer && entry.qnn_model->Name() == model_name &&
+                                 entry.context_key == context_key;
                         });
   }
-
-  SharedContext() = default;
-  ~SharedContext() = default;
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(SharedContext);
 
@@ -146,6 +185,7 @@ class SharedContext {
   // Producer sessions can be in parallel
   // Consumer sessions have to be after producer sessions initialized
   std::mutex mtx_;
+  std::mutex initialization_mutex_;
 };
 
 }  // namespace onnxruntime

@@ -13,12 +13,14 @@
 #endif
 
 #include <cstdint>
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -197,6 +199,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         configure_host_mode_(config.configure_host_mode),
         htp_power_config_manager_(power::HtpPowerConfigManager()),
         api_ptrs_(api_ptrs),
+        context_sharing_config_(config),
         logger_ptr_(&logger) {}
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnBackendManager);
@@ -447,7 +450,39 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #endif
 
   void ResetLogger(const Ort::Logger& logger) {
-    logger_ptr_ = &logger;
+    if (!shared_logger_) {
+      logger_ptr_ = &logger;
+    }
+  }
+
+  void UseLoggerForSharedContexts() {
+    if (!shared_logger_) {
+      shared_logger_.emplace(OrtLoggingManager::HasDefaultLogger()
+                                 ? Ort::Logger(OrtLoggingManager::GetDefaultLoggerPtr())
+                                 : OrtLoggingManager::GetDefaultLogger());
+      logger_ptr_ = &*shared_logger_;
+    }
+  }
+
+  bool IsContextSharingCompatible(const QnnBackendManager& other) const {
+    const auto settings = [](const QnnBackendManagerConfig& c) {
+      return std::tie(c.backend_path, c.profiling_level, c.profiling_level_etw, c.profiling_file_path,
+                      c.context_priority, c.qnn_serializer_config, c.device_id, c.htp_num_cores,
+                      c.htp_arch, c.soc_model, c.skip_qnn_version_check, c.enable_framework_op_trace,
+                      c.skip_backend_op_validation, c.reused_io_limit_mb, c.configure_host_mode);
+    };
+    const auto& packages = context_sharing_config_.op_packages;
+    const auto& other_packages = other.context_sharing_config_.op_packages;
+    return settings(context_sharing_config_) == settings(other.context_sharing_config_) &&
+           std::equal(packages.begin(), packages.end(), other_packages.begin(), other_packages.end(),
+                      [](const OpPackage& a, const OpPackage& b) {
+                        return std::tie(a.op_type, a.path, a.interface, a.target) ==
+                               std::tie(b.op_type, b.path, b.interface, b.target);
+                      }) &&
+           qnn_allocator_type_ == other.qnn_allocator_type_ &&
+           &api_ptrs_.ort_api == &other.api_ptrs_.ort_api &&
+           &api_ptrs_.ep_api == &other.api_ptrs_.ep_api &&
+           &api_ptrs_.model_editor_api == &other.api_ptrs_.model_editor_api;
   }
 
   // Release the current QNN context handles (frees HW resources).
@@ -728,6 +763,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
            (act_ver.major == min_ver.major && act_ver.minor == min_ver.minor && act_ver.patch >= min_ver.patch);
   }
 
+  // Keep the logger wrapper alive until all QNN resources have been released.
+  std::optional<Ort::Logger> shared_logger_;
   const std::string backend_path_;
   std::recursive_mutex logger_recursive_mutex_;
   QNN_INTERFACE_VER_TYPE qnn_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
@@ -842,6 +879,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::shared_ptr<QnnBackendSystemDlcPlugin> system_dlc_plugin_ = nullptr;
 
   const ApiPtrs api_ptrs_;
+  const QnnBackendManagerConfig context_sharing_config_;
   const Ort::Logger* logger_ptr_;
 };
 

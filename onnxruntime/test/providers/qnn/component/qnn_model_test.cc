@@ -898,39 +898,58 @@ TEST(QnnUnit_ModelTest, KeepsBackendManagerAlive) {
   EXPECT_TRUE(weak_manager.expired());
 }
 
-TEST(QnnUnit_ModelTest, SharedContextRemovalIsScopedToProducingSession) {
+TEST(QnnUnit_ModelTest, SharedContextSurvivesProducerAndStopsAfterConsumption) {
   QnnModelMinimalTestContext ctx;
-  ASSERT_TRUE(ctx.IsValid());
-
+  SharedContext shared;
+  const std::vector<std::string> names{"session_b_graph"};
+  SetQnnModelNameForTest(*ctx.model, names[0]);
+  std::vector<std::unique_ptr<qnn::QnnModel>> models;
+  models.push_back(std::move(ctx.model));
+  std::string duplicates;
+  ASSERT_FALSE(shared.SetSharedQnnModel(std::move(models), ctx.manager, "binary", duplicates));
   ApiPtrs api_ptrs{ctx.stub_ort_api, ctx.stub_ep_api, ctx.stub_editor_api};
-  auto model_a = std::make_unique<qnn::QnnModel>(ctx.manager, api_ptrs);
-  auto model_b = std::make_unique<qnn::QnnModel>(ctx.manager, api_ptrs);
-  SetQnnModelNameForTest(*model_a, "session_a_graph");
-  SetQnnModelNameForTest(*model_b, "session_b_graph");
+  auto same_named_model = std::make_unique<qnn::QnnModel>(ctx.manager, api_ptrs);
+  SetQnnModelNameForTest(*same_named_model, names[0]);
+  std::vector<std::unique_ptr<qnn::QnnModel>> other_models;
+  other_models.push_back(std::move(same_named_model));
+  ASSERT_FALSE(shared.SetSharedQnnModel(std::move(other_models), ctx.manager, "other-binary", duplicates));
+  std::weak_ptr<qnn::QnnBackendManager> weak = ctx.manager;
+  ctx.manager.reset();
+  EXPECT_FALSE(weak.expired());
 
-  SharedContext::QnnModelOwnerToken owner_a = std::make_shared<char>();
-  SharedContext::QnnModelOwnerToken owner_b = std::make_shared<char>();
-  std::string duplicate_graph_names;
-  std::vector<std::unique_ptr<qnn::QnnModel>> session_a_models;
-  session_a_models.push_back(std::move(model_a));
-  EXPECT_FALSE(SharedContext::GetInstance().SetSharedQnnModel(
-      std::move(session_a_models), ctx.manager, owner_a, duplicate_graph_names));
-  std::vector<std::unique_ptr<qnn::QnnModel>> session_b_models;
-  session_b_models.push_back(std::move(model_b));
-  EXPECT_FALSE(SharedContext::GetInstance().SetSharedQnnModel(
-      std::move(session_b_models), ctx.manager, owner_b, duplicate_graph_names));
+  auto consumer = shared.FindSharedQnnBackendManager("binary", names, weak.lock());
+  ASSERT_EQ(consumer, weak.lock());
+  EXPECT_EQ(shared.FindSharedQnnBackendManager("different-binary", names, consumer), nullptr);
+  auto active_model = shared.GetSharedQnnModel(names[0], consumer, "binary");
+  ASSERT_NE(active_model, nullptr);
+  shared.RemoveSharedQnnModels(consumer, "binary");
+  EXPECT_TRUE(shared.HasSharedQnnModel(names[0], consumer, "other-binary"));
+  shared.RemoveSharedQnnModels(consumer, "other-binary");
+  consumer.reset();
+  EXPECT_FALSE(weak.expired());
+  active_model.reset();
+  EXPECT_TRUE(weak.expired());
+}
 
-  // Sessions A and B share one manager. Destroying A must leave B's parked model
-  // available for a later consumer session C.
-  SharedContext::GetInstance().RemoveSharedQnnModels(owner_a);
-  EXPECT_FALSE(SharedContext::GetInstance().HasSharedQnnModel("session_a_graph", ctx.manager));
-  EXPECT_TRUE(SharedContext::GetInstance().HasSharedQnnModel("session_b_graph", ctx.manager));
-  auto session_c_model =
-      SharedContext::GetInstance().GetSharedQnnModel("session_b_graph", ctx.manager);
-  ASSERT_NE(session_c_model, nullptr);
-  EXPECT_EQ(session_c_model->Name(), "session_b_graph");
-
-  SharedContext::GetInstance().RemoveSharedQnnModels(owner_b);
+TEST(QnnUnit_ModelTest, SharedContextSerializesInitializers) {
+  QnnModelMinimalTestContext ctx;
+  SharedContext shared;
+  auto first = shared.GetInitializationLock();
+  std::promise<void> entered;
+  auto second = std::async(std::launch::async, [&] {
+    entered.set_value();
+    auto lock = shared.GetInitializationLock();
+    return shared.HasSharedQnnModel("graph", ctx.manager, "binary");
+  });
+  entered.get_future().wait();
+  EXPECT_EQ(second.wait_for(std::chrono::milliseconds(20)), std::future_status::timeout);
+  SetQnnModelNameForTest(*ctx.model, "graph");
+  std::vector<std::unique_ptr<qnn::QnnModel>> models;
+  models.push_back(std::move(ctx.model));
+  std::string duplicates;
+  ASSERT_FALSE(shared.SetSharedQnnModel(std::move(models), ctx.manager, "binary", duplicates));
+  first.unlock();
+  EXPECT_TRUE(second.get());
 }
 
 // ---------------------------------------------------------------------------

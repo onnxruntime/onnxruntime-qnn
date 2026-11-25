@@ -2290,9 +2290,9 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
     Ort::Session session1(*ort_env, ctx_model_file1.c_str(), so1);
   }
 
-  // Destroying the producer session purges its parked models from SharedContext.
-  // The next session must load its own context instead of adopting a stale or
-  // same-named model from the destroyed producer.
+  // Pending graphs and their backend must survive the first loading session.
+  // The second session consumes its graph before stop_share_ep_contexts clears
+  // pending models. Component tests additionally assert a single native context load.
   Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
 
   std::vector<std::string> input_names;
