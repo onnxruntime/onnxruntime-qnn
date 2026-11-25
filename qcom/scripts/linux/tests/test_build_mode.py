@@ -44,6 +44,9 @@ def build_repo(tmp_path: Path) -> Path:
     all_scripts.mkdir()
     (all_scripts / "python_test_files.txt").touch()
     (all_scripts / "fetch_cmake_deps.py").touch()
+    (all_scripts / "prepare_custom_op.py").write_text(
+        "import sys\nfrom pathlib import Path\nPath('custom-op-prepare.txt').write_text(' '.join(sys.argv[1:]))\n"
+    )
     (all_scripts / "archive_tests.py").write_text(
         """import argparse
 import json

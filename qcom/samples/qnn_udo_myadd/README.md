@@ -128,15 +128,59 @@ standalone build script produces `artifacts/libQnnMyAddOpPackage.so`, which
 can be selected with the package-directory override.
 
 The unit tests generate and reload contexts within each run, including mixed
-QNN/CPU graphs. Cross-platform Hybrid AOT context generation, artifact transfer,
-and Windows ARM64 execution are deferred to a follow-up that adds the producer
-and CI consumer together. Windows builds and device execution remain unvalidated.
+QNN/CPU graphs. Archive production also generates reusable v73, v75, v79, and v81 contexts
+on Linux x86_64 and validates their consumption in separate processes. These
+contexts ship with both Linux and Android test archives. Only Windows ARM64
+AOT consumption and signing remain deferred.
+
+### Packaged JIT and AOT tests
+
+```bash
+python qcom/build_and_test.py --config Release --target-py-version None archive_ort_linux_x86_64
+```
+
+Archive mode runs `qcom/scripts/all/prepare_custom_op.py` with the build's
+provider tests and QAIRT SDK. `custom_op/contexts/73` uses `soc_model=60`,
+`htp_arch=73`, `vtcm_mb=8`; `custom_op/contexts/81` uses `soc_model=87`,
+`htp_arch=81`, `vtcm_mb=8`. Android QDC targets additionally use v75
+(`soc_model=57`) and v79 (`soc_model=69`), with `vtcm_mb=8`. The target definitions live in
+`qcom/scripts/all/custom_op_targets.json`. Each directory contains the source
+QDQ model, EPContext model, external context binary, and target metadata.
+
+From the unpacked archive, run:
+
+```bash
+sh build/linux-x86_64/Release/custom_op/run_custom_op_tests.sh
+```
+
+The script checks JIT, loads the packaged contexts without the custom-domain
+environment variable, and generates and reloads independent native contexts.
+Failed or skipped tests fail the script. No Python, op-package generator, LLVM,
+or Hexagon SDK is needed on the test host. The Linux runner calls it automatically.
+
+For Android archive production, first build a native Linux producer with the
+same SDK, then enable the Android packages:
+
+```bash
+python qcom/build_and_test.py --config Release --target-py-version None build_ort_linux_x86_64
+ORT_QNN_BUILD_UDO_OP_PACKAGES=ON python qcom/build_and_test.py --config Release archive_ort_android_aarch64
+```
+
+`ORT_QNN_UDO_HOST_BUILD` selects another native producer directory, for example
+an Ubuntu-labelled build. The producer SDK must match the destination SDK.
+Android CI runs the same build sequence and invokes the packaged script through
+a filtered Appium case, independently of the full provider-test suite exclusion.
+Deploy the archive and run `sh custom_op/run_custom_op_tests.sh` beside the
+Android provider test executable. It loads the Linux-generated context for the
+device DSP architecture, then tests native AOT generation and consumption.
+Pure EPContext consumption registers only the DSP package; JIT and native
+context generation register the host and DSP halves.
 
 ---
 
 ## Android aarch64 JIT unit tests
 
-Android package builds are opt-in until device CI runs these tests:
+Android developer builds remain opt-in; Android CI enables the packages:
 
 ```bash
 ORT_QNN_BUILD_UDO_OP_PACKAGES=ON python qcom/build_and_test.py --config Release build_ort_android_aarch64
@@ -144,13 +188,16 @@ ORT_QNN_BUILD_UDO_OP_PACKAGES=ON python qcom/build_and_test.py --config Release 
 CMake produces both halves of the HTP package beside the test executable:
 
 - `custom_op/op_packages/htp/libQnnMyAddOpPackage.so`: ARM64 preparation library (`:CPU`).
-- `custom_op/op_packages/htp/hexagon-v81/libQnnMyAddOpPackage.so`: Hexagon execution library (`:HTP`).
+- `custom_op/op_packages/htp/hexagon-v<arch>/libQnnMyAddOpPackage.so`: Hexagon execution libraries (`:HTP`) for v73, v75, v79, and v81.
 
-The CMake cache setting `onnxruntime_QNN_UDO_HTP_ARCH` defaults to `81`.
-Select an architecture matching the device before building for another target.
-The tests check the built DSP architecture against the device and register both
-libraries automatically. `ORT_QNN_UDO_OP_PACKAGE_DIR` overrides the root containing
-the host library and its `hexagon-v<arch>/` DSP subdirectory. Both libraries belong to the `MyAdd` HTP package.
+The target definitions in `qcom/scripts/all/custom_op_targets.json` select the
+DSP architectures to build and contexts to generate. The tests query the
+actual device architecture and select its matching package subdirectory.
+The archive script records the device target in `custom_op_device_target.txt`
+and selects the corresponding packaged context. Missing device artifacts fail
+with the searched paths. `ORT_QNN_UDO_OP_PACKAGE_DIR` overrides the root containing
+the host library and its `hexagon-v<arch>/` DSP subdirectories. Both halves
+belong to the `MyAdd` HTP package.
 
 Deploy the test executable, ORT/QNN EP libraries, and the entire `custom_op`
 directory. Also deploy the matching QAIRT Android `libQnnHtp.so`,
@@ -159,10 +206,10 @@ with its catalog. Add the Android libraries to `LD_LIBRARY_PATH` and the DSP
 library directories to `ADSP_LIBRARY_PATH`.
 
 Run `./onnxruntime_provider_test --gtest_filter='*UDO_Op_MyAdd*'`.
-The seven JIT tests cover graph
+The filtered Custom Op tests cover graph
 preparation, inference, domain registration, negative cases, and context round trips.
 Android aarch64 JIT and V81 context round trips were manually validated with QAIRT 2.52;
-these tests are not yet run by Android CI.
+the packaged JIT and AOT script is included in the Android CI test plan.
 
 ---
 

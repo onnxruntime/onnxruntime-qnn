@@ -135,6 +135,9 @@ if [ "$(uname -m)" == "aarch64" ]; then
 fi
 
 log_info "-=-=-=- Running ctests -=-=-=-"
+if [ -f "${build_dir}/custom_op/run_custom_op_tests.sh" ]; then
+    count_errors sh "${build_dir}/custom_op/run_custom_op_tests.sh"
+fi
 exclude_args=()
 if [ -n "${QNN_UT_TWO_PASS_SNAPSHOT_ACCURACY:-}" ]; then
     # Snapshot drift is a routing signal, not a failure: the CI workflow runs

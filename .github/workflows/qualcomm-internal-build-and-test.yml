@@ -300,7 +300,10 @@ jobs:
 
       - name: Build Android
         if: ${{ needs['path-filter'].outputs.code == 'true' }}
+        env:
+          ORT_QNN_BUILD_UDO_OP_PACKAGES: "ON"
         run: |
+          python3 qcom/build_and_test.py --target-py-version None build_ort_linux_x86_64
           python3 qcom/build_and_test.py archive_ort_android_aarch64
 
       - name: Upload Test Archive to Artifactory
