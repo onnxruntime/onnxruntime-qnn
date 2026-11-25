@@ -874,9 +874,10 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       // No context binary filepath — either JIT mode or embed_mode=1.
       // SSR recovery requires a context binary on disk to reload from, so skip recovery.
       return LogUnrecoverableSsrError(
-          logger, "NPU crashed. SSR detected. Recovery not supported"
-                  " (no context binary on disk — JIT or embed_mode=1). " +
-                      utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status));
+          logger,
+          "NPU crashed. SSR detected. Recovery not supported"
+          " (no context binary on disk — JIT or embed_mode=1). " +
+              utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status));
     }
   }
 
