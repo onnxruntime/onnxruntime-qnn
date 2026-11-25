@@ -279,13 +279,16 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Below functions are especially for multi-SoC EP context scenarios.
   Ort::Status SetupBackendExceptDeviceAndContext();
 
-  Ort::Status SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arch,
-                                    uint32_t soc_model,
-                                    bool enable_htp_extended_udma_mode = false,
-                                    bool enable_htp_prepare_only = false,
-                                    bool enable_htp_ref_weight_sharing = false,
-                                    bool enable_htp_graph_splitting = false,
-                                    uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
+  Ort::Status SetupDevicesAndContexts(const std::vector<QnnHtpDevice_Arch_t>& htp_archs,
+                                      const std::vector<uint32_t>& soc_models,
+                                      bool enable_htp_weight_sharing = false,
+                                      bool enable_htp_extended_udma_mode = false,
+                                      bool enable_htp_prepare_only = false,
+                                      bool enable_htp_ref_weight_sharing = false,
+                                      bool enable_htp_graph_splitting = false,
+                                      uint32_t htp_graph_splitting_num_prepare_threads = UINT32_MAX);
+
+  Ort::Status SetActiveSoc(int32_t soc_idx);
 
   void ReleaseDeviceAndContext();
 
@@ -319,6 +322,17 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   const QNN_SYSTEM_INTERFACE_VER_TYPE& GetQnnSystemInterface() const { return qnn_sys_interface_; }
 
   const Qnn_ContextHandle_t& GetQnnContext(int index = 0) {
+    if (!soc_records_.empty()) {
+      if (active_soc_idx_ == -1) {
+        ORT_CXX_API_THROW("Unexpected usage of getting QNN context without active SoC set.", ORT_EP_FAIL);
+      }
+      if (index != 0) {
+        ORT_CXX_API_THROW("Unexpected usage of getting QNN context with non zero index while active SoC is set.",
+                          ORT_EP_FAIL);
+      }
+      return soc_records_[active_soc_idx_].context_handle;
+    }
+
     if (!((contexts_.size() > 0) && (static_cast<size_t>(index) < contexts_.size()))) {
       ORT_CXX_API_THROW("No valid QNN context!", ORT_EP_FAIL);
     }
@@ -352,9 +366,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const std::string& GetSdkVersion() { return sdk_build_version_; }
 
-  QnnHtpDevice_Arch_t GetHtpArch() const { return htp_arch_internal_; }
+  QnnHtpDevice_Arch_t GetHtpArch() const {
+    return active_soc_idx_ == -1 ? htp_arch_internal_ : soc_records_[active_soc_idx_].htp_arch;
+  }
 
-  uint32_t GetSocModel() const { return soc_model_; }
+  uint32_t GetSocModel() const {
+    return active_soc_idx_ == -1 ? soc_model_ : soc_records_[active_soc_idx_].soc_model;
+  }
 
   uint32_t GetVtcmSize() const { return vtcm_size_internal_; }
 
@@ -470,9 +488,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // with no real hardware to enumerate, so it always passes false.
   Ort::Status CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
                                  Qnn_LogHandle_t log_handle,
-                                 Qnn_DeviceHandle_t& device_handle,
-                                 bool& device_created_flag,
-                                 bool allow_hw_device_enumeration);
+                                 uint32_t soc_model,
+                                 QnnHtpDevice_Arch_t htp_arch,
+                                 bool allow_hw_device_enumeration,
+                                 /*out*/ Qnn_DeviceHandle_t& device_handle);
 
   Ort::Status CreateSystemDlcPlugin();
 
@@ -483,9 +502,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status CreateValidatorDevice();
 
   // Shared implementation for ReleaseDevice / ReleaseValidatorDevice.
-  Ort::Status ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
-                                  Qnn_DeviceHandle_t& device_handle,
-                                  bool& device_created_flag);
+  Ort::Status ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface, Qnn_DeviceHandle_t& device_handle);
 
   Ort::Status ReleaseDevice();
 
@@ -500,6 +517,15 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status ShutdownBackend();
 
   Ort::Status ShutdownValidatorBackend();
+
+  Ort::Status CreateContextForDevice(Qnn_DeviceHandle_t device,
+                                     bool enable_htp_weight_sharing,
+                                     bool enable_htp_extended_udma_mode,
+                                     bool enable_htp_prepare_only,
+                                     bool enable_htp_ref_weight_sharing,
+                                     bool enable_htp_graph_splitting,
+                                     uint32_t htp_graph_splitting_num_prepare_threads,
+                                     /*out*/ Qnn_ContextHandle_t& context);
 
   Ort::Status CreateContext(bool enable_htp_weight_sharing,
                             bool enable_htp_extended_udma_mode,
@@ -616,6 +642,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   struct QnnContextHandleRecord {
     UniqueQnnContextHandle context_handle;
     std::unique_ptr<QnnContextMemHandleManager> mem_handles;
+  };
+
+  struct QnnSocRecord {
+    uint32_t soc_model = QNN_SOC_MODEL_UNKNOWN;
+    QnnHtpDevice_Arch_t htp_arch = QNN_HTP_DEVICE_ARCH_NONE;
+    Qnn_DeviceHandle_t device_handle = nullptr;
+    Qnn_ContextHandle_t context_handle = nullptr;  // Unowned, reference to context_map_.
   };
 
   Ort::Status LoadOpPackage() {
@@ -773,7 +806,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool validator_device_created_ = false;
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
-  bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDeviceAndContext.
+  bool backend_partial_setup_completed_ = false;  // For SetupBackendExceptDeviceAndContext and SetupDevicesAndContexts.
   uint8_t htp_share_resource_optimization_ = 0;
   uint64_t reused_io_limit_mb_ = 0;
   bool htp_context_init_acceleration_ = false;
@@ -832,6 +865,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Backend plugin for system DLC APIs.
   bool system_dlc_created_ = false;
   std::shared_ptr<QnnBackendSystemDlcPlugin> system_dlc_plugin_ = nullptr;
+
+  // SoC resource collection, especially for multi-SoC binary usage.
+  std::vector<QnnSocRecord> soc_records_;
+  int32_t active_soc_idx_ = -1;
 
   const ApiPtrs api_ptrs_;
   const Ort::Logger* logger_ptr_;

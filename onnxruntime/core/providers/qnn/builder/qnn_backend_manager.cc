@@ -812,9 +812,10 @@ std::pair<DevicePlatformInfoPtr, Qnn_ErrorHandle_t> GetDevicePlatformInfo(
 
 Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                                   Qnn_LogHandle_t log_handle,
-                                                  Qnn_DeviceHandle_t& device_handle,
-                                                  bool& device_created_flag,
-                                                  bool allow_hw_device_enumeration) {
+                                                  uint32_t soc_model,
+                                                  QnnHtpDevice_Arch_t htp_arch,
+                                                  bool allow_hw_device_enumeration,
+                                                  Qnn_DeviceHandle_t& device_handle) {
   // Create device if its property supported
   if (!IsDevicePropertySupported(qnn_interface)) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Skip to create device.");
@@ -834,10 +835,10 @@ Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& 
   if (qnn_backend_type_ == QnnBackendType::HTP) {
     // Set SoC Model. The *enum* Qnn_SocModel_t is deprecated and will not be updated in the future. Therefore,
     // must use the latest SDK documentation to get the SoC model of the latest HW.
-    if (soc_model_ != QNN_SOC_MODEL_UNKNOWN) {
+    if (soc_model != QNN_SOC_MODEL_UNKNOWN) {
       gsl::not_null<QnnHtpDevice_CustomConfig_t*> custom_config = device_configs_builder.PushCustomConfig();
       custom_config->option = QNN_HTP_DEVICE_CONFIG_OPTION_SOC;
-      custom_config->socModel = soc_model_;
+      custom_config->socModel = soc_model;
 
       gsl::not_null<QnnDevice_Config_t*> device_config = device_configs_builder.PushConfig();
       device_config->option = QNN_DEVICE_CONFIG_OPTION_CUSTOM;
@@ -845,10 +846,10 @@ Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& 
     }
 
     // Set the minimum HTP architecture. The driver will use ops that are compatible with this minimum architecture.
-    if (htp_arch_ != QNN_HTP_DEVICE_ARCH_NONE) {
+    if (htp_arch != QNN_HTP_DEVICE_ARCH_NONE) {
       gsl::not_null<QnnHtpDevice_CustomConfig_t*> custom_config = device_configs_builder.PushCustomConfig();
       custom_config->option = QNN_HTP_DEVICE_CONFIG_OPTION_ARCH;
-      custom_config->arch.arch = htp_arch_;
+      custom_config->arch.arch = htp_arch;
       custom_config->arch.deviceId = device_id_;
 
       gsl::not_null<QnnDevice_Config_t*> device_config = device_configs_builder.PushConfig();
@@ -958,7 +959,6 @@ Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& 
       return MAKE_EP_FAIL(("Failed to create device. Error: " + QnnErrorHandleToString(result)).c_str());
     }
   }
-  device_created_flag = true;
 
   return Ort::Status();
 }
@@ -978,9 +978,15 @@ Ort::Status QnnBackendManager::CreateDevice() {
   constexpr bool allow_hw_device_enumeration = false;
 #endif
 
-  return CreateDeviceCommon(qnn_interface_, log_handle_,
-                            device_handle_, device_created_,
-                            allow_hw_device_enumeration);
+  RETURN_IF_ERROR(CreateDeviceCommon(qnn_interface_,
+                                     log_handle_,
+                                     soc_model_,
+                                     htp_arch_,
+                                     allow_hw_device_enumeration,
+                                     device_handle_));
+
+  device_created_ = true;
+  return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::CreateValidatorDevice() {
@@ -992,14 +998,19 @@ Ort::Status QnnBackendManager::CreateValidatorDevice() {
   // so device_id_ / platform-info handling is skipped. soc_model_ / htp_arch_
   // configs still flow through so that backendValidateOpConfig validates against
   // the user's intended HTP arch instead of the shim's default.
-  return CreateDeviceCommon(qnn_validator_interface_, validator_log_handle_,
-                            validator_device_handle_, validator_device_created_,
-                            /*allow_hw_device_enumeration=*/false);
+  RETURN_IF_ERROR(CreateDeviceCommon(qnn_validator_interface_,
+                                     validator_log_handle_,
+                                     soc_model_,
+                                     htp_arch_,
+                                     /*allow_hw_device_enumeration=*/false,
+                                     validator_device_handle_));
+
+  validator_device_created_ = true;
+  return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE& qnn_interface,
-                                                   Qnn_DeviceHandle_t& device_handle,
-                                                   bool& device_created_flag) {
+                                                   Qnn_DeviceHandle_t& device_handle) {
   if (nullptr != qnn_interface.deviceFree) {
     Qnn_ErrorHandle_t result = qnn_interface.deviceFree(device_handle);
     if (QNN_SUCCESS != result) {
@@ -1007,24 +1018,45 @@ Ort::Status QnnBackendManager::ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE&
     }
   }
 
-  device_created_flag = false;
-
+  device_handle = nullptr;
   return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::ReleaseDevice() {
-  if (!device_created_) {
-    return Ort::Status();
+  if (device_handle_ != nullptr) {
+    RETURN_IF_ERROR(ReleaseDeviceCommon(qnn_interface_, device_handle_));
   }
-  return ReleaseDeviceCommon(qnn_interface_, device_handle_, device_created_);
+
+  if (!soc_records_.empty()) {
+    active_soc_idx_ = -1;
+
+    bool all_freed = true;
+    for (auto& record : soc_records_) {
+      if (record.device_handle != nullptr) {
+        if (Ort::Status status = ReleaseDeviceCommon(qnn_interface_, record.device_handle); !status.IsOK()) {
+          ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, status.GetErrorMessage().c_str());
+          all_freed = false;
+        }
+      }
+    }
+
+    RETURN_IF_NOT(all_freed, "Failed to free all devices.");
+    soc_records_.clear();
+  }
+
+  device_created_ = false;
+  return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::ReleaseValidatorDevice() {
   if (!validator_device_created_) {
     return Ort::Status();
   }
-  return ReleaseDeviceCommon(qnn_validator_interface_,
-                             validator_device_handle_, validator_device_created_);
+
+  RETURN_IF_ERROR(ReleaseDeviceCommon(qnn_validator_interface_, validator_device_handle_));
+
+  validator_device_created_ = false;
+  return Ort::Status();
 }
 
 Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Config_t& qnn_context_config) {
@@ -1754,17 +1786,15 @@ Ort::Status QnnBackendManager::ResetContextPriority() {
   return SetContextPriority(context_priority_);
 }
 
-Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
-                                             bool enable_htp_extended_udma_mode,
-                                             bool enable_htp_prepare_only,
-                                             bool enable_htp_ref_weight_sharing,
-                                             bool enable_htp_graph_splitting,
-                                             uint32_t htp_graph_splitting_num_prepare_threads) {
-  if (true == context_created_) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Context created already.");
-    return Ort::Status();
-  }
-
+Ort::Status QnnBackendManager::CreateContextForDevice(Qnn_DeviceHandle_t device,
+                                                      bool enable_htp_weight_sharing,
+                                                      bool enable_htp_extended_udma_mode,
+                                                      bool enable_htp_prepare_only,
+                                                      bool enable_htp_ref_weight_sharing,
+                                                      bool enable_htp_graph_splitting,
+                                                      uint32_t htp_graph_splitting_num_prepare_threads,
+                                                      Qnn_ContextHandle_t& context) {
+  // Weight sharing.
   QnnContext_Config_t context_config_weight_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t custom_config;
   custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;
@@ -1772,9 +1802,11 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   context_config_weight_sharing.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   context_config_weight_sharing.customConfig = &custom_config;
 
+  // Context Priortiy.
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
+  // Extended uDMA.
   QnnContext_Config_t context_config_extended_udma = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t udma_custom_config;
   udma_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_USE_EXTENDED_UDMA;
@@ -1782,6 +1814,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   context_config_extended_udma.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   context_config_extended_udma.customConfig = &udma_custom_config;
 
+  // Prepare only.
   QnnContext_Config_t context_config_prepare_only = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t prepare_only_custom_config;
   prepare_only_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_PREPARE_ONLY;
@@ -1789,6 +1822,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
   context_config_prepare_only.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   context_config_prepare_only.customConfig = &prepare_only_custom_config;
 
+  // Reference weight sharing.
   QnnContext_Config_t context_config_ref_weight_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t ref_weight_sharing_custom_config;
 #if QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 33
@@ -1807,6 +1841,7 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     enable_htp_ref_weight_sharing = false;
   }
 
+  // Graph splitting.
 #ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
   QnnContext_Config_t context_config_graph_splitting = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t graph_splitting_custom_config;
@@ -1875,18 +1910,34 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
     configs = nullptr;
   }
 
-  Qnn_ContextHandle_t context = nullptr;
-  Qnn_ErrorHandle_t result = 0;
-
-  result = qnn_interface_.contextCreate(backend_handle_,
-                                        device_handle_,
-                                        configs,
-                                        &context);
-
+  Qnn_ErrorHandle_t result = qnn_interface_.contextCreate(backend_handle_, device, configs, &context);
   RETURN_IF(QNN_CONTEXT_NO_ERROR != result,
             ("Failed to create context. Error: " + QnnErrorHandleToString(result)).c_str());
-
   RETURN_IF_ERROR(AddQnnContextHandle(context));
+
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing,
+                                             bool enable_htp_extended_udma_mode,
+                                             bool enable_htp_prepare_only,
+                                             bool enable_htp_ref_weight_sharing,
+                                             bool enable_htp_graph_splitting,
+                                             uint32_t htp_graph_splitting_num_prepare_threads) {
+  if (context_created_) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Context created already.");
+    return Ort::Status();
+  }
+
+  Qnn_ContextHandle_t context = nullptr;
+  RETURN_IF_ERROR(CreateContextForDevice(device_handle_,
+                                         enable_htp_weight_sharing,
+                                         enable_htp_extended_udma_mode,
+                                         enable_htp_prepare_only,
+                                         enable_htp_ref_weight_sharing,
+                                         enable_htp_graph_splitting,
+                                         htp_graph_splitting_num_prepare_threads,
+                                         context));
 
   context_created_ = true;
   return Ort::Status();
@@ -1923,7 +1974,7 @@ Ort::Status QnnBackendManager::GetContextBinaryBuffer(bool is_multi_soc_buffer,
 
   uint64_t required_buffer_size = 0;
   // Generate all graphs in one single context
-  Qnn_ErrorHandle_t rt = qnn_interface_.contextGetBinarySize(contexts_[0], &required_buffer_size);
+  Qnn_ErrorHandle_t rt = qnn_interface_.contextGetBinarySize(GetQnnContext(), &required_buffer_size);
   RETURN_IF(rt != QNN_CONTEXT_NO_ERROR,
             ("Failed to get QNN context binary size. Error: " + QnnErrorHandleToString(rt)).c_str());
 
@@ -1931,7 +1982,7 @@ Ort::Status QnnBackendManager::GetContextBinaryBuffer(bool is_multi_soc_buffer,
   RETURN_IF(buffer == nullptr, "Failed to allocate buffer for context binary.");
 
   uint64_t written_buffer_size = 0;
-  rt = qnn_interface_.contextGetBinary(contexts_[0],
+  rt = qnn_interface_.contextGetBinary(GetQnnContext(),
                                        reinterpret_cast<void*>(buffer.get()),
                                        required_buffer_size,
                                        &written_buffer_size);
@@ -2456,39 +2507,78 @@ Ort::Status QnnBackendManager::SetupBackendExceptDeviceAndContext() {
   return status;
 }
 
-Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arch,
-                                                     uint32_t soc_model,
-                                                     bool enable_htp_extended_udma_mode,
-                                                     bool enable_htp_prepare_only,
-                                                     bool enable_htp_ref_weight_sharing,
-                                                     bool enable_htp_graph_splitting,
-                                                     uint32_t htp_graph_splitting_num_prepare_threads) {
+Ort::Status QnnBackendManager::SetupDevicesAndContexts(const std::vector<QnnHtpDevice_Arch_t>& htp_archs,
+                                                       const std::vector<uint32_t>& soc_models,
+                                                       bool enable_htp_weight_sharing,
+                                                       bool enable_htp_extended_udma_mode,
+                                                       bool enable_htp_prepare_only,
+                                                       bool enable_htp_ref_weight_sharing,
+                                                       bool enable_htp_graph_splitting,
+                                                       uint32_t htp_graph_splitting_num_prepare_threads) {
   RETURN_IF_NOT(backend_partial_setup_completed_, "QNN backend manager must be partially setup first.");
+  RETURN_IF_NOT(system_dlc_created_, "QNN system DLC should be setup already.");
+
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN backend manager completely setup already.");
+
+    std::vector<QnnHtpDevice_Arch_t> cached_htp_archs;
+    std::vector<uint32_t> cached_soc_models;
+    cached_htp_archs.reserve(soc_records_.size());
+    cached_soc_models.reserve(soc_records_.size());
+    for (const auto& record : soc_records_) {
+      cached_htp_archs.push_back(record.htp_arch);
+      cached_soc_models.push_back(record.soc_model);
+    }
+    RETURN_IF(cached_htp_archs != htp_archs || cached_soc_models != soc_models,
+              "Mismatched htp_arch/soc_model between current session and the previous one.");
+
     return Ort::Status();
+  } else {
+    RETURN_IF_NOT(soc_records_.empty(), "QNN backend manager has unexpected device/context setup.");
   }
 
-  // Override cached values.
-  // Update htp_arch_internal_ as well to make sure GetHtpArch returns correct value.
-  htp_arch_ = htp_arch_internal_ = htp_arch;
-  soc_model_ = soc_model;
+  RETURN_IF(htp_archs.size() != soc_models.size(), "Expecting equal length of HTP archs and SoC models.");
+  RETURN_IF(soc_models.size() == 0, "Expecting at least one pair of HTP arch and SoC model.");
+  soc_records_.reserve(soc_models.size());
+  for (size_t idx = 0; idx < soc_models.size(); ++idx) {
+    soc_records_.push_back({soc_models[idx], htp_archs[idx]});
+  }
 
-  Ort::Status status = CreateDevice();
+  Ort::Status status;
+  for (auto& record : soc_records_) {
+    status = CreateDeviceCommon(qnn_interface_,
+                                log_handle_,
+                                record.soc_model,
+                                record.htp_arch,
+                                /*allow_hw_device_enumeration=*/false,  // Multi-SoC usage is always offline prepare.
+                                record.device_handle);
+    if (!status.IsOK()) {
+      break;
+    }
+  }
   if (status.IsOK()) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN device created.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN devices created.");
+    device_created_ = true;
   }
 
   if (status.IsOK()) {
-    status = CreateContext(false /*enable_htp_weight_sharing*/,
-                           enable_htp_extended_udma_mode,
-                           enable_htp_prepare_only,
-                           enable_htp_ref_weight_sharing,
-                           enable_htp_graph_splitting,
-                           htp_graph_splitting_num_prepare_threads);
-  }
-  if (status.IsOK()) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN context created.");
+    for (auto& record : soc_records_) {
+      status = CreateContextForDevice(record.device_handle,
+                                      enable_htp_weight_sharing,
+                                      enable_htp_extended_udma_mode,
+                                      enable_htp_prepare_only,
+                                      enable_htp_ref_weight_sharing,
+                                      enable_htp_graph_splitting,
+                                      htp_graph_splitting_num_prepare_threads,
+                                      record.context_handle);
+      if (!status.IsOK()) {
+        break;
+      }
+    }
+    if (status.IsOK()) {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN contexts created.");
+      context_created_ = true;
+    }
   }
 
   if (status.IsOK()) {
@@ -2500,6 +2590,14 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
   }
 
   return status;
+}
+
+Ort::Status QnnBackendManager::SetActiveSoc(int32_t soc_idx) {
+  RETURN_IF_NOT(soc_idx == -1 || (soc_idx >= 0 && static_cast<size_t>(soc_idx) < soc_records_.size()),
+                "Expecting SoC index -1 (reset) or a valid target index.");
+
+  active_soc_idx_ = soc_idx;
+  return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
@@ -3349,7 +3447,7 @@ Ort::Status QnnBackendManager::ReleaseSystemDlcPlugin() {
 
 Ort::Status QnnBackendManager::AddContextToDlc() {
   RETURN_IF(system_dlc_plugin_ == nullptr, "Unexpected call of this function without DLC initialized.");
-  RETURN_IF_NOT(GetQnnContextSize() == 1, "Expecting only one context to be added into DLC.");
+  RETURN_IF_NOT(GetQnnContextSize() == 1 || active_soc_idx_ != -1, "Expecting only one context to be added into DLC.");
   return system_dlc_plugin_->AddContextToDlc(GetQnnContext());
 }
 

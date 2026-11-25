@@ -65,6 +65,9 @@ QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnValidatorBackendHandleTag, Qnn_Backe
                                          validator_backend_handle_);
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnBackendTypeTag, qnn::QnnBackendType, qnn_backend_type_);
 QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnHtpArchTag, QnnHtpDevice_Arch_t, htp_arch_internal_);
+QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnBackendSetupTag, bool, backend_setup_completed_);
+QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnBackendPartialSetupTag, bool, backend_partial_setup_completed_);
+QNN_UT_DEFINE_BACKEND_MANAGER_MEMBER_TAG(QnnSystemDlcCreatedTag, bool, system_dlc_created_);
 
 }  // namespace
 
@@ -110,6 +113,18 @@ qnn::QnnBackendType& StubBackendManager::BackendType() {
 
 QnnHtpDevice_Arch_t& StubBackendManager::HtpArch() {
   return (*manager_).*GetPrivateMemberPtr(QnnHtpArchTag{});
+}
+
+bool& StubBackendManager::BackendSetupCompleted() {
+  return (*manager_).*GetPrivateMemberPtr(QnnBackendSetupTag{});
+}
+
+bool& StubBackendManager::BackendPartialSetupCompleted() {
+  return (*manager_).*GetPrivateMemberPtr(QnnBackendPartialSetupTag{});
+}
+
+bool& StubBackendManager::SystemDlcCreated() {
+  return (*manager_).*GetPrivateMemberPtr(QnnSystemDlcCreatedTag{});
 }
 
 }  // namespace test

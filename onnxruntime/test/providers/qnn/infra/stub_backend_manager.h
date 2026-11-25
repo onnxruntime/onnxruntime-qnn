@@ -66,6 +66,9 @@ class StubBackendManager {
   Qnn_BackendHandle_t& ValidatorBackendHandle();
   qnn::QnnBackendType& BackendType();
   QnnHtpDevice_Arch_t& HtpArch();
+  bool& BackendSetupCompleted();
+  bool& BackendPartialSetupCompleted();
+  bool& SystemDlcCreated();
 
  private:
   std::shared_ptr<qnn::QnnBackendManager> manager_;

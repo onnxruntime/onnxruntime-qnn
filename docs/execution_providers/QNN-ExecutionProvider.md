@@ -490,13 +490,15 @@ Multi-SoC mode is enabled automatically when `soc_model` and/or `htp_arch` is gi
 - The following HTP backend options may each be given `0`, `1`, or `N` values (comma-separated), where `N` matches the number of SoCs. With `0` values the default is applied to every SoC; with `1` value it is duplicated across all SoCs; with `N` values each is applied to the corresponding SoC:
   - `vtcm_mb`
 
+Multiple models can share weights within the context for each target SoC. The first session creates all target devices and contexts once; later sessions compile their models into those same contexts. The final session packages the per-SoC contexts into one shared QNN DLC. The shared binary contains the compiled graphs from all models for every configured SoC. On Windows on Snapdragon, also include `"enable_htp_cross_device_prepare": "1"` in provider options.
+
 Constraints:
 
-- Supported only on **x86_64** hosts (offline preparation). On-device preparation will soon be supported in later QAIRT version.
+- Supported on **Linux x86_64** and **Windows x86_64** hosts for offline preparation. On **Windows on Snapdragon**, set `enable_htp_cross_device_prepare=1`; this requires **QAIRT 2.51 or later (QNN API >= 2.40)**.
 - Requires the EP context cache to be enabled (`ep.context_enable=1`). `enable_htp_prepare_only` is turned on automatically (preparation only, no inference).
-- Not supported together with shared EP contexts (`share_ep_contexts` / `stop_share_ep_contexts`).
 
 **Example (Python):**
+
 ```python
 ep_options = {
     "backend_type": "htp",
@@ -1677,7 +1679,7 @@ For more information on the data collected with optrace profiling, please refer 
 ## QNN EP weight sharing
 Refers to the [EPContext design doc](https://onnxruntime.ai/docs/execution-providers/EP-Context-Design.html#epcontext-with-weight-sharing)
 
-Note: QNN EP requires **Linux x86_64** or **Windows x86_64** platform.
+For multi-SoC context generation with weight sharing, follow [Weight sharing across FCB models](#weight-sharing-across-fcb-models), including its platform and session-option requirements. Each generated EPContext ONNX model references the same external QNN DLC.
 
 Additionally, if user creates the QNN context binary (`qnn_ctx.bin`) with weight sharing using the QNN toolchain (`qnn-context-binary-generator`), they can use a script to generate the wrapper Onnx model from the context:  [gen_qnn_ctx_onnx_model.py](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/python/tools/qnn/gen_qnn_ctx_onnx_model.py). The script creates multiple `model_x_ctx.onnx` files, each containing an `EPContext` node that references the shared `qnn_ctx.bin` file. Each `EPContext` node specifies a unique node name, referring to different Qnn graph from the QNN context.
 
