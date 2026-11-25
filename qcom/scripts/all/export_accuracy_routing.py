@@ -169,6 +169,16 @@ def export_result(args: argparse.Namespace) -> dict:
     }
 
 
+def write_routing_result(result: dict, output: Path) -> None:
+    """Finalize the versioned artifact digest and atomically publish its JSON."""
+    payload = json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    result["payload_sha256"] = hashlib.sha256(payload).hexdigest()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    temporary.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(output)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("snapshot-json", "snapshot-list", "accuracy-list", "manifest", "output"):
@@ -183,12 +193,7 @@ def main() -> None:
     parser.add_argument("--snapshot-exit", type=int, required=True)
     args = parser.parse_args()
     result = export_result(args)
-    payload = json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    result["payload_sha256"] = hashlib.sha256(payload).hexdigest()
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = args.output.with_suffix(args.output.suffix + ".tmp")
-    temporary.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(args.output)
+    write_routing_result(result, args.output)
 
 
 if __name__ == "__main__":

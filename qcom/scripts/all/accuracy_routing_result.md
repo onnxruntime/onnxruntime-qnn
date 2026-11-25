@@ -72,6 +72,8 @@ missing or incompatible metadata remains untrusted for consumption.
 
 The digest detects payload corruption. It does not authenticate a producer.
 Consumers must obtain artifacts from the expected trusted workflow run.
+Both entry points use `write_routing_result` for canonical JSON, digest generation,
+staging-file naming, and atomic replacement.
 
 Manifest versions must be nonempty strings, and the profile must be a valid
 namespace identifier. Invalid nested values are normalized to null. GTest

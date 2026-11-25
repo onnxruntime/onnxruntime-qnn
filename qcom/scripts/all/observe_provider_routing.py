@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import subprocess
@@ -14,7 +13,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from export_accuracy_routing import export_result
+from export_accuracy_routing import export_result, write_routing_result
 
 
 def read_provider_xml(path: Path) -> dict:
@@ -96,12 +95,7 @@ def main() -> None:
     result["decision_granularity"] = "none"
     result["snapshot_exit_code"] = None  # CTest gives an aggregate provider verdict.
     result["provider_validation_exit_code"] = args.validation_exit
-    payload = json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    result["payload_sha256"] = hashlib.sha256(payload).hexdigest()
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    staging = args.output.with_suffix(args.output.suffix + ".tmp")
-    staging.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    staging.replace(args.output)
+    write_routing_result(result, args.output)
 
 
 if __name__ == "__main__":
