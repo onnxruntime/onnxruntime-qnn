@@ -351,7 +351,7 @@ def test_ci_directory_preparation_preserves_test_execution(tmp_path, preparation
     step = next(item for item in steps if item.get("id") == "linux_snapshot_routing")
     upload = next(item for item in steps if item.get("name") == "Upload Linux snapshot routing result")
     cleanup = next(item for item in steps if item.get("name") == "Clean up routing output directory")
-    assert upload["with"]["path"] == "${{ steps.linux_snapshot_routing.outputs.routing_result_path }}"
+    assert "steps.linux_snapshot_routing.outputs.routing_result_path" in upload["with"]["path"]
     assert "outputs.routing_result_path != ''" in upload["if"]
     assert "always()" in cleanup["if"]
 

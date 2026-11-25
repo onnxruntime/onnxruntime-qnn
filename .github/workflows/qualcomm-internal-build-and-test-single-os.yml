@@ -230,7 +230,24 @@ jobs:
           path: ${{ github.workspace }}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}windows-${{ env.BUILD_DIR_ARCH }}.zip
           if-no-files-found: error
 
+      - name: Prepare Linux provider observation
+        id: linux_observation_directory
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'linux' && inputs.target_arch == 'x86_64_ubuntu_22_04' && inputs.qnn_internal_test_symbols && inputs.run_tests && inputs.build_test_same_runner }}
+        run: |
+          # mktemp replaces XXXXXX with random characters for an isolated directory.
+          if routing_dir=$(mktemp -d "${RUNNER_TEMP}/qnn-routing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX"); then
+            printf 'routing_dir=%s\n' "${routing_dir}" >> "${GITHUB_OUTPUT}" || echo "::warning::Could not record observation directory."
+            if rm -f -- "${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/${BUILD_CONFIG_DIR}/onnxruntime_provider_test.results.xml"; then
+              printf 'ready=true\n' >> "${GITHUB_OUTPUT}" || echo "::warning::Could not enable observation output."
+            else
+              echo "::warning::Could not clear the previous provider report; observation disabled."
+            fi
+          else
+            echo "::warning::Could not prepare routing observation; continuing validation."
+          fi
+
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+        id: platform_validation
         if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
@@ -242,6 +259,24 @@ jobs:
           # The two-pass runner below owns snapshot and accuracy execution for
           # this lane; the baseline ctest run retains all other provider tests.
           QNN_UT_TWO_PASS_SNAPSHOT_ACCURACY: ${{ inputs.target_os == 'linux' && inputs.target_arch == 'x86_64' && inputs.qnn_internal_test_symbols && '1' || '' }}
+
+      - name: Export active Linux provider Snapshot evidence
+        id: linux_provider_observation
+        if: ${{ !cancelled() && steps.linux_observation_directory.outputs.ready == 'true' && (steps.platform_validation.outcome == 'success' || steps.platform_validation.outcome == 'failure') }}
+        env:
+          QNN_ROUTING_OUTPUT_DIR: ${{ steps.linux_observation_directory.outputs.routing_dir }}
+          QNN_VALIDATION_OUTCOME: ${{ steps.platform_validation.outcome }}
+        run: |
+          validation_exit=1
+          [ "${QNN_VALIDATION_OUTCOME}" = success ] && validation_exit=0
+          routing_result="${QNN_ROUTING_OUTPUT_DIR}/accuracy_routing.json"
+          if venv/bin/python qcom/scripts/all/observe_provider_routing.py \
+            --build-dir="${GITHUB_WORKSPACE}/build/linux-${BUILD_DIR_ARCH}/${BUILD_CONFIG_DIR}" \
+            --validation-exit="${validation_exit}" --output="${routing_result}"; then
+            printf 'routing_result_path=%s\n' "${routing_result}" >> "${GITHUB_OUTPUT}" || echo "::warning::Could not publish observation output."
+          else
+            echo "::warning::Provider observation export failed; retaining the original validation result."
+          fi
 
       - name: Validate Linux x86_64 QNN snapshots and routed accuracy
         id: linux_snapshot_routing
@@ -259,18 +294,18 @@ jobs:
             "${routing_args[@]}"
 
       - name: Upload Linux snapshot routing result
-        if: ${{ !cancelled() && steps.linux_snapshot_routing.outputs.routing_result_path != '' }}
+        if: ${{ !cancelled() && (steps.linux_provider_observation.outputs.routing_result_path != '' || steps.linux_snapshot_routing.outputs.routing_result_path != '') }}
         uses: actions/upload-artifact@v7
         with:
           name: qnn-routing-linux-x86_64-${{ inputs.build_config }}-py${{ inputs.target_py_vsn }}-${{ github.run_attempt }}
           retention-days: 7
-          path: ${{ steps.linux_snapshot_routing.outputs.routing_result_path }}
+          path: ${{ steps.linux_provider_observation.outputs.routing_result_path || steps.linux_snapshot_routing.outputs.routing_result_path }}
           if-no-files-found: warn
 
       - name: Clean up routing output directory
-        if: ${{ always() && steps.linux_snapshot_routing.outputs.routing_dir != '' }}
+        if: ${{ always() && (steps.linux_observation_directory.outputs.routing_dir != '' || steps.linux_snapshot_routing.outputs.routing_dir != '') }}
         env:
-          QNN_ROUTING_OUTPUT_DIR: ${{ steps.linux_snapshot_routing.outputs.routing_dir }}
+          QNN_ROUTING_OUTPUT_DIR: ${{ steps.linux_observation_directory.outputs.routing_dir || steps.linux_snapshot_routing.outputs.routing_dir }}
         run: |
           rm -rf -- "${QNN_ROUTING_OUTPUT_DIR}" || echo "::warning::Routing directory cleanup failed."
 

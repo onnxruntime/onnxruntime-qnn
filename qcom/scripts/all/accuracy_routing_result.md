@@ -7,6 +7,24 @@ test filter or exit code. Output preparation and export failures log a warning
 and retain the original test execution. Reused local output files are cleared
 when preparation succeeds, and new results are replaced atomically.
 
+The active `x86_64_ubuntu_22_04` internal-symbol caller uses ordinary provider
+CTest validation, not the legacy `x86_64` two-pass shadow runner. Its publisher
+reads the newly generated `onnxruntime_provider_test.results.xml` through
+`observe_provider_routing.py`; it does not execute Snapshot or Accuracy tests
+again. The previous report is removed before validation so an interrupted
+invocation cannot publish stale evidence. Missing or malformed reports and
+export failures warn without changing the validation verdict.
+
+This producer records `mode: provider_observation`,
+`decision_granularity: none`, `selection_complete: false`, and Accuracy
+`runner_action: unknown`. It observes Snapshot evidence, not a routing decision.
+`snapshot_exit_code` is null because the provider exit is aggregate;
+`provider_validation_exit_code` and `runner_exit_code` record the validation
+command outcome. It does not enable golden preflight or alter the current
+CTest filter. Without explicit golden metadata, Accuracy evidence remains
+untrusted. Consumers must retain target execution for this observation mode.
+Enabling active testcase routing is separate from publishing its observations.
+
 CI creates a unique directory under `RUNNER_TEMP`, named with the run ID,
 attempt, and a random suffix. Only a successful export emits the
 `routing_result_path` step output used by the upload action. Preparation or
@@ -25,13 +43,13 @@ run ID, and attempt against the expected producer run.
 |---|---|
 | `schema_version` | `1`; other versions require an explicit consumer implementation |
 | `evidence_granularity` | `testcase`; evidence is paired by exact suite variant and testcase name |
-| `decision_granularity` | `operator_group`; describes the existing Linux runner selection, not target skip granularity |
+| `decision_granularity` | `operator_group` for the legacy two-pass runner, `none` for active provider observation; neither grants target skip authorization |
 | `producer` | Checkout SHA, Actions identity, actual build QAIRT/ORT versions, and downloaded golden profile |
 | `golden_manifest` | Versions and profile read from the golden store; missing data is represented by null |
 | `versions_match` | Both build versions match the manifest and the manifest supplies a profile |
-| `mode` | `compare`, `force_accuracy`, or `generate_goldens` |
+| `mode` | `compare`, `force_accuracy`, `generate_goldens`, or `provider_observation`; observation cannot authorize target skips |
 | `selection_complete` | Whether the runner completed its group selection |
-| `runner_exit_code`, `snapshot_exit_code` | Actual execution outcomes, including failure exits |
+| `runner_exit_code`, `snapshot_exit_code` | Actual execution outcomes; Snapshot exit is null when only an aggregate provider verdict is available |
 | `snapshots` | Registered in-scope Snapshot identities and observed `match`, `drift`, or `untrusted` status |
 | `accuracy_decisions` | Accuracy identity, paired Snapshot identities with the same suite variant and testcase name, evidence status, and observed runner action |
 | `payload_sha256` | SHA-256 of UTF-8 compact JSON for all other fields, with keys sorted recursively |
