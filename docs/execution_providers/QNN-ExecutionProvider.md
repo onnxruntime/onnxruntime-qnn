@@ -720,6 +720,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:QLinearMatMul|Per-tensor (scalar) scale/zero-point only; scale must be float32, float16, or bfloat16; quantized input/output types int8 or uint8|
 |ai.onnx:QuantizeLinear||
 |ai.onnx:RandomNormalLike||
+|ai.onnx:RandomUniform|shape attribute must be a non-empty list of non-negative integers (static, no symbolic dims possible)|
 |ai.onnx:RandomUniformLike||
 |ai.onnx:Range|All inputs (start, limit, delta) must be constant initializers; pre-computed host-side into a static tensor|
 |ai.onnx:Reciprocal||

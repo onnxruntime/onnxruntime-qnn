@@ -66,6 +66,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateQuickGeluOpBuilder("QuickGelu", *this);
   CreateQuickGeluOpBuilder("Swish", *this);
   CreateRandomNormalLikeOpBuilder("RandomNormalLike", *this);
+  CreateRandomUniformOpBuilder("RandomUniform", *this);
   CreateRandomUniformLikeOpBuilder("RandomUniformLike", *this);
   CreateRangeOpBuilder("Range", *this);
   CreateReciprocalOpBuilder("Reciprocal", *this);
