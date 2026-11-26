@@ -366,6 +366,36 @@ TEST_F(QnnHTPBackendTests, Max_3Inputs_U16) {
                                  /*use_contrib_qdq=*/true);  // 16-bit zero-point needs com.microsoft Q/DQ
 }
 
+// Max/Min inputs with strongly mismatched encodings (~100x scale difference). The fused op must not
+// reinterpret one input's raw codes under the output's encoding, so QNN must match CPU QDQ.
+TEST_F(QnnHTPBackendTests, Max_2Inputs_MismatchedInputEncodings) {
+  RunQDQMinOrMaxOpTest<uint8_t>("Max",
+                                {TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                                 TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-0.1f, 0.1f, 48))},
+                                ExpectedEPNodeAssignment::All, 13);
+}
+
+TEST_F(QnnHTPBackendTests, Min_2Inputs_MismatchedInputEncodings) {
+  RunQDQMinOrMaxOpTest<uint8_t>("Min",
+                                {TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                                 TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-0.1f, 0.1f, 48))},
+                                ExpectedEPNodeAssignment::All, 13);
+}
+
+TEST_F(QnnHTPBackendTests, Max_2Inputs_MismatchedInputEncodings_U16) {
+  RunQDQMinOrMaxOpTest<uint16_t>("Max",
+                                 {TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                                  TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-5.0f, 15.0f, 48))},
+                                 ExpectedEPNodeAssignment::All, 13, true);
+}
+
+TEST_F(QnnHTPBackendTests, Min_2Inputs_MismatchedInputEncodings_U16) {
+  RunQDQMinOrMaxOpTest<uint16_t>("Min",
+                                 {TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                                  TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-5.0f, 15.0f, 48))},
+                                 ExpectedEPNodeAssignment::All, 13, true);
+}
+
 // Test int32 Min with 3 inputs on HTP backend (non-quantized integer fold branch).
 TEST_F(QnnHTPBackendTests, Min_3Inputs_Int32) {
   std::vector<int32_t> input0_data = {-10, -5, 0, 5, 10, -3, 7, -8, 2, -1, 9, -6};
