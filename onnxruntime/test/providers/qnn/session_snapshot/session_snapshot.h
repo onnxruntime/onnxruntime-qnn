@@ -53,6 +53,7 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -75,7 +76,8 @@ inline void AssertSessionSnapshotJson(
     int opset_version,
     const std::string& golden_basename,
     std::string golden_subdir = "",
-    const char* caller_file = __builtin_FILE()) {
+    const char* caller_file = __builtin_FILE(),
+    const std::function<void(const nlohmann::json&)>& graph_verifier = {}) {
   if (golden_subdir.empty()) {
     golden_subdir = DeriveGoldenSubdirFromFile(caller_file);
     ASSERT_FALSE(golden_subdir.empty())
@@ -148,6 +150,10 @@ inline void AssertSessionSnapshotJson(
 
   nlohmann::json graph = nlohmann::json::parse(raw_json);
   NormalizeQnnJSONGraph(graph);
+  if (graph_verifier) {
+    graph_verifier(graph);
+    if (::testing::Test::HasFailure()) return;
+  }
 
   const std::string current = graph.dump(2) + "\n";  // Match AssertSnapshotJson formatting.
   CompareOrWriteGolden(current, golden_basename, golden_subdir, "Session-snapshot");
