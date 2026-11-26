@@ -168,10 +168,15 @@ def export_result(args: argparse.Namespace) -> dict:
     }
 
 
+def routing_payload_sha256(result: dict) -> str:
+    payload = {key: value for key, value in result.items() if key != "payload_sha256"}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def write_routing_result(result: dict, output: Path) -> None:
     """Finalize the artifact digest and atomically publish its JSON."""
-    payload = json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    result["payload_sha256"] = hashlib.sha256(payload).hexdigest()
+    result["payload_sha256"] = routing_payload_sha256(result)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
     temporary.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -185,16 +190,12 @@ def main() -> None:
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--qairt-version", default="")
     parser.add_argument("--ort-version", default="")
-    parser.add_argument("--emit-filter-file", type=Path)
     parser.add_argument("--mode", choices=("compare", "force_accuracy", "generate_goldens"), required=True)
     parser.add_argument("--selection-complete", action="store_true")
     parser.add_argument("--runner-exit", type=int, required=True)
     parser.add_argument("--snapshot-exit", type=int, required=True)
     args = parser.parse_args()
     result = export_result(args)
-    if args.emit_filter_file:
-        selected = [case["accuracy_test_id"] for case in result["accuracy_decisions"] if case["runner_action"] == "run"]
-        args.emit_filter_file.write_text(":".join(selected) or "QnnAcc_ZZZ_NoCasesSelected.None", encoding="utf-8")
     write_routing_result(result, args.output)
 
 

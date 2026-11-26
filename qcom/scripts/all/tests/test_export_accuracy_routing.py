@@ -269,9 +269,22 @@ def test_selected_filter_contains_drift_and_unmapped_but_not_match(tmp_path):
         tmp_path,
         data,
         MANIFEST,
-        ("--selection-complete", f"--emit-filter-file={filter_file}"),
+        ("--selection-complete",),
         snapshot_list=f"{SNAPSHOT}.\n  Case\n  Other\n",
         accuracy_list=f"{ACCURACY}.\n  Case\n  Other\n  Unpaired\n",
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT.with_name("select_accuracy_from_routing.py")),
+            f"--verdict={tmp_path / 'result.json'}",
+            f"--accuracy-list={tmp_path / 'accuracy.txt'}",
+            f"--output={filter_file}",
+            "--source-commit=" + "a" * 40,
+            "--qairt-version=2.52",
+            "--ort-version=1.30",
+        ],
+        check=True,
     )
     assert filter_file.read_text().split(":") == [ACCURACY + ".Other", ACCURACY + ".Unpaired"]
 
@@ -412,7 +425,7 @@ def test_ci_observation_directory_preparation_and_scoped_cleanup(tmp_path, prepa
     step = next(item for item in steps if item.get("id") == "linux_observation_directory")
     upload = next(item for item in steps if item.get("name") == "Upload Linux snapshot routing result")
     cleanup = next(item for item in steps if item.get("name") == "Clean up routing output directory")
-    assert upload["with"]["path"] == "${{ steps.linux_provider_observation.outputs.routing_result_path }}"
+    assert upload["with"]["path"] == "${{ steps.linux_snapshot_routing.outputs.routing_result_path }}"
     assert "outputs.routing_result_path != ''" in upload["if"]
     assert "always()" in cleanup["if"]
 

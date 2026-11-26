@@ -22,7 +22,7 @@ def _write_executable(path: Path, content: str) -> None:
 
 @pytest.mark.parametrize(
     ("skip_accuracy", "expected_exit"),
-    [(False, 0), (True, 1)],
+    [(False, 1), (True, 1)],
     ids=["accuracy-fallback", "accuracy-skipped"],
 )
 def test_failed_snapshot_uses_accuracy_fallback_or_fails_when_accuracy_skipped(

@@ -32,6 +32,7 @@
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
 set -euo pipefail
+source "${REPO_ROOT}/qcom/scripts/all/qnn_test_stages.sh"
 if [ "${BASH_VERSINFO:-0}" -gt 3 ]; then
     shopt -s inherit_errexit
 fi
@@ -110,6 +111,7 @@ EOF
             ;;
     esac
 done
+PYTHON_BIN="${python_bin}"
 
 if [ -n "${routing_result}" ]; then
     if prepared_routing_result="$(realpath -m "${routing_result}")" &&
@@ -164,11 +166,7 @@ fi
 bin_dir="$(dirname "${binary}")"
 
 run_provider_test() {
-    (
-        cd "${bin_dir}"
-        export LD_LIBRARY_PATH="${bin_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-        "${binary}" "$@"
-    )
+    qnn_run_provider "${binary}" "${bin_dir}" "$@"
 }
 
 to_provider_test_path() {
@@ -212,7 +210,7 @@ if [ -n "${filter_groups}" ]; then
         snapshot_filter+="QnnSnapshot_${g}_OpBuilder*Test.*:QnnSnapshot_${g}_Session*Test.*"
     done
 else
-    snapshot_filter="QnnSnapshot_*_OpBuilder*Test.*:QnnSnapshot_*_Session*Test.*"
+    snapshot_filter="${QNN_SNAPSHOT_SCOPE}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -229,37 +227,22 @@ rm -f "${snapshot_json}" "${accuracy_json}" "${snapshot_list}"
 selection_complete=false
 accuracy_list="${results_dir}/routing_accuracy_tests.txt"
 accuracy_filter_file="${results_dir}/accuracy_filter.txt"
+rm -f "${accuracy_list}" "${accuracy_filter_file}" "${results_dir}/selection.json" \
+      "${results_dir}/accuracy_gate_summary.txt"
 snapshot_exit=0
 
 export_routing_result() {
     local runner_exit="$1"
-    local routing_snapshot_list="${snapshot_list}"
-    local qairt_version="" ort_version="" source_commit mode="compare"
-    source "${REPO_ROOT}/qcom/scripts/all/resolve_tool_versions.sh"
-    qairt_version="$(resolve_qairt_version "${bin_dir}" || true)"
-    ort_version="$(resolve_ort_version "${bin_dir}" || true)"
-    source_commit="$(git -C "${REPO_ROOT}" rev-parse HEAD)" || return 1
-
+    local mode="compare"
     if [ "${generate_goldens}" = true ]; then
         mode="generate_goldens"
     elif [ "${force_accuracy}" = true ]; then
         mode="force_accuracy"
     fi
-    local export_args=()
-    if [ "${selection_complete}" = true ]; then
-        export_args+=(--selection-complete)
-    fi
     local destination="${2:-${routing_result:-${results_dir}/selection.json}}"
-    "${python_bin}" "${REPO_ROOT}/qcom/scripts/all/export_accuracy_routing.py" \
-        --snapshot-json="${snapshot_json}" \
-        --snapshot-list="${routing_snapshot_list}" \
-        --accuracy-list="${accuracy_list}" \
-        --manifest="${QNN_UT_SNAPSHOT_GOLDEN_DIR:-${results_dir}/no-golden-store}/manifest.json" \
-        --source-commit="${source_commit}" \
-        --qairt-version="${qairt_version}" --ort-version="${ort_version}" \
-        --mode="${mode}" \
-        --runner-exit="${runner_exit}" --snapshot-exit="${snapshot_exit}" \
-        --output="${destination}" --emit-filter-file="${accuracy_filter_file}" "${export_args[@]}" || return 1
+    [ "${QNN_ROUTING_UPSTREAM_EXIT:-0}" = 0 ] || runner_exit=1
+    qnn_export_verdict "${bin_dir}" "${snapshot_json}" "${snapshot_list}" "${accuracy_list}" \
+        "${destination}" "${snapshot_exit}" "${mode}" "${runner_exit}" "${selection_complete}" || return 1
     if [ "${destination}" = "${routing_result}" ] && [ -n "${routing_result}" ] && [ -n "${GITHUB_OUTPUT:-}" ]; then
         printf 'routing_result_path=%s\n' "${routing_result}" >> "${GITHUB_OUTPUT}" || return 1
     fi
@@ -301,7 +284,7 @@ fi
 
 # Start from the entire registered scoped Accuracy universe, including cases
 # with no Snapshot pair. Selection and exported actions share one implementation.
-accuracy_scope="QnnAcc_*_Accuracy*Test.*"
+accuracy_scope="${QNN_ACCURACY_SCOPE}"
 if [ -n "${filter_groups}" ]; then
     accuracy_scope=""
     for g in "${groups[@]}"; do
@@ -314,7 +297,16 @@ if run_provider_test --gtest_list_tests --gtest_filter="${snapshot_filter}" > "$
     inventory_complete=true
 fi
 selection_complete="${inventory_complete}"
-if [ "${inventory_complete}" = true ] && export_routing_result "0" "${results_dir}/selection.json"; then
+selection_mode="compare"
+if [ "${generate_goldens}" = true ]; then
+    selection_mode="generate_goldens"
+elif [ "${force_accuracy}" = true ]; then
+    selection_mode="force_accuracy"
+fi
+if [ "${inventory_complete}" = true ] && qnn_export_and_select \
+    "${bin_dir}" "${snapshot_json}" "${snapshot_list}" "${accuracy_list}" \
+    "${results_dir}/selection.json" "${accuracy_filter_file}" "${snapshot_exit}" "${selection_mode}" \
+    "${results_dir}/accuracy_gate_summary.txt"; then
     accuracy_filter="$(cat "${accuracy_filter_file}")"
 else
     log_warn "Testcase selection failed; running the full scoped Accuracy universe."
@@ -325,24 +317,7 @@ fi
 # Drift and absent goldens are routing signals. Preserve genuine Snapshot
 # failures even when Accuracy passes; an incomplete report cannot clear failure.
 snapshot_verdict=0
-if [ "${snapshot_exit}" -ne 0 ]; then
-    "${python_bin}" - "${snapshot_json}" <<'PYCODE' || snapshot_verdict=${snapshot_exit}
-import json
-import sys
-try:
-    data = json.load(open(sys.argv[1], encoding="utf-8"))
-    assert not data.get("errors", 0)
-    assert all(not suite.get("errors", 0) for suite in data["testsuites"])
-    failures = [failure for suite in data["testsuites"] for case in suite.get("testsuite", [])
-                for failure in case.get("failures", [])]
-    assert failures
-    assert all(isinstance(f, dict) and isinstance(f.get("failure"), str) and
-               ("QNN_SNAPSHOT_DRIFT" in f["failure"] or "QNN_GOLDEN_ABSENT" in f["failure"])
-               for f in failures)
-except (OSError, ValueError, KeyError, TypeError, AttributeError, AssertionError):
-    sys.exit(1)
-PYCODE
-fi
+qnn_snapshot_failure_is_routing_only "${snapshot_json}" "${snapshot_exit}" || snapshot_verdict=${snapshot_exit}
 
 log_info "--- Pass 2: Running accuracy tests ---"
 log_info "Filter: ${accuracy_filter}"
