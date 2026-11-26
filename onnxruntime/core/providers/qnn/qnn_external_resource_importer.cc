@@ -159,6 +159,11 @@ bool ORT_API_CALL QnnExternalResourceImporterImpl::CanImportMemoryImpl(
          (handle_type == ORT_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION && impl.supports_host_allocation_);
 }
 
+bool QnnExternalResourceImporterImpl::FindImportMemory(void* handle) {
+  std::shared_lock read_lock{mutex_mem_handle_registry_};
+  return mem_handle_registry_.contains(static_cast<QnnExternalMemoryHandle*>(handle));
+}
+
 QnnExternalMemoryHandle* QnnExternalResourceImporterImpl::FindHostHandleLocked(uintptr_t address) {
   auto it = host_memory_registry_.upper_bound(address);
   if (it == host_memory_registry_.begin()) {

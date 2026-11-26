@@ -152,10 +152,7 @@ struct QnnExternalResourceImporterImpl : OrtExternalResourceImporterImpl {
       _In_ OrtExternalResourceImporterImpl* this_ptr) noexcept;
 
   // Returns true if `handle` is an imported D3D12 memory handle.
-  static bool FindImportMemory(void* handle) {
-    std::shared_lock read_lock{mutex_mem_handle_registry_};
-    return mem_handle_registry_.contains((QnnExternalMemoryHandle*)handle);
-  }
+  static bool FindImportMemory(void* handle);
 
   struct ImportedHostMemoryInfo {
     void* base_address;

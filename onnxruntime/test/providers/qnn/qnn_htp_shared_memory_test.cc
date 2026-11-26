@@ -1665,7 +1665,7 @@ TEST_F(QnnHTPBackendTests, host_allocation_import_registration_reused_across_sha
       {"X", "Y", kFloat, {3, 2}}, {"XR", "YR", kFloat, {6}}, {"XI", "YI", kInt32, {6}}, {"XS", "YS", kFloat, {2}}};
 
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, [&ports](ModelTestBuilder& builder) {
+  CreateModelInMemory(model, [&ports, kFloat](ModelTestBuilder& builder) {
     for (const auto& port : ports) {
       if (port.type == kFloat) {
         builder.MakeInput<float>(port.input, port.shape, std::vector<float>(SizeOfShape(port.shape)));
