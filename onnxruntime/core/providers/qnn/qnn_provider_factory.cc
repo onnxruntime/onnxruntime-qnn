@@ -4,7 +4,6 @@
 #include "core/providers/qnn/qnn_provider_factory.h"
 
 #include <algorithm>
-#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -636,7 +635,10 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
 
   // The device type selects the importable memory: D3D12 resources for the GPU backend, host allocations
   // (mapped through FastRPC) for the HTP backend.
-  const OrtHardwareDevice* device = ep_device != nullptr ? factory->ort_api.EpDevice_Device(ep_device) : nullptr;
+  if (ep_device == nullptr) {
+    return factory->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "ep_device cannot be nullptr");
+  }
+  const OrtHardwareDevice* device = factory->ort_api.EpDevice_Device(ep_device);
   if (device == nullptr) {
     return factory->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "ep_device has no hardware device");
   }
@@ -653,7 +655,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateExternalResourceImporterForDeviceImp
 
   return nullptr;
 #else
-  std::ignore = ep_device;
+  ORT_UNUSED_PARAMETER(ep_device);
   return factory->ort_api.CreateStatus(
       ORT_NOT_IMPLEMENTED, "External resource import is not supported on non-Windows platforms");
 #endif
@@ -684,14 +686,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetCustomOpDomainsImpl(
 }
 
 }  // namespace onnxruntime
-
-namespace {
-// Number of QnnEpFactory instances created by CreateEpFactories and not yet released.
-std::atomic<size_t>& LiveFactoryCount() {
-  static std::atomic<size_t> count{0};
-  return count;
-}
-}  // namespace
 
 extern "C" {
 //
@@ -794,7 +788,6 @@ OrtStatus* CreateEpFactories(const char* registration_name,
 
   factories[0] = factory.release();
   *num_factories = 1;
-  LiveFactoryCount().fetch_add(1);
 
   return nullptr;
 }
@@ -806,17 +799,12 @@ OrtStatus* ReleaseEpFactory(OrtEpFactory* factory) {
 
   delete static_cast<onnxruntime::QnnEpFactory*>(factory);
 #ifdef _WIN32
-  // Host imports hold process-wide FastRPC mappings. Once the last factory is gone, undo any the app did not release
-  // before the EP library is unloaded, which would otherwise leak them.
-  if (LiveFactoryCount().fetch_sub(1) == 1) {
-    try {
-      onnxruntime::QnnExternalResourceImporterImpl::ReleaseOutstandingHostImports();
-    } catch (...) {
-      // Best effort; exceptions must not cross the C API boundary.
-    }
+  // Undo host imports the app did not release before the EP library is unloaded.
+  try {
+    onnxruntime::QnnExternalResourceImporterImpl::ReleaseOutstandingHostImports();
+  } catch (...) {
+    // Best effort; exceptions must not cross the C API boundary.
   }
-#else
-  LiveFactoryCount().fetch_sub(1);
 #endif
   return nullptr;
 }

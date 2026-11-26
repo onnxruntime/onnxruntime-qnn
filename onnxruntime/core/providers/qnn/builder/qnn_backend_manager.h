@@ -449,10 +449,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   }
 
  private:
-  // Adds the clean up hook that deregisters the registration for `memory_address` when its backing memory goes away.
-  Ort::Status AttachContextMemHandleCleanUp(QnnContextMemHandleManager& context_mem_handle_manager,
-                                            void* memory_address);
-
   Ort::Status LoadBackend();
 
   Ort::Status SetGlobalConfig();
@@ -616,6 +612,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   static_assert(std::is_pointer_v<Qnn_ContextHandle_t>);
   using UniqueQnnContextHandle =
       std::unique_ptr<std::remove_pointer_t<Qnn_ContextHandle_t>, std::function<void(Qnn_ContextHandle_t)>>;
+
+  // Adds the clean up hook that deregisters the registration for `memory_address` when its backing memory goes away.
+  Ort::Status AttachContextMemHandleCleanUp(QnnContextMemHandleManager& context_mem_handle_manager,
+                                            void* memory_address);
 
   struct QnnContextHandleRecord {
     UniqueQnnContextHandle context_handle;

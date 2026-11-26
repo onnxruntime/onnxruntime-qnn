@@ -21,6 +21,7 @@ namespace onnxruntime {
 // QnnExternalMemoryHandle Implementation
 // ============================================================================
 
+// Require whole pages so the NPU mapping does not expose bytes outside the imported range.
 size_t GetHostAllocationImportAlignment() {
   static const size_t page_size = [] {
     SYSTEM_INFO system_info{};

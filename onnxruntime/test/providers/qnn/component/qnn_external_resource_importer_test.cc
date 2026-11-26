@@ -27,6 +27,11 @@
 #include "test/providers/qnn/infra/qnn_test_logger.h"
 #include "test/providers/qnn/infra/stub_backend_manager.h"
 
+namespace onnxruntime {
+// Internal DLL symbol used only by the importer and its component tests.
+size_t GetHostAllocationImportAlignment();
+}  // namespace onnxruntime
+
 namespace onnxruntime::test {
 namespace {
 

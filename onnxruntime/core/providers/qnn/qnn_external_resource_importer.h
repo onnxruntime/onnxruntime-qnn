@@ -25,11 +25,6 @@ namespace onnxruntime {
 
 using ImportResourceCleanUpFn_t = std::function<void(void* handle)>;
 
-// Alignment required for the address and size of an ORT_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION import: the OS
-// page size. ORT requires the pointer to be page-aligned; requiring whole pages for the size as well (as Vulkan's
-// host-pointer import does) keeps the NPU mapping from exposing bytes the app did not import.
-size_t GetHostAllocationImportAlignment();
-
 /**
  * @brief Derived handle for external memory imported into QNN.
  *
@@ -170,7 +165,7 @@ struct QnnExternalResourceImporterImpl : OrtExternalResourceImporterImpl {
                                             std::weak_ptr<void> owner);
 
   // Releases host imports the app has not released, in the normal order (QNN mem handles, then FastRPC). Called when
-  // the last EP factory is released, before the EP library can be unloaded. Returns the number released.
+  // the EP factory is released, before the EP library can be unloaded. Returns the number released.
   static size_t ReleaseOutstandingHostImports();
 
   int device_id_;
