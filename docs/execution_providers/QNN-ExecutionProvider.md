@@ -231,6 +231,13 @@ Warning: Enabling HTP Monolithic LSTM may improve session creation time, but thi
 |`"0"`|Disable the HTP MatMul LUT kernel optimization.|
 |`"1"`|Default. Enable the HTP MatMul LUT kernel optimization. Available on Windows and Linux x86_64 with QAIRT 2.51 or later.|
 
+|`"enable_htp_predication"`|Description|
+|---|---|
+|`"0"`|Default. Do not enable HTP graph predication.|
+|`"1"`|Enable HTP graph predication during preparation/finalization, allowing eligible operations to be skipped based on runtime conditions. Backend support is required.|
+
+For AOT context generation, set this option when compiling the graph. Changing it when loading an existing context binary does not change the prepared graph; regenerate the context binary to apply it.
+
 |`"enable_htp_spill_fill_buffer"`|Description|
 |---|---|
 |'0'|Default. Disabled.|

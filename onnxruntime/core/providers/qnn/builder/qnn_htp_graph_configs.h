@@ -97,6 +97,16 @@ inline void PopulateHtpGraphConfigs(
     graph_config->customConfig = matmul_lut_config;
   }
 #endif
+
+  if (configs.enable_htp_predication) {
+    gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_predication_config = configs_builder.PushCustomConfig();
+    htp_graph_predication_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_ENABLE_PREDICATION;
+    htp_graph_predication_config->enablePredication = true;
+
+    gsl::not_null<QnnGraph_Config_t*> graph_predication_config = configs_builder.PushConfig();
+    graph_predication_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+    graph_predication_config->customConfig = htp_graph_predication_config;
+  }
 }
 
 }  // namespace qnn

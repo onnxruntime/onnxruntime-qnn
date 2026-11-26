@@ -964,7 +964,8 @@ TEST(QnnUnit_UtilsTest, QnnJSONGraph_StringScalarParam) {
   qnn::utils::QnnJSONGraph graph;
   graph.AddOp(op);
   EXPECT_EQ(graph.Finalize()["graph"]["nodes"]["custom"]["scalar_params"]["string_param"]
-                           [std::to_string(QNN_DATATYPE_STRING)], "NONE");
+                            [std::to_string(QNN_DATATYPE_STRING)],
+            "NONE");
 }
 
 static void RunJsonGraphScalarParamTest(const char* op_name, Qnn_DataType_t scalar_dt) {
