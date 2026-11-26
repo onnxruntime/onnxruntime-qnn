@@ -2141,6 +2141,102 @@ TEST_F(QnnHTPBackendTests, VariadicOp_Concat_2Inputs_2ndAxis) {
                         ExpectedEPNodeAssignment::All);
 }
 
+// Test QDQ Concat with strongly mismatched input encodings (~100x scale difference). A fused Concat
+// that copies raw quantized codes without requantizing produces wrong values here, so the QNN result
+// must still match the CPU QDQ accuracy.
+TEST_F(QnnHTPBackendTests, VariadicOp_Concat_MismatchedInputEncodings) {
+  RunQDQOpTest<uint8_t>("Concat",
+                        {TestInputDef<float>({1, 2, 2, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 8)),
+                         TestInputDef<float>({1, 2, 2, 2}, false, GetFloatDataInRange(-0.1f, 0.1f, 8))},
+                        {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+                        13,
+                        ExpectedEPNodeAssignment::All);
+}
+
+// Builds a QDQ model resembling the production rotary/q-norm pattern: each Concat input is produced by its
+// own Q/DQ pair followed by a data-movement op (Transpose) sandwiched between two Q/DQ pairs that share one
+// encoding, so every input chain is self-consistent but the chains disagree with each other and with the
+// Concat output encoding.
+static GetTestQDQModelFn<uint16_t> BuildQDQConcatDistinctChainEncodingsTestCase(
+    const TestInputDef<float>& input_a_def, const TestInputDef<float>& input_b_def) {
+  return [input_a_def, input_b_def](ModelTestBuilder& builder, std::vector<QuantParams<uint16_t>>& output_qparams) {
+    constexpr bool use_contrib_qdq = true;
+
+    MakeTestInput<float>(builder, "input_a", input_a_def);
+    MakeTestInput<float>(builder, "input_b", input_b_def);
+
+    const QuantParams<uint16_t> qparams_a = GetTestInputQuantParams<uint16_t>(input_a_def);
+    const QuantParams<uint16_t> qparams_b = GetTestInputQuantParams<uint16_t>(input_b_def);
+
+    const auto perm = builder.MakeIntsAttribute("perm", {0, 2, 1});
+
+    // Chain A: Q/DQ(enc A) -> Transpose -> Q/DQ(enc A)
+    const std::string a_dq1 = AddQDQNodePair<uint16_t>(builder, "a_qdq1", "input_a",
+                                                       qparams_a.scale, qparams_a.zero_point, use_contrib_qdq);
+    builder.AddNode("transpose_a", "Transpose", {a_dq1}, {"a_t"}, kOnnxDomain, {perm});
+    const std::string a_dq2 = AddQDQNodePair<uint16_t>(builder, "a_qdq2", "a_t",
+                                                       qparams_a.scale, qparams_a.zero_point, use_contrib_qdq);
+
+    // Chain B: Q/DQ(enc B) -> Transpose -> Q/DQ(enc B)
+    const std::string b_dq1 = AddQDQNodePair<uint16_t>(builder, "b_qdq1", "input_b",
+                                                       qparams_b.scale, qparams_b.zero_point, use_contrib_qdq);
+    builder.AddNode("transpose_b", "Transpose", {b_dq1}, {"b_t"}, kOnnxDomain, {perm});
+    const std::string b_dq2 = AddQDQNodePair<uint16_t>(builder, "b_qdq2", "b_t",
+                                                       qparams_b.scale, qparams_b.zero_point, use_contrib_qdq);
+
+    // Concat over the two differently-encoded chains, then Q/DQ with the output encoding.
+    const auto axis = builder.MakeScalarAttribute("axis", static_cast<int64_t>(1));
+    builder.AddNode("concat", "Concat", {a_dq2, b_dq2}, {"concat_out"}, kOnnxDomain, {axis});
+    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "qdq_out", "concat_out",
+                                                    output_qparams[0].scale, output_qparams[0].zero_point,
+                                                    use_contrib_qdq);
+  };
+}
+
+// Float reference model for BuildQDQConcatDistinctChainEncodingsTestCase.
+static GetTestModelFn BuildF32ConcatTransposeChainsTestCase(const TestInputDef<float>& input_a_def,
+                                                            const TestInputDef<float>& input_b_def) {
+  return [input_a_def, input_b_def](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input_a", input_a_def);
+    MakeTestInput<float>(builder, "input_b", input_b_def);
+    const auto perm = builder.MakeIntsAttribute("perm", {0, 2, 1});
+    builder.AddNode("transpose_a", "Transpose", {"input_a"}, {"a_t"}, kOnnxDomain, {perm});
+    builder.AddNode("transpose_b", "Transpose", {"input_b"}, {"b_t"}, kOnnxDomain, {perm});
+    const auto axis = builder.MakeScalarAttribute("axis", static_cast<int64_t>(1));
+    builder.AddNode("concat", "Concat", {"a_t", "b_t"}, {"output"}, kOnnxDomain, {axis});
+    builder.MakeOutput("output");
+  };
+}
+
+static void RunConcatDistinctChainEncodingsTest(const TestInputDef<float>& input_a_def,
+                                                const TestInputDef<float>& input_b_def) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // The Concat output must match the CPU QDQ result: QNN may not reinterpret one chain's raw codes
+  // under another chain's encoding.
+  TestQDQModelAccuracy(BuildF32ConcatTransposeChainsTestCase(input_a_def, input_b_def),
+                       BuildQDQConcatDistinctChainEncodingsTestCase(input_a_def, input_b_def),
+                       provider_options,
+                       18,
+                       ExpectedEPNodeAssignment::All);
+}
+
+// Concat inputs whose chains use very different scales (and zero-points).
+TEST_F(QnnHTPBackendTests, VariadicOp_Concat_U16_DistinctChainScales) {
+  RunConcatDistinctChainEncodingsTest(
+      TestInputDef<float>({1, 4, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 24)),
+      TestInputDef<float>({1, 4, 6}, false, GetFloatDataInRange(-0.1f, 0.1f, 24)));
+}
+
+// Concat inputs whose chains share a scale but differ only in zero-point.
+TEST_F(QnnHTPBackendTests, VariadicOp_Concat_U16_DistinctChainZeroPoints) {
+  RunConcatDistinctChainEncodingsTest(
+      TestInputDef<float>({1, 4, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 24)),
+      TestInputDef<float>({1, 4, 6}, false, GetFloatDataInRange(-5.0f, 15.0f, 24)));
+}
+
 TEST_F(QnnHTPBackendTests, LpNormalization_u8_rank4) {
   std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
   RunQDQOpTest<uint8_t>("LpNormalization",
