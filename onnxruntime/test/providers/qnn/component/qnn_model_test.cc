@@ -310,6 +310,29 @@ TEST_F(QnnUnitModelExecutionTest, NonSsrRetryFailureReturnsQnnNameAndCode) {
   EXPECT_EQ(execution_.calls, 2u);
 }
 
+TEST_F(QnnUnitModelExecutionTest, FatalSsrDoesNotRetryAndPreservesFullHandle) {
+  EnableRecovery();
+  constexpr auto error = kTrackingBits | QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL;
+  backend_.QnnInterface().errorGetMessage = [](Qnn_ErrorHandle_t, const char** message) -> Qnn_ErrorHandle_t {
+    *message = "QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL";
+    return QNN_SUCCESS;
+  };
+  execution_.results = {error};
+  const auto status = Execute();
+  ASSERT_NO_FATAL_FAILURE(ExpectQnnError(status, error, "QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL"));
+  EXPECT_EQ(status.GetErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+  EXPECT_EQ(execution_.calls, 1u);
+}
+
+TEST_F(QnnUnitModelExecutionTest, FatalSsrAfterRecoveryReturnsDeviceReset) {
+  EnableRecovery();
+  execution_.results = {QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL};
+  const auto status = Execute();
+  EXPECT_EQ(status.GetErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+  EXPECT_NE(status.GetErrorMessage().find("after SSR recovery"), std::string::npos);
+  EXPECT_EQ(execution_.calls, 2u);
+}
+
 TEST_F(QnnUnitModelExecutionTest, SuccessfulSsrRecoveryReturnsSuccess) {
   EnableRecovery();
   execution_.results = {QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, QNN_GRAPH_NO_ERROR};

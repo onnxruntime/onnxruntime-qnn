@@ -17,6 +17,7 @@ QCOM_ROOT = Path(__file__).resolve().parents[3]
     ("task_name", "mode"),
     [
         ("_build_ort_linux_aarch64_manylinux_2_34_internal_symbols", "build"),
+        ("archive_ort_linux_aarch64_manylinux_2_34_internal_symbols", "archive"),
         ("test_ort_linux_aarch64_manylinux_2_34_internal_symbols", "test"),
     ],
 )
