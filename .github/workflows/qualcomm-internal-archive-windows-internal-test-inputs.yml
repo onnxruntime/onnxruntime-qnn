@@ -1,0 +1,54 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Archive Windows ARM64 internal-symbol test inputs
+
+on:
+  workflow_call:
+    inputs:
+      target_py_vsn:
+        type: string
+        required: true
+      build_config:
+        type: string
+        required: true
+
+env:
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+  BUILD_CONFIG: "${{ inputs.build_config }}"
+  TEST_ARCHIVE_PATH: "build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}windows-arm64-internal-symbols.zip"
+
+jobs:
+  archive-windows-internal-test-inputs:
+    runs-on: ["self-hosted", "linux", "X64", "Build"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "windows-arm64-py${{ inputs.target_py_vsn }}-tests"
+
+      - name: Pack Windows ARM64 internal-symbol test inputs
+        # Windows packaging ignores the QAIRT path required by the CLI.
+        run: |
+          python3 -m zipfile -e "$TEST_ARCHIVE_PATH" "$GITHUB_WORKSPACE"
+          python3 qcom/scripts/all/archive_tests.py \
+            --config="$BUILD_CONFIG" \
+            --target-platform=windows-arm64-internal-symbols \
+            --qairt-sdk-root="$GITHUB_WORKSPACE/build"
+
+      - name: Upload Windows internal-symbol test inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: qnn-internal-windows-arm64-test-inputs
+          retention-days: 1
+          path: ${{ github.workspace }}/${{ env.TEST_ARCHIVE_PATH }}
+          if-no-files-found: error

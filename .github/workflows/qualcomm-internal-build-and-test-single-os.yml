@@ -211,25 +211,6 @@ jobs:
           path: ${{ github.workspace }}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}linux-${{ env.BUILD_DIR_ARCH }}.tar.bz2
           if-no-files-found: error
 
-      # Use the existing archive layout and include MSVC runtime DLLs for QDC.
-      # Actions handles the Windows test handoff; upload_test_archive controls Artifactory publication.
-      - name: Pack Windows ARM64 internal-symbol test inputs
-        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols && !inputs.build_test_same_runner }}
-        run: >
-          python.exe qcom/build_and_test.py
-          --target-py-version ${{ inputs.target_py_vsn }}
-          --config ${{ inputs.build_config }}
-          archive_ort_windows_arm64_internal_symbols --only
-
-      - name: Upload Windows internal-symbol test inputs
-        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols && !inputs.build_test_same_runner }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
-          retention-days: 1
-          path: ${{ github.workspace }}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}windows-${{ env.BUILD_DIR_ARCH }}.zip
-          if-no-files-found: error
-
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.has_code_changes && inputs.run_tests && inputs.build_test_same_runner }}
         run: >
@@ -354,11 +335,25 @@ jobs:
             "${GITHUB_WORKSPACE}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}linux-${BUILD_DIR_ARCH}.tar.bz2" \
             "${GITHUB_WORKSPACE}/build/onnxruntime-testdata.tar.bz2"
 
+  archive-windows-internal-test-inputs:
+    if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
+    needs: [build]
+    uses: ./.github/workflows/qualcomm-internal-archive-windows-internal-test-inputs.yml
+    secrets: inherit
+    with:
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      build_config: ${{ inputs.build_config }}
+
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && '-self-hosted' || '' }}${{ inputs.qnn_internal_test_symbols && inputs.target_os != 'linux' && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     # Cross-runner tests also consume shared testdata from Artifactory; skip on fork PRs where secrets are unavailable.
-    if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
-    needs: [build]
+    if: >-
+      ${{ !cancelled() && inputs.run_tests && !inputs.build_test_same_runner &&
+          github.event.pull_request.head.repo.fork != true && needs.build.result == 'success' &&
+          (!inputs.has_code_changes || inputs.target_os != 'windows' ||
+           inputs.target_arch != 'arm64' || !inputs.qnn_internal_test_symbols ||
+           needs['archive-windows-internal-test-inputs'].result == 'success') }}
+    needs: [build, archive-windows-internal-test-inputs]
     runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Test"]
     defaults:
       run:
@@ -481,7 +476,7 @@ jobs:
   windows-arm64-validation:
     # Preserve the existing Windows ARM64 test check name for self-hosted validation.
     name: "test-windows-arm64-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
-    if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && !inputs.build_test_same_runner && (inputs.qnn_internal_test_symbols || inputs.upload_test_archive) && github.event.pull_request.head.repo.fork != true }}
+    if: ${{ always() && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && !inputs.build_test_same_runner && inputs.upload_test_archive && github.event.pull_request.head.repo.fork != true }}
     needs: [build, test]
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     timeout-minutes: 5
