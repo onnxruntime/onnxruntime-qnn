@@ -40,7 +40,15 @@ class QMoEOpBuilder final : public BaseOpBuilder {
     RETURN_IF_NOT(h.Get("activation_type", std::string()) == "swiglu", "QMoE GPU requires swiglu activation.");
     RETURN_IF_NOT(h.Get("swiglu_fusion", int64_t(0)) == 1, "QMoE GPU requires swiglu_fusion=1.");
     RETURN_IF_NOT(h.Get("use_sparse_mixer", int64_t(0)) == 0, "QMoE GPU does not support sparse mixer.");
-    RETURN_IF_NOT(inputs.size() < 14 || !inputs[8].Exists(), "Fused SwiGLU QMoE must not provide fc3 inputs.");
+    // The QNN GPU QMoE kernels consume only inputs 0-7. Reject every optional input they would ignore
+    // so the node falls back to another EP instead of silently running with different semantics:
+    // fc3_* (8-10, invalid with fused SwiGLU), zero points (11-13), router_weights (14), and the
+    // global/activation scales (15-20), which ProcessInputs does not forward at all.
+    RETURN_IF(inputs.size() > 14 && inputs[14].Exists(),
+              "QMoE GPU does not support the router_weights input; routing would differ from the CPU EP.");
+    for (size_t i = 8; i < inputs.size(); ++i) {
+      RETURN_IF(inputs[i].Exists(), ("QMoE GPU does not support optional input " + std::to_string(i) + ".").c_str());
+    }
     return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);
   }
 

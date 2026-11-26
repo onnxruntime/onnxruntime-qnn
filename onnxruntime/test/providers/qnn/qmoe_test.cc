@@ -32,6 +32,7 @@ struct QMoETestParams {
   int64_t num_experts;
   int64_t k{4};
   int64_t block_size{32};
+  bool with_router_weights{false};  // supply optional input 14 (not supported by QNN GPU)
 };
 
 // Quantizes a single expert's [K, N] row-major weight matrix into the packed uint8 blob
@@ -148,6 +149,16 @@ static void RunQMoETest(const QMoETestParams params,
       (void)name;
     }
 
+    // router_weights (input 14): separate aggregation weights, {num_tokens, num_experts}.
+    if (params.with_router_weights) {
+      std::vector<float> router_weight_vals(
+          random.Uniform<float>(AsSpan({params.batch_size * params.num_tokens, params.num_experts}), 0.0f, 1.0f));
+      auto router_weights_def =
+          TestInputDef<float>({params.batch_size * params.num_tokens, params.num_experts}, false, router_weight_vals);
+      MakeTestInput<float>(builder, "router_weights", router_weights_def);
+      input_names.push_back("router_weights");
+    }
+
     builder.MakeOutput("output");
 
     std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
@@ -188,6 +199,18 @@ TEST_F(QnnGPUBackendTests, QMoE_Tokens8_H128_I128_E8_K4) {
   params.num_experts = 8;
   params.k = 4;
   RunQMoETest(params);
+}
+
+// QNN GPU ignores router_weights (input 14), so a node that provides it must not be assigned to QNN.
+TEST_F(QnnGPUBackendTests, QMoE_RouterWeights_NotSupported) {
+  QMoETestParams params;
+  params.num_tokens = 8;
+  params.hidden_size = 128;
+  params.inter_size = 128;
+  params.num_experts = 8;
+  params.k = 4;
+  params.with_router_weights = true;
+  RunQMoETest(params, ExpectedEPNodeAssignment::None);
 }
 
 // Large production-shaped coverage, matching the GPU OpPackage QMoE tests.
