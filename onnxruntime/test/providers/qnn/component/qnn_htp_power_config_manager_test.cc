@@ -66,11 +66,15 @@ struct StubHtpPerfInterface {
   static int set_power_config_calls;
   static int get_infrastructure_calls;
   static int fail_get_infrastructure_on_call;
+  static QnnHtpPerfInfrastructure_PowerConfig_t last_power_config;
   static QnnHtpDevice_Infrastructure_t infra;
 
   static Qnn_ErrorHandle_t SetPowerConfig(uint32_t /*power_config_id*/,
-                                          const QnnHtpPerfInfrastructure_PowerConfig_t** /*config*/) {
+                                          const QnnHtpPerfInfrastructure_PowerConfig_t** config) {
     ++set_power_config_calls;
+    if (config != nullptr && config[0] != nullptr) {
+      last_power_config = *config[0];
+    }
     return QNN_SUCCESS;
   }
 
@@ -113,17 +117,20 @@ QnnHtpDevice_Infrastructure_t StubHtpPerfInterface::infra{};
 
 int StubHtpPerfInterface::get_infrastructure_calls = 0;
 int StubHtpPerfInterface::fail_get_infrastructure_on_call = -1;
+QnnHtpPerfInfrastructure_PowerConfig_t StubHtpPerfInterface::last_power_config{};
 // Zeroes the observable call counter for a test's duration.
 struct ResetStubCounters {
   ResetStubCounters() {
     StubHtpPerfInterface::set_power_config_calls = 0;
     StubHtpPerfInterface::get_infrastructure_calls = 0;
     StubHtpPerfInterface::fail_get_infrastructure_on_call = -1;
+    StubHtpPerfInterface::last_power_config = {};
   }
   ~ResetStubCounters() {
     StubHtpPerfInterface::set_power_config_calls = 0;
     StubHtpPerfInterface::get_infrastructure_calls = 0;
     StubHtpPerfInterface::fail_get_infrastructure_on_call = -1;
+    StubHtpPerfInterface::last_power_config = {};
   }
 };
 
@@ -162,6 +169,19 @@ int FireTimeoutRelaxCalls(HtpPowerConfigManager& manager, const Ort::Logger& log
 
 // Common fixture wiring: stub interface + active timer.
 struct ManagerFixture {
+  // Timer setup obtains the module's default logger, which may be null in a
+  // focused test run. Stub its severity query before the timer is created.
+  static OrtApi MakeTimerOrtApi() {
+    OrtApi api = *OrtGetApiBase()->GetApi(ORT_API_VERSION);
+    api.Logger_GetLoggingSeverityLevel = [](const OrtLogger*, OrtLoggingLevel* severity) noexcept -> OrtStatus* {
+      *severity = ORT_LOGGING_LEVEL_FATAL;
+      return nullptr;
+    };
+    return api;
+  }
+
+  OrtApi ort_api = MakeTimerOrtApi();
+  OrtGlobalApiOverride api_override{&ort_api};
   HtpPowerConfigManager manager;
   Ort::Logger logger = MakeNullLogger();
   QNN_INTERFACE_VER_TYPE qnn_interface = StubHtpPerfInterface::MakeInterface();
@@ -300,6 +320,59 @@ TEST(QnnUnit_HtpPowerStateGuardTest, SuccessfulPostRunPreventsDestructorRetry) {
 
   EXPECT_EQ(calls_after_post_run, 2);
   EXPECT_EQ(StubHtpPerfInterface::get_infrastructure_calls, calls_after_post_run);
+}
+
+TEST(QnnUnit_HtpPowerStateGuardTest, EarlyReturnWithoutPostRunRelaxesHtpOnce) {
+  ResetStubCounters reset;
+  GuardFixture fx;
+  HtpPerfConfig_t config = MakeHighPerformanceConfig();
+
+  auto start_and_return = [&]() {
+    qnn::HtpPowerStateGuard guard(&fx.manager, /*valid_power_config_id=*/true,
+                                  GraphState::RUN_START, GraphState::RUN_DONE,
+                                  config, fx.logger);
+    return guard.SetPreRunHtpPerfStatus().IsOK();
+  };
+
+  ASSERT_TRUE(start_and_return());
+
+  // One start and one destructor-driven done; no explicit post-run call.
+  EXPECT_EQ(StubHtpPerfInterface::get_infrastructure_calls, 2);
+  EXPECT_EQ(StubHtpPerfInterface::set_power_config_calls, 2);
+  const auto& relaxed = StubHtpPerfInterface::last_power_config;
+  ASSERT_EQ(relaxed.option, QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3);
+  EXPECT_EQ(relaxed.dcvsV3Config.contextId, config.htp_power_config_client_id);
+  EXPECT_EQ(relaxed.dcvsV3Config.powerMode, QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_POWER_SAVER_MODE);
+  EXPECT_EQ(relaxed.dcvsV3Config.busVoltageCornerTarget, DCVS_VOLTAGE_VCORNER_SVS);
+  EXPECT_EQ(relaxed.dcvsV3Config.coreVoltageCornerTarget, DCVS_VOLTAGE_VCORNER_SVS);
+}
+
+TEST(QnnUnit_HtpPowerStateGuardTest, ScopeExitKeepsTimeoutGatedUntilLastRunCompletes) {
+  ResetStubCounters reset;
+  ManagerFixture fx;
+  HtpPerfConfig_t burst_config = MakeBurstConfig(/*client_id=*/2);
+  HtpPerfConfig_t config = MakeHighPerformanceConfig();
+
+  {
+    qnn::HtpPowerStateGuard active_guard(&fx.manager, /*valid_power_config_id=*/true,
+                                         GraphState::RUN_START, GraphState::RUN_DONE,
+                                         burst_config, fx.logger);
+    ASSERT_TRUE(active_guard.SetPreRunHtpPerfStatus().IsOK());
+
+    {
+      qnn::HtpPowerStateGuard guard(&fx.manager, /*valid_power_config_id=*/true,
+                                    GraphState::RUN_START, GraphState::RUN_DONE,
+                                    config, fx.logger);
+      ASSERT_TRUE(guard.SetPreRunHtpPerfStatus().IsOK());
+      EXPECT_EQ(FireTimeoutRelaxCalls(fx.manager, fx.logger), 0);
+    }
+
+    // The first guard cleaned up, but the burst operation is still active.
+    EXPECT_EQ(FireTimeoutRelaxCalls(fx.manager, fx.logger), 0);
+  }
+
+  // Both guards completed through RAII; drive TIMEOUT without waiting on a timer.
+  EXPECT_GT(FireTimeoutRelaxCalls(fx.manager, fx.logger), 0);
 }
 
 TEST(QnnUnit_HtpPowerStateGuardTest, FailedPostRunIsRetriedByDestructor) {
