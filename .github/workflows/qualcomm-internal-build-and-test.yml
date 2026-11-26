@@ -219,7 +219,7 @@ jobs:
       qnn_internal_test_symbols: true
       run_tests: true
       build_test_same_runner: true
-      upload_wheel: true
+      upload_wheel: false
       upload_test_archive: false
 
   lint:
