@@ -82,13 +82,16 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
 
   if (qnn_model_wrapper.GetModelSettings().enable_htp_persistent_buffer) {
     RETURN_IF_NOT(backend_type == QnnBackendType::HTP, "Persistent GQA buffers require the HTP backend");
-    RETURN_IF((num_inputs > 3 && inputs[3].Exists()) || (num_inputs > 4 && inputs[4].Exists()),
-              "Persistent GQA requires omitted past_key and past_value inputs");
+    const bool has_past_key = num_inputs > 3 && inputs[3].Exists();
+    const bool has_past_value = num_inputs > 4 && inputs[4].Exists();
+    RETURN_IF_NOT(has_past_key == has_past_value, "Persistent GQA requires both past KV inputs or neither");
+    if (has_past_key) {
+      RETURN_IF_NOT(qnn_model_wrapper.IsGraphInput(inputs[3].name) &&
+                        qnn_model_wrapper.IsGraphInput(inputs[4].name),
+                    "Persistent GQA past KV tensors must be graph inputs");
+    }
     RETURN_IF_NOT(num_outputs >= 3 && outputs[1].Exists() && outputs[2].Exists(),
-                  "Persistent GQA requires internal present_key and present_value outputs with shape information");
-    RETURN_IF(qnn_model_wrapper.IsGraphOutput(outputs[1].name) ||
-                  qnn_model_wrapper.IsGraphOutput(outputs[2].name),
-              "Persistent GQA requires present_key and present_value to be removed from graph outputs");
+                  "Persistent GQA requires present_key and present_value outputs with shape information");
   }
 
   uint32_t cache_capacity = 0;
@@ -204,7 +207,28 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
 
   for (size_t qnn_idx = 0; qnn_idx < qnn_input_count; ++qnn_idx) {
     const auto onnx_idx = qnn_idx_to_onnx[qnn_idx];
-    if (onnx_idx.has_value() && onnx_inputs.size() > *onnx_idx && onnx_inputs[*onnx_idx].Exists()) {
+    if (qnn_model_wrapper.GetModelSettings().enable_htp_persistent_buffer &&
+        onnx_idx.has_value() && (*onnx_idx == 3 || *onnx_idx == 4)) {
+      const auto& output = node_unit.Outputs()[*onnx_idx - 2];
+      const bool has_input = onnx_inputs.size() > *onnx_idx && onnx_inputs[*onnx_idx].Exists();
+      const auto& cache = has_input ? onnx_inputs[*onnx_idx] : output;
+      TensorInfo tensor_info = {};
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(cache, tensor_info));
+      RETURN_IF_NOT(!tensor_info.is_initializer, "Persistent GQA cache cannot be an initializer");
+      RETURN_IF_NOT(tensor_info.shape.size() == 4, "Persistent GQA cache must have rank 4");
+      RETURN_IF_NOT(tensor_info.qnn_data_type == QNN_DATATYPE_FLOAT_16,
+                    "Engineering persistent GQA buffers require FP16 cache tensors");
+      TensorInfo output_info = {};
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, output_info));
+      RETURN_IF_NOT(tensor_info.shape == output_info.shape && tensor_info.qnn_data_type == output_info.qnn_data_type,
+                    "Persistent GQA past and present cache shapes and types must match");
+      const std::string tensor_name = has_input ? cache.name : output.name + "_persistent";
+      QnnTensorWrapper tensor_wrapper(tensor_name, kPersistentTensorType, tensor_info.qnn_data_type,
+                                      std::move(tensor_info.quant_param), std::move(tensor_info.shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tensor_wrapper)),
+                    "Failed to add persistent GQA cache tensor");
+      input_names.push_back(tensor_name);
+    } else if (onnx_idx.has_value() && onnx_inputs.size() > *onnx_idx && onnx_inputs[*onnx_idx].Exists()) {
       const auto& onnx_input = onnx_inputs[*onnx_idx];
       // QNN requires total_sequence_length as a 0D scalar, but ONNX provides it as shape [1].
       // Build the tensor wrapper directly with an empty shape to avoid a Reshape.
@@ -222,21 +246,6 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
       } else {
         RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, onnx_input, logger, input_names));
       }
-    } else if (qnn_model_wrapper.GetModelSettings().enable_htp_persistent_buffer &&
-               onnx_idx.has_value() && (*onnx_idx == 3 || *onnx_idx == 4)) {
-      const size_t output_idx = *onnx_idx - 2;
-      const auto& output = node_unit.Outputs()[output_idx];
-      TensorInfo tensor_info = {};
-      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, tensor_info));
-      RETURN_IF_NOT(tensor_info.shape.size() == 4, "Persistent GQA cache must have rank 4");
-      RETURN_IF_NOT(tensor_info.qnn_data_type == QNN_DATATYPE_FLOAT_16,
-                    "Engineering persistent GQA buffers require FP16 cache tensors");
-      const std::string tensor_name = output.name + "_persistent";
-      QnnTensorWrapper tensor_wrapper(tensor_name, kPersistentTensorType, tensor_info.qnn_data_type,
-                                      std::move(tensor_info.quant_param), std::move(tensor_info.shape));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tensor_wrapper)),
-                    "Failed to add persistent GQA cache tensor");
-      input_names.push_back(tensor_name);
     } else {
       std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
       input_names.emplace_back(null_tensor_name);
@@ -355,7 +364,9 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
       TensorInfo output_info = {};
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[output_idx], output_info));
 
-      bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+      const bool persistent_cache = qnn_model_wrapper.GetModelSettings().enable_htp_persistent_buffer &&
+                                    (output_idx == 1 || output_idx == 2);
+      bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name) && !persistent_cache;
       Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
       QnnTensorWrapper output_tensorwrapper(output_name,

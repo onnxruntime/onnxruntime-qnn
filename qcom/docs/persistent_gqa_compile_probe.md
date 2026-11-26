@@ -1,13 +1,18 @@
 # Persistent GQA compile probe (experimental)
 
-This opt-in experiment replaces omitted GQA past key/value inputs with two
-backend-managed FP16 tensors. It checks compilation only. It does not implement
+This opt-in experiment converts GQA past key/value inputs into two
+backend-managed FP16 tensors while retaining the original ONNX KV I/O by default.
+It checks compilation only. It does not implement
 KV initialization, reset, readback, or sharing between separate sessions.
 
-`enable_htp_persistent_buffer=1` requires HTP, omitted past key/value inputs,
-and named internal present key/value outputs with rank-4 FP16 metadata. Remove
-KV graph IO while retaining the three GQA node outputs and their cache shapes.
-The default option is off.
+`enable_htp_persistent_buffer=1` requires HTP and matching rank-4 FP16 past/present
+cache shapes. Retained past KV tensors must be graph inputs. The backend graph
+uses type-14 past tensors and native present tensors; these are excluded from
+ordinary QNN execute I/O. The ONNX graph retains its shape-inference information
+and public I/O. The default provider option is off.
+
+The earlier omitted-KV diagnostic remains available with `--remove-kv-io`.
+It requires named present KV metadata and retains all three GQA node outputs.
 
 The prototype uses tensor type **14** via a local cast because the SDK headers
 used for this experiment do not publish `QNN_TENSOR_TYPE_PERSISTENT`. This value
@@ -43,13 +48,38 @@ The default target architecture is v73, with one core.
 
 - `baseline`: explicit KV IO, option off; three graph inputs and outputs.
 - `default`: omitted KV IO, option off; one graph input and output.
-- `persistent`: omitted KV IO, option on; two type-14 cache inputs inside QNN.
+- `persistent`: retained ONNX KV I/O, option on; two type-14 cache inputs inside QNN.
+- `persistent --remove-kv-io`: earlier omitted-KV diagnostic, option on.
 
 Successful runs verify EPContext export, graph IO counts, and numeric persistent
 tensor types/shapes/dtypes in the JSON dump, then write a result JSON.
 A native backend crash can terminate the process before a result JSON is written.
 
+## Runtime request (not yet functional)
+
+The plugin EP reads `qnn.persistent_kv_write` in `OnRunStart` through the existing
+ORT run-config API; no ORT-core patch is needed. Only `"0"` and `"1"` are accepted.
+The intended first run requests a host KV write; later runs request internal
+cache use. The setting is per run, not a mutable session-wide option.
+
+```python
+run_options = ort.RunOptions()
+run_options.add_run_config_entry("qnn.persistent_kv_write", "1")
+# feeds includes the original ONNX past_key/past_value tensors.
+session.run(["output"], feeds, run_options)
+```
+
+This request currently fails with `ORT_NOT_IMPLEMENTED` before backend execution:
+the engineering write/initialization recipe has not been wired. Subsequent runs
+also fail rather than reading uninitialized state. There is no readback, valid
+host KV output, or ctx/iter state-sharing contract. Request only attention outputs
+when testing this route. Use the persistent provider option when loading its
+compiled context as well as when compiling it.
+
 ## Current evidence
+
+The following results describe the earlier omitted-KV diagnostic, not the new
+retained-I/O path.
 
 Native ARM64 Release build and model structural checks pass. Standalone
 ModelCompiler experiments with CPU fallback disabled produced:

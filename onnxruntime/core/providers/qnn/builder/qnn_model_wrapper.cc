@@ -1206,6 +1206,14 @@ void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::st
       break;
     }
 
+    // Stateful KV remains in the ONNX interface but is not ordinary QNN execute I/O.
+    const auto tensor_type = it->second.GetTensorType();
+    if (model_settings_.enable_htp_persistent_buffer &&
+        tensor_type != QNN_TENSOR_TYPE_APP_WRITE && tensor_type != QNN_TENSOR_TYPE_APP_READ &&
+        tensor_type != QNN_TENSOR_TYPE_APP_READWRITE) {
+      continue;
+    }
+
     if (const std::string* name = model_settings_.offload_graph_io_quantization
                                       ? GetTensorNameOverride(tensor_name)
                                       : nullptr) {

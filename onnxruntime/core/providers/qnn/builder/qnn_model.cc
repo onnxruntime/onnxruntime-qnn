@@ -85,6 +85,8 @@ bool QnnModel::GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::
 Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
   const OrtGraph& ort_graph = context.ort_graph;
 
+  enable_htp_persistent_buffer_ = context.model_settings && context.model_settings->enable_htp_persistent_buffer;
+
   graph_inputs_.Clear();
   graph_outputs_.Clear();
 
@@ -788,6 +790,10 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
                                    const qnn::EpContextIoDispatch& io_dispatch,
                                    QnnEpProfiler* ort_profiler) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "QnnModel::ExecuteGraphs");
+  if (enable_htp_persistent_buffer_) {
+    return Ort::Status("Persistent KV execution is not implemented: backend initialization is not wired.",
+                       ORT_NOT_IMPLEMENTED);
+  }
   size_t num_inputs;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.KernelContext_GetInputCount(context, &num_inputs));
 
