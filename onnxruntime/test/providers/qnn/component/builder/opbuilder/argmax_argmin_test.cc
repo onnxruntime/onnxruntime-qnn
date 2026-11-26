@@ -46,7 +46,7 @@ Ort::Status AddArgMaxMin(const std::string& op_type, std::vector<int64_t> input_
 TEST(QnnUnit_ArgMaxMin_ComponentTest, DefaultsAndGraphOutputInt64ConversionSucceed) {
   for (const char* op_type : {"ArgMax", "ArgMin"}) {
     SCOPED_TRACE(op_type);
-    const auto status = AddArgMaxMin(op_type, {1, 3, 4, 4}, {1, 3, 4, 1}, {}, true);
+    const auto status = AddArgMaxMin(op_type, {1, 3, 4, 4}, {1, 3, 4, 4}, {}, true);
     EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
   }
 }
