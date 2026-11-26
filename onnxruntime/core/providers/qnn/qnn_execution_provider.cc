@@ -1743,25 +1743,15 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
 
   // Owns the EPContext callbacks resolved from session_options; no-op stub if the runtime
   // does not support EPContext encryption (see EpContextIoDispatch for the capability check).
-  std::string decrypt_source_mapping;
-  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("context_binary_decrypt_source_mapping"),
-                                 "0", decrypt_source_mapping);
-  if (decrypt_source_mapping != "0" && decrypt_source_mapping != "1") {
-    throw std::runtime_error("context_binary_decrypt_source_mapping must be '0' or '1'.");
-  }
+  const bool decrypt_source_mapping = ParseBoolOption(
+      ort_api, session_options_, FormatEPConfigKey("context_binary_decrypt_source_mapping"), false, logger_);
 #if !defined(QNN_FILE_MAPPED_WEIGHTS_AVAILABLE) || !ORT_API_HAS_EPCONTEXT_ENCRYPTION
-  if (decrypt_source_mapping == "1") {
+  if (decrypt_source_mapping) {
     throw std::runtime_error("Decrypt source mapping requires Windows ARM64/HTP and EPContext callbacks.");
   }
 #endif
-  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(session_options_,
-                                                            runtime_capabilities,
-                                                            &logger_, decrypt_source_mapping == "1");
-  if (io_dispatch_->SourceMappingIsEnabled() &&
-      (!io_dispatch_->HasSourceReadCallback() || enable_multi_soc_ep_context_ ||
-       htp_share_resource_optimization_ == 1)) {
-    throw std::runtime_error("Decrypt source mapping requires the private source binding and an external, single-SoC HTP context.");
-  }
+  io_dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(
+      session_options_, runtime_capabilities, decrypt_source_mapping, &logger_);
 
   // A callback session may initialize a manager later reused by native sessions.
   // Preserve the setup option; the manager decides mapping per load.
@@ -2295,8 +2285,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   // Genie Pathway
   if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
     if (ep->io_dispatch_->SourceMappingIsEnabled()) {
-      return ep->ort_api.CreateStatus(ORT_NOT_IMPLEMENTED,
-                                      "Decrypt source mapping does not support Genie/DLC models.");
+      ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                  "Decrypt source mapping applies to external EPContext reads; "
+                  "continuing Genie/DLC model loading.");
     }
 #if defined(_WIN32) && QNN_ARCH_ARM64
     return ep->GetGenieCapability(this_ptr, graph, graph_support_info);
@@ -2308,7 +2299,14 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph, ep->ort_api);
   if (ep->io_dispatch_->SourceMappingIsEnabled() && !is_qnn_ctx_model) {
-    return ep->ort_api.CreateStatus(ORT_NOT_IMPLEMENTED, "Decrypt source mapping requires an EPContext model.");
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                "Decrypt source mapping applies to external EPContext reads; "
+                "continuing regular model loading.");
+  }
+  if (is_qnn_ctx_model && ep->io_dispatch_->SourceMappingIsEnabled() &&
+      !ep->io_dispatch_->HasSourceReadCallback()) {
+    return ep->ort_api.CreateStatus(
+        ORT_INVALID_ARGUMENT, "Decrypt source mapping requires the private source-aware read callback.");
   }
 
   // Compatibility validation precedes GetCapability and therefore cannot
@@ -2346,7 +2344,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
         char context_buffer[512] = {0};
         size_t context_len = 0;
         if (ep->ort_api.ReadOpAttr(ep_cache_context_attr, ORT_OP_ATTR_STRING, context_buffer, sizeof(context_buffer) - 1, &context_len) == nullptr) {
-          std::string context_bin_filepath(parent_path.string());
+          std::string context_bin_filepath(
+              ep->io_dispatch_->HasReadCallback() ? parent_path.u8string() : parent_path.string());
           if (context_bin_filepath.empty()) {
             context_bin_filepath.append(".");
           }
@@ -2398,7 +2397,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   // so HTP sessions default to keeping GQA on CPU
   // -- users can opt into HTP via the op_affinity config once they've validated it.
   const qnn::QnnBackendType resolved_backend = ep->qnn_backend_manager_->GetQnnBackendType();
-  if (ep->io_dispatch_->SourceMappingIsEnabled() && resolved_backend != qnn::QnnBackendType::HTP) {
+  if (is_qnn_ctx_model && ep->io_dispatch_->SourceMappingIsEnabled() &&
+      resolved_backend != qnn::QnnBackendType::HTP) {
     return ep->ort_api.CreateStatus(ORT_NOT_IMPLEMENTED, "Decrypt source mapping requires the HTP backend.");
   }
   if (resolved_backend == qnn::QnnBackendType::HTP) {
@@ -2949,9 +2949,6 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
   std::vector<int> main_context_pos_list;
   RETURN_IF_NOT_OK(qnn::GetMainContextNode(graphs, count, ort_api, main_context_pos_list));
   uint32_t total_context_size = SafeInt<uint32_t>(main_context_pos_list.size());
-  if (io_dispatch_->SourceMappingIsEnabled() && total_context_size != 1) {
-    return ort_api.CreateStatus(ORT_NOT_IMPLEMENTED, "Decrypt source mapping supports one external context binary.");
-  }
 
   int64_t max_spill_fill_size = 0;
 

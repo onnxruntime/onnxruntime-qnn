@@ -134,9 +134,9 @@ EpContextIoDispatch::EpContextIoDispatch() noexcept : config_{nullptr} {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& session_options,
                                          const OrtApiRuntimeCapabilities& runtime_capabilities,
-                                         const Ort::Logger* logger,
-                                         bool map_decrypt_source) noexcept
-    : map_decrypt_source_(map_decrypt_source), config_{nullptr} {
+                                         bool map_decrypt_source,
+                                         const Ort::Logger* logger) noexcept
+    : config_{nullptr}, map_decrypt_source_(map_decrypt_source) {
   // The named capability is negotiated with the actual runtime, not inferred from the
   // compile-time ORT_API_VERSION. Skip APIs absent from an older runtime's OrtApi struct.
   if (!runtime_capabilities.SupportsEpContextEncryption()) {
@@ -187,7 +187,7 @@ bool EpContextIoDispatch::HasWriteCallback() const noexcept {
 }
 
 bool EpContextIoDispatch::HasSourceReadCallback() const noexcept {
-#if defined(_WIN32)
+#if defined(_WIN32) && QNN_ARCH_ARM64
   return read_fn_ == ReadDecryptSourceBridge && read_state_ != nullptr;
 #else
   return false;
@@ -266,9 +266,8 @@ EpContextIoDispatch::EpContextIoDispatch() noexcept {}
 
 EpContextIoDispatch::EpContextIoDispatch(const OrtSessionOptions& /*session_options*/,
                                          const OrtApiRuntimeCapabilities& /*runtime_capabilities*/,
-                                         const Ort::Logger* /*logger*/,
-                                         bool map_decrypt_source) noexcept
-    : map_decrypt_source_(map_decrypt_source) {}
+                                         bool /*map_decrypt_source*/,
+                                         const Ort::Logger* /*logger*/) noexcept {}
 
 bool EpContextIoDispatch::HasReadCallback() const noexcept { return false; }
 bool EpContextIoDispatch::HasWriteCallback() const noexcept { return false; }

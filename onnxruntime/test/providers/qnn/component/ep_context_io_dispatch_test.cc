@@ -13,6 +13,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -238,7 +239,7 @@ TEST_F(QnnDecryptSourceTest, OffDelegatesLegacyWithOriginalStateWithoutOpeningSo
 }
 
 TEST_F(QnnDecryptSourceTest, OnAdoptsDifferentSizedOutputIndependentOfSource) {
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true, &logger_);
   qnn::EpContextBuffer out;
   ASSERT_TRUE(dispatch.Read("logical-name", out, path_.u8string()).IsOK());
   EXPECT_EQ(state_.legacy_calls, 0u);
@@ -256,7 +257,7 @@ TEST_F(QnnDecryptSourceTest, Utf8SourcePathPreservesCallbackNameAndUnmapsAfterRe
   const auto unicode_path = std::filesystem::path(path_.wstring() + L"_\u6E2C\u8A66_\u00E9.bin");
   ASSERT_TRUE(MoveFileW(path_.c_str(), unicode_path.c_str()));
   path_ = unicode_path;
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true, &logger_);
   qnn::EpContextBuffer out;
   const auto name = path_.filename().u8string();
   ASSERT_TRUE(dispatch.Read(name, out, path_.u8string()).IsOK());
@@ -269,7 +270,7 @@ TEST_F(QnnDecryptSourceTest, Utf8SourcePathPreservesCallbackNameAndUnmapsAfterRe
 }
 
 TEST_F(QnnDecryptSourceTest, FailedDecryptReleasesViewWithoutRetryOrReplacingPreviousOutput) {
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true, &logger_);
   qnn::EpContextBuffer out;
   qnn::EpContextIoDispatch legacy(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION});
   ASSERT_TRUE(legacy.Read("previous", out).IsOK());
@@ -283,7 +284,7 @@ TEST_F(QnnDecryptSourceTest, FailedDecryptReleasesViewWithoutRetryOrReplacingPre
 }
 
 TEST_F(QnnDecryptSourceTest, MappingFailureDoesNotInvokeEitherCallback) {
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true, &logger_);
   qnn::EpContextBuffer out;
   EXPECT_FALSE(dispatch.Read("logical-name", out, path_.u8string() + ".absent").IsOK());
   EXPECT_EQ(state_.source_calls, 0u);
@@ -294,7 +295,7 @@ TEST_F(QnnDecryptSourceTest, MappingFailureDoesNotInvokeEitherCallback) {
 TEST_F(QnnDecryptSourceTest, UnrelatedCallbackIsRejectedWithoutInterpretingItsApplicationState) {
   auto setter = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(&Ort::GetApi());
   Ort::ThrowOnError(setter(options_, SourceState::Legacy, &state_));
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true, &logger_);
   qnn::EpContextBuffer out;
   EXPECT_FALSE(dispatch.HasSourceReadCallback());
   EXPECT_FALSE(dispatch.Read("logical-name", out, path_.u8string()).IsOK());
@@ -307,7 +308,7 @@ TEST_F(QnnDecryptSourceTest, MappingFailurePreservesPreviousOutput) {
   qnn::EpContextIoDispatch legacy(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION});
   ASSERT_TRUE(legacy.Read("previous", out).IsOK());
   auto* previous = out.data();
-  qnn::EpContextIoDispatch mapped(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  qnn::EpContextIoDispatch mapped(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true, &logger_);
   EXPECT_FALSE(mapped.Read("logical-name", out, path_.u8string() + ".absent").IsOK());
   EXPECT_EQ(out.data(), previous);
   EXPECT_EQ(out.size(), 4u);
@@ -321,7 +322,7 @@ TEST_F(QnnDecryptSourceTest, InvalidSuccessfulSourceOutputUnmapsAndPreservesPrev
   qnn::EpContextIoDispatch legacy(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION});
   ASSERT_TRUE(legacy.Read("previous", out).IsOK());
   auto* previous = out.data();
-  qnn::EpContextIoDispatch mapped(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  qnn::EpContextIoDispatch mapped(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true, &logger_);
   state_.empty_output = true;
   EXPECT_FALSE(mapped.Read("empty", out, path_.u8string()).IsOK());
   ExpectSourceReleased();
@@ -360,7 +361,7 @@ TEST_F(QnnDecryptSourceTest, SsrSourceOnPreservesResolvedUtf8PathAndOriginalOutp
     *context = current_state;
     return QNN_SUCCESS;
   };
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true, &logger_);
   Qnn_ContextHandle_t context = nullptr;
   ASSERT_TRUE(backend.GetMutable()->ReloadContextForSSR(path_.u8string(), 0, context, dispatch).IsOK());
   EXPECT_EQ(state_.name, path_.filename().u8string());
@@ -380,7 +381,7 @@ TEST_F(QnnDecryptSourceTest, SsrDecodeFailureUnmapsWithoutRetryingLegacyOrCallin
     ADD_FAILURE() << "QNN must not receive a failed decode";
     return QNN_SUCCESS;
   };
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, &logger_, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true, &logger_);
   state_.fail = true;
   Qnn_ContextHandle_t context = nullptr;
   auto status = backend.GetMutable()->ReloadContextForSSR(path_.u8string(), 0, context, dispatch);
@@ -391,7 +392,7 @@ TEST_F(QnnDecryptSourceTest, SsrDecodeFailureUnmapsWithoutRetryingLegacyOrCallin
 }
 
 TEST_F(QnnDecryptSourceTest, SourceMappingDoesNotRequireALogger) {
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, nullptr, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true);
   qnn::EpContextBuffer out;
   ASSERT_TRUE(dispatch.Read("logical-name", out, path_.u8string()).IsOK());
   EXPECT_EQ(state_.source_calls, 1u);
@@ -403,7 +404,7 @@ TEST_F(QnnDecryptSourceTest, EmptySourceFailsBeforeCallbacksAndClosesItsHandle) 
   {
     std::ofstream empty(path_, std::ios::binary | std::ios::trunc);
   }
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, nullptr, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true);
   qnn::EpContextBuffer out;
   EXPECT_FALSE(dispatch.Read("logical-name", out, path_.u8string()).IsOK());
   EXPECT_EQ(state_.source_calls, 0u);
@@ -419,7 +420,7 @@ TEST_F(QnnDecryptSourceTest, InvalidPathsFailBeforeCallbacksAndPreserveOutput) {
   qnn::EpContextIoDispatch legacy(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION});
   ASSERT_TRUE(legacy.Read("previous", out).IsOK());
   const auto* previous = out.data();
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, nullptr, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true);
   for (const auto& path : {std::string{}, std::string("invalid\0path", 12),
                            std::string("\xc3\x28", 2), path_.u8string() + ".missing"}) {
     EXPECT_FALSE(dispatch.Read("logical-name", out, path).IsOK());
@@ -435,7 +436,7 @@ TEST_F(QnnDecryptSourceTest, DecoderExceptionUnmapsWithoutReplacingOutput) {
   qnn::EpContextIoDispatch legacy(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION});
   ASSERT_TRUE(legacy.Read("previous", out).IsOK());
   const auto* previous = out.data();
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, nullptr, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true);
   state_.throw_exception = true;
   EXPECT_EQ(dispatch.Read("logical-name", out, path_.u8string()).GetErrorMessage(),
             "Test decoder exception.");
@@ -448,7 +449,7 @@ TEST_F(QnnDecryptSourceTest, DecoderExceptionUnmapsWithoutReplacingOutput) {
 TEST_F(QnnDecryptSourceTest, NullBindingIsRejectedBeforeOpeningSource) {
   auto setter = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(&Ort::GetApi());
   Ort::ThrowOnError(setter(options_, bridge_, nullptr));
-  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, nullptr, true);
+  qnn::EpContextIoDispatch dispatch(*options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true);
   qnn::EpContextBuffer out;
   EXPECT_FALSE(dispatch.HasSourceReadCallback());
   EXPECT_FALSE(dispatch.Read("logical-name", out, path_.u8string()).IsOK());
@@ -657,6 +658,12 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
       EXPECT_FALSE(ec);
     }
     dispatch_.reset();
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    if (source_binding_) {
+      options_ = Ort::SessionOptions{nullptr};
+      QnnEpReleaseDecryptSourceBinding(source_binding_);
+    }
+#endif
     EXPECT_TRUE(live_.empty());
     for (auto* data : live_) backing_->Free(backing_, data);
     live_.clear();
@@ -688,6 +695,107 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
     }
     return nullptr;
   }
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  void EnableSourceReads() {
+    Ort::ThrowOnError(QnnEpCreateDecryptSourceBinding(
+        Read,
+        [](void* opaque, const char* name, const void* source, size_t source_bytes,
+           OrtAllocator* allocator, void** data, size_t* size) -> OrtStatus* {
+          auto& test = *static_cast<QnnUnit_CallbackBufferTest*>(opaque);
+          ++test.source_reads_;
+          MEMORY_BASIC_INFORMATION info{};
+          EXPECT_NE(VirtualQuery(source, &info, sizeof(info)), 0u);
+          EXPECT_EQ(info.Type, static_cast<DWORD>(MEM_MAPPED));
+          EXPECT_EQ(info.Protect, static_cast<DWORD>(PAGE_READONLY));
+          constexpr char ciphertext[] = "XXcallback_graph";
+          if (source_bytes != sizeof(ciphertext) || std::memcmp(source, ciphertext, sizeof(ciphertext)) != 0) {
+            return test.api_.CreateStatus(ORT_FAIL, "Unexpected ciphertext.");
+          }
+          auto* status = Read(opaque, name, allocator, data, size);
+          if (!status && *data && *size) {
+            std::memcpy(*data, static_cast<const char*>(source) + 2, source_bytes - 2);
+          }
+          return status;
+        },
+        this, &source_binding_, &source_bridge_));
+    auto setter = Ort::Experimental::Get_OrtApi_SessionOptions_SetEpContextDataReadFunc_SinceV28_Fn(&api_);
+    Ort::ThrowOnError(setter(options_, source_bridge_, source_binding_));
+    dispatch_ = std::make_unique<qnn::EpContextIoDispatch>(
+        *options_, OrtApiRuntimeCapabilities{ORT_API_VERSION}, true);
+  }
+
+  std::string WriteSourceBinary(const char* name) {
+    const auto path = std::filesystem::temp_directory_path() /
+                      std::filesystem::u8path("qnn_callback_source_" +
+                                              std::to_string(reinterpret_cast<uintptr_t>(this)) + "_" + name + ".bin");
+    native_files_.push_back(path);
+    std::ofstream file(path, std::ios::binary);
+    constexpr char ciphertext[] = "XXcallback_graph";
+    file.write(ciphertext, sizeof(ciphertext));
+    EXPECT_TRUE(file.good());
+    return path.u8string();
+  }
+
+  Ort::Status SourceInitialLoad(bool multi_soc = false) {
+    const auto path = std::filesystem::u8path(WriteSourceBinary(u8"initial_\u4f86\u6e90_\u00e9"));
+    FakeOpAttr embed = FakeOpAttr::MakeInt64(qnn::EMBED_MODE, 0);
+    FakeOpAttr binary = FakeOpAttr::MakeString(qnn::EP_CACHE_CONTEXT, path.filename().u8string());
+    FakeOpAttr multi = FakeOpAttr::MakeInt64(qnn::IS_MULTI_SOC_EP_CONTEXT, multi_soc);
+    FakeNode node{"callback_node", "EPContext", "", 1, {}, {}};
+    node.attrs[qnn::EMBED_MODE] = &embed;
+    node.attrs[qnn::EP_CACHE_CONTEXT] = &binary;
+    node.attrs[qnn::IS_MULTI_SOC_EP_CONTEXT] = &multi;
+    return qnn::GetEpContextFromMainNode(node.AsNode(), api_, (path.parent_path() / "model.onnx").native(),
+                                         backend_->GetMutable(), models_, 0, *dispatch_, &logger_);
+  }
+
+  Ort::Status SourceListLoad(uint8_t mode) {
+    backend_->GetMutable()->*GetCallbackBackendMember(CallbackSharingModeTag{}) = mode;
+    std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> binaries;
+    for (const char* name : {u8"one_\u4f86\u6e90_\u00e9", u8"two_\u4f86\u6e90_\u00e9", u8"three_\u4f86\u6e90_\u00e9"}) {
+      const auto path = WriteSourceBinary(name);
+      binaries.emplace(path, std::make_unique<std::vector<std::string>>(1, path));
+    }
+    return (backend_->GetMutable()->*GetCallbackBackendMember(CallbackListMethodTag{}))(binaries, *dispatch_);
+  }
+#ifdef QNN_SYSTEM_DLC_API_ENABLED
+  void ConfigureMultiSocSourceMetadata() {
+    auto& system = backend_->SystemInterface();
+    system.systemLogCreate = [](QnnLog_Callback_t, QnnLog_Level_t, Qnn_LogHandle_t* handle) -> Qnn_ErrorHandle_t {
+      *handle = current_;
+      return QNN_SUCCESS;
+    };
+    system.systemLogFree = [](Qnn_LogHandle_t) -> Qnn_ErrorHandle_t { return QNN_SUCCESS; };
+    system.systemDlcCreateFromBinary = [](Qnn_LogHandle_t, const uint8_t* data, Qnn_ContextBinarySize_t size,
+                                          QnnSystemDlc_Handle_t* handle) -> Qnn_ErrorHandle_t {
+      current_->CheckBinary(data, size);
+      current_->events_.push_back("dlc_create");
+      *handle = current_;
+      return QNN_SUCCESS;
+    };
+    system.systemDlcGetRecordsByType = [](QnnSystemDlc_Handle_t, QnnSystemDlc_RecordType_t, uint8_t,
+                                          QnnSystemDlc_RecordHandle_t** handles, uint32_t* count) -> Qnn_ErrorHandle_t {
+      static thread_local QnnSystemDlc_RecordHandle_t record;
+      record = current_;
+      *handles = &record;
+      *count = 1;
+      return QNN_SUCCESS;
+    };
+    system.systemDlcReadRecordDataMemoryMapped = [](QnnSystemDlc_RecordHandle_t, const uint8_t** data,
+                                                    uint64_t* size) -> Qnn_ErrorHandle_t {
+      *data = static_cast<const uint8_t*>(current_->outputs_.back());
+      *size = 32;
+      return QNN_SUCCESS;
+    };
+    system.systemDlcFree = [](QnnSystemDlc_Handle_t) -> Qnn_ErrorHandle_t {
+      current_->CheckBinary(current_->outputs_.back(), 32);
+      current_->events_.push_back("dlc_free");
+      return QNN_SUCCESS;
+    };
+  }
+#endif
+#endif
 
   void CheckBinary(const void* data, uint64_t size) {
     if (native_reads_) {
@@ -832,6 +940,11 @@ class QnnUnit_CallbackBufferTest : public ::testing::Test {
   std::vector<std::string> read_names_, events_;
   size_t read_calls_ = 0, frees_ = 0, ordinary_calls_ = 0, list_calls_ = 0, fail_read_ = 0;
   size_t mapped_calls_ = 0, mapped_list_calls_ = 0;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  size_t source_reads_ = 0;
+  QnnEpDecryptSourceBinding* source_binding_ = nullptr;
+  OrtReadNamedBufferFunc source_bridge_ = nullptr;
+#endif
   const void* metadata_buffer_ = nullptr;
   const void* ordinary_buffer_ = nullptr;
   uint64_t metadata_size_ = 0;
@@ -971,6 +1084,65 @@ TEST_F(QnnUnit_CallbackBufferTest, ListKeepsAllOriginalPointersThroughEveryNotif
   EXPECT_EQ(frees_, 3u);
   EXPECT_EQ(backend_->GetMutable()->GetQnnContextSize(), 3u);
 }
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+
+TEST_F(QnnUnit_CallbackBufferTest, SourceInitialLoadKeepsPlaintextThroughMetadataAndContextCreation) {
+  EnableSourceReads();
+  ASSERT_TRUE(SourceInitialLoad().IsOK());
+  EXPECT_EQ(source_reads_, 1u);
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(frees_, 1u);
+  EXPECT_EQ(models_.at("callback_node")->Name(), "callback_graph");
+  EXPECT_NE(read_names_.front().find(u8"\u4f86\u6e90_\u00e9"), std::string::npos);
+}
+
+TEST_F(QnnUnit_CallbackBufferTest, SourceMappingSharingMode1KeepsAllOutputsThroughNotifications) {
+  EnableSourceReads();
+  ASSERT_TRUE(SourceListLoad(1).IsOK());
+  EXPECT_EQ(source_reads_, 3u);
+  EXPECT_EQ(list_calls_, 1u);
+  EXPECT_EQ(frees_, 3u);
+  EXPECT_TRUE(live_.empty());
+}
+
+TEST_F(QnnUnit_CallbackBufferTest, SourceMappingSharingMode2KeepsAllOutputsThroughNotifications) {
+  EnableSourceReads();
+  ASSERT_TRUE(SourceListLoad(2).IsOK());
+  EXPECT_EQ(source_reads_, 3u);
+  EXPECT_EQ(list_calls_, 1u);
+  EXPECT_EQ(frees_, 3u);
+  EXPECT_TRUE(live_.empty());
+}
+
+TEST_F(QnnUnit_CallbackBufferTest, SourceAllocatorFailureDoesNotDecodeOrReplacePreviousOutput) {
+  qnn::EpContextBuffer output;
+  ASSERT_TRUE(dispatch_->Read("previous.bin", output).IsOK());
+  const auto* previous = output.data();
+  EnableSourceReads();
+  allocator_failure_ = true;
+  auto status = dispatch_->Read("source.bin", output, "missing-source.bin");
+  EXPECT_EQ(status.GetErrorMessage(), "allocator lookup failure");
+  EXPECT_EQ(source_reads_, 0u);
+  EXPECT_EQ(output.data(), previous);
+  EXPECT_EQ(frees_, 0u);
+}
+
+#ifdef QNN_SYSTEM_DLC_API_ENABLED
+TEST_F(QnnUnit_CallbackBufferTest, SourceMultiSocUsesPlaintextForDlcMetadataAndContextCreation) {
+  EnableSourceReads();
+  ConfigureMultiSocSourceMetadata();
+  ASSERT_TRUE(SourceInitialLoad(true).IsOK());
+  EXPECT_EQ(source_reads_, 1u);
+  EXPECT_EQ(ordinary_calls_, 1u);
+  EXPECT_EQ(frees_, 1u);
+  EXPECT_EQ(models_.at("callback_node")->Name(), "callback_graph");
+  EXPECT_NE(std::find(events_.begin(), events_.end(), "dlc_create"), events_.end());
+  EXPECT_NE(std::find(events_.begin(), events_.end(), "dlc_free"), events_.end());
+}
+#endif
+
+#endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
 TEST_F(QnnUnit_CallbackBufferTest, ListSdkFailureFreesEveryOutputOnce) {
   sdk_result_ = QNN_CONTEXT_ERROR_INVALID_ARGUMENT;

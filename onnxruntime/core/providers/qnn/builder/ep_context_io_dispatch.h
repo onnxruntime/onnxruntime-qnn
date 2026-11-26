@@ -58,12 +58,16 @@ class EpContextIoDispatch {
   // does not duplicate a raw API-version guard. There is intentionally no default value: a
   // session-bound caller must supply the factory's negotiated capabilities.
   //
+  // The source is the encrypted external context file mapped read-only by the provider.
+  // A source callback borrows those bytes; a legacy read callback receives only the name.
+  // Both callbacks return independent plaintext allocated with the ORT allocator.
+  //
   // `logger` (optional) receives a WARNING if resolution genuinely fails rather than the app
   // simply not registering anything.
   explicit EpContextIoDispatch(const OrtSessionOptions& session_options,
                                const OrtApiRuntimeCapabilities& runtime_capabilities,
-                               const Ort::Logger* logger = nullptr,
-                               bool map_decrypt_source = false) noexcept;
+                               bool map_decrypt_source = false,
+                               const Ort::Logger* logger = nullptr) noexcept;
   ~EpContextIoDispatch() = default;
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(EpContextIoDispatch);
@@ -86,7 +90,6 @@ class EpContextIoDispatch {
                     const Ort::Logger& logger) const;
 
  private:
-  bool map_decrypt_source_ = false;
 #if ORT_API_HAS_EPCONTEXT_ENCRYPTION
   Ort::Experimental::EpContextConfig config_;
   OrtReadNamedBufferFunc read_fn_ = nullptr;
@@ -94,6 +97,7 @@ class EpContextIoDispatch {
   OrtWriteNamedBufferFunc write_fn_ = nullptr;
   void* write_state_ = nullptr;
 #endif
+  bool map_decrypt_source_ = false;
 };
 
 }  // namespace qnn

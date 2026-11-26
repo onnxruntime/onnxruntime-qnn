@@ -16,12 +16,17 @@
 // binding and application state until all referencing options and sessions are released.
 struct QnnEpDecryptSourceBinding;
 
-using QnnEpDecryptFromSourceFunc = OrtStatus*(ORT_API_CALL*)(void* app_state, const char* name, const void* ciphertext, size_t ciphertext_bytes,
-                                                             OrtAllocator* allocator, void** plaintext, size_t* plaintext_bytes);
+using QnnEpDecryptFromSourceFunc =
+    OrtStatus*(ORT_API_CALL*)(void* app_state, const char* name,
+                              const void* ciphertext, size_t ciphertext_bytes,
+                              OrtAllocator* allocator, void** plaintext,
+                              size_t* plaintext_bytes);
 
-inline constexpr const char* kQnnEpDecryptSourceMappingOption =
-    "ep.qnn.context_binary_decrypt_source_mapping";
-
+// Register the returned bridge and binding with the existing ORT named-buffer read callback.
+// The source is the encrypted external context file mapped read-only by the provider.
+// A source callback borrows those bytes; a legacy read callback receives only the name.
+// Both callbacks return independent plaintext allocated with the ORT allocator,
+// which EpContextBuffer owns after a successful dispatch Read().
 // The returned bridge delegates to legacy_read with the original app_state when
 // the source policy is OFF. ON requires this exact bridge and maps the validated
 // external path before invoking decrypt_from_source. Ciphertext and plaintext
@@ -34,6 +39,7 @@ extern "C" QNN_EP_DECRYPT_SOURCE_EXPORT OrtStatus* ORT_API_CALL QnnEpCreateDecry
     void* app_state, QnnEpDecryptSourceBinding** binding,
     OrtReadNamedBufferFunc* read_bridge) noexcept;
 
+// Release the binding after all referencing options and sessions have been released.
 extern "C" QNN_EP_DECRYPT_SOURCE_EXPORT void ORT_API_CALL QnnEpReleaseDecryptSourceBinding(
     QnnEpDecryptSourceBinding* binding) noexcept;
 

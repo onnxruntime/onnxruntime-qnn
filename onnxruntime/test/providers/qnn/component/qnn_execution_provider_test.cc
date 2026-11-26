@@ -42,6 +42,7 @@
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
+#include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
 
 namespace onnxruntime {
 namespace test {
@@ -1605,6 +1606,99 @@ TEST_F(QnnUnit_ExecutionProviderTest,
   EXPECT_EQ(compat, OrtCompiledModelCompatibility_EP_NOT_APPLICABLE);
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "Skip compatibility validation due to deserialization failure:");
 }
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_DecryptSourceMappingInvalid_LogsVerboseAndDefaultsOff) {
+  for (const char* value : {"invalid", "2", "true"}) {
+    SCOPED_TRACE(value);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("context_binary_decrypt_source_mapping")] = value;
+    auto factory = MakeFactory(ctx);
+    ASSERT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 "Invalid value for " + EPKey("context_binary_decrypt_source_mapping"));
+    ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                 "User specified " + EPKey("context_binary_decrypt_source_mapping") + ": 0");
+  }
+}
+
+#if defined(QNN_FILE_MAPPED_WEIGHTS_AVAILABLE) && ORT_API_HAS_EPCONTEXT_ENCRYPTION
+
+TEST_F(QnnUnit_ExecutionProviderTest, GetCapability_SourceMappingMissingBinding_RejectsBeforeBackendSetup) {
+  for (const char* mode : {"0", "1", "2"}) {
+    SCOPED_TRACE(mode);
+    ResetSharedBackendManagerForTest();
+    EpStubContext ctx;
+    ctx.session_config[EPKey("backend_path")] = "/nonexistent/libQnnFake.so";
+    ctx.session_config[EPKey("context_binary_decrypt_source_mapping")] = "1";
+    ctx.session_config[EPKey("htp_share_resource_optimization")] = mode;
+    InstallFakeGraphApiStubs(ctx.stub_ort_api);
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    FakeOpAttr source = FakeOpAttr::MakeString(qnn::SOURCE, "QNN");
+    FakeNode node{"context", "EPContext", "com.microsoft", 1, {}, {}};
+    node.attrs[qnn::SOURCE] = &source;
+    FakeGraph graph{{node}, {}, {}, {}};
+    UseGlobalEpStubs use(ctx);
+    auto* ep_ptr = static_cast<OrtEp*>(ep.get());
+    Ort::Status status(ep_ptr->GetCapability(ep_ptr, graph.AsGraph(), nullptr));
+    EXPECT_EQ(status.GetErrorCode(), ORT_INVALID_ARGUMENT);
+    EXPECT_EQ(status.GetErrorMessage(),
+              "Decrypt source mapping requires the private source-aware read callback.");
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, GetCapability_SourceMappingRegularModel_WarnsAndContinuesToBackend) {
+  EpStubContext ctx;
+  ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+  ctx.session_config[EPKey("backend_path")] = "/nonexistent/libQnnFake.so";
+  ctx.session_config[EPKey("context_binary_decrypt_source_mapping")] = "1";
+  InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+  FakeNode node{"identity", "Identity", "", 13, {}, {}};
+  FakeGraph graph{{node}, {}, {}, {}};
+  UseGlobalEpStubs use(ctx);
+  auto* ep_ptr = static_cast<OrtEp*>(ep.get());
+  Ort::Status status(ep_ptr->GetCapability(ep_ptr, graph.AsGraph(), nullptr));
+  EXPECT_EQ(status.GetErrorCode(), ORT_EP_FAIL);
+  EXPECT_NE(status.GetErrorMessage().find("QNN SetupBackend failed"), std::string::npos);
+  ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "continuing regular model loading.");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, GetCapability_SourceMappingDlc_WarnsAndKeepsGenieBehavior) {
+  std::array<OrtErrorCode, 2> codes{};
+  std::array<std::string, 2> messages;
+  for (size_t index = 0; index < 2; ++index) {
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("context_binary_decrypt_source_mapping")] = index ? "1" : "0";
+    InstallFakeGraphApiStubs(ctx.stub_ort_api);
+    ctx.stub_ep_api.EpGraphSupportInfo_AddNodesToFuse =
+        [](OrtEpGraphSupportInfo*, const OrtNode* const*, size_t,
+           const OrtNodeFusionOptions*) noexcept -> OrtStatus* { return nullptr; };
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    FakeOpAttr source = FakeOpAttr::MakeString(qnn::SOURCE, "QNN");
+    FakeOpAttr type = FakeOpAttr::MakeString(qnn::EP_CONTEXT_TYPE, qnn::EP_CONTEXT_TYPE_DLC);
+    FakeNode node{"dlc", "EPContext", "com.microsoft", 1, {}, {}};
+    node.attrs[qnn::SOURCE] = &source;
+    node.attrs[qnn::EP_CONTEXT_TYPE] = &type;
+    FakeGraph graph{{node}, {}, {}, {}};
+    UseGlobalEpStubs use(ctx);
+    auto* ep_ptr = static_cast<OrtEp*>(ep.get());
+    Ort::Status status(ep_ptr->GetCapability(ep_ptr, graph.AsGraph(), nullptr));
+    codes[index] = status.GetErrorCode();
+    messages[index] = status.GetErrorMessage();
+    if (index) {
+      ExpectLogged(ctx, ORT_LOGGING_LEVEL_WARNING, "continuing Genie/DLC model loading.");
+    }
+  }
+  EXPECT_EQ(codes[1], codes[0]);
+  EXPECT_EQ(messages[1], messages[0]);
+}
+
+#endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE && ORT_API_HAS_EPCONTEXT_ENCRYPTION
 
 // ===========================================================================
 // Group 11: SetDynamicOptionsImpl
