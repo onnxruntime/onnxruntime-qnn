@@ -21,12 +21,15 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
                            ExpectedEPNodeAssignment expected_ep_assignment,
                            float fp32_abs_err = 1e-5,
                            const std::string& backend_name = "cpu",
-                           int opset = 13) {
+                           int opset = 13,
+                           const std::string& soc_model = "") {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8350);
+  if (!soc_model.empty()) {
+    provider_options["soc_model"] = soc_model;
+  }
 
   RunQnnModelTest(BuildOpTestCase<DataType>("Inverse_node", "Inverse", input_defs, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
                   provider_options,
@@ -134,7 +137,13 @@ TEST_F(QnnHTPBackendTests, Inverse_2d) {
                         {},
                         ExpectedEPNodeAssignment::All,
                         1e-3f,
-                        "htp");
+                        "htp",
+                        13,
+#if defined(__linux__) && !defined(__aarch64__)
+                        std::to_string(QNN_SOC_MODEL_SM8550));
+#else
+                        "");
+#endif
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_3d) {
@@ -146,7 +155,13 @@ TEST_F(QnnHTPBackendTests, Inverse_3d) {
                         {},
                         ExpectedEPNodeAssignment::All,
                         1e-3f,
-                        "htp");
+                        "htp",
+                        13,
+#if defined(__linux__) && !defined(__aarch64__)
+                        std::to_string(QNN_SOC_MODEL_SM8550));
+#else
+                        "");
+#endif
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_4d) {
@@ -158,7 +173,13 @@ TEST_F(QnnHTPBackendTests, Inverse_4d) {
                         {},
                         ExpectedEPNodeAssignment::All,
                         1e-3f,
-                        "htp");
+                        "htp",
+                        13,
+#if defined(__linux__) && !defined(__aarch64__)
+                        std::to_string(QNN_SOC_MODEL_SM8550));
+#else
+                        "");
+#endif
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_qdq_2d) {
