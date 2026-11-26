@@ -85,7 +85,7 @@ def export_result(args: argparse.Namespace) -> dict:
         raise ValueError("Snapshot and Accuracy test universes must be nonempty")
     try:
         statuses = load_snapshot_cases(args.snapshot_json)
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         statuses = {}
 
     manifest = read_manifest(args.manifest)

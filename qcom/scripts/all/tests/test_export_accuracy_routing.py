@@ -99,6 +99,18 @@ def test_duplicate_snapshot_identity_fails_closed(tmp_path):
     assert result["accuracy_decisions"][0]["status"] == "untrusted"
 
 
+@pytest.mark.parametrize("suite", [None, [], False, 0, "invalid"])
+def test_malformed_snapshot_suite_discards_partial_evidence(tmp_path, suite):
+    data = snapshot(PASS)
+    data["testsuites"].append(suite)
+
+    result = export(tmp_path, data, MANIFEST)
+
+    assert result["snapshots"][0]["status"] == "untrusted"
+    assert result["accuracy_decisions"][0]["status"] == "untrusted"
+    assert result["accuracy_decisions"][0]["runner_action"] == "unknown"
+
+
 @pytest.mark.parametrize("profile", [True, False, {}, {"profile": "simulator"}, [], 73, "", " ", "profile/invalid"])
 @pytest.mark.parametrize("targets", ["", "Clip"])
 def test_invalid_manifest_profile_cannot_supply_match(tmp_path, profile, targets):
