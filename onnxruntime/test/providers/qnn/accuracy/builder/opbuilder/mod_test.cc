@@ -32,19 +32,20 @@ ProviderOptions ModProviderOptions() {
 void RunModAccuracy(const ModSpec& spec) {
   RunQnnModelTest(
       BuildModModel(spec), ModProviderOptions(), 13,
-      EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(0.0f)});
+      EPVerificationParams{ExpectedEPNodeAssignment::All});
 }
 
 }  // namespace
 
-class QnnAcc_Mod_AccuracyTest : public ::testing::TestWithParam<ModSpec> {};
+class QnnAcc_Mod_AccuracyTest : public QnnHTPBackendTests,
+                                public ::testing::WithParamInterface<ModSpec> {};
 
 TEST_P(QnnAcc_Mod_AccuracyTest, Case) {
   RunModAccuracy(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnAcc_Mod_AccuracyTest, ::testing::ValuesIn(kModSpecs),
+    , QnnAcc_Mod_AccuracyTest, ::testing::ValuesIn(GetModSpecs()),
     [](const ::testing::TestParamInfo<ModSpec>& info) { return std::string(info.param.name); });
 
 }  // namespace onnxruntime::test

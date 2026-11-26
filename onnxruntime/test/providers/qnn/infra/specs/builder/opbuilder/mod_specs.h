@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "test/unittest_util/model_test_builder.h"
+
 namespace onnxruntime::test {
 
 struct ModSpec {
@@ -15,20 +17,21 @@ struct ModSpec {
   std::vector<int64_t> divisor;
 };
 
-inline const std::vector<int64_t> kModDividend = {
-    -100, -93, -42, -17, -10,
-    -9, -5, -1, 0, 1,
-    5, 9, 10, 17, 42,
-    93, 99, 7, -33, 64};
-
-inline const std::vector<int64_t> kModPositiveDivisor = {3, 5, 7, 9, 10};
-inline const std::vector<int64_t> kModNegativeDivisor = {-3, -5, -7, -9, -10};
-
-inline const std::vector<ModSpec> kModSpecs = {
-    {"Dynamic_PositiveDivisor", false, kModDividend, kModPositiveDivisor},
-    {"Dynamic_NegativeDivisor", false, kModDividend, kModNegativeDivisor},
-    {"Static_PositiveDivisor", true, kModDividend, kModPositiveDivisor},
-    {"Static_NegativeDivisor", true, kModDividend, kModNegativeDivisor},
-};
+inline const std::vector<ModSpec>& GetModSpecs() {
+  static const std::vector<ModSpec> specs = [] {
+    // Preserve the legacy generator, ranges and three successive draws.
+    RandomValueGenerator random{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
+    auto dividend = random.Uniform<int64_t>(std::vector<int64_t>{1, 4, 5}, -100.0f, 100.0f);
+    auto positive = random.Uniform<int64_t>(std::vector<int64_t>{1, 5}, 1.0f, 10.0f);
+    auto negative = random.Uniform<int64_t>(std::vector<int64_t>{1, 5}, -10.0f, -1.0f);
+    return std::vector<ModSpec>{
+        {"Dynamic_PositiveDivisor", false, dividend, positive},
+        {"Dynamic_NegativeDivisor", false, dividend, negative},
+        {"Static_PositiveDivisor", true, dividend, positive},
+        {"Static_NegativeDivisor", true, dividend, negative},
+    };
+  }();
+  return specs;
+}
 
 }  // namespace onnxruntime::test

@@ -63,7 +63,7 @@ TEST_P(QnnSnapshot_Mod_OpBuilderTest, Case) {
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    , QnnSnapshot_Mod_OpBuilderTest, ::testing::ValuesIn(kModSpecs),
+    , QnnSnapshot_Mod_OpBuilderTest, ::testing::ValuesIn(GetModSpecs()),
     [](const ::testing::TestParamInfo<ModSpec>& info) { return std::string(info.param.name); });
 
 }  // namespace onnxruntime::test
