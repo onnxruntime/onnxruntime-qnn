@@ -57,7 +57,7 @@ GetTestModelFn BuildRank5GraphIO() {
   };
 }
 
-void RunGraphIOAccuracy(const FlattenSpec& s) {
+void RunGraphIOGraphAccuracy(const FlattenSpec& s) {
   ProviderOptions options{{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}};
   // Preserve the general legacy helper's broad ARM64 V68 skip before staging
   // any files. This is policy parity, not a claimed U8 hardware restriction.
@@ -100,7 +100,9 @@ class QnnAcc_Flatten_AccuracyTest : public QnnHTPBackendTests,
 TEST_P(QnnAcc_Flatten_AccuracyTest, Case) {
   const auto& s = GetParam();
   if (s.profile == FlattenProfile::QdqU8GraphIO) {
-    RunGraphIOAccuracy(s);
+    ProviderOptions options{{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}};
+    RunQnnModelTest(BuildRank5GraphIO(), options, 13,
+                    EPVerificationParams{ExpectedEPNodeAssignment::All});
     return;
   }
   std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
@@ -136,6 +138,18 @@ TEST_P(QnnAcc_Flatten_AccuracyTest, Case) {
 INSTANTIATE_TEST_SUITE_P(
     , QnnAcc_Flatten_AccuracyTest, ::testing::ValuesIn(kFlattenSpecs),
     [](const ::testing::TestParamInfo<FlattenSpec>& info) { return std::string(info.param.name); });
+
+class QnnAcc_Flatten_GraphIoTest : public QnnHTPBackendTests {};
+
+TEST_F(QnnAcc_Flatten_GraphIoTest, Rank5ReshapeGraph) {
+  for (const auto& spec : kFlattenSpecs) {
+    if (spec.profile == FlattenProfile::QdqU8GraphIO) {
+      RunGraphIOGraphAccuracy(spec);
+      return;
+    }
+  }
+  FAIL() << "Rank5 graph-I/O spec is missing";
+}
 
 }  // namespace test
 }  // namespace onnxruntime
