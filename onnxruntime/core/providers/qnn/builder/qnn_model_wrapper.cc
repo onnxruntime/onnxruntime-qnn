@@ -227,9 +227,15 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
                                                   bool do_op_validation) {
   for (const auto& tensor_name : tensor_names) {
     if (tensor_name.empty()) {
-      // Optional inputs are positional. Register one graph null tensor so the QNN graph
+      // Optional inputs are positional. Register one null tensor per node so the QNN graph
       // receives a valid nonzero tensor id while validators still recognize the slot as absent.
-      auto null_tensor = QnnTensorWrapper::MakeNull(qnn_node_name);
+      // The wrapper is owned by model_tensors_map_ so the name and dimension storage referenced by
+      // the returned Qnn_Tensor_t outlives the op config.
+      const std::string null_tensor_name = qnn_node_name + "_null";
+      if (!AddTensorWrapper(QnnTensorWrapper::MakeNull(null_tensor_name))) {
+        return false;
+      }
+      QnnTensorWrapper& null_tensor = model_tensors_map_.at(null_tensor_name);
       if (!do_op_validation) {
         std::string error_string;
         if (!null_tensor.CreateQnnGraphTensor(qnn_backend_manager_.GetQnnInterface(),
@@ -242,9 +248,6 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
         }
       }
       qnn_tensors.push_back(null_tensor.GetQnnTensor());
-      // The op config outlives the local wrapper. qnn_node_name is owned by the caller for
-      // the complete graph-add call and is deep-copied by QNN when the node is added.
-      SetQnnTensorName(qnn_tensors.back(), qnn_node_name.c_str());
       continue;
     }
 
