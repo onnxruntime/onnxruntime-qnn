@@ -546,7 +546,7 @@ TEST_F(QnnUnit_HostAllocationImportTest, ContextRegistrationUsesImportFdAndOffse
   expected = nullptr;
 }
 
-TEST_F(QnnUnit_HostAllocationImportTest, ImportExceptionsAreReportedAndUndoTheMapping) {
+TEST_F(QnnUnit_HostAllocationImportTest, ImportRegistrationExceptionIsReportedAndRollsBack) {
   auto buffer = MakeAlignedBuffer(kPage);
   std::string error;
 
@@ -556,10 +556,22 @@ TEST_F(QnnUnit_HostAllocationImportTest, ImportExceptionsAreReportedAndUndoTheMa
   EXPECT_NE(error.find("Failed to import"), std::string::npos);
   fastrpc_.throw_on_registration = false;
   EXPECT_TRUE(fastrpc_.registered.empty());
+  EXPECT_EQ(fastrpc_.Count(/*deregistration*/ true), 1u);
+  EXPECT_FALSE(QnnExternalResourceImporterImpl::FindImportedHostMemory(buffer.get()).has_value());
+
+  OrtExternalMemoryHandle* handle = Import(HostDesc(buffer.get(), kPage));
+  ASSERT_NE(handle, nullptr);
+  Release(handle);
+}
+
+TEST_F(QnnUnit_HostAllocationImportTest, ImportExceptionsAreReportedAndUndoTheMapping) {
+  auto buffer = MakeAlignedBuffer(kPage);
+  std::string error;
 
   // A failure after FastRPC mapped the buffer, but before the import was published, undoes the mapping.
   fastrpc_.throw_on_fd_lookup_once_mapped = true;
   EXPECT_EQ(Import(HostDesc(buffer.get(), kPage), &error), nullptr);
+  EXPECT_NE(error.find("Failed to import"), std::string::npos);
   EXPECT_TRUE(fastrpc_.registered.empty());
   EXPECT_EQ(fastrpc_.Count(/*deregistration*/ true), 1u);
   EXPECT_FALSE(QnnExternalResourceImporterImpl::FindImportedHostMemory(buffer.get()).has_value());
