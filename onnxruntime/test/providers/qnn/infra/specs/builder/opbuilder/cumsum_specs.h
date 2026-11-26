@@ -11,6 +11,9 @@
 namespace onnxruntime {
 namespace test {
 
+// Exact legacy input literals, shared by the Accuracy and Snapshot setup.
+inline const std::vector<float> kCumSumInputData = {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f};
+
 enum class CumSumDataType {
   Float,
   UInt8,

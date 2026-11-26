@@ -24,18 +24,21 @@ std::vector<ONNX_NAMESPACE::AttributeProto> CumSumAttrs() {
           test::MakeAttribute("reverse", static_cast<int64_t>(0))};
 }
 
-ProviderOptions CumSumProviderOptions() {
+ProviderOptions CumSumProviderOptions([[maybe_unused]] const CumSumSpec& spec) {
   ProviderOptions options;
   options["backend_type"] = "htp";
   options["offload_graph_io_quantization"] = "0";
 #if defined(__linux__) && !defined(__aarch64__)
-  options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+  // Only the legacy F32 cases select this simulator SoC explicitly.
+  if (spec.data_type == CumSumDataType::Float) {
+    options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+  }
 #endif
   return options;
 }
 
 GetTestModelFn BuildCumSumF32(const CumSumSpec& spec) {
-  const TestInputDef<float> input{{3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}};
+  const TestInputDef<float> input{{3, 2}, false, kCumSumInputData};
   if (spec.axis_is_int64) {
     return BuildOpTestCase<float, int64_t>("cumsum", "CumSum", {input},
                                            {TestInputDef<int64_t>({}, true, {spec.axis})}, CumSumAttrs());
@@ -48,21 +51,21 @@ GetTestModelFn BuildCumSumF32(const CumSumSpec& spec) {
 GetTestQDQModelFn<uint8_t> BuildCumSumU8QDQ(const CumSumSpec& spec) {
   return [axis = static_cast<int32_t>(spec.axis)](ModelTestBuilder& builder,
                                                   std::vector<QuantParams<uint8_t>>& output_qparams) {
-    const TestInputDef<float> input{{3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}};
+    const TestInputDef<float> input{{3, 2}, false, kCumSumInputData};
     MakeTestInput(builder, "input", input);
     const QuantParams<uint8_t> qparams = GetTestInputQuantParams<uint8_t>(input);
     const std::string input_qdq = AddQDQNodePair<uint8_t>(builder, "qdq_in", "input", qparams.scale,
                                                           qparams.zero_point);
     builder.MakeScalarInitializer("axis", axis);
     builder.AddNode("cumsum", "CumSum", {input_qdq, "axis"}, {"cumsum_out"}, "", CumSumAttrs());
-    output_qparams[0] = qparams;
-    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "cumsum_out", qparams.scale,
-                                                   qparams.zero_point);
+    // Preserve the CPU F32 output-derived parameters supplied by the accuracy helper.
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "cumsum_out", output_qparams[0].scale,
+                                                   output_qparams[0].zero_point);
   };
 }
 
 void RunCumSumAccuracy(const CumSumSpec& spec) {
-  const ProviderOptions options = CumSumProviderOptions();
+  const ProviderOptions options = CumSumProviderOptions(spec);
   if (spec.data_type == CumSumDataType::Float) {
     RunQnnModelTest(BuildCumSumF32(spec), options, /*opset_version=*/17,
                     EPVerificationParams{ExpectedEPNodeAssignment::All, ElementwiseAbsoluteVerifier(2e-3f)});
