@@ -176,6 +176,25 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         super().__init__(group_name, [cmd], env=ort_build_env_vars())
 
 
+class GenerateOpenCppCoverageTask(RunPowershellScriptsTask):
+    """Generate a local Windows x86_64 QNN coverage report with OpenCppCoverage."""
+
+    def __init__(
+        self,
+        group_name: str | None,
+        build_dir: Path,
+        config: str = "RelWithDebInfo",
+    ) -> None:
+        cmd = [
+            str(REPO_ROOT / "qcom" / "scripts" / "windows" / "generate_opencppcoverage.ps1"),
+            "-BuildDir",
+            str(build_dir),
+            "-Config",
+            config,
+        ]
+        super().__init__(group_name, [cmd], env=ort_build_env_vars())
+
+
 class GenerateCoverageTask(BashScriptsWithVenvTask):
     """Run generate_coverage.sh to collect gcov data and produce an HTML coverage report.
 

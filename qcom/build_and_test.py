@@ -41,6 +41,7 @@ from ep_build.tasks.build import (
     GenerateCoverageTask,
     GenerateDiffCoverageTask,
     GenerateFileCoverageExcelTask,
+    GenerateOpenCppCoverageTask,
     QdcTestsTask,
     RunAsanTask,
 )
@@ -1039,6 +1040,33 @@ class TaskLibrary:
                     build_nuget=False,
                     build_archive=False,
                     qnn_internal_test_symbols=True,
+                )
+            )
+
+        @public_task("Build and generate a local QNN CPU coverage report (Windows x86_64, RelWithDebInfo)")
+        @depends(["create_venv"])
+        def coverage_windows_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "windows-x86_64-internal-symbols"
+            return plan.add_step(
+                CompositeTask(
+                    "Windows x86_64 QNN coverage build and report",
+                    [
+                        BuildEpWindowsTask(
+                            "Building ONNX Runtime for Windows on x86_64 with QNN EP internal test symbols",
+                            self.__venv_path,
+                            "x86_64",
+                            "RelWithDebInfo",
+                            None,  # Coverage does not require a Python wheel.
+                            self.__ort_prebuilt_root,
+                            self.__qairt_sdk_root,
+                            "build",
+                            qnn_internal_test_symbols=True,
+                        ),
+                        GenerateOpenCppCoverageTask(
+                            "Generating OpenCppCoverage report",
+                            build_dir,
+                        ),
+                    ],
                 )
             )
 
