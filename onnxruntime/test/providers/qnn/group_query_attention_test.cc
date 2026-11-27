@@ -1169,18 +1169,18 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_FullCacheWindow_FP32) {
   }
 }
 
-TEST_F(QnnGPUBackendTests, GroupQueryAttention_TruncatingWindow_NotAssigned) {
+// QNN GPU supports truncating local windows: the node is assigned and compared against the CPU EP.
+TEST_F(QnnGPUBackendTests, GroupQueryAttention_TruncatingWindow_FP32) {
   GpuPackedGqaCase test_case{8, 4, 32, 1, 1024, 10.0f};
   test_case.local_window_size = 128;
-  test_case.expected_ep_assignment = ExpectedEPNodeAssignment::None;
   RunGpuPackedGQATest<float>(test_case);
 }
 
-TEST_F(QnnGPUBackendTests, GroupQueryAttention_SlidingWindowCache_NotAssigned) {
+// QNN GPU supports sliding_window_cache: the node is assigned and compared against the CPU EP.
+TEST_F(QnnGPUBackendTests, GroupQueryAttention_SlidingWindowCache_FP32) {
   GpuPackedGqaCase test_case{8, 4, 32, 1, 1024, 10.0f};
   test_case.local_window_size = 1024;
   test_case.sliding_window_cache = 1;
-  test_case.expected_ep_assignment = ExpectedEPNodeAssignment::None;
   RunGpuPackedGQATest<float>(test_case);
 }
 
