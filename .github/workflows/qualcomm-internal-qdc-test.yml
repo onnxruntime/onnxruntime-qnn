@@ -53,6 +53,39 @@ on:
         default: ""
   workflow_dispatch:
     inputs:
+      inspect_current_validation:
+        description: "Draft investigation only: read the current own QDC validation status; submit no device job."
+        default: false
+        type: boolean
+      inspect_1074_qdc_results:
+        description: "Draft investigation only: read existing #1074 QDC job records and attachments; submit no device job."
+        default: false
+        type: boolean
+      validate_1074_internal_smoke:
+        description: "Draft investigation only: reuse run 44502389595 internal binaries for Windows ARM64 QDC smoke; no rebuild."
+        default: false
+        type: boolean
+      validation_internal_symbols:
+        description: "Draft smoke comparison only: true uses the original internal archive; false uses the original shipping archive."
+        default: true
+        type: boolean
+      validation_shipping_layout:
+        description: "Draft smoke experiment only: relocate the original internal binaries to the shipping device layout; no rebuild."
+        default: false
+        type: boolean
+      validation_repack_only:
+        description: "Draft smoke control only: repack the original internal ZIP without changing its paths or bytes."
+        default: false
+        type: boolean
+      validation_test_mode:
+        description: "Draft replay only: smoke verifies startup; full runs the original CTest and model suites."
+        default: smoke
+        type: choice
+        options: [smoke, full]
+      validation_diagnostics:
+        description: "Draft internal full run only: retry connection errors on status GET and retain per-process CTest logs."
+        default: false
+        type: boolean
       target_os:
         description: "The OS to test: android, linux, or windows"
         default: android
@@ -95,11 +128,472 @@ env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
+  inspect-current-validation:
+    name: Inspect current own QDC validation (read only)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.inspect_current_validation }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Prepare the existing QDC client environment
+        run: python3 qcom/build_and_test.py create_qdc_venv --only
+      - name: Read the own validation job status
+        env:
+          QDC_API_TOKEN: ${{ secrets.QDC_API_TOKEN }}
+          QDC_ON_BEHALF_OF: ${{ github.actor }}
+        run: |
+          venv/bin/python - <<'PY'
+          import inspect
+          import json
+          import os
+          import sys
+          from datetime import datetime
+          from pathlib import Path
+          sys.path.insert(0, str(Path('qcom/scripts/all').resolve()))
+          from qdc_runner import QdcClient
+          from qualcomm_device_cloud_sdk.api.jobs import get_jobs
+          client = QdcClient(None, os.environ['QDC_ON_BEHALF_OF'])
+          prefix = 'ORT-tzuhsuanwei-dev_tzuhwei_wind'
+          parameters = inspect.signature(get_jobs.sync_detailed).parameters
+          query = {'page_number': 1, 'page_size': 30}
+          if 'job_name' in parameters:
+              query['job_name'] = prefix
+          response = get_jobs.sync_detailed(client=client._client, **query)
+          if response.status_code != 200:
+              raise RuntimeError(f'Cannot read QDC status: HTTP {response.status_code}')
+          payload = json.loads(response.content)
+          def job_records(value):
+              if isinstance(value, dict):
+                  if 'jobId' in value and 'jobName' in value:
+                      yield value
+                  else:
+                      for child in value.values():
+                          yield from job_records(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from job_records(child)
+          records = list(job_records(payload))
+          own = [record for record in records if record['jobName'] == prefix]
+          start = datetime.fromisoformat('2026-11-20T08:09:10+00:00')
+          end = datetime.fromisoformat('2026-11-20T08:25:00+00:00')
+          candidates = [record for record in own if record.get('createdOn') and
+                        start <= datetime.fromisoformat(record['createdOn'].replace('Z', '+00:00')) <= end]
+          report = {
+              'source_run': 44700181667,
+              'sdk_signature': str(inspect.signature(get_jobs.sync_detailed)),
+              'response_keys': sorted(payload) if isinstance(payload, dict) else [],
+              'record_count': len(records),
+              'record_keys': sorted(records[0]) if records else [],
+              'job_id_range': [min(record['jobId'] for record in records), max(record['jobId'] for record in records)] if records else [],
+              'own_jobs': own,
+              'candidates': candidates,
+          }
+          if len(candidates) == 1:
+              status = client.get_job_status(candidates[0]['jobId'])
+              report['status'] = status.to_dict()
+          output = Path('build/current-qdc-validation-status.json')
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_text(json.dumps(report, indent=2, default=str))
+          print(output.read_text())
+          PY
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: current-own-qdc-validation-status
+          path: build/current-qdc-validation-status.json
+          retention-days: 7
+          if-no-files-found: error
+
+  inspect-1074-qdc-results:
+    name: Inspect original internal-symbol QDC failure (read only)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.inspect_1074_qdc_results }}
+    runs-on: ["self-hosted", "Linux", "QDC"]
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download the original internal test input for archive comparison
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-windows-arm64-test-inputs
+          path: build/
+          run-id: 44502389595
+          github-token: ${{ github.token }}
+      - name: Setup read-only source archive retrieval
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+      - name: Download the original shipping input and matching testdata
+        run: |
+          for name in windows-arm64-pyNone-tests testdata-zip; do
+            env GITHUB_EVENT_NAME=pull_request GITHUB_REF=refs/pull/1074/merge \
+              GITHUB_SHA=1c787b8dcfacca150712b06168519a3af86a4ed1 GITHUB_RUN_ID=44502389595 \
+              python3 qcom/scripts/artifactory/download_ci.py --name "$name"
+          done
+      - name: Prepare the existing QDC client
+        run: python3 qcom/build_and_test.py create_qdc_venv --only
+      - name: Compare the original archives and every mapped testdata path
+        run: |
+          venv/bin/python - <<'PY'
+          import hashlib
+          import json
+          import sys
+          import zipfile
+          from collections import Counter
+          from pathlib import Path, PurePosixPath
+          sys.path.insert(0, str(Path('qcom/scripts/all').resolve()))
+          from extract_testdata import MAPPING
+          output = Path('build/original-qdc-records')
+          output.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile('build/onnxruntime-testdata.zip') as testdata:
+              data_names = [name for name in testdata.namelist() if not name.endswith('/')]
+          result = {}
+          for platform in ['windows-arm64', 'windows-arm64-internal-symbols']:
+              archive_path = Path(f'build/onnxruntime-tests-{platform}.zip')
+              with archive_path.open('rb') as stream:
+                  digest = hashlib.sha256()
+                  for block in iter(lambda: stream.read(1024 * 1024), b''):
+                      digest.update(block)
+              with zipfile.ZipFile(archive_path) as archive:
+                  names = archive.namelist()
+                  config = 'Release/Release' if f'build/{platform}/Release/Release/onnxruntime_provider_test.exe' in names else 'Release'
+                  inventory = [{
+                      'name': info.filename, 'size': info.file_size, 'compressed': info.compress_size,
+                      'crc': info.CRC, 'compression': info.compress_type, 'flags': info.flag_bits,
+                      'create_system': info.create_system, 'external_attr': info.external_attr,
+                      'extra_hex': info.extra.hex(), 'extract_version': info.extract_version,
+                  } for info in archive.infolist()]
+                  (output / f'{platform}-input-inventory.json').write_text(json.dumps(inventory, indent=2))
+              mapped = []
+              for name in data_names:
+                  relative = PurePosixPath(name)
+                  handle = relative.parts[0]
+                  if handle not in MAPPING:
+                      raise RuntimeError(f'Unknown testdata handle {handle}')
+                  prefix = MAPPING[handle].format(plat=platform, config=config)
+                  mapped.append(f'{prefix}/{relative.relative_to(handle)}')
+              all_names = names + mapped
+              device_paths = ['C:/Temp/TestContent/' + name for name in all_names]
+              counts = Counter(name.casefold() for name in all_names)
+              result[platform] = {
+                  'input_sha256': digest.hexdigest(), 'input_bytes': archive_path.stat().st_size,
+                  'config_directory': config, 'input_entries': len(names), 'testdata_files': len(mapped),
+                  'max_device_path': max(map(len, device_paths)),
+                  'longest_paths': sorted(device_paths, key=len, reverse=True)[:20],
+                  'paths_at_least_260': [name for name in device_paths if len(name) >= 260],
+                  'casefold_duplicates': [name for name, count in counts.items() if count > 1],
+              }
+          (output / 'mapped-path-audit.json').write_text(json.dumps(result, indent=2))
+          print(json.dumps(result, indent=2))
+          PY
+      - name: Read the existing job records and original internal attachments
+        env:
+          QDC_API_TOKEN: ${{ secrets.QDC_API_TOKEN }}
+          QDC_ON_BEHALF_OF: ${{ github.actor }}
+        run: |
+          venv/bin/python - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path, PurePosixPath
+          sys.path.insert(0, str(Path('qcom/scripts/all').resolve()))
+          from qdc_runner import QdcClient
+          client = QdcClient(None, os.environ['QDC_ON_BEHALF_OF'])
+          for label, job_id in [('shipping', 991568), ('internal', 991740)]:
+              output = Path('build/original-qdc-records') / str(job_id)
+              output.mkdir(parents=True, exist_ok=True)
+              status = client.get_job_status(job_id)
+              (output / 'job-details.json').write_text(json.dumps(status.to_dict(), indent=2, default=str))
+              names = client._get_full_job_log_names(job_id)
+              (output / 'log-inventory.json').write_text(json.dumps(names, indent=2))
+              print(f'{label} QDC job {job_id}: {status.state}/{status.result}; attachments={len(names)}')
+              if label == 'internal':
+                  for name in names:
+                      client._download_log(PurePosixPath(name), output / PurePosixPath(name).name)
+          from qualcomm_device_cloud_sdk.api.jobs import get_jobs
+          response = get_jobs.sync_detailed(client=client._client, page_number=1, page_size=30)
+          if response.status_code != 200:
+              raise RuntimeError(f'Cannot read validation job status: HTTP {response.status_code}')
+          def job_records(value):
+              if isinstance(value, dict):
+                  if 'jobId' in value and 'jobName' in value:
+                      yield value
+                  else:
+                      for child in value.values():
+                          yield from job_records(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from job_records(child)
+          records = [record for record in job_records(json.loads(response.content))
+                     if record.get('jobName', '').startswith('ORT-tzuhsuanwei-dev_tzuhwei_wind')]
+          Path('build/original-qdc-records/latest-own-validation-jobs.json').write_text(json.dumps(records, indent=2))
+          for record in records:
+              print(f"Own validation QDC {record['jobId']}: {record.get('state')}/{record.get('result')}; created={record.get('createdOn')}")
+          PY
+      - name: Preserve the original QDC evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: original-1074-qdc-records
+          path: |
+            build/original-qdc-records/
+            build/onnxruntime-tests-windows-arm64.zip
+            build/onnxruntime-testdata.zip
+          retention-days: 7
+          if-no-files-found: error
+
+  validate-1074-internal-smoke:
+    name: Validate original Windows ARM64 ${{ inputs.validation_internal_symbols && 'internal-symbol' || 'shipping' }} QDC (${{ inputs.validation_test_mode }})
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.validate_1074_internal_smoke }}
+    runs-on: ["self-hosted", "Linux", "QDC"]
+    timeout-minutes: ${{ inputs.validation_test_mode == 'full' && 240 || 60 }}
+    permissions:
+      actions: read
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      VALIDATION_INTERNAL_SYMBOLS: ${{ inputs.validation_internal_symbols }}
+      VALIDATION_SHIPPING_LAYOUT: ${{ inputs.validation_shipping_layout }}
+      VALIDATION_TEST_MODE: ${{ inputs.validation_test_mode }}
+      VALIDATION_DIAGNOSTICS: ${{ inputs.validation_diagnostics }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download the original internal-symbol test archive
+        if: ${{ inputs.validation_internal_symbols }}
+        uses: actions/download-artifact@v4
+        with:
+          name: qnn-internal-windows-arm64-test-inputs
+          path: build/
+          run-id: 44502389595
+          github-token: ${{ github.token }}
+      - name: Setup JFrog CLI for read-only source testdata retrieval
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+      - name: Download the original shipping archive for comparison
+        if: ${{ !inputs.validation_internal_symbols }}
+        run: >
+          env GITHUB_EVENT_NAME=pull_request GITHUB_REF=refs/pull/1074/merge
+          GITHUB_SHA=1c787b8dcfacca150712b06168519a3af86a4ed1 GITHUB_RUN_ID=44502389595
+          python3 qcom/scripts/artifactory/download_ci.py --name windows-arm64-pyNone-tests
+      - name: Download matching original testdata
+        run: >
+          env GITHUB_EVENT_NAME=pull_request GITHUB_REF=refs/pull/1074/merge
+          GITHUB_SHA=1c787b8dcfacca150712b06168519a3af86a4ed1 GITHUB_RUN_ID=44502389595
+          python3 qcom/scripts/artifactory/download_ci.py --name testdata-zip
+      - name: Preserve source identity and prepare the existing QDC environment
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          internal = os.environ['VALIDATION_INTERNAL_SYMBOLS'] == 'true'
+          suffix = '-internal-symbols' if internal else ''
+          archive = Path(f'build/onnxruntime-tests-windows-arm64{suffix}.zip')
+          with archive.open('rb') as stream:
+              digest = hashlib.sha256()
+              for block in iter(lambda: stream.read(1024 * 1024), b''):
+                  digest.update(block)
+          actual = digest.hexdigest()
+          expected = 'c569a3f428b8c8afc73d86d442145110b14c7e05ca5cb8fed5d1ef76138c35c4'
+          if internal and actual != expected:
+              raise RuntimeError(f'Original input archive hash mismatch: {actual}')
+          Path('build/internal-qdc-validation-source.json').write_text(json.dumps({
+              'source_run': 44502389595,
+              'source_checkout': '1c787b8dcfacca150712b06168519a3af86a4ed1',
+              'source_head': '814d5f073973eda5e1e146abfca482ab83c6e653',
+              'archive_sha256': actual,
+              'internal_symbols': internal,
+              'test_mode': os.environ['VALIDATION_TEST_MODE'],
+              'full_ut_validation': os.environ['VALIDATION_TEST_MODE'] == 'full',
+              'diagnostic_status_get_retry': os.environ['VALIDATION_DIAGNOSTICS'] == 'true',
+              'diagnostic_per_process_reports': os.environ['VALIDATION_DIAGNOSTICS'] == 'true',
+          }, indent=2))
+          PY
+          python3 qcom/build_and_test.py create_qdc_venv --only
+      - name: Prepare the isolated internal archive-layout comparison
+        if: ${{ (inputs.validation_shipping_layout || inputs.validation_repack_only) && inputs.validation_internal_symbols }}
+        run: |
+          venv/bin/python - <<'PY'
+          import copy
+          import hashlib
+          import json
+          import os
+          import zipfile
+          from pathlib import Path
+          source = Path('build/onnxruntime-tests-windows-arm64-internal-symbols.zip')
+          relocated = source.with_suffix('.relocated.zip')
+          old = 'build/windows-arm64-internal-symbols/'
+          new = 'build/windows-arm64/'
+          relocate = os.environ['VALIDATION_SHIPPING_LAYOUT'] == 'true'
+          changed = []
+          with zipfile.ZipFile(source) as original, zipfile.ZipFile(relocated, 'w') as output:
+              for info in original.infolist():
+                  content = original.read(info)
+                  name = info.filename.replace(old, new) if relocate else info.filename
+                  if relocate and name.endswith('.cmake'):
+                      content = content.replace(b'windows-arm64-internal-symbols', b'windows-arm64')
+                  if content != original.read(info):
+                      changed.append(name)
+                  item = copy.copy(info)
+                  item.filename = name
+                  output.writestr(item, content)
+          with zipfile.ZipFile(relocated) as archive:
+              bad = archive.testzip()
+              if bad:
+                  raise RuntimeError(f'Relocated ZIP failed CRC check: {bad}')
+          relocated.replace(source)
+          if relocate:
+              helper = Path('qcom/scripts/all/qdc_windows_payload.py')
+              text = helper.read_text()
+              expected = 'platform = "windows-arm64-internal-symbols" if internal_symbols else "windows-arm64"'
+              if text.count(expected) != 1:
+                  raise RuntimeError('Unexpected payload helper source; refusing the experiment')
+              helper.write_text(text.replace(expected, 'platform = "windows-arm64"'))
+          Path('build/device-layout-experiment.json').write_text(json.dumps({
+              'experiment': 'shipping-layout' if relocate else 'repack-only',
+              'device_platform_directory': 'windows-arm64' if relocate else 'windows-arm64-internal-symbols',
+              'original_internal_binaries_unchanged': True,
+              'changed_content_entries': changed,
+              'relocated_archive_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+              'provider_processes': 2,
+              'full_ut_validation': os.environ['VALIDATION_TEST_MODE'] == 'full',
+          }, indent=2))
+          PY
+      - name: Enable temporary full-run diagnostics
+        if: ${{ inputs.validation_diagnostics }}
+        run: |
+          python3 - <<'PY'
+          import ast
+          import json
+          import os
+          from pathlib import Path
+          if os.environ['VALIDATION_INTERNAL_SYMBOLS'] != 'true' or os.environ['VALIDATION_TEST_MODE'] != 'full':
+              raise RuntimeError('These diagnostics require the internal-symbol full run.')
+          runner = Path('qcom/scripts/all/qdc_runner.py')
+          text = runner.read_text()
+          marker = '    @retry_with_backoff()\n    def get_jobs_id'
+          if text.count(marker) != 1:
+              raise RuntimeError('Unexpected status GET method; refusing the diagnostic patch.')
+          text = text.replace(marker,
+              '    @retry_with_backoff()\n'
+              '    @backoff.on_exception(backoff.expo, httpx.ConnectError, max_tries=MAX_TRIES)\n'
+              '    def get_jobs_id')
+          ast.parse(text)
+          runner.write_text(text)
+          helper = Path('qcom/scripts/all/qdc_windows_payload.py')
+          text = helper.read_text()
+          marker = '                if entry.filename.endswith(".cmake"):\n'
+          if text.count(marker) != 1:
+              raise RuntimeError('Unexpected payload writer; refusing the diagnostic patch.')
+          insertion = r'''
+                          if entry.filename.startswith("build/windows-arm64/") and entry.filename.endswith("/run_tests.ps1"):
+                              ctest = b'& $CTestExe --build-config $Config --verbose --timeout $TimeoutSec'
+                              move = b'Move-Item -LiteralPath $ProviderReport -Destination $ShardReport -Force'
+                              if content.count(ctest) != 2 or content.count(move) != 1:
+                                  raise ValueError('Unexpected archived provider-test flow.')
+                              newline = b"\r\n" if b"\r\n" in content else b"\n"
+                              content = content.replace(ctest, ctest + rb' --output-log "C:\Temp\QDC_logs\provider-ctest-shard${Shard}_stdout.txt"')
+                              content = content.replace(move, move + newline + rb'                Copy-Item -LiteralPath $ShardReport -Destination "C:\Temp\QDC_logs" -Force')
+          '''
+          text = text.replace(marker, insertion + marker)
+          ast.parse(text)
+          helper.write_text(text)
+          Path('build/diagnostic-modifications.json').write_text(json.dumps({
+              'temporary_only': True,
+              'status_get_connect_error_max_tries': 6,
+              'ctest_stdout_per_process': True,
+              'completed_provider_xml_copied_immediately': True,
+              'source_archive_and_binary_bytes_unchanged': True,
+              'test_filters_and_provider_process_count_unchanged': True,
+          }, indent=2))
+          PY
+      - name: Run the selected mode through the original build-and-test task
+        env:
+          QDC_API_TOKEN: ${{ secrets.QDC_API_TOKEN }}
+          QDC_WINDOWS_TEST_MODE: ${{ inputs.validation_test_mode }}
+        run: |
+          python3 qcom/build_and_test.py --config Release \
+            test_ort_qdc_windows_arm64${{ inputs.validation_internal_symbols && '_internal_symbols' || '' }} --only \
+            2>&1 | tee build/internal-qdc-validation.log
+      - name: Collect this internal validation job's metadata and raw logs
+        if: ${{ always() }}
+        env:
+          QDC_API_TOKEN: ${{ secrets.QDC_API_TOKEN }}
+          QDC_ON_BEHALF_OF: ${{ github.actor }}
+        run: |
+          if [ ! -x venv/bin/python ]; then exit 0; fi
+          venv/bin/python - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path('qcom/scripts/all').resolve()))
+          from qdc_runner import QdcClient
+          source = Path('build/internal-qdc-validation.log')
+          if not source.is_file():
+              print('No device job was submitted.')
+              raise SystemExit(0)
+          matches = re.findall(r'Started QDC job id=(\d+):', source.read_text(errors='replace'))
+          if len(matches) != 1:
+              print(f'Expected one validation job; found {matches}. See the retained task log.')
+              raise SystemExit(0)
+          job_id = int(matches[0])
+          client = QdcClient(None, os.environ['QDC_ON_BEHALF_OF'])
+          status = client.get_job_status(job_id)
+          output = Path('build/qdc-internal-validation-raw') / str(job_id)
+          output.mkdir(parents=True, exist_ok=True)
+          (output / 'job-details.json').write_text(json.dumps(status.to_dict(), indent=2, default=str))
+          names = client._get_full_job_log_names(job_id)
+          print(f'Internal validation job {job_id}: {status.state}/{status.result}; logs={names}')
+          (output / 'log-inventory.json').write_text(json.dumps(names, indent=2))
+          from pathlib import PurePosixPath
+          for name in names:
+              client._download_log(PurePosixPath(name), output / PurePosixPath(name).name)
+          PY
+      - name: Preserve the internal-symbol startup validation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-arm64-${{ inputs.validation_internal_symbols && 'internal' || 'shipping' }}-qdc-startup-validation
+          path: |
+            build/internal-qdc-validation-source.json
+            build/device-layout-experiment.json
+            build/diagnostic-modifications.json
+            build/internal-qdc-validation.log
+            build/qdc-windows/
+            build/qdc-internal-validation-raw/
+          retention-days: 7
+          if-no-files-found: error
+
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-${{ inputs.target_os == 'windows' && (inputs.qnn_internal_test_symbols && 'internal-symbols-qdc' || 'qdc') || 'pynone' }}"
     # Fork PRs cannot access the required credentials. They remain blocked until
     # a maintainer dispatches the reviewed SHA through /approve-ci.
-    if: ${{ github.event.pull_request.head.repo.fork != true }}
+    if: ${{ github.event.pull_request.head.repo.fork != true && !inputs.validate_1074_internal_smoke && !inputs.inspect_1074_qdc_results && !inputs.inspect_current_validation }}
     runs-on: ["self-hosted", "Linux", "QDC"]
     defaults:
       run:

@@ -3,6 +3,7 @@
 
 """Prepare Windows QDC tests without changing the shared test archive's layout."""
 
+import copy
 import hashlib
 import json
 import shutil
@@ -123,8 +124,9 @@ def prepare_windows_payload(
 ) -> Path:
     """Add bootstrap, installer, models and testdata to a copy of the build artifact.
 
-    Keep every original entry at its original path. Multi-config binaries and their
-    testdata remain under <config>/<config>; ctest and run_tests.ps1 stay one level up.
+    Leave the source archive unchanged. Internal-symbol payloads use the existing
+    windows-arm64 device layout. Multi-config binaries and their testdata remain
+    under <config>/<config>; ctest and run_tests.ps1 stay one level up.
     Optional local inputs allow payload verification without a device or downloads.
     htp_arch selects runtime dependencies and smoke-test expectations, not the QDC device.
     """
@@ -181,7 +183,26 @@ def prepare_windows_payload(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / archive_path.name
-    shutil.copyfile(archive_path, output_path)
+    if output_path.exists() and archive_path.samefile(output_path):
+        raise shutil.SameFileError("QDC payload output must not overwrite the source archive")
+    if internal_symbols:
+        # Keep the build artifact isolated, but reuse QDC's working Windows layout.
+        source_prefix = f"build/{platform}/"
+        device_prefix = "build/windows-arm64/"
+        with zipfile.ZipFile(archive_path) as original, zipfile.ZipFile(output_path, "w") as relocated:
+            for info in original.infolist():
+                content = original.read(info)
+                entry = copy.copy(info)
+                entry.filename = entry.filename.replace(source_prefix, device_prefix, 1)
+                if entry.filename.endswith(".cmake"):
+                    content = content.replace(platform.encode(), b"windows-arm64")
+                relocated.writestr(entry, content)
+        entries = {name.replace(source_prefix, device_prefix, 1) for name in entries}
+        test_root = test_root.replace(source_prefix, device_prefix, 1)
+        binary_root = binary_root.replace(source_prefix, device_prefix, 1)
+        platform = "windows-arm64"
+    else:
+        shutil.copyfile(archive_path, output_path)
     with zipfile.ZipFile(output_path, "a", compression=zipfile.ZIP_DEFLATED) as payload:
 
         def add_tree(source: Path, prefix: str) -> None:
@@ -204,6 +225,7 @@ def prepare_windows_payload(
                     "expected_htp_arch": htp_arch,
                     "test_platform": platform,
                     "provider_test_processes": 2 if internal_symbols else 1,
+                    **({"qnn_internal_test_symbols": True} if internal_symbols else {}),
                 },
                 indent=2,
             ),
