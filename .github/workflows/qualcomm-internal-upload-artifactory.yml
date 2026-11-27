@@ -140,13 +140,29 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: NuGet login — nuget.org
+        if: ${{ inputs.index_server_to == 'nuget' }}
+        uses: NuGet/login@v1
+        id: nuget_login
+        with:
+          user: ${{ secrets.NUGET_USERNAME }}
+
+      - name: NuGet login — int.nugettest.org
+        if: ${{ inputs.index_server_to == 'testnuget' }}
+        uses: NuGet/login@v1
+        id: testnuget_login
+        with:
+          user: ${{ secrets.NUGET_USERNAME }}
+          token-service-url: https://int.nugettest.org/api/v2/token
+          audience: https://int.nugettest.org
+
       - name: Publish
         shell: powershell
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
-          NUGET_API_KEY: ${{ secrets.NUGET_UPLOADER_PASSWORD }}
-          TEST_NUGET_API_KEY: ${{ secrets.TEST_NUGET_UPLOADER_PASSWORD }}
+          NUGET_API_KEY: ${{ steps.nuget_login.outputs.NUGET_API_KEY || '' }}
+          TEST_NUGET_API_KEY: ${{ steps.testnuget_login.outputs.NUGET_API_KEY || '' }}
         run: |
           py -m venv uplevel_venv
           .\uplevel_venv\Scripts\activate
