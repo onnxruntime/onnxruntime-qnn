@@ -30,7 +30,9 @@ class QnnContextMemHandleManager {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnContextMemHandleManager);
 
   // Gets an existing QNN mem handle or registers a new one.
-  // `qnn_mem_handle` is set to the QNN mem handle and `did_register` is true if `qnn_mem_handle` was newly registered.
+  // `qnn_mem_handle` is set to the QNN mem handle. `did_register` is true when
+  // this address needs an allocation cleanup hook. Replacing an existing,
+  // undersized registration preserves its hook and leaves `did_register` false.
   Ort::Status GetOrRegister(void* shared_memory_address,
                             const Qnn_Tensor_t& qnn_tensor,
                             Qnn_MemHandle_t& qnn_mem_handle,

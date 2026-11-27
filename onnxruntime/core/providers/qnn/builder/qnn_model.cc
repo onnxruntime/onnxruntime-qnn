@@ -584,11 +584,15 @@ Ort::Status QnnModel::BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& log
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
     SetQnnTensorMemType(qnn_tensor, QNN_TENSORMEMTYPE_RAW);
     SetQnnTensorClientBuf(qnn_tensor, ort_value_data, ort_value_data_size);
-    if (!zero_copy_fallback_warned_ &&
-        (uses_shared_memory || uses_imported_memory || qnn_allocator_type != QnnAllocatorType::NONE)) {
-      zero_copy_fallback_warned_ = true;
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
-                  "QNN zero-copy memory binding was not used; falling back to clientBuf.");
+    if (uses_shared_memory || uses_imported_memory || qnn_allocator_type != QnnAllocatorType::NONE) {
+      // Logged for every fallback so each tensor that misses zero-copy can be identified.
+      const char* tensor_name = GetQnnTensorName(qnn_tensor);
+      std::ostringstream oss;
+      oss << "QNN zero-copy memory binding was not used; falling back to clientBuf. Tensor: "
+          << (tensor_name != nullptr ? tensor_name : "<unnamed>") << ", reason: "
+          << (uses_shared_memory ? "HOST_ACCESSIBLE memory was not allocated by QnnHtpShared"
+                                 : "memory is not HOST_ACCESSIBLE");
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, oss.str().c_str());
     }
   }
 
