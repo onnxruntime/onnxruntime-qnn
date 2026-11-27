@@ -13,6 +13,7 @@
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
 #include "test/providers/qnn/infra/specs/builder/opbuilder/split_specs.h"
+#include "test/providers/qnn/qnn_test_utils.h"
 #include "test/providers/qnn/snapshot/snapshot.h"
 
 using namespace onnxruntime;
@@ -56,13 +57,17 @@ void RunSplitSnapshot(const SplitSpec& spec) {
   const OrtValueInfo* zero_point = nullptr;
   ONNXTensorElementDataType data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
   if (spec.quant_type != SplitQuantType::None) {
-    scale = g_mock_init_reg.AddScalarFloat("scale", 0.1f);
+    const TestInputDef<float> input(spec.shape, false, SplitInputValues<float>(spec));
     if (spec.quant_type == SplitQuantType::UInt8) {
+      const auto qparams = GetTestInputQuantParams<uint8_t>(input);
+      scale = g_mock_init_reg.AddScalarFloat("scale", qparams.scale);
       data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
-      zero_point = g_mock_init_reg.AddScalarUint8("zero_point", 0);
+      zero_point = g_mock_init_reg.AddScalarUint8("zero_point", qparams.zero_point);
     } else {
+      const auto qparams = GetTestInputQuantParams<uint16_t>(input);
+      scale = g_mock_init_reg.AddScalarFloat("scale", qparams.scale);
       data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
-      zero_point = g_mock_init_reg.AddScalarUint16("zero_point", 0);
+      zero_point = g_mock_init_reg.AddScalarUint16("zero_point", qparams.zero_point);
     }
   }
 
@@ -95,6 +100,23 @@ void RunSplitSnapshot(const SplitSpec& spec) {
   const auto status = builder->AddToModelBuilder(*wrapper, node, ctx.ort_logger, false);
   ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
   ASSERT_TRUE(wrapper->ComposeQnnGraph(true));
+  const auto& graph = wrapper->GetQnnJSONGraph().at("graph");
+  const auto& nodes = graph.at("nodes");
+  ASSERT_EQ(nodes.size(), 1u);
+  const auto qnn_node = nodes.begin().value();
+  EXPECT_EQ(qnn_node.at("type"), output_shapes.size() == 1 ? "Reshape" : "Split");
+  EXPECT_EQ(qnn_node.at("input_names"), nlohmann::json(std::vector<std::string>{"input"}));
+  EXPECT_EQ(qnn_node.at("output_names"), nlohmann::json(output_names));
+  const auto expected_dtype = spec.quant_type == SplitQuantType::None    ? QNN_DATATYPE_INT_32
+                              : spec.quant_type == SplitQuantType::UInt8 ? QNN_DATATYPE_UFIXED_POINT_8
+                                                                         : QNN_DATATYPE_UFIXED_POINT_16;
+  EXPECT_EQ(graph.at("tensors").at("input").at("dims"), nlohmann::json(spec.shape));
+  EXPECT_EQ(graph.at("tensors").at("input").at("data_type"), static_cast<uint32_t>(expected_dtype));
+  for (size_t i = 0; i < output_shapes.size(); ++i) {
+    const auto& tensor = graph.at("tensors").at(output_names[i]);
+    EXPECT_EQ(tensor.at("dims"), nlohmann::json(output_shapes[i]));
+    EXPECT_EQ(tensor.at("data_type"), static_cast<uint32_t>(expected_dtype));
+  }
   AssertSnapshotJson(*wrapper, spec.name);
 }
 

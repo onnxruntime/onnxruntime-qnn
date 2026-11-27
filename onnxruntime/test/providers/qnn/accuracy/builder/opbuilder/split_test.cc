@@ -22,19 +22,16 @@ size_t OutputCount(const SplitSpec& spec) {
 }
 
 std::vector<ONNX_NAMESPACE::AttributeProto> SplitAttrs(const SplitSpec& spec) {
-  std::vector<ONNX_NAMESPACE::AttributeProto> attrs{MakeAttribute("axis", spec.axis)};
+  std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
   if (spec.opset < 13) attrs.push_back(MakeAttribute("split", spec.split));
   if (spec.num_outputs > 0) attrs.push_back(MakeAttribute("num_outputs", spec.num_outputs));
+  attrs.push_back(MakeAttribute("axis", spec.axis));
   return attrs;
 }
 
 template <typename T>
 TestInputDef<T> MakeInput(const SplitSpec& spec) {
-  size_t count = 1;
-  for (int64_t dim : spec.shape) count *= static_cast<size_t>(dim);
-  std::vector<T> values(count);
-  for (size_t i = 0; i < count; ++i) values[i] = static_cast<T>(i + 1);
-  return TestInputDef<T>(spec.shape, false, values);
+  return TestInputDef<T>(spec.shape, false, SplitInputValues<T>(spec));
 }
 
 template <typename T>
@@ -44,12 +41,12 @@ GetTestModelFn BuildSplitModel(const SplitSpec& spec) {
     if (spec.opset >= 13 && !spec.split.empty()) builder.Make1DInitializer<int64_t>("split", spec.split);
     std::vector<std::string> outputs;
     for (size_t i = 0; i < OutputCount(spec); ++i) {
-      outputs.push_back("y" + std::to_string(i));
+      outputs.push_back("Y" + std::to_string(i));
       builder.MakeOutput(outputs.back());
     }
     std::vector<std::string> inputs{"input"};
     if (spec.opset >= 13 && !spec.split.empty()) inputs.push_back("split");
-    builder.AddNode("split", "Split", inputs, outputs, kOnnxDomain, SplitAttrs(spec));
+    builder.AddNode("Split", "Split", inputs, outputs, kOnnxDomain, SplitAttrs(spec));
   };
 }
 
@@ -66,7 +63,8 @@ GetTestQDQModelFn<QType> BuildQDQSplitModel(const SplitSpec& spec) {
     for (size_t i = 0; i < OutputCount(spec); ++i) split_outputs.push_back("split_out" + std::to_string(i));
     std::vector<std::string> inputs{qdq_input};
     if (spec.opset >= 13 && !spec.split.empty()) inputs.push_back("split");
-    builder.AddNode("split", "Split", inputs, split_outputs, kOnnxDomain, SplitAttrs(spec));
+    builder.AddNode("Split", "Split", inputs, split_outputs, kOnnxDomain, SplitAttrs(spec));
+    QNN_ASSERT(output_qparams.size() == split_outputs.size());
     for (size_t i = 0; i < split_outputs.size(); ++i) {
       output_qparams[i] = qparams;
       AddQDQNodePairWithOutputAsGraphOutput<QType>(builder, "qdq_out" + std::to_string(i), split_outputs[i],
@@ -75,15 +73,15 @@ GetTestQDQModelFn<QType> BuildQDQSplitModel(const SplitSpec& spec) {
   };
 }
 
-ProviderOptions SplitOptions() {
+ProviderOptions SplitOptions(const SplitSpec& spec) {
   ProviderOptions options;
   options["backend_type"] = "htp";
-  options["offload_graph_io_quantization"] = "0";
+  if (spec.quant_type != SplitQuantType::None) options["offload_graph_io_quantization"] = "0";
   return options;
 }
 
 void RunSplitAccuracy(const SplitSpec& spec) {
-  const auto options = SplitOptions();
+  const auto options = SplitOptions(spec);
   if (spec.quant_type == SplitQuantType::None) {
     RunQnnModelTest(BuildSplitModel<int32_t>(spec), options, spec.opset,
                     EPVerificationParams{ExpectedEPNodeAssignment::All});
@@ -98,7 +96,7 @@ void RunSplitAccuracy(const SplitSpec& spec) {
 
 }  // namespace
 
-class QnnAcc_Split_AccuracyTest : public ::testing::TestWithParam<SplitSpec> {};
+class QnnAcc_Split_AccuracyTest : public QnnHTPBackendTests, public ::testing::WithParamInterface<SplitSpec> {};
 TEST_P(QnnAcc_Split_AccuracyTest, Case) { RunSplitAccuracy(GetParam()); }
 INSTANTIATE_TEST_SUITE_P(, QnnAcc_Split_AccuracyTest, ::testing::ValuesIn(kSplitSpecs),
                          [](const ::testing::TestParamInfo<SplitSpec>& info) { return std::string(info.param.name); });
