@@ -62,25 +62,31 @@ if(UNIX)
         set(_UDO_DSP_COMMANDS)
         set(_UDO_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/libQnnMyAddOpPackage.so)
         if(ANDROID)
-            set(onnxruntime_QNN_UDO_HTP_ARCH "81" CACHE STRING "Hexagon architecture for Android Custom Op tests")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                         "${CMAKE_SOURCE_DIR}/../qcom/scripts/all/custom_op_targets.json")
+            file(READ "${CMAKE_SOURCE_DIR}/../qcom/scripts/all/custom_op_targets.json" _UDO_TARGET_CONFIG)
+            string(JSON _UDO_ARCH_COUNT LENGTH "${_UDO_TARGET_CONFIG}")
+            math(EXPR _UDO_LAST_ARCH "${_UDO_ARCH_COUNT} - 1")
             file(STRINGS "${TEST_SRC_DIR}/providers/qnn/udo/HTP_Makefile" _UDO_TARGETS_LINE REGEX "^SUPPORTED_TARGETS =")
             string(REPLACE "SUPPORTED_TARGETS =" "" _UDO_TARGETS "${_UDO_TARGETS_LINE}")
             separate_arguments(_UDO_TARGETS)
-            if(NOT "hexagon-v${onnxruntime_QNN_UDO_HTP_ARCH}" IN_LIST _UDO_TARGETS)
-                message(FATAL_ERROR "Unsupported Custom Op HTP architecture: ${onnxruntime_QNN_UDO_HTP_ARCH}")
-            endif()
-            add_compile_definitions(QNN_UDO_HTP_ARCH=${onnxruntime_QNN_UDO_HTP_ARCH})
             set(_UDO_BUILD_TARGET htp_aarch64)
             set(_UDO_HOST_ARCH aarch64-android)
-            list(APPEND _UDO_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/hexagon-v${onnxruntime_QNN_UDO_HTP_ARCH}/libQnnMyAddOpPackage.so)
-            set(_UDO_DSP_COMMANDS
-                COMMAND ${CMAKE_COMMAND} -E env QNN_SDK_ROOT=${onnxruntime_QNN_HOME}
-                    HEXAGON_SDK_ROOT=${HEXAGON_SDK_ROOT}/${_HEXAGON_SDK_VERSION}
-                    ${MAKE_EXECUTABLE} -C ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/MyAddOpPackage htp_v${onnxruntime_QNN_UDO_HTP_ARCH}
-                COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/hexagon-v${onnxruntime_QNN_UDO_HTP_ARCH}
-                COMMAND ${CMAKE_COMMAND} -E copy
-                    ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/MyAddOpPackage/build/hexagon-v${onnxruntime_QNN_UDO_HTP_ARCH}/libQnnMyAddOpPackage.so
-                    ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/hexagon-v${onnxruntime_QNN_UDO_HTP_ARCH}/libQnnMyAddOpPackage.so)
+            foreach(_UDO_INDEX RANGE ${_UDO_LAST_ARCH})
+                string(JSON _UDO_ARCH MEMBER "${_UDO_TARGET_CONFIG}" ${_UDO_INDEX})
+                if(NOT "hexagon-v${_UDO_ARCH}" IN_LIST _UDO_TARGETS)
+                    message(FATAL_ERROR "Unsupported Custom Op HTP architecture: ${_UDO_ARCH}")
+                endif()
+                list(APPEND _UDO_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/hexagon-v${_UDO_ARCH}/libQnnMyAddOpPackage.so)
+                list(APPEND _UDO_DSP_COMMANDS
+                    COMMAND ${CMAKE_COMMAND} -E env QNN_SDK_ROOT=${onnxruntime_QNN_HOME}
+                        HEXAGON_SDK_ROOT=${HEXAGON_SDK_ROOT}/${_HEXAGON_SDK_VERSION}
+                        ${MAKE_EXECUTABLE} -C ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/MyAddOpPackage htp_v${_UDO_ARCH}
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/hexagon-v${_UDO_ARCH}
+                    COMMAND ${CMAKE_COMMAND} -E copy
+                        ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/MyAddOpPackage/build/hexagon-v${_UDO_ARCH}/libQnnMyAddOpPackage.so
+                        ${CMAKE_CURRENT_BINARY_DIR}/custom_op/op_packages/htp/hexagon-v${_UDO_ARCH}/libQnnMyAddOpPackage.so)
+            endforeach()
         endif()
         add_custom_command(
             OUTPUT ${_UDO_OUTPUTS}
@@ -116,6 +122,7 @@ if(UNIX)
                 ${TEST_SRC_DIR}/providers/qnn/udo/MyAddOpPackageHtp.xml
                 ${TEST_SRC_DIR}/providers/qnn/udo/MyAddHTP.cpp
                 ${TEST_SRC_DIR}/providers/qnn/udo/HTP_Makefile
+                ${CMAKE_SOURCE_DIR}/../qcom/scripts/all/custom_op_targets.json
         )
         add_custom_target(QnnUDO_MyAdd_HTP
           DEPENDS ${_UDO_OUTPUTS}

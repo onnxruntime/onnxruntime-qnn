@@ -1824,9 +1824,13 @@ package generation and its tool downloads. An enabled Android fixture checks the
 built DSP architecture against the device before JIT tests. The graph-preparation
 fixture supports Linux x86_64 and Android aarch64;
 other targets skip those tests. Parsing tests reside in
-`component/qnn_custom_op_test.cc`. Cross-platform Hybrid AOT fixtures are deferred
-until context production and CI consumption are implemented together. Test fixture
-settings are in the sample README.
+`component/qnn_custom_op_test.cc`. Test archives also include reusable Linux-generated v73/v75/v79/v81 contexts and
+`custom_op/run_custom_op_tests.sh`, which tests JIT, packaged-context consumption,
+and native context generation/loading on Linux x86_64 and Android aarch64.
+Android CI enables the op-package build and runs this filtered script. The
+producer and archive use the same QAIRT SDK; no build toolchain is required on
+test hosts. Only Windows ARM64 AOT consumption and signing remain deferred.
+Target settings and archive commands are in the sample README.
 
 ### UDO Workflow
 

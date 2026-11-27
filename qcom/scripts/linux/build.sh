@@ -355,6 +355,16 @@ function scrub_mirror() {
 trap scrub_mirror EXIT
 
 if [ -n "${make_test_archive}" ]; then
+  if [[ "${udo_packages}" == "ON" ]]; then
+    udo_host_build="${build_dir}/${config}"
+    if [[ "${target_platform}" == "android" ]]; then
+      udo_host_build="${ORT_QNN_UDO_HOST_BUILD:-${build_root}/linux-x86_64/${config}}"
+    fi
+    python "${REPO_ROOT}/qcom/scripts/all/prepare_custom_op.py" \
+      --host-build "${udo_host_build}" \
+      --destination "${build_dir}/${config}/custom_op" \
+      --qairt-sdk "${qairt_sdk_root}"
+  fi
   python "${REPO_ROOT}/qcom/scripts/all/archive_tests.py" \
     "--config=${config}" \
     "--target-platform=${build_dir_name}" \

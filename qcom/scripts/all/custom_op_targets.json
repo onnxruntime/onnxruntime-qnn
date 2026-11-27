@@ -1,0 +1,6 @@
+{
+  "73": {"soc_model": 60, "htp_arch": 73, "vtcm_mb": 8},
+  "75": {"soc_model": 57, "htp_arch": 75, "vtcm_mb": 8},
+  "79": {"soc_model": 69, "htp_arch": 79, "vtcm_mb": 8},
+  "81": {"soc_model": 87, "htp_arch": 81, "vtcm_mb": 8}
+}

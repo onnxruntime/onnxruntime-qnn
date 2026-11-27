@@ -190,7 +190,7 @@ struct UdoArtifact {
 };
 
 static UdoArtifact FindUdoArtifact(const std::filesystem::path& executable_dir,
-                                   const std::string& override_dir) {
+                                   const std::string& override_dir, uint32_t htp_arch = 0) {
   std::vector<std::filesystem::path> dirs;
   if (!override_dir.empty()) dirs.emplace_back(override_dir);
   dirs.push_back(executable_dir / "custom_op/op_packages/htp");
@@ -199,10 +199,10 @@ static UdoArtifact FindUdoArtifact(const std::filesystem::path& executable_dir,
     const auto host = dir / "libQnnMyAddOpPackage.so";
     result.searched += host.string() + "\n";
     std::filesystem::path dsp;
-#if defined(__ANDROID__) && defined(QNN_UDO_HTP_ARCH)
-    dsp = dir / ("hexagon-v" + std::to_string(QNN_UDO_HTP_ARCH)) / "libQnnMyAddOpPackage.so";
-    result.searched += dsp.string() + "\n";
-#endif
+    if (htp_arch != 0) {
+      dsp = dir / ("hexagon-v" + std::to_string(htp_arch)) / "libQnnMyAddOpPackage.so";
+      result.searched += dsp.string() + "\n";
+    }
     if (std::filesystem::is_regular_file(host) && (dsp.empty() || std::filesystem::is_regular_file(dsp))) {
       result.path = std::filesystem::absolute(host);
       if (!dsp.empty()) result.dsp = std::filesystem::absolute(dsp);
@@ -219,14 +219,12 @@ class QnnHTPUdoTests : public QnnHTPBackendTests {
     if (HasFatalFailure() || IsSkipped()) return;
 #ifdef BUILD_QNN_UDO_TEST
     SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-#ifdef QNN_UDO_HTP_ARCH
-    const auto device_arch = GetPlatformAttributes().htp_arch;
-    if (device_arch != QNN_UDO_HTP_ARCH) {
-      FAIL() << "Custom Op skel V" << QNN_UDO_HTP_ARCH << " does not match device V" << device_arch;
-    }
+    uint32_t htp_arch = 0;
+#ifdef __ANDROID__
+    htp_arch = GetPlatformAttributes().htp_arch;
 #endif
     const auto artifact = FindUdoArtifact(ExecutableDirectory(),
-                                          ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_OP_PACKAGE_DIR", ""));
+                                          ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_OP_PACKAGE_DIR", ""), htp_arch);
     ASSERT_FALSE(artifact.path.empty()) << "Required HTP Custom Op package pair missing. Searched:\n"
                                         << artifact.searched;
     package_path_ = artifact.path;
@@ -431,49 +429,140 @@ TEST_F(QnnHTPUdoTests, UDO_Op_MyAdd_MixedEPContext) {
   TestUdoContextRoundTrip(package_path(), dsp_path(), true);
 }
 
+// These two entry points run in separate processes from the archive scripts.
+// Ordinary unit-test runs retain the in-process round-trip coverage above.
+static ProviderOptions UdoContextOptions(const std::filesystem::path& host,
+                                         const std::filesystem::path& dsp) {
+  auto options = UdoProviderOptions(host, dsp);
+  const auto target = ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_CONTEXT_TARGET", "");
+  std::istringstream fields(target);
+  for (const auto* key : {"htp_arch", "soc_model", "vtcm_mb"}) {
+    std::string value;
+    if (!std::getline(fields, value, ':') || value.empty() || value.find_first_not_of("0123456789") != std::string::npos) {
+      throw std::runtime_error("ORT_QNN_UDO_CONTEXT_TARGET must specify htp_arch:soc_model:vtcm_mb");
+    }
+    options[key] = value;
+  }
+  std::string extra;
+  if (std::getline(fields, extra, ':')) throw std::runtime_error("Unexpected Custom Op target field");
+  return options;
+}
+
+static void CheckUdoContextArtifacts(const std::filesystem::path& path) {
+  ONNX_NAMESPACE::ModelProto context;
+  std::ifstream stream(path, std::ios::binary);
+  ASSERT_TRUE(context.ParseFromIstream(&stream));
+  bool found_context = false;
+  bool found_binary = false;
+  for (const auto& node : context.graph().node()) {
+    ASSERT_EQ(node.op_type(), "EPContext");
+    found_context = true;
+    for (const auto& attr : node.attribute()) {
+      if (attr.name() == "source") {
+        EXPECT_EQ(attr.s(), "QNNExecutionProvider");
+      }
+      if (attr.name() == "ep_cache_context") {
+        const auto binary = path.parent_path() / attr.s();
+        ASSERT_TRUE(std::filesystem::is_regular_file(binary));
+        ASSERT_GT(std::filesystem::file_size(binary), 0u);
+        found_binary = true;
+      }
+    }
+  }
+  ASSERT_TRUE(found_context);
+  ASSERT_TRUE(found_binary);
+}
+
+TEST_F(QnnHTPUdoTests, UDO_AOT_GenerateContext) {
+  const auto directory = ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_CONTEXT_DIR", "");
+  if (directory.empty()) GTEST_SKIP() << "Run custom_op/run_custom_op_tests.sh or prepare_custom_op.py";
+  const std::filesystem::path path = std::filesystem::path(directory) / "myadd_ctx.onnx";
+  std::filesystem::create_directories(path.parent_path());
+  ScopedUdoDomain env("udo_domain:MyAdd");
+  ModelTestBuilder builder;
+  MakeUdoModel(builder);
+  const auto model = builder.model_.SerializeAsString();
+  Ort::SessionOptions session_options;
+  session_options.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");
+  session_options.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  session_options.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+  session_options.AddConfigEntry(kOrtSessionOptionEpContextFilePath, path.string().c_str());
+  RegisteredEpDeviceUniquePtr registered_ep;
+  ASSERT_NO_FATAL_FAILURE(RegisterQnnEpLibrary(registered_ep, session_options, "QNNExecutionProvider",
+                                               UdoContextOptions(package_path(), dsp_path())));
+  Ort::Session session(*GetOrtEnv(), model.data(), model.size(), session_options);
+  ASSERT_NO_FATAL_FAILURE(CheckUdoContextArtifacts(path));
+  std::ofstream source(path.parent_path() / "myadd_qdq.onnx", std::ios::binary);
+  ASSERT_TRUE(builder.model_.SerializeToOstream(&source));
+}
+
+TEST_F(QnnHTPUdoTests, UDO_AOT_LoadContext) {
+  const auto directory = ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_CONTEXT_DIR", "");
+  if (directory.empty()) GTEST_SKIP() << "Run custom_op/run_custom_op_tests.sh or prepare_custom_op.py";
+  const auto path = std::filesystem::path(directory) / "myadd_ctx.onnx";
+  ASSERT_NO_FATAL_FAILURE(CheckUdoContextArtifacts(path));
+  ScopedUdoDomain env(nullptr);
+  auto options = UdoContextOptions(package_path(), dsp_path());
+#ifdef __ANDROID__
+  // A pure EPContext needs only the DSP execution half; no graph preparation.
+  options["op_packages"] = "MyAdd:" + dsp_path().filename().string() + ":MyAddOpPackageInterfaceProvider:HTP";
+#endif
+  ModelTestBuilder builder;
+  MakeUdoModel(builder);
+  RunUdoWithoutCpuReference(builder, options, ExpectedEPNodeAssignment::All,
+                            {{kOrtSessionOptionsDisableCPUEPFallback, "1"}}, path);
+}
+
+TEST_F(QnnHTPBackendTests, UDO_AOT_QueryTarget) {
+  const auto directory = ParseEnvironmentVariableWithDefault<std::string>("ORT_QNN_UDO_CONTEXT_DIR", "");
+  if (directory.empty()) GTEST_SKIP() << "Run custom_op/run_custom_op_tests.sh";
+  const auto& attributes = GetPlatformAttributes();
+  std::ofstream target(std::filesystem::path(directory) / "custom_op_device_target.txt");
+  ASSERT_TRUE(target.is_open());
+  target << attributes.htp_arch << ':' << attributes.soc_model << ':' << attributes.vtcm_size_mb << '\n';
+  ASSERT_TRUE(target.good());
+}
+
 TEST(QnnUdoArtifactLookup, UDO_Op_MyAdd_ArtifactLookup) {
+  constexpr uint32_t lookup_arch = 81;
   EXPECT_TRUE(std::filesystem::is_directory(ExecutableDirectory()));
   QnnScopedTempDir temporary_directory;
   const auto& missing = temporary_directory.path();
   const auto override_dir = missing / "override";
   const auto packaged_dir = missing / "custom_op/op_packages/htp";
-  const auto artifact = FindUdoArtifact(missing, override_dir.string());
+  const auto artifact = FindUdoArtifact(missing, override_dir.string(), lookup_arch);
   EXPECT_TRUE(artifact.path.empty());
   EXPECT_NE(artifact.searched.find("override"), std::string::npos);
   EXPECT_NE(artifact.searched.find("custom_op/op_packages/htp"), std::string::npos);
   std::filesystem::create_directories(override_dir);
   std::filesystem::create_directories(packaged_dir);
   const auto name = "libQnnMyAddOpPackage.so";
-#if defined(__ANDROID__) && defined(QNN_UDO_HTP_ARCH)
   for (const auto& root : {override_dir, packaged_dir}) {
-    const auto dir = root / ("hexagon-v" + std::to_string(QNN_UDO_HTP_ARCH));
+    const auto dir = root / ("hexagon-v" + std::to_string(lookup_arch));
     std::filesystem::create_directories(dir);
     std::ofstream file(dir / name);
   }
-#endif
   {
     std::ofstream file(missing / name);
   }
-  EXPECT_TRUE(FindUdoArtifact(missing, override_dir.string()).path.empty());
+  EXPECT_TRUE(FindUdoArtifact(missing, override_dir.string(), lookup_arch).path.empty());
   {
     std::ofstream file(packaged_dir / name);
   }
-  EXPECT_EQ(FindUdoArtifact(missing, override_dir.string()).path, packaged_dir / name);
+  EXPECT_EQ(FindUdoArtifact(missing, override_dir.string(), lookup_arch).path, packaged_dir / name);
   {
     std::ofstream file(override_dir / name);
   }
-  EXPECT_EQ(FindUdoArtifact(missing, override_dir.string()).path, override_dir / name);
-#if defined(__ANDROID__) && defined(QNN_UDO_HTP_ARCH)
-  const auto dsp_dir = "hexagon-v" + std::to_string(QNN_UDO_HTP_ARCH);
-  EXPECT_EQ(FindUdoArtifact(missing, override_dir.string()).dsp, override_dir / dsp_dir / name);
+  EXPECT_EQ(FindUdoArtifact(missing, override_dir.string(), lookup_arch).path, override_dir / name);
+  const auto dsp_dir = "hexagon-v" + std::to_string(lookup_arch);
+  EXPECT_EQ(FindUdoArtifact(missing, override_dir.string(), lookup_arch).dsp, override_dir / dsp_dir / name);
   std::filesystem::remove(override_dir / dsp_dir / name);
   // An incomplete override must never be paired with another root's DSP half.
-  const auto fallback = FindUdoArtifact(missing, override_dir.string());
+  const auto fallback = FindUdoArtifact(missing, override_dir.string(), lookup_arch);
   EXPECT_EQ(fallback.path, packaged_dir / name);
   EXPECT_EQ(fallback.dsp, packaged_dir / dsp_dir / name);
   std::filesystem::remove(packaged_dir / dsp_dir / name);
-  EXPECT_TRUE(FindUdoArtifact(missing, override_dir.string()).path.empty());
-#endif
+  EXPECT_TRUE(FindUdoArtifact(missing, override_dir.string(), lookup_arch).path.empty());
 }
 
 }  // namespace test

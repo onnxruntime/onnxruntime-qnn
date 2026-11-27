@@ -65,6 +65,14 @@ MODEL_TEST_IDS = [m.name for m in MODEL_TEST_DEFINITIONS]
 
 
 class TestOrt(TestBase):
+    def test_custom_op(self) -> None:
+        if CONFIG.build_target != "android-aarch64":
+            pytest.skip("Custom Op device automation currently targets Android")
+        script = Path(CONFIG.host_build_root) / "custom_op/run_custom_op_tests.sh"
+        assert script.is_file(), "Android CI archive must contain the Custom Op test package"
+        device_script = PurePosixPath(CONFIG.device_build_root) / "custom_op/run_custom_op_tests.sh"
+        self.__assert_passes(self.__get_test_cmd(["sh", str(device_script)]))
+
     @pytest.mark.parametrize(["test_name", "test_cmd"], CTEST_PLAN.tests.items(), ids=CTEST_PLAN.names)
     def test_onnxruntime_test_suite(self, test_name: str, test_cmd: list[str]) -> None:
         if test_name in CONFIG.skip_ctests:
