@@ -685,7 +685,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |ai.onnx:Identity||
 |ai.onnx:InstanceNormalization||
 |ai.onnx:Inverse||
-|ai.onnx:IsInf|float32 and float16 inputs only; CPU backend only|
+|ai.onnx:IsInf|float32 and float16 inputs; HTP backend: float16 inputs only. See [IsInf HTP limitation](#isinf-htp-limitation).|
 |ai.onnx:IsNaN||
 |ai.onnx:LRN||
 |ai.onnx:LSTM||
@@ -781,6 +781,10 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |qti_aisw:StatefulLstm|QTI AISW block op. See [QTI AISW block operators](#qti-aisw-block-operators).|
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
+
+### IsInf HTP limitation
+
+QNN EP supports `IsInf` with float16 inputs on the HTP backend. Float32 inputs are declined because the QnnHtp op-config validator can accept the node even though its internal format conversion fails during graph finalization, causing the entire QNN subgraph to fail compilation at session creation.
 
 ### QTI AISW block operators
 
