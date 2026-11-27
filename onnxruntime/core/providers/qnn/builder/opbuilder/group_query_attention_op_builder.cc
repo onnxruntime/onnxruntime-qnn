@@ -1,10 +1,12 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
 #include <cmath>
 #include <iterator>
 #include <numeric>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "QnnOpDef.h"
@@ -17,10 +19,44 @@ namespace onnxruntime {
 namespace qnn {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+// Zero-length new K/V (e.g. Gemma KV-shared decoder layers): key and value are present but have a
+// zero-sized dimension, and the layer attends only over a past_key/past_value cache produced by
+// another layer. QNN cannot represent zero-sized tensors, so such inputs are passed as null tensors.
+static Ort::Status IsZeroLengthKv(QnnModelWrapper& qnn_model_wrapper,
+                                  const OrtNodeUnit& node_unit,
+                                  bool& zero_length_kv) {
+  const auto& inputs = node_unit.Inputs();
+  bool is_zero_length[2] = {false, false};
+  for (size_t i = 0; i < 2; ++i) {
+    const size_t onnx_idx = 1 + i;  // ONNX key (1), value (2)
+    if (inputs.size() <= onnx_idx || !inputs[onnx_idx].Exists()) {
+      continue;
+    }
+    TensorInfo info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[onnx_idx], info));
+    is_zero_length[i] = std::find(info.shape.begin(), info.shape.end(), 0u) != info.shape.end();
+  }
+  RETURN_IF(is_zero_length[0] != is_zero_length[1],
+            "GroupQueryAttention key and value must both be zero-length or both be non-empty");
+  zero_length_kv = is_zero_length[0];
+  return Ort::Status();
+}
+
 static Ort::Status GetGqaCacheCapacity(QnnModelWrapper& qnn_model_wrapper,
                                        const OrtNodeUnit& node_unit,
-                                       uint32_t& cache_capacity) {
+                                       uint32_t& cache_capacity,
+                                       bool allow_past_key_fallback = false) {
   const auto& outputs = node_unit.Outputs();
+  if (!(outputs.size() > 1 && outputs[1].Exists()) && allow_past_key_fallback) {
+    // Shared-KV layers may not emit present_key; the shared past_key holds the full cache.
+    const auto& inputs = node_unit.Inputs();
+    RETURN_IF_NOT(inputs.size() > 3 && inputs[3].Exists(), "Required input tensor past_key not provided");
+    TensorInfo past_key_tensor_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[3], past_key_tensor_info));
+    RETURN_IF_NOT(past_key_tensor_info.shape.size() == 4, "Unexpected rank for past_key");
+    cache_capacity = past_key_tensor_info.shape[2];
+    return Ort::Status();
+  }
   RETURN_IF_NOT(outputs.size() > 1 && outputs[1].Exists(), "Required output tensor present_key not provided");
   TensorInfo present_key_tensor_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[1], present_key_tensor_info));
@@ -77,8 +113,17 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
   const size_t num_outputs = node_unit.Outputs().size();
   const auto& outputs = node_unit.Outputs();
 
+  bool zero_length_kv = false;
+  RETURN_IF_ERROR(IsZeroLengthKv(qnn_model_wrapper, node_unit, zero_length_kv));
+  if (zero_length_kv) {
+    RETURN_IF_NOT(IsGpuBackend(backend_type),
+                  "Zero-length key/value (shared-KV) GroupQueryAttention is only supported on GPU");
+    RETURN_IF_NOT(num_inputs > 4 && inputs[3].Exists() && inputs[4].Exists(),
+                  "Zero-length key/value (shared-KV) GroupQueryAttention requires past_key and past_value");
+  }
+
   uint32_t cache_capacity = 0;
-  RETURN_IF_ERROR(GetGqaCacheCapacity(qnn_model_wrapper, node_unit, cache_capacity));
+  RETURN_IF_ERROR(GetGqaCacheCapacity(qnn_model_wrapper, node_unit, cache_capacity, zero_length_kv));
 
   const size_t max_num_outputs = 4;
 
@@ -188,9 +233,17 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
   const size_t qnn_input_count =
       qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP ? std::size(qnn_idx_to_onnx) : 10u;
 
+  // Zero-length new K/V (shared-KV layers) cannot be represented as QNN tensors; pass null tensors.
+  constexpr size_t kQnnKeyIdx = 3;
+  constexpr size_t kQnnValueIdx = 4;
+  bool zero_length_kv = false;
+  RETURN_IF_ERROR(IsZeroLengthKv(qnn_model_wrapper, node_unit, zero_length_kv));
+
   for (size_t qnn_idx = 0; qnn_idx < qnn_input_count; ++qnn_idx) {
     const auto onnx_idx = qnn_idx_to_onnx[qnn_idx];
-    if (onnx_idx.has_value() && onnx_inputs.size() > *onnx_idx && onnx_inputs[*onnx_idx].Exists()) {
+    const bool is_zero_length_kv_slot = zero_length_kv && (qnn_idx == kQnnKeyIdx || qnn_idx == kQnnValueIdx);
+    if (!is_zero_length_kv_slot && onnx_idx.has_value() && onnx_inputs.size() > *onnx_idx &&
+        onnx_inputs[*onnx_idx].Exists()) {
       const auto& onnx_input = onnx_inputs[*onnx_idx];
       // QNN requires total_sequence_length as a 0D scalar, but ONNX provides it as shape [1].
       // Build the tensor wrapper directly with an empty shape to avoid a Reshape.
