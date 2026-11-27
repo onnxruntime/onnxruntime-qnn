@@ -45,6 +45,10 @@ on:
         description: "Enable QNN EP internal test symbols for supported targets."
         default: false
         type: boolean
+      qnn_accuracy_routing_shadow:
+        description: "Collect Windows ARM64 target evidence for observe-only Linux routing consumption."
+        default: false
+        type: boolean
       version_suffix:
         description: "Version suffix. If set, the specified suffix will be appended to the version string."
         type: string
@@ -180,6 +184,14 @@ jobs:
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
           ${{ (inputs.upload_test_archive || (inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner)) && 'archive' || 'build' }}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
 
+      - name: Capture Windows ARM64 routing build context
+        if: ${{ inputs.has_code_changes && inputs.qnn_accuracy_routing_shadow && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.qnn_internal_test_symbols }}
+        continue-on-error: true
+        run: >
+          python.exe qcom/scripts/all/collect_routing_target.py
+          --bin-dir="${{ github.workspace }}/build/windows-${{ env.BUILD_DIR_ARCH }}/${{ env.BUILD_CONFIG_DIR }}"
+          --output="${{ github.workspace }}/build/routing_target_build.json"
+
       - name: Setup JFrog CLI
         if: ${{ inputs.has_code_changes && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: jfrog/setup-jfrog-cli@v5
@@ -215,7 +227,9 @@ jobs:
         with:
           name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
           retention-days: 1
-          path: ${{ github.workspace }}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}windows-${{ env.BUILD_DIR_ARCH }}.zip
+          path: |
+            ${{ github.workspace }}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}windows-${{ env.BUILD_DIR_ARCH }}.zip
+            ${{ inputs.qnn_accuracy_routing_shadow && format('{0}/build/routing_target_build.json', github.workspace) || '' }}
           if-no-files-found: error
 
       - name: Prepare Linux provider observation
@@ -448,6 +462,13 @@ jobs:
           extract_ort_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}${{ inputs.qnn_internal_test_symbols && '_internal_symbols' || '' }} --only
 
+      - name: Mark Windows ARM64 routing observation start
+        if: ${{ inputs.has_code_changes && inputs.qnn_accuracy_routing_shadow && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.qnn_internal_test_symbols }}
+        continue-on-error: true
+        run: >
+          python.exe qcom/scripts/all/collect_routing_target.py
+          --mark-start --output="${{ github.workspace }}/build/routing_target_started.txt"
+
       - name: Test Windows ARM64 QNN internal-symbol build
         if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.qnn_internal_test_symbols }}
         run: >
@@ -457,6 +478,16 @@ jobs:
           create_venv
           extract_ort_windows_arm64_internal_symbols
           test_ort_windows_arm64_internal_symbols --only
+
+      - name: Collect Windows ARM64 routing observation evidence
+        if: ${{ !cancelled() && inputs.has_code_changes && inputs.qnn_accuracy_routing_shadow && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.qnn_internal_test_symbols }}
+        continue-on-error: true
+        run: >
+          python.exe qcom/scripts/all/collect_routing_target.py
+          --build-context="${{ github.workspace }}/build/routing_target_build.json"
+          --reports-dir="${{ github.workspace }}/build/windows-${{ env.BUILD_DIR_ARCH }}"
+          --started="${{ github.workspace }}/build/routing_target_started.txt"
+          --output="${{ github.workspace }}/build/windows-${{ env.BUILD_DIR_ARCH }}/${{ env.BUILD_CONFIG_DIR }}/routing_target_evidence.json"
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6
@@ -478,6 +509,7 @@ jobs:
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{env.BUILD_DIR_ARCH}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+            ${{ inputs.qnn_accuracy_routing_shadow && format('{0}/build/windows-{1}/{2}/routing_target_evidence.json', github.workspace, env.BUILD_DIR_ARCH, env.BUILD_CONFIG_DIR) || '' }}
 
       - name: Clean Linux internal-symbol test outputs
         if: ${{ always() && inputs.target_os == 'linux' && inputs.qnn_internal_test_symbols && (inputs.target_arch == 'x86_64_ubuntu_22_04' || inputs.target_arch == 'aarch64_manylinux_2_34') }}
