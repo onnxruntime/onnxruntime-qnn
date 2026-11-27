@@ -514,6 +514,19 @@ TEST(QnnUnit_UtilsTest, QnnTensorHasDynamicShape_V2OneDynamicDim) {
 // operator<< for Qnn types
 // =============================================================================
 
+TEST(QnnUnit_UtilsTest, OstreamQnnStringScalar) {
+  Qnn_Scalar_t scalar{};
+  scalar.dataType = QNN_DATATYPE_STRING;
+  scalar.stringValue = "NONE";
+  std::ostringstream output;
+  output << scalar.dataType << ':' << scalar;
+  EXPECT_EQ(output.str(), "QNN_DATATYPE_STRING:NONE");
+  scalar.stringValue = nullptr;
+  std::ostringstream null_output;
+  null_output << scalar;
+  EXPECT_EQ(null_output.str(), "NULL");
+}
+
 TEST(QnnUnit_UtilsTest, OstreamQnnScalar_INT64PrintsNotSupported) {
   Qnn_Scalar_t s{};
   s.dataType = QNN_DATATYPE_INT_64;
@@ -971,6 +984,20 @@ TEST(QnnUnit_UtilsTest, QnnJSONGraph_AddOp_Uint32Raw) {
 // =============================================================================
 // QnnJSONGraph — exercises GetQnnScalarParamJSON via SCALAR params.
 // =============================================================================
+
+TEST(QnnUnit_UtilsTest, QnnJSONGraph_StringScalarParam) {
+  Qnn_Param_t param{};
+  param.paramType = QNN_PARAMTYPE_SCALAR;
+  param.name = "string_param";
+  param.scalarParam.dataType = QNN_DATATYPE_STRING;
+  param.scalarParam.stringValue = "NONE";
+  qnn::QnnOpConfigWrapper op("custom", "custom_package", "CustomOp", {}, {}, {param});
+  qnn::utils::QnnJSONGraph graph;
+  graph.AddOp(op);
+  EXPECT_EQ(graph.Finalize()["graph"]["nodes"]["custom"]["scalar_params"]["string_param"]
+                            [std::to_string(QNN_DATATYPE_STRING)],
+            "NONE");
+}
 
 static void RunJsonGraphScalarParamTest(const char* op_name, Qnn_DataType_t scalar_dt) {
   TensorFixture in_fix, out_fix;

@@ -221,6 +221,9 @@ bool QnnTensorHasDynamicShape(const Qnn_Tensor_t& tensor) {
 
 std::ostream& operator<<(std::ostream& out, const Qnn_Scalar_t& scalar) {
   switch (scalar.dataType) {
+    case QNN_DATATYPE_STRING:
+      out << (scalar.stringValue ? scalar.stringValue : "NULL");
+      break;
     case QNN_DATATYPE_INT_8:
       out << static_cast<int32_t>(scalar.int8Value);
       break;
@@ -272,6 +275,9 @@ std::ostream& operator<<(std::ostream& out, const Qnn_Scalar_t& scalar) {
 
 std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type) {
   switch (data_type) {
+    case QNN_DATATYPE_STRING:
+      out << "QNN_DATATYPE_STRING";
+      break;
     case QNN_DATATYPE_INT_8:
       out << "QNN_DATATYPE_INT_8";
       break;
@@ -812,6 +818,9 @@ static nlohmann::json GetQnnScalarParamJSON(const Qnn_Scalar_t& param) {
   ss << static_cast<uint64_t>(param.dataType);
 
   switch (param.dataType) {
+    case QNN_DATATYPE_STRING:
+      param_json[ss.str()] = param.stringValue ? nlohmann::json(param.stringValue) : nlohmann::json(nullptr);
+      break;
     case QNN_DATATYPE_BOOL_8:  // Print bool the same as int8 (0 or 1)
     case QNN_DATATYPE_INT_8:
       param_json[ss.str()] = param.int8Value;

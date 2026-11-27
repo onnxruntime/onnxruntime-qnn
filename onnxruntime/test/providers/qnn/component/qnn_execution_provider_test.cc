@@ -288,7 +288,7 @@ static void ExpectLogged(const EpStubContext& ctx, OrtLoggingLevel severity,
 
 namespace {
 
-// Exposes one private method for focused component coverage without changing
+// Exposes private members for focused component coverage without changing
 // QnnEp's production interface. Access checking does not apply to the member
 // named by an explicit-instantiation template argument (C++17 [temp.spec]/6).
 template <typename Tag, typename Tag::type Member>
@@ -303,6 +303,14 @@ struct GetPerThreadHtpPowerConfigsTag {
 
 template struct QnnEpPrivateMember<GetPerThreadHtpPowerConfigsTag,
                                    &QnnEp::GetPerThreadHtpPowerConfigs>;
+
+struct PerSocHtpGraphConfigsTag {
+  using type = std::vector<qnn::HtpGraphConfigs_t> QnnEp::*;
+  friend type GetQnnEpPrivateMember(PerSocHtpGraphConfigsTag);
+};
+
+template struct QnnEpPrivateMember<PerSocHtpGraphConfigsTag,
+                                   &QnnEp::htp_graph_configs_per_soc_>;
 
 void GetPerThreadHtpPowerConfigsForTest(
     QnnEp& ep, qnn::PerThreadHtpPowerConfigs_t& configs,
@@ -1113,6 +1121,31 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_EnableHtpMonolithicLstmInvalid_LogsVe
   EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
   ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
                "Invalid value for ep.qnnexecutionprovider.enable_htp_monolithic_lstm");
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_HtpPredication_PreservedForEachSoc) {
+  for (const std::string value : {"", "0", "1", "maybe"}) {
+    SCOPED_TRACE(value);
+    EpStubContext ctx;
+    ctx.log_severity = ORT_LOGGING_LEVEL_VERBOSE;
+    ctx.session_config[EPKey("soc_model")] = "60,73";
+    ctx.session_config[EPKey("htp_arch")] = "73,75";
+    ctx.session_config["ep.context_enable"] = "1";
+    if (!value.empty()) {
+      ctx.session_config[EPKey("enable_htp_predication")] = value;
+    }
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    const auto& configs = ep.get()->*GetQnnEpPrivateMember(PerSocHtpGraphConfigsTag{});
+    ASSERT_EQ(configs.size(), 2u);
+    for (const auto& config : configs) {
+      EXPECT_EQ(config.enable_htp_predication, value == "1");
+    }
+    if (value == "maybe") {
+      ExpectLogged(ctx, ORT_LOGGING_LEVEL_VERBOSE,
+                   "Invalid value for ep.qnnexecutionprovider.enable_htp_predication");
+    }
+  }
 }
 
 #if ORT_QNN_HTP_MATMUL_LUT_SUPPORTED
@@ -1953,11 +1986,33 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, NumCoresZero_NotPushed) {
   EXPECT_EQ(found, nullptr);
 }
 
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, PredicationEnabled_Pushed) {
+  qnn::HtpGraphConfigs_t configs{};
+  configs.enable_htp_predication = true;
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+
+  auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_ENABLE_PREDICATION);
+  ASSERT_NE(found, nullptr);
+  EXPECT_TRUE(found->enablePredication);
+}
+
+TEST(QnnUnit_PopulateHtpGraphConfigsTest, PredicationDefault_NotPushed) {
+  qnn::HtpGraphConfigs_t configs{};
+  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
+      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
+  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, configs, builder);
+
+  EXPECT_EQ(FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_ENABLE_PREDICATION), nullptr);
+}
+
 TEST(QnnUnit_PopulateHtpGraphConfigsTest, NonHtpBackend_SkipsAll) {
   qnn::HtpGraphConfigs_t configs{};
   configs.htp_num_cores = 4;
   configs.vtcm_size_in_mb = 8;
   configs.enable_htp_fp16_precision = true;
+  configs.enable_htp_predication = true;
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
       QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
   qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::CPU, configs, builder);
@@ -2017,6 +2072,7 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, AggregateInit_PreservesAllFields) {
   source.enable_htp_fp16_clamp_overflow = false;
   source.enable_htp_matmul_lut = false;
   source.htp_num_cores = 3;
+  source.enable_htp_predication = true;
 
   // Aggregate init - same order as struct definition.
   qnn::HtpGraphConfigs_t copy{source.vtcm_size_in_mb,
@@ -2025,11 +2081,13 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, AggregateInit_PreservesAllFields) {
                               source.enable_htp_monolithic_lstm,
                               source.enable_htp_fp16_clamp_overflow,
                               source.enable_htp_matmul_lut,
-                              source.htp_num_cores};
+                              source.htp_num_cores,
+                              source.enable_htp_predication};
 
   EXPECT_EQ(copy.htp_num_cores, 3u);
   EXPECT_EQ(copy.vtcm_size_in_mb, 4);
   EXPECT_EQ(copy.enable_htp_fp16_precision, true);
+  EXPECT_TRUE(copy.enable_htp_predication);
 
   // Verify copy + round-trip through PopulateHtpGraphConfigs.
   qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
@@ -2042,13 +2100,13 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, AggregateInit_PreservesAllFields) {
 
 // New field added to HtpGraphConfigs_t without updating aggregate init sites will break this.
 TEST(QnnUnit_PopulateHtpGraphConfigsTest, StructLayout_FieldCountGuard) {
-  // All 7 fields via aggregate init - compile error if field count changes.
+  // Keep the aggregate initializer and size guard aligned with all 8 fields.
   qnn::HtpGraphConfigs_t full_init{0,
                                    qnn::HtpGraphFinalizationOptimizationMode::kDefault,
                                    false, false, false, false,
-                                   0u};
+                                   0u, false};
   (void)full_init;
-  static_assert(sizeof(qnn::HtpGraphConfigs_t) <= 16,
+  static_assert(sizeof(qnn::HtpGraphConfigs_t) <= 20,
                 "HtpGraphConfigs_t size changed - update all aggregate init sites and this test");
 }
 
