@@ -304,6 +304,16 @@ struct GetPerThreadHtpPowerConfigsTag {
 template struct QnnEpPrivateMember<GetPerThreadHtpPowerConfigsTag,
                                    &QnnEp::GetPerThreadHtpPowerConfigs>;
 
+struct GetHtpPowerConfigIdTag {
+  using type = bool (QnnEp::*)(uint32_t&);
+  friend type GetQnnEpPrivateMember(GetHtpPowerConfigIdTag);
+};
+template struct QnnEpPrivateMember<GetHtpPowerConfigIdTag, &QnnEp::GetHtpPowerConfigId>;
+
+bool GetHtpPowerConfigIdForTest(QnnEp& ep, uint32_t& id) {
+  return (ep.*GetQnnEpPrivateMember(GetHtpPowerConfigIdTag{}))(id);
+}
+
 void GetPerThreadHtpPowerConfigsForTest(
     QnnEp& ep, qnn::PerThreadHtpPowerConfigs_t& configs,
     const OrtRunOptions* run_options) {
@@ -349,6 +359,26 @@ TEST_F(QnnUnit_ExecutionProviderTest, DefaultCtor_Succeeds) {
   EpStubContext ctx;
   auto factory = MakeFactory(ctx);
   ASSERT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, BeforeBackendSetup_NoPowerIdAndOutputUntouched) {
+  EpStubContext ctx;
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+  uint32_t id = 123;
+  EXPECT_FALSE(GetHtpPowerConfigIdForTest(*ep, id));
+  EXPECT_EQ(id, 123u);
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, BeforeBackendSetup_RunCallbacksAreNoOps) {
+  EpStubContext ctx;
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+  ASSERT_NE(ep->OnRunStart, nullptr);
+  ASSERT_NE(ep->OnRunEnd, nullptr);
+  UseGlobalEpStubs use(ctx);
+  EXPECT_EQ(ep->OnRunStart(ep.get(), reinterpret_cast<const OrtRunOptions*>(kFakeToken)), nullptr);
+  EXPECT_EQ(ep->OnRunEnd(ep.get(), reinterpret_cast<const OrtRunOptions*>(kFakeToken), false), nullptr);
 }
 
 TEST_F(QnnUnit_ExecutionProviderTest, CreateAllocator_NullMemoryInfo_ReturnsNullAllocator) {
