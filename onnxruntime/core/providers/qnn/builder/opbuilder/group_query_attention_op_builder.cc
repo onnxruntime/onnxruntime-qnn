@@ -82,14 +82,11 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
 
   const size_t max_num_outputs = 4;
 
+#ifndef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
   const bool has_attention_bias = num_inputs > 10 && inputs[10].Exists();
-#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
-  RETURN_IF(has_attention_bias && backend_type != QnnBackendType::HTP,
-            "attention_bias is only supported by QNN GroupQueryAttention on HTP");
-#else
   RETURN_IF(has_attention_bias,
             "attention_bias requires QNN EP built with QAIRT SDK >= 2.53 (QNN API >= 2.42)");
-#endif  // QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif  // !QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
 
   // Reject unsupported inputs when present, allowing empty trailing optional slots as the schema evolves.
   for (size_t i = 11; i < num_inputs; ++i) {
@@ -125,17 +122,14 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
             ("unsupported value for local_window_size: " + std::to_string(local_window_size)).c_str());
   RETURN_IF(sliding_window_cache == 1 && local_window_size <= 0,
             "sliding_window_cache requires local_window_size > 0");
+#ifndef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
   const int32_t qnn_local_window_size =
       NormalizeLocalWindowSize(local_window_size, sliding_window_cache, cache_capacity);
   const bool uses_window_features = sliding_window_cache != 0 || qnn_local_window_size != -1;
-#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
-  RETURN_IF(uses_window_features && backend_type != QnnBackendType::HTP,
-            "Truncating local windows and sliding_window_cache are only supported by QNN GroupQueryAttention on HTP");
-#else
   RETURN_IF(uses_window_features,
             "Truncating local windows and sliding_window_cache require QNN EP built with "
             "QAIRT SDK >= 2.53 (QNN API >= 2.42)");
-#endif  // QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
+#endif  // !QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
 
   int32_t qk_output = node_helper.Get("qk_output", 0);
   RETURN_IF(qk_output != 0, "qk_output != 0 not supported");
@@ -175,8 +169,8 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
       8u,  // sin_cache
       9u,  // position_ids (cast to INT32 by the base pipeline)
 #ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
-      // The extended HTP GQA op definition has 14 positional inputs. Include trailing optional
-      // inputs and represent absent ones with null tensors to satisfy its exact input count.
+      // HTP consumes all 14 extended inputs. GPU consumes inputs through optional head_sink
+      // (indices 0-11), with unsupported optional inputs represented by null tensors.
       10u,           // QNN attention_bias <- ONNX attention_bias
       std::nullopt,  // QNN head_sink: unsupported
       std::nullopt,  // QNN q_norm_weight: unsupported
@@ -185,8 +179,12 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
   };
 
   constexpr size_t kQnnTotalSeqLenIdx = 2;  // index of total_sequence_length in qnn_idx_to_onnx
+#ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
   const size_t qnn_input_count =
-      qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP ? std::size(qnn_idx_to_onnx) : 10u;
+      qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP ? std::size(qnn_idx_to_onnx) : 12u;
+#else
+  const size_t qnn_input_count = 10u;
+#endif
 
   for (size_t qnn_idx = 0; qnn_idx < qnn_input_count; ++qnn_idx) {
     const auto onnx_idx = qnn_idx_to_onnx[qnn_idx];
@@ -290,9 +288,10 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
                                param_names));
 
 #ifdef QNN_EXTENDED_GROUP_QUERY_ATTENTION_AVAILABLE
-  // Explicit defaults match the extended op spec. Legacy builds and GPU retain full attention
-  // without these parameters; backend validation determines support for the extended HTP config.
-  if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP) {
+  // Explicit defaults match the extended op spec. GPU and HTP both validate support for
+  // local-window and sliding-cache configurations.
+  const auto backend_type = qnn_model_wrapper.GetQnnBackendType();
+  if (IsGpuBackend(backend_type) || backend_type == QnnBackendType::HTP) {
     uint32_t cache_capacity = 0;
     RETURN_IF_ERROR(GetGqaCacheCapacity(qnn_model_wrapper, node_unit, cache_capacity));
     const int32_t sliding_window_cache = node_helper.Get("sliding_window_cache", 0);
