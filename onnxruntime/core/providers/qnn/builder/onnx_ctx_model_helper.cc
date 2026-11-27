@@ -167,6 +167,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   OrtNodeAttrHelper node_helper(*main_context_node);
   bool is_embed_mode = node_helper.Get(EMBED_MODE, true);
   bool is_multi_soc_ep_context = node_helper.Get(IS_MULTI_SOC_EP_CONTEXT, false);
+  RETURN_IF(io_dispatch.SourceMappingIsEnabled() && is_embed_mode,
+            "Provider source mapping requires an external EPContext binary.");
   if (is_embed_mode) {
     const std::string& context_binary = node_helper.Get(EP_CACHE_CONTEXT, "");
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(const_cast<char*>(context_binary.c_str()),
@@ -183,7 +185,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   std::string external_qnn_ctx_binary_file_name = node_helper.Get(EP_CACHE_CONTEXT, "");
   RETURN_IF(external_qnn_ctx_binary_file_name.empty(), "The file path in ep_cache_context should not be empty.");
 #ifdef _WIN32
-  auto ctx_file_path = std::filesystem::path(external_qnn_ctx_binary_file_name);
+  auto ctx_file_path = std::filesystem::u8path(external_qnn_ctx_binary_file_name);
   RETURN_IF(ctx_file_path.is_absolute(),
             ("External mode should set ep_cache_context field with a relative path, but it is an absolute path: " +
              external_qnn_ctx_binary_file_name)
@@ -209,14 +211,13 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
   std::filesystem::path context_binary_path = folder_path.append(external_qnn_ctx_binary_file_name);
   std::string file_full_path = context_binary_path.string();
 #endif
-  std::string context_binary_path_str = context_binary_path.string();
-
   // Read callback takes priority over file mapping: if it produces data, we return
   // the decrypted buffer immediately so QNN is never handed the on-disk ciphertext
   // via the file-mapping path below.
   if (io_dispatch.HasReadCallback()) {
+    const std::string context_binary_path_str = context_binary_path.u8string();
     qnn::EpContextBuffer decrypted;
-    RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted));
+    RETURN_IF_ERROR(io_dispatch.Read(external_qnn_ctx_binary_file_name, decrypted, context_binary_path_str));
     // Keep the callback allocation alive through context creation and graph metadata use.
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(decrypted.data(),
                                                                static_cast<uint64_t>(decrypted.size()),
@@ -227,6 +228,8 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
                                                                io_dispatch,
                                                                is_multi_soc_ep_context);
   }
+
+  std::string context_binary_path_str = context_binary_path.string();
 
   if (!std::filesystem::is_regular_file(context_binary_path)) {
     return Ort::Status("The file path in ep_cache_context does not exist or is not accessible.", ORT_INVALID_GRAPH);

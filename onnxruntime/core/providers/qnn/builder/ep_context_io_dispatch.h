@@ -58,10 +58,15 @@ class EpContextIoDispatch {
   // does not duplicate a raw API-version guard. There is intentionally no default value: a
   // session-bound caller must supply the factory's negotiated capabilities.
   //
+  // The source is the encrypted external context file mapped read-only by the provider.
+  // A source callback borrows those bytes; a legacy read callback receives only the name.
+  // Both callbacks return independent plaintext allocated with the ORT allocator.
+  //
   // `logger` (optional) receives a WARNING if resolution genuinely fails rather than the app
   // simply not registering anything.
   explicit EpContextIoDispatch(const OrtSessionOptions& session_options,
                                const OrtApiRuntimeCapabilities& runtime_capabilities,
+                               bool map_decrypt_source = false,
                                const Ort::Logger* logger = nullptr) noexcept;
   ~EpContextIoDispatch() = default;
 
@@ -69,10 +74,14 @@ class EpContextIoDispatch {
 
   bool HasReadCallback() const noexcept;
   bool HasWriteCallback() const noexcept;
+  bool HasSourceReadCallback() const noexcept;
+  bool SourceMappingIsEnabled() const noexcept { return map_decrypt_source_; }
 
   // Precondition: HasReadCallback(). Adopts valid successful output without copying.
   // On callback error, the callback cleans up and the previous output is preserved.
-  Ort::Status Read(const std::string& file_name, EpContextBuffer& out) const;
+  // validated_external_path is the resolved UTF-8 path used for source mapping.
+  Ort::Status Read(const std::string& file_name, EpContextBuffer& out,
+                   const std::string& validated_external_path = "") const;
 
   // Precondition: HasWriteCallback(). Logs INFO with byte count on success.
   Ort::Status Write(const std::string& name,
@@ -88,6 +97,7 @@ class EpContextIoDispatch {
   OrtWriteNamedBufferFunc write_fn_ = nullptr;
   void* write_state_ = nullptr;
 #endif
+  bool map_decrypt_source_ = false;
 };
 
 }  // namespace qnn
