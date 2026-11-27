@@ -6,6 +6,7 @@
 #include "core/providers/qnn/qnn_external_resource_importer.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
+#include <exception>
 #include <new>
 #include <sstream>
 #include <string>
@@ -31,6 +32,7 @@ QnnExternalMemoryHandle::QnnExternalMemoryHandle()
 
 void ORT_API_CALL QnnExternalMemoryHandle::ReleaseCallback(
     _In_ OrtExternalMemoryHandle* handle) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   if (handle == nullptr) return;
   QnnExternalMemoryHandle* derived = static_cast<QnnExternalMemoryHandle*>(handle);
 
@@ -43,6 +45,7 @@ void ORT_API_CALL QnnExternalMemoryHandle::ReleaseCallback(
   QnnExternalResourceImporterImpl::mem_handle_registry_.erase(derived);
 
   delete derived;
+  QNN_EP_API_IMPL_END_VOID
 }
 
 // ============================================================================
@@ -61,9 +64,11 @@ QnnExternalSemaphoreHandle::QnnExternalSemaphoreHandle() {
 
 void ORT_API_CALL QnnExternalSemaphoreHandle::ReleaseCallback(
     _In_ OrtExternalSemaphoreHandle* handle) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   if (handle == nullptr) return;
   auto* derived = static_cast<QnnExternalSemaphoreHandle*>(handle);
   delete derived;
+  QNN_EP_API_IMPL_END_VOID
 }
 
 // ============================================================================
@@ -108,6 +113,7 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::ImportMemoryImpl(
     _In_ OrtExternalResourceImporterImpl* this_ptr,
     _In_ const OrtExternalMemoryDescriptor* desc,
     _Outptr_ OrtExternalMemoryHandle** out_handle) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   auto& impl = *static_cast<QnnExternalResourceImporterImpl*>(this_ptr);
 
   if (desc == nullptr || out_handle == nullptr) {
@@ -165,15 +171,18 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::ImportMemoryImpl(
   mem_handle_registry_.insert(raw_handle);
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 void ORT_API_CALL QnnExternalResourceImporterImpl::ReleaseMemoryImpl(
     _In_ OrtExternalResourceImporterImpl* /*this_ptr*/,
     _In_ OrtExternalMemoryHandle* handle) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   // The handle has a Release callback that does the actual cleanup
   if (handle) {
     handle->Release(handle);
   }
+  QNN_EP_API_IMPL_END_VOID
 }
 
 OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::CreateTensorFromMemoryImpl(
@@ -181,6 +190,7 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::CreateTensorFromMemoryI
     _In_ const OrtExternalMemoryHandle* mem_handle,
     _In_ const OrtExternalTensorDescriptor* tensor_desc,
     _Outptr_ OrtValue** out_tensor) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   auto& impl = *static_cast<QnnExternalResourceImporterImpl*>(this_ptr);
 
   if (mem_handle == nullptr || tensor_desc == nullptr || out_tensor == nullptr) {
@@ -199,9 +209,10 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::CreateTensorFromMemoryI
 
   size_t tensor_size_bytes = 0;
   try {
-    tensor_size_bytes = qnn::utils::GetOnnxTensorDataSizeInBytes(gsl::span{tensor_desc->shape, tensor_desc->rank}, tensor_desc->element_type);
-  } catch (...) {
-    return impl.ort_api_.CreateStatus(ORT_INVALID_ARGUMENT, "Unsupported tensor element type");
+    tensor_size_bytes = qnn::utils::GetOnnxTensorDataSizeInBytes(
+        gsl::span{tensor_desc->shape, tensor_desc->rank}, tensor_desc->element_type);
+  } catch (const std::exception& ex) {
+    return impl.ort_api_.CreateStatus(ORT_INVALID_ARGUMENT, ex.what());
   }
 
   size_t available_size = qnn_handle->descriptor.size_bytes - qnn_handle->descriptor.offset_bytes - tensor_desc->offset_bytes;
@@ -245,6 +256,7 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::CreateTensorFromMemoryI
   impl.ort_api_.ReleaseMemoryInfo(memory_info);
 
   return status;
+  QNN_EP_API_IMPL_END
 }
 
 // ============================================================================
@@ -325,10 +337,12 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::ImportSemaphoreImpl(
 void ORT_API_CALL QnnExternalResourceImporterImpl::ReleaseSemaphoreImpl(
     _In_ OrtExternalResourceImporterImpl* /*this_ptr*/,
     _In_ OrtExternalSemaphoreHandle* handle) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   // The handle has a Release callback that does the actual cleanup
   if (handle) {
     handle->Release(handle);
   }
+  QNN_EP_API_IMPL_END_VOID
 }
 
 OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::WaitSemaphoreImpl(
@@ -379,10 +393,12 @@ OrtStatus* ORT_API_CALL QnnExternalResourceImporterImpl::SignalSemaphoreImpl(
 
 void ORT_API_CALL QnnExternalResourceImporterImpl::ReleaseImpl(
     _In_ OrtExternalResourceImporterImpl* this_ptr) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   if (this_ptr == nullptr) {
     return;
   }
   delete static_cast<QnnExternalResourceImporterImpl*>(this_ptr);
+  QNN_EP_API_IMPL_END_VOID
 }
 
 // ============================================================================
@@ -412,10 +428,12 @@ void* ORT_API_CALL QnnSyncStreamImpl::GetHandleImpl(
 
 void ORT_API_CALL QnnSyncStreamImpl::ReleaseImpl(
     _In_ OrtSyncStreamImpl* this_ptr) noexcept {
+  QNN_EP_API_IMPL_BEGIN
   if (this_ptr == nullptr) {
     return;
   }
   delete static_cast<QnnSyncStreamImpl*>(this_ptr);
+  QNN_EP_API_IMPL_END_VOID
 }
 
 }  // namespace onnxruntime

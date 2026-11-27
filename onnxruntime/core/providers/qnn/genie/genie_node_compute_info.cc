@@ -24,6 +24,7 @@ GenieNodeComputeInfo::GenieNodeComputeInfo(QnnEp& ep,
 OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
                                                  OrtNodeComputeContext* compute_context,
                                                  void** compute_state) {
+  QNN_EP_API_IMPL_BEGIN
   auto* node_compute_info = static_cast<GenieNodeComputeInfo*>(this_ptr);
   auto& ep = node_compute_info->ep;
   auto& builder = node_compute_info->builder;
@@ -168,11 +169,13 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
   *compute_state = static_cast<void*>(st.release());
 
   return nullptr;
+  QNN_EP_API_IMPL_END
 }
 
 OrtStatus* GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
                                              void* compute_state,
                                              OrtKernelContext* kernel_context) {
+  QNN_EP_API_IMPL_BEGIN
 #if (GENIE_API_VERSION_MAJOR > 1) || (GENIE_API_VERSION_MAJOR == 1 && GENIE_API_VERSION_MINOR >= 17)
   auto* node_compute_info = static_cast<GenieNodeComputeInfo*>(this_ptr);
   auto& ep = node_compute_info->ep;
@@ -326,12 +329,15 @@ OrtStatus* GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
   ORT_UNUSED_PARAMETER(kernel_context);
   return nullptr;
 #endif  // GENIE_API_VERSION_MAJOR > 1 || GENIE_API_VERSION_MINOR >= 17
+  QNN_EP_API_IMPL_END
 }
 
 void GenieNodeComputeInfo::ReleaseStateImpl(OrtNodeComputeInfo* this_ptr,
                                             void* compute_state) {
+  QNN_EP_API_IMPL_BEGIN
   ORT_UNUSED_PARAMETER(this_ptr);
   std::unique_ptr<GenieNodeState, GenieNodeStateDeleter> state(static_cast<GenieNodeState*>(compute_state));
+  QNN_EP_API_IMPL_END_VOID
 }
 
 }  // namespace onnxruntime

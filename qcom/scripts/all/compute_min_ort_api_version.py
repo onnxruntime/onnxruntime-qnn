@@ -189,6 +189,9 @@ _WRAPPER_TO_C_API: dict[str, list[str]] = {
     "GetShape": ["GetDimensions"],
     "GetElementCount": ["GetTensorShapeElementCount"],
     "GetDimensionsCount": ["GetDimensionsCount"],
+    "CreateStatus": ["CreateStatus"],
+    "Logger_LogMessage": ["Logger_LogMessage"],
+    "ReleaseStatus": ["ReleaseStatus"],
     "IsOK": [],
 }
 
