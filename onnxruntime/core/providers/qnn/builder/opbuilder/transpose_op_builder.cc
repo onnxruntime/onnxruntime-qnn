@@ -226,7 +226,7 @@ Ort::Status TransposeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                                               QNN_TENSOR_TYPE_NATIVE,
                                               output_info.qnn_data_type,
                                               output_info.quant_param.Copy(),
-                                              std::move(output_shape));
+                                              std::vector<uint32_t>(output_shape));
 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cast_input_tensorwrapper)), "Failed to add tensor.");
     cast_node_info_vec.emplace_back(CastNodeInfo{cast_node_name, cast_input_name, cast_output_name});
@@ -239,13 +239,14 @@ Ort::Status TransposeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   // 2. In QDQ model, Transpose also support non-quantized data like int32.
   QnnTensorWrapper output_tensorwrapper(output_name,
                                         tensor_type,
-                                        input_tensor_wrapper.GetTensorDataType(),
+                                        needs_int64_cast ? output_info.qnn_data_type
+                                                         : input_tensor_wrapper.GetTensorDataType(),
                                         input_tensor_wrapper.GetQnnQuantParams().Copy(),
                                         std::move(output_shape));
 
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
 
-  output_names.push_back(output_name);
+  output_names.push_back(needs_int64_cast ? cast_node_info_vec[0].input_name : output_name);
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_TRANSPOSE,
