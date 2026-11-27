@@ -323,9 +323,7 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP_GenericFpValues) {
 
 // Cast float16 to bool on HTP.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "FP16-to-bool Cast is unsupported on Windows HTP devices.";
-#endif
+  QNN_SKIP_TEST_ON_WINDOWS("FP16-to-bool Cast is unsupported on Windows HTP devices.");
   RunCastFP16HTPTest({3, 3},
                      ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
                      ExpectedEPNodeAssignment::All);
@@ -333,9 +331,7 @@ TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
 
 // Cast(fp16 -> bool) on HTP over a mix of signs, magnitudes, and sub-1 values.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP_GenericFpValues) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "FP16-to-bool Cast is unsupported on Windows HTP devices.";
-#endif
+  QNN_SKIP_TEST_ON_WINDOWS("FP16-to-bool Cast is unsupported on Windows HTP devices.");
   const std::vector<float> fp32_data = {-5.0f, -0.5f, 0.0f, 0.5f, 0.9f, 1.0f, 5.0f, 100.0f};
   std::vector<Ort::Float16_t> fp16_data;
   fp16_data.reserve(fp32_data.size());

@@ -332,8 +332,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Transient state captured in GetCapability() and consumed in Compile().
   // Only one model is ever in-flight per EP instance (one EP per session).
   mutable std::unordered_map<std::string, std::string> tensor_name_overrides_;
-  // ONNX graph I/O names in declaration order: {input_names, output_names}.
-  mutable std::optional<std::pair<std::vector<std::string>, std::vector<std::string>>> onnx_graph_io_names_;
+  // ONNX graph I/O in declaration order.
+  mutable std::optional<qnn::OnnxGraphIo> onnx_graph_io_;
 
   // Genie pathway-specific variables
   std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;

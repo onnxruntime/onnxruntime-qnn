@@ -54,6 +54,22 @@ extern "C" void SetMockSSRAlwaysCrash(bool always_crash) {
   g_always_crash_mode = always_crash;
 }
 
+// Select fatal SSR (1011) instead of recoverable SSR (1007) on initial execution.
+static bool g_inject_fatal_error = false;
+
+extern "C" void SetMockSSRFatalError(bool fatal_error) {
+  g_inject_fatal_error = fatal_error;
+  g_ssr_fired = false;
+}
+
+// Override execution after the first SSR. Zero forwards the retry to HTP.
+static Qnn_ErrorHandle_t g_retry_error = QNN_SUCCESS;
+
+extern "C" void SetMockSSRRetryError(uint32_t error_code) {
+  g_retry_error = error_code;
+  g_ssr_fired = false;
+}
+
 // Selects the QNN API at which this mock reports
 // QNN_COMMON_ERROR_SYSTEM_COMMUNICATION. Invalid values restore the default
 // graphExecute behavior. This is exported for tests which load the mock through
@@ -133,10 +149,14 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
   if (g_always_crash_mode) {
     return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
   }
+  if (g_ssr_fired && g_retry_error != QNN_SUCCESS) {
+    return g_retry_error;
+  }
   if (InjectAt(MockSSRInjectionPoint::kGraphExecute) && !g_ssr_fired) {
     g_ssr_fired = true;
     g_file_mapping_used_for_recovery = false;  // Reset: anything after this is recovery.
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+    return g_inject_fatal_error ? QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL
+                                : QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
   }
   if (!real_providerList) {
     return QNN_COMMON_ERROR_GENERAL;
@@ -207,7 +227,9 @@ Qnn_ErrorHandle_t QnnContext_createFromBinary(Qnn_BackendHandle_t backendHandle,
       backendHandle, deviceHandle, config, binaryBuffer, binaryBufferSize, context, profileHandle);
 }
 
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+// QnnContext_createFromBinaryWithCallback was added in QNN API 2.28 (QAIRT 2.37).
+// Gate on API availability rather than the EP's file-mapping feature macro.
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 28)
 // Intercepts contextCreateFromBinaryWithCallback: records whether it was called during
 // SSR recovery (g_ssr_fired == true).  Calls before SSR are the initial load and are
 // not counted.
@@ -241,7 +263,7 @@ Qnn_ErrorHandle_t QnnContext_createFromBinaryWithCallback(
       backendHandle, deviceHandle, config, callbacks, binaryBuffer, binaryBufferSize,
       context, profileHandle, reserved);
 }
-#endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#endif  // QNN API >= 2.28
 
 #endif  // defined(_WIN32)
 
@@ -294,7 +316,7 @@ extern "C" Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** p
     mock_interface.QNN_INTERFACE_VER_NAME.graphRetrieve = QnnGraph_retrieve;
     mock_interface.QNN_INTERFACE_VER_NAME.graphFinalize = QnnGraph_finalize;
     mock_interface.QNN_INTERFACE_VER_NAME.contextCreateFromBinary = QnnContext_createFromBinary;
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#if QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 28)
     // Intercept contextCreateFromBinaryWithCallback to detect file mapping during recovery.
     mock_interface.QNN_INTERFACE_VER_NAME.contextCreateFromBinaryWithCallback =
         QnnContext_createFromBinaryWithCallback;

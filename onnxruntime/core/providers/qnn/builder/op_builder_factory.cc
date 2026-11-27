@@ -51,6 +51,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateMaxRoiPoolOpBuilder("MaxRoiPool", *this);
   CreateMeanOpBuilder("Mean", *this);
   CreateModOpBuilder("Mod", *this);
+  CreateMultinomialOpBuilder("Multinomial", *this);
   CreateNonMaxSuppressionOpBuilder("NonMaxSuppression", *this);
   CreateNonZeroOpBuilder("NonZero", *this);
   CreateOneHotOpBuilder("OneHot", *this);

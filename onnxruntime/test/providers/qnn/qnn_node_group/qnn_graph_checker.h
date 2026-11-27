@@ -50,6 +50,11 @@ void AssertOpInputInQnnGraph(const std::filesystem::path& dump_dir,
 // Count APP_WRITE tensors to detect parameters left outside a QDQ group.
 void AssertQnnGraphInputCount(const std::filesystem::path& dump_dir, size_t expected_count);
 
+// Asserts that the APP_WRITE tensors (graph inputs) in the compiled QNN graph JSON are exactly
+// `expected_names`, in any order: the JSON keeps tensors in a name-sorted map, so order is not visible.
+void AssertQnnGraphInputNames(const std::filesystem::path& dump_dir,
+                              const std::vector<std::string>& expected_names);
+
 // Asserts that a node with the exact `node_name` does not appear in
 // the compiled QNN graph JSON (root["graph"]["nodes"]).
 void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,

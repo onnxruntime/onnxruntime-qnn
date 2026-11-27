@@ -31,6 +31,17 @@ namespace qnn {
 
 namespace {
 
+bool IsQnnSsrError(Qnn_ErrorHandle_t status) {
+  const auto error_code = QNN_GET_ERROR_CODE(status);
+  return error_code == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION ||
+         error_code == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL;
+}
+
+Ort::Status LogUnrecoverableSsrError(const Ort::Logger& logger, const std::string& error_message) {
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, error_message.c_str());
+  return Ort::Status(error_message.c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+}
+
 // Resolves the correct I/O order for a QNN fused subgraph, preferring ONNX declaration order.
 // For each ONNX-declared name, tries `tensor_name_overrides_reversed` first (handles renames),
 // then a direct match. Fallback to fused_order if any name is unresolvable. Appends partition-
@@ -99,6 +110,16 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
     if (!IsConstantInitializer(ort_graph, name)) {
       fused_input_names.insert(name);
       fused_input_order.push_back(name);
+    }
+  }
+
+  unbound_graph_inputs_.clear();
+  if (context.unconsumed_inputs != nullptr) {
+    for (const auto& unconsumed : *context.unconsumed_inputs) {
+      if (fused_input_names.insert(unconsumed.name).second) {
+        fused_input_order.push_back(unconsumed.name);
+        unbound_graph_inputs_.push_back(unconsumed);
+      }
     }
   }
 
@@ -302,6 +323,34 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
                                                       context.tensor_name_overrides,
                                                       trace_collector.get(),
                                                       /*is_post_layout_transform=*/true);
+
+  for (const auto& unbound : unbound_graph_inputs_) {
+    const std::string& unconsumed = unbound.name;
+    Qnn_DataType_t qnn_data_type = QNN_DATATYPE_UNDEFINED;
+    RETURN_IF_ERROR(utils::GetQnnDataType(/*is_quantized_tensor=*/false,
+                                          unbound.data_type,
+                                          qnn_data_type,
+                                          qnn_backend_manager_->GetQnnBackendType()));
+    std::vector<uint32_t> qnn_shape;
+    RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(std::optional<std::vector<int64_t>>(unbound.shape), qnn_shape),
+                  ("Unsupported shape for unconsumed graph input: " + unconsumed).c_str());
+    std::vector<uint32_t> sink_shape = qnn_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(QnnTensorWrapper(unconsumed,
+                                                                      QNN_TENSOR_TYPE_APP_WRITE,
+                                                                      qnn_data_type,
+                                                                      QnnQuantParamsWrapper(),
+                                                                      std::move(qnn_shape))),
+                  ("Failed to add unconsumed graph input: " + unconsumed).c_str());
+    // QnnIr crashes on a graph input with no consumer; a Cast with an unread output gives it one.
+    RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(unconsumed + "_unconsumed_sink",
+                                                  unconsumed,
+                                                  unconsumed + "_unconsumed_sink_out",
+                                                  QNN_TENSOR_TYPE_NATIVE,
+                                                  qnn_data_type,
+                                                  QnnQuantParamsWrapper(),
+                                                  std::move(sink_shape),
+                                                  /*do_op_validation=*/false));
+  }
 
   qnn::profile::ProfilingInfo profiling_info;
   QnnProfilingScope profiling_scope;
@@ -826,12 +875,18 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 #endif
   RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
 
-  if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == QNN_GET_ERROR_CODE(execute_status)) {
+  if (IsQnnSsrError(execute_status)) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
     if (ort_profiler) {
       ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
     }
 #endif
+    if (QNN_GET_ERROR_CODE(execute_status) == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL) {
+      return LogUnrecoverableSsrError(
+          logger, "NPU crashed. Fatal SSR communication failure. " +
+                      utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status));
+    }
+
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR,
                 "NPU crashed. SSR detected during QNN graph execute.");
     if (!context_bin_filepath_.empty()) {
@@ -840,7 +895,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 
       // Retry once with fresh context and re-bound tensors.
       RETURN_IF_ERROR(BindAndExecuteGraph(context, logger, execute_status, ort_profiler));
-      if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == QNN_GET_ERROR_CODE(execute_status)) {
+      if (IsQnnSsrError(execute_status)) {
 #if QNN_ORT_EP_PROFILING_API_ENABLED
         if (ort_profiler) {
           ort_profiler->DiscardPendingExecuteProfilingExtractionsSince(pending_extraction_mark);
@@ -856,12 +911,11 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     } else {
       // No context binary filepath — either JIT mode or embed_mode=1.
       // SSR recovery requires a context binary on disk to reload from, so skip recovery.
-      std::ostringstream oss;
-      oss << "NPU crashed. SSR detected. Recovery not supported"
-             " (no context binary on disk — JIT or embed_mode=1). "
-          << utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status);
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-      return Ort::Status(oss.str().c_str(), QNN_SSR_UNRECOVERABLE_ERROR_CODE);
+      return LogUnrecoverableSsrError(
+          logger,
+          "NPU crashed. SSR detected. Recovery not supported"
+          " (no context binary on disk — JIT or embed_mode=1). " +
+              utils::FormatQnnError(qnn_backend_manager_->GetQnnInterface(), execute_status));
     }
   }
 
@@ -898,6 +952,10 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
   }
 
   for (auto& tensor_wrapper : tensor_wrappers) {
+    if (is_input && std::any_of(unbound_graph_inputs_.begin(), unbound_graph_inputs_.end(),
+                                [&](const UnconsumedGraphInput& u) { return u.name == tensor_wrapper.GetName(); })) {
+      continue;  // No ORT input to bind.
+    }
     RETURN_IF(utils::QnnTensorHasDynamicShape(tensor_wrapper.GetQnnTensor()),
               ("QNN tensor (" + tensor_wrapper.GetName() + ") has dynamic shape. This is not supported yet.").c_str());
 

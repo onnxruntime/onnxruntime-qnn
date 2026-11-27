@@ -59,6 +59,22 @@ static void SetMockSSRAlwaysCrash(bool always_crash) {
   set_fn(always_crash);
 }
 
+static void SetMockSSRFatalError(bool fatal_error) {
+  HMODULE mod = GetModuleHandleW(L"QnnMockSSR.dll");
+  ASSERT_NE(mod, nullptr) << "QnnMockSSR.dll is not loaded in this process.";
+  auto set_fn = reinterpret_cast<void (*)(bool)>(GetProcAddress(mod, "SetMockSSRFatalError"));
+  ASSERT_NE(set_fn, nullptr) << "SetMockSSRFatalError not exported by QnnMockSSR.dll.";
+  set_fn(fatal_error);
+}
+
+static void SetMockSSRRetryError(uint32_t error_code) {
+  HMODULE mod = GetModuleHandleW(L"QnnMockSSR.dll");
+  ASSERT_NE(mod, nullptr) << "QnnMockSSR.dll is not loaded in this process.";
+  auto set_fn = reinterpret_cast<void (*)(uint32_t)>(GetProcAddress(mod, "SetMockSSRRetryError"));
+  ASSERT_NE(set_fn, nullptr) << "SetMockSSRRetryError not exported by QnnMockSSR.dll.";
+  set_fn(error_code);
+}
+
 // Reads the EPContext ONNX skeleton file and extracts the relative path of the
 // QNN context binary from the EPContext node with main_context=1.
 static void GetContextBinaryFileName(const std::string& onnx_ctx_file,
@@ -479,13 +495,20 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteJitReturnsUnrecoverableError) {
   const char* run_input_names[] = {qnn_in_name.get()};
   const char* run_output_names[] = {qnn_out_name.get()};
 
-  try {
-    scoped.session().Run(Ort::RunOptions{}, run_input_names, &run_input_tensor, 1, run_output_names, 1);
-    FAIL() << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " exception but Run() succeeded.";
-  } catch (const Ort::Exception& e) {
-    EXPECT_EQ(e.GetOrtErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE)
-        << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " for SSR in JIT flow, got error code: " << e.GetOrtErrorCode()
-        << ", message: " << e.what();
+  // Both recoverable and fatal SSR are unrecoverable without a context binary.
+  for (bool fatal_error : {false, true}) {
+    SCOPED_TRACE(fatal_error ? "fatal SSR 1011" : "recoverable SSR 1007");
+    SetMockSSRFatalError(fatal_error);
+    auto restore_default_ssr_error = gsl::finally([]() { SetMockSSRFatalError(false); });
+    try {
+      scoped.session().Run(Ort::RunOptions{}, run_input_names, &run_input_tensor, 1, run_output_names, 1);
+      ADD_FAILURE() << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " exception but Run() succeeded.";
+    } catch (const Ort::Exception& e) {
+      EXPECT_EQ(e.GetOrtErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE)
+          << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " for SSR in JIT flow, got error code: "
+          << e.GetOrtErrorCode()
+          << ", message: " << e.what();
+    }
   }
 }
 
@@ -872,6 +895,25 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecuteDoubleCrashReturnsUnrecoverableErr
     EXPECT_EQ(e.GetOrtErrorCode(), QNN_SSR_UNRECOVERABLE_ERROR_CODE)
         << "Expected " QNN_SSR_UNRECOVERABLE_ERROR_CODE_STR " for a double crash, got error code: " << e.GetOrtErrorCode()
         << ", message: " << e.what();
+  }
+
+  // Also check fatal SSR and non-SSR errors after a 1007-triggered recovery.
+  SetMockSSRAlwaysCrash(false);
+  for (uint32_t retry_error : {1011u, 1002u}) {
+    SCOPED_TRACE(retry_error);
+    SetMockSSRRetryError(retry_error);
+    auto restore_retry_error = gsl::finally([]() { SetMockSSRRetryError(0); });
+    const OrtErrorCode expected_status = retry_error == 1002 ? ORT_EP_FAIL : QNN_SSR_UNRECOVERABLE_ERROR_CODE;
+    try {
+      scoped.session().Run(Ort::RunOptions{}, input_names, &input_tensor, 1, output_names, 1);
+      ADD_FAILURE() << "Expected error " << expected_status << " for QNN retry error " << retry_error;
+    } catch (const Ort::Exception& e) {
+      EXPECT_EQ(e.GetOrtErrorCode(), expected_status) << "Message: " << e.what();
+      if (retry_error == 1002) {
+        EXPECT_NE(std::string(e.what()).find("QNN graph execute error."), std::string::npos);
+        EXPECT_NE(std::string(e.what()).find("1002"), std::string::npos);
+      }
+    }
   }
 
   CleanUpCtxFile(context_model_file);

@@ -179,6 +179,28 @@ size_t GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape, Qnn_DataType
   return GetQnnTensorDataSizeInBytes(num_elements, element_type);
 }
 
+Ort::Status GetQnnTensorDataSizeInBytes(gsl::span<const uint32_t> shape,
+                                        Qnn_DataType_t element_type,
+                                        size_t& data_size) {
+  size_t num_elements = 1;
+  for (uint32_t dim : shape) {
+    size_t next_num_elements = 0;
+    RETURN_IF_NOT(SafeMultiply(num_elements, static_cast<size_t>(dim), next_num_elements),
+                  "QNN tensor element count overflow.");
+    num_elements = next_num_elements;
+  }
+
+  if (element_type == QNN_DATATYPE_SFIXED_POINT_4 || element_type == QNN_DATATYPE_UFIXED_POINT_4) {
+    data_size = num_elements / 2 + num_elements % 2;
+    return Ort::Status();
+  }
+
+  const size_t element_size = GetElementSizeByType(element_type);
+  RETURN_IF_NOT(SafeMultiply(num_elements, element_size, data_size),
+                "QNN tensor byte size overflow.");
+  return Ort::Status();
+}
+
 size_t GetQnnTensorDataSizeInBytes(const Qnn_Tensor_t& tensor) {
   uint32_t rank = GetQnnTensorRank(tensor);
   uint32_t* dims = GetQnnTensorDims(tensor);
@@ -2227,13 +2249,11 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
   RETURN_IF(initializer == nullptr, "Initializer to unpack must not be null.");
   OrtExternalInitializerInfo* external_initializer = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer));
-  auto external_info = std::unique_ptr<OrtExternalInitializerInfo, FuncDeleter<OrtExternalInitializerInfo>>(
-      external_initializer, FuncDeleter<OrtExternalInitializerInfo>{ort_api.ReleaseExternalInitializerInfo});
-  if (external_info) {
-    RETURN_IF(expected_byte_size.has_value() &&
-                  ort_api.ExternalInitializerInfo_GetByteSize(external_info.get()) != *expected_byte_size,
+  if (external_initializer) {
+    const Ort::ExternalInitializerInfo external_info(external_initializer);
+    RETURN_IF(expected_byte_size.has_value() && external_info.GetByteSize() != *expected_byte_size,
               "Initializer byte count does not match its declared shape and element type.");
-    return ReadExternalData(ort_api, external_info.get(), model_path, unpacked_tensor);
+    return ReadExternalData(ort_api, external_info, model_path, unpacked_tensor);
   }
 
   const OrtTypeInfo* type_info = nullptr;
