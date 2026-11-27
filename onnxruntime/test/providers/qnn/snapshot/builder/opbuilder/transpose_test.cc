@@ -31,7 +31,8 @@ void RunTransposeSnapshot(const std::vector<int64_t>& input_shape,
                           const std::vector<int64_t>& perm,
                           ONNXTensorElementDataType data_type,
                           bool qdq,
-                          const std::string& golden_basename) {
+                          const std::string& golden_basename,
+                          const char* expected_type = "Transpose") {
   const qnn::IOpBuilder* builder = qnn::GetOpBuilder("Transpose");
   ASSERT_NE(builder, nullptr);
 
@@ -55,12 +56,28 @@ void RunTransposeSnapshot(const std::vector<int64_t>& input_shape,
                    : MakeMockIODef("input", data_type, input_shape);
   auto output = qdq ? MakeMockQDQIODef("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, output_shape, scale, zero_point)
                     : MakeMockIODef("output", data_type, output_shape);
-  auto node_unit = qdq ? MakeMockQDQNodeUnit("Transpose", {input}, {output}, "transpose", "", 13, 0, MakePermAttr(perm))
+  auto node_unit = qdq ? MakeMockQDQNodeUnit("Transpose", {input}, {output}, "transpose", "", 18, 0, MakePermAttr(perm))
                        : MakeMockNodeUnit("Transpose", {input}, {output}, "transpose", "", 13, 0, MakePermAttr(perm));
 
   const auto status = builder->AddToModelBuilder(*wrapper, node_unit, ctx.ort_logger, false);
   ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
   ASSERT_TRUE(wrapper->ComposeQnnGraph(/*build_json_qnn_graph=*/true));
+  const auto& graph = wrapper->GetQnnJSONGraph().at("graph");
+  const auto& nodes = graph.at("nodes");
+  ASSERT_EQ(nodes.size(), 1u);
+  const auto node = nodes.begin().value();
+  EXPECT_EQ(node.at("type"), expected_type);
+  EXPECT_EQ(node.at("input_names"), nlohmann::json(std::vector<std::string>{"input"}));
+  EXPECT_EQ(node.at("output_names"), nlohmann::json(std::vector<std::string>{"output"}));
+  const auto expected_dtype = qdq ? QNN_DATATYPE_UFIXED_POINT_8
+                                  : (data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32 ? QNN_DATATYPE_INT_32
+                                                                                      : QNN_DATATYPE_FLOAT_32);
+  for (const auto& entry : std::vector<std::pair<std::string, std::vector<int64_t>>>{{"input", input_shape},
+                                                                                     {"output", output_shape}}) {
+    const auto& tensor = graph.at("tensors").at(entry.first);
+    EXPECT_EQ(tensor.at("dims"), nlohmann::json(entry.second));
+    EXPECT_EQ(tensor.at("data_type"), static_cast<uint32_t>(expected_dtype));
+  }
   AssertSnapshotJson(*wrapper, golden_basename);
 }
 
@@ -83,12 +100,12 @@ TEST(QnnSnapshot_Transpose_OpBuilderTest, NormalPerm_QdqU8) {
 
 TEST(QnnSnapshot_Transpose_OpBuilderTest, UnitDimensionPerm_LowersToReshape_Fp32) {
   RunTransposeSnapshot({128, 1, 128}, {1, 128, 128}, {1, 0, 2}, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, false,
-                       "UnitDimensionPerm_LowersToReshape_Fp32");
+                       "UnitDimensionPerm_LowersToReshape_Fp32", "Reshape");
 }
 
 TEST(QnnSnapshot_Transpose_OpBuilderTest, UnitDimensionPerm_LowersToReshape_QdqU8) {
   RunTransposeSnapshot({128, 1, 128}, {1, 128, 128}, {1, 0, 2}, ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, true,
-                       "UnitDimensionPerm_LowersToReshape_QdqU8");
+                       "UnitDimensionPerm_LowersToReshape_QdqU8", "Reshape");
 }
 
 }  // namespace test
