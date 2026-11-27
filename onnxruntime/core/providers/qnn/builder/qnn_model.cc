@@ -190,6 +190,23 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
     ONNXTensorElementDataType elem_type = shape_info.GetElementType();
     std::vector<int64_t> shape = shape_info.GetShape();
 
+    bool has_dynamic_shape = false;
+    for (const auto& s : shape) {
+      has_dynamic_shape = has_dynamic_shape || s < 0;
+    }
+
+    // GPU: a dynamic present.* KV-cache output shares its buffer with past_key_values.*, so use
+    // the static shape of the matching past input.
+    constexpr size_t kPresentPrefixLength = 8;
+    if (IsGpuBackend(qnn_backend_type_) && has_dynamic_shape && name.rfind("present.", 0) == 0) {
+      std::string past_name{"past_key_values."};
+      past_name.append(name.substr(kPresentPrefixLength));
+      const auto past_it = graph_inputs_.tensors.find(past_name);
+      if (past_it != graph_inputs_.tensors.end()) {
+        shape = past_it->second.shape_;
+      }
+    }
+
     for (const auto& s : shape) {
       RETURN_IF(s < 0, ("Dynamic shape is not supported yet, for output: " + name).c_str());
     }
