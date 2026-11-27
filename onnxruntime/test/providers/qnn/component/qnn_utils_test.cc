@@ -58,6 +58,22 @@ namespace test {
 // `oss << qnn_value` resolves to the qnn::utils overload.
 using qnn::utils::operator<<;
 
+TEST(QnnUnit_UtilsTest, UnpackInitializerData_Int32PreservesSignedValues) {
+  g_mock_init_reg.clear();
+  const std::vector<int32_t> values = {std::numeric_limits<int32_t>::min(), -7, 0,
+                                       std::numeric_limits<int32_t>::max()};
+  const auto* initializer = g_mock_init_reg.AddTensorInt32("signed_values", {2, 2}, values);
+  OrtApiStubContext context;
+  SetupMockInitRegistryStubs(context);
+  std::vector<uint8_t> bytes;
+
+  const auto status = qnn::utils::UnpackInitializerData(context.stub_ort_api, initializer, {}, bytes);
+
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  ASSERT_EQ(bytes.size(), values.size() * sizeof(int32_t));
+  EXPECT_EQ(std::memcmp(bytes.data(), values.data(), bytes.size()), 0);
+}
+
 TEST(QnnUnit_UtilsTest, LowPowerBlockQuantizeData_ZeroBlockSizeReturnsError) {
   const std::vector<float> data = {1.0f, 2.0f, 4.0f, 6.0f};
   const std::vector<uint32_t> shape = {1, 4};
