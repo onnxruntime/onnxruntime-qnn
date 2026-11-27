@@ -1207,6 +1207,75 @@ TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_FP32) {
 TEST_F(QnnGPUBackendTests, GroupQueryAttention_Llama3_1_AR64_FP16) {
   RunGpuPackedGQATest<Ort::Float16_t>({32, 8, 64, 64, 1024, 0.125f});
 }
+// Zero-length new K/V (Gemma KV-shared decoder layers): key/value are empty initializers
+// ([batch, 0, kv_num_heads * head_size]) and the layer attends only over a past_key/past_value cache
+// written by another layer. Mirrors the model's shared-KV GQA node: rank-2 seqlens_k, scalar
+// total_sequence_length, rotary, scale=1. QNN cannot represent zero-sized tensors, so the EP passes
+// null key/value and QNN GPU must run a query-only/shared-KV GQA. Until QNN GPU supports that mode,
+// QNN validation rejects the node and these tests fail with "No nodes were assigned".
+struct GpuZeroLengthKvGqaCase {
+  int32_t num_heads;
+  int32_t kv_num_heads;
+  int32_t head_size;
+  int32_t cache_length;  // past_key/past_value capacity (also total_sequence_length)
+  int32_t local_window_size{-1};
+  float scale{1.0f};
+  ExpectedEPNodeAssignment expected_ep_assignment{ExpectedEPNodeAssignment::All};
+};
+
+template <typename T>
+static void RunGpuZeroLengthKvGQATest(const GpuZeroLengthKvGqaCase& test_case) {
+  constexpr int64_t batch_size = 1;
+  constexpr int64_t sequence_length = 1;
+  const int64_t q_hidden = static_cast<int64_t>(test_case.num_heads) * test_case.head_size;
+  const int64_t kv_hidden = static_cast<int64_t>(test_case.kv_num_heads) * test_case.head_size;
+  const std::vector<int64_t> cache_shape{batch_size, test_case.kv_num_heads, test_case.cache_length,
+                                         test_case.head_size};
+
+  GqaTestConfig<T, int32_t> config{
+      TestInputDef<T>({batch_size, sequence_length, q_hidden}, false, static_cast<T>(-1.0f), static_cast<T>(1.0f)),
+      // Rank-2 seqlens_k ([batch, 1]) as emitted by the model; the EP reshapes it to rank 1.
+      TestInputDef<int32_t>({batch_size, 1}, true, std::vector<int32_t>{test_case.cache_length - 1}),
+      TestInputDef<int32_t>({}, true, std::vector<int32_t>{test_case.cache_length})};
+  // Zero-length new key/value: empty initializers.
+  config.key_def.emplace(std::vector<int64_t>{batch_size, 0, kv_hidden}, true, std::vector<T>{});
+  config.value_def.emplace(std::vector<int64_t>{batch_size, 0, kv_hidden}, true, std::vector<T>{});
+  // Shared KV cache produced by another layer.
+  config.past_key_def.emplace(cache_shape, false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.past_value_def.emplace(cache_shape, false, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.cos_cache_def.emplace(std::vector<int64_t>{test_case.cache_length, test_case.head_size / 2},
+                               true, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.sin_cache_def.emplace(std::vector<int64_t>{test_case.cache_length, test_case.head_size / 2},
+                               true, static_cast<T>(-1.0f), static_cast<T>(1.0f));
+  config.do_rotary = 1;
+  config.kv_num_heads = test_case.kv_num_heads;
+  config.num_heads = test_case.num_heads;
+  config.scale = test_case.scale;
+  if (test_case.local_window_size != -1) {
+    config.local_window_size = test_case.local_window_size;
+  }
+  config.expected_ep_assignment = test_case.expected_ep_assignment;
+  config.backend_name = "gpu";
+  config.opset = 13;
+  config.tensor_verifier = CosineSimilarityVerifier{0.99f};
+  if (config.expected_ep_assignment == ExpectedEPNodeAssignment::None) {
+    // CPU fallback does not require the GPU's shared past/present buffers.
+    RunQnnModelTest(BuildGQATestCase(config), ProviderOptions{{"backend_type", "gpu"}}, config.opset,
+                    EPVerificationParams{ExpectedEPNodeAssignment::None, config.tensor_verifier});
+    return;
+  }
+  RunGQATest(config);
+}
+
+// Gemma sliding-window shared-KV layer: num_heads=8, kv_num_heads=1, head_size=256, local window 512.
+TEST_F(QnnGPUBackendTests, GroupQueryAttention_ZeroLengthKv_SlidingWindow_FP16) {
+  RunGpuZeroLengthKvGQATest<Ort::Float16_t>({8, 1, 256, 4096, 512});
+}
+
+// Gemma global shared-KV layer: num_heads=8, kv_num_heads=1, head_size=512, full attention.
+TEST_F(QnnGPUBackendTests, GroupQueryAttention_ZeroLengthKv_Global_FP16) {
+  RunGpuZeroLengthKvGQATest<Ort::Float16_t>({8, 1, 512, 4096});
+}
 
 #if defined(_WIN32)
 
