@@ -65,6 +65,7 @@ build_dir=""
 filter_groups=""
 force_accuracy=false
 generate_goldens=false
+routing_result=""
 python_bin="${PYTHON_BIN:-python3}"
 
 for arg in "$@"; do
@@ -74,6 +75,9 @@ for arg in "$@"; do
             ;;
         --filter=*)
             filter_groups="${arg#--filter=}"
+            ;;
+        --emit-routing-result=*)
+            routing_result="${arg#--emit-routing-result=}"
             ;;
         --force-accuracy)
             force_accuracy=true
@@ -94,6 +98,8 @@ Options:
   --generate-goldens          Generate golden files from current output, then run accuracy
                             tests to verify the new graph structure is numerically correct.
   --force-accuracy          Always run accuracy tests regardless of snapshot outcome.
+  --emit-routing-result=<path>
+                            Export observed routing selection as JSON.
   --filter=<group1,group2,...>
                             Scope both passes to these test groups only.
                             Group name = op segment, i.e. QnnSnapshot_<Group>_OpBuilder...Test.
@@ -106,6 +112,16 @@ EOF
             ;;
     esac
 done
+
+if [ -n "${routing_result}" ]; then
+    if prepared_routing_result="$(realpath -m "${routing_result}")" &&
+       rm -f -- "${prepared_routing_result}" "${prepared_routing_result}.tmp"; then
+        routing_result="${prepared_routing_result}"
+    else
+        log_warn "Routing artifact preparation failed; continuing tests without artifact publication."
+        routing_result=""
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Validate & auto-detect build config
@@ -315,6 +331,51 @@ accuracy_json="${results_dir}/accuracy_results.json"
 snapshot_list="${results_dir}/snapshot_tests.txt"
 rm -f "${snapshot_json}" "${accuracy_json}" "${snapshot_list}"
 
+selection_complete=false
+target_ops=""
+snapshot_exit=0
+
+export_routing_result() {
+    local runner_exit="$1"
+    local accuracy_list="${results_dir}/routing_accuracy_tests.txt"
+    local routing_snapshot_list="${results_dir}/routing_snapshot_tests.txt"
+    local qairt_version="" ort_version="" source_commit mode="compare"
+    source "${REPO_ROOT}/qcom/scripts/all/resolve_tool_versions.sh"
+    qairt_version="$(resolve_qairt_version "${bin_dir}" || true)"
+    ort_version="$(resolve_ort_version "${bin_dir}" || true)"
+    source_commit="$(git -C "${REPO_ROOT}" rev-parse HEAD)" || return 1
+    run_provider_test --gtest_list_tests --gtest_filter="${snapshot_filter}" > "${routing_snapshot_list}" || return 1
+    run_provider_test --gtest_list_tests --gtest_filter='QnnAcc_*' > "${accuracy_list}" || return 1
+    if [ "${generate_goldens}" = true ]; then
+        mode="generate_goldens"
+    elif [ "${force_accuracy}" = true ]; then
+        mode="force_accuracy"
+    fi
+    local export_args=()
+    if [ "${selection_complete}" = true ]; then
+        export_args+=(--selection-complete)
+    fi
+    "${python_bin}" "${REPO_ROOT}/qcom/scripts/all/export_accuracy_routing.py" \
+        --snapshot-json="${snapshot_json}" \
+        --snapshot-list="${routing_snapshot_list}" \
+        --accuracy-list="${accuracy_list}" \
+        --manifest="${QNN_UT_SNAPSHOT_GOLDEN_DIR:-${results_dir}/no-golden-store}/manifest.json" \
+        --source-commit="${source_commit}" \
+        --qairt-version="${qairt_version}" --ort-version="${ort_version}" \
+        --target-groups="${target_ops}" --mode="${mode}" \
+        --runner-exit="${runner_exit}" --snapshot-exit="${snapshot_exit}" \
+        --output="${routing_result}" "${export_args[@]}" || return 1
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+        printf 'routing_result_path=%s\n' "${routing_result}" >> "${GITHUB_OUTPUT}" || return 1
+    fi
+}
+
+if [ -n "${routing_result}" ]; then
+    # Export after selection, including early success and failure exits. Export
+    # failures leave the original test exit code and selection intact.
+    trap 'runner_exit=$?; export_routing_result "${runner_exit}" || log_warn "Routing artifact export failed; no result is available for consumption."' EXIT
+fi
+
 # Native Windows binaries do not understand Git Bash paths such as /c/work/....
 snapshot_json_arg="$(to_provider_test_path "${snapshot_json}")"
 accuracy_json_arg="$(to_provider_test_path "${accuracy_json}")"
@@ -388,6 +449,7 @@ else
     if [ -z "${target_ops}" ]; then
         if [ ${snapshot_exit} -eq 0 ]; then
             log_info "All snapshot tests passed. No accuracy tests needed."
+            selection_complete=true
             exit 0
         fi
         log_err "Snapshot tests exited ${snapshot_exit} but no group failures could be extracted."
@@ -395,6 +457,7 @@ else
     fi
 fi
 
+selection_complete=true
 if [ -z "${target_ops}" ]; then
     log_info "No groups to verify. Done."
     exit 0
