@@ -772,6 +772,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:GatherBlockQuantized|GPU backend only; weights/scales must have rank > 1; indices may be scalar or have rank < 4; bits=4; block_size must be a power-of-2 ≥ 16; quantize_axis must resolve to the trailing axis (`-1` is supported); symmetric quantization only (no zero points); requires QAIRT SDK ≥ 2.48|
 |com.microsoft:GroupQueryAttention|GPU and HTP backends (FP16/FP32); GPU requires QAIRT SDK ≥ 2.48; rotary_interleaved=0; no k_quant_type/v_quant_type; HTP requires QAIRT SDK ≥ 2.49. When the backend is set to HTP, GQA falls back to CPU by default. Enable HTP GQA with an explicit HTP pin using [Op Affinity](#op-affinity). HTP `attention_bias` and sliding-window attention require QAIRT SDK ≥ 2.53 (QNN API ≥ 2.42). On HTP, GQA may run slower than on CPU and may exhibit accuracy deviations on certain models.|
 |com.microsoft:MatMulNBits||
+|com.microsoft:QMoE|GPU backend only; requires QAIRT SDK >= 2.53. 3D input (float32/float16) with hidden_size a multiple of 64; expert_weight_bits=4, block_size=32; activation_type=swiglu with swiglu_fusion=1 and swiglu_limit set; use_sparse_mixer=0; 1 <= k <= num_experts and num_experts > 1; fc1/fc2 bias both present or both absent; fc3, zero-point, router_weights, and global/activation-scale inputs are not supported. num_tokens > 1 requires an 8xx-tier GPU.|
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
 |com.microsoft:RMSNormalization||
 |com.microsoft:QuickGelu||

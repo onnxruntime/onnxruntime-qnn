@@ -226,6 +226,31 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
                                                   std::vector<Qnn_Tensor_t>& qnn_tensors,
                                                   bool do_op_validation) {
   for (const auto& tensor_name : tensor_names) {
+    if (tensor_name.empty()) {
+      // Optional inputs are positional. Register one null tensor per node so the QNN graph
+      // receives a valid nonzero tensor id while validators still recognize the slot as absent.
+      // The wrapper is owned by model_tensors_map_ so the name and dimension storage referenced by
+      // the returned Qnn_Tensor_t outlives the op config.
+      const std::string null_tensor_name = qnn_node_name + "_null";
+      if (!AddTensorWrapper(QnnTensorWrapper::MakeNull(null_tensor_name))) {
+        return false;
+      }
+      QnnTensorWrapper& null_tensor = model_tensors_map_.at(null_tensor_name);
+      if (!do_op_validation) {
+        std::string error_string;
+        if (!null_tensor.CreateQnnGraphTensor(qnn_backend_manager_.GetQnnInterface(),
+                                              graph_,
+                                              qnn_node_name,
+                                              qnn_tensor_id_map_,
+                                              error_string)) {
+          ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
+          return false;
+        }
+      }
+      qnn_tensors.push_back(null_tensor.GetQnnTensor());
+      continue;
+    }
+
     auto it = model_tensors_map_.find(tensor_name);
     if (it == model_tensors_map_.end()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Input name not exist: " + tensor_name).c_str());

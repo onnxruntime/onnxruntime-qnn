@@ -62,6 +62,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreatePoolOpBuilder("MaxPool", *this);
   CreateQLinearConvOpBuilder("QLinearConv", *this);
   CreateQLinearMatMulOpBuilder("QLinearMatMul", *this);
+  CreateQMoEOpBuilder("QMoE", *this);
   // QuickGelu and Swish share x * sigmoid(alpha * x); the builder applies each schema's default alpha.
   CreateQuickGeluOpBuilder("QuickGelu", *this);
   CreateQuickGeluOpBuilder("Swish", *this);
