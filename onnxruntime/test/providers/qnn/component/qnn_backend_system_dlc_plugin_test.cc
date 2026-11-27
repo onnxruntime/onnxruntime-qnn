@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -43,11 +44,15 @@
 #include "System/QnnSystemInterface.h"
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/builder/qnn_backend_system_dlc_plugin.h"
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_model.h"
+#include "core/providers/qnn/builder/qnn_spill_fill_utils.h"
 #include "core/providers/qnn/ort_api.h"
 
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
+#include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
 
 namespace onnxruntime {
 namespace test {
@@ -105,6 +110,7 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
 #endif  // QNN_SYSTEM_DLC_API_ENABLED
     // Reached by QnnBackendManager::QnnErrorHandleToString on every QNN failure path.
     QnnInterface().errorGetMessage = ErrorGetMessage;
+    QnnInterface().contextFree = ContextFree;
 
     plugin_ = std::make_unique<qnn::QnnBackendSystemDlcPlugin>(backend_manager_.GetMutable());
   }
@@ -193,6 +199,7 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
   std::vector<QnnSystemContext_Handle_t> get_binary_info_sys_ctx;
 
   const void* RecordData(size_t idx) const { return records_[idx].data(); }
+  size_t RecordSize(size_t idx) const { return records_[idx].size(); }
 
  private:
   // ---- QNN System API stubs ----
@@ -225,7 +232,7 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
   }
 
   static Qnn_ErrorHandle_t SystemContextGetBinaryInfo(QnnSystemContext_Handle_t sys_ctx, void* buffer,
-                                                      uint64_t /*buffer_size*/,
+                                                      uint64_t buffer_size,
                                                       const QnnSystemContext_BinaryInfo_t** binary_info,
                                                       Qnn_ContextBinarySize_t* binary_info_size) {
     current_->calls.push_back("systemContextGetBinaryInfo");
@@ -233,7 +240,9 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
     current_->get_binary_info_buffers.push_back(buffer);
     if (current_->get_binary_info_result != QNN_SUCCESS) return current_->get_binary_info_result;
     for (size_t idx = 0; idx < current_->records_.size(); ++idx) {
-      if (current_->records_[idx].data() == buffer) {
+      if (current_->records_[idx].data() == buffer ||
+          (buffer != nullptr && buffer_size == current_->records_[idx].size() &&
+           std::memcmp(buffer, current_->records_[idx].data(), static_cast<size_t>(buffer_size)) == 0)) {
         *binary_info = &current_->binary_infos_[idx];
         *binary_info_size = sizeof(QnnSystemContext_BinaryInfo_t);
         return QNN_SUCCESS;
@@ -336,12 +345,18 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
     return QNN_SUCCESS;
   }
 
+  static Qnn_ErrorHandle_t ContextFree(Qnn_ContextHandle_t /*context*/, Qnn_ProfileHandle_t /*profile*/) {
+    return QNN_SUCCESS;
+  }
+
   static QnnUnit_BackendSystemDlcPluginTest* current_;
 
+ protected:
   // Declared before backend_manager_ so the manager's stored logger pointer stays valid.
   StubApiEnv env_;
   StubBackendManager backend_manager_{env_.api_ptrs, env_.logger};
 
+ private:
   int log_sentinel_ = 0;
   int dlc_sentinel_ = 0;
   int sys_ctx_sentinel_ = 0;
@@ -359,6 +374,187 @@ class QnnUnit_BackendSystemDlcPluginTest : public ::testing::Test {
 };
 
 QnnUnit_BackendSystemDlcPluginTest* QnnUnit_BackendSystemDlcPluginTest::current_ = nullptr;
+
+#ifdef QNN_HTP_SPILL_FILL_BUFFER_AVAILABLE
+TEST(QnnUnit_SpillFillUtilsTest, ValidateSpillFillBufferSize_EnforcesBinaryAndGroupBounds) {
+  EXPECT_TRUE(qnn::ValidateSpillFillBufferSize(0, 300, 0).IsOK());
+  EXPECT_TRUE(qnn::ValidateSpillFillBufferSize(0, 300, 300).IsOK());
+  EXPECT_TRUE(qnn::ValidateSpillFillBufferSize(300, 300, 300).IsOK());
+  EXPECT_TRUE(qnn::ValidateSpillFillBufferSize(300, 300, 500).IsOK());
+
+  ExpectErrorContains(qnn::ValidateSpillFillBufferSize(200, 300, 300), "does not match the spill-fill size 300");
+  ExpectErrorContains(qnn::ValidateSpillFillBufferSize(301, 300, 301), "does not match the spill-fill size 300");
+  ExpectErrorContains(qnn::ValidateSpillFillBufferSize(301, 301, 300), "exceeds the EPContext group max_size 300");
+  ExpectErrorContains(qnn::ValidateSpillFillBufferSize(std::numeric_limits<int64_t>::max(), 300,
+                                                       std::numeric_limits<int64_t>::max()),
+                      "does not match");
+  ExpectErrorContains(qnn::ValidateSpillFillBufferSize(-1, 300, 300), "must not be negative");
+  ExpectErrorContains(qnn::ValidateSpillFillBufferSize(0, 300, -1), "must not be negative");
+}
+
+TEST(QnnUnit_SpillFillUtilsTest, GetMaxSpillFillBufferSizeFromGraphInfo_UsesOnlySupportedHtpV1Graphs) {
+  QnnHtpSystemContext_GraphBlobInfo_t valid_blob{};
+  valid_blob.version = QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_VERSION_V1;
+  valid_blob.contextBinaryGraphBlobInfoV1.spillFillBufferSize = 300;
+
+  QnnHtpSystemContext_GraphBlobInfo_t unsupported_blob{};
+  unsupported_blob.version = QNN_SYSTEM_CONTEXT_HTP_GRAPH_INFO_BLOB_UNDEFINED;
+  unsupported_blob.contextBinaryGraphBlobInfoV1.spillFillBufferSize = 1000;
+
+  QnnSystemContext_GraphInfo_t graph_infos[3]{};
+  graph_infos[0].version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3;
+  graph_infos[0].graphInfoV3.graphBlobInfo = &valid_blob;
+  graph_infos[1].version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3;
+  graph_infos[1].graphInfoV3.graphBlobInfo = &unsupported_blob;
+  graph_infos[2].version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1;
+
+  EXPECT_EQ(qnn::GetMaxSpillFillBufferSizeFromGraphInfo(graph_infos, 3), 300u);
+  EXPECT_EQ(qnn::GetMaxSpillFillBufferSizeFromGraphInfo(nullptr, 0), 0u);
+}
+
+TEST_F(QnnUnit_BackendSystemDlcPluginTest, PreflightQnnContexts_MissingAttributesDeriveGroupAndOrder) {
+  InstallFakeGraphApiStubs(env_.stub_ort_api);
+  OrtGlobalApiOverride api_override(&env_.stub_ort_api);
+  GraphSpec smaller;
+  smaller.spill_fill_buffer_size = 100;
+  AddRecord({smaller});
+  GraphSpec larger;
+  larger.spill_fill_buffer_size = 300;
+  AddRecord({larger});
+
+  FakeOpAttr first_binary = FakeOpAttr::MakeString(qnn::EP_CACHE_CONTEXT,
+                                                   std::string(static_cast<const char*>(RecordData(0)), RecordSize(0)));
+  FakeOpAttr second_binary = FakeOpAttr::MakeString(qnn::EP_CACHE_CONTEXT,
+                                                    std::string(static_cast<const char*>(RecordData(1)), RecordSize(1)));
+  FakeNode first_node{"first", "EPContext", "", 1, {}, {}};
+  first_node.attrs[qnn::EP_CACHE_CONTEXT] = &first_binary;
+  FakeNode second_node{"second", "EPContext", "", 1, {}, {}};
+  second_node.attrs[qnn::EP_CACHE_CONTEXT] = &second_binary;
+  FakeGraph first_graph{{first_node}, {}, {}, {}};
+  FakeGraph unrelated_graph{{}, {}, {}, {}};
+  FakeGraph second_graph{{second_node}, {}, {}, {}};
+  const OrtGraph* graphs[] = {first_graph.AsGraph(), unrelated_graph.AsGraph(), second_graph.AsGraph()};
+  std::vector<int> main_context_pos_list{0, 2};
+  int64_t group_size = 0;
+
+  ASSERT_TRUE(qnn::PreflightQnnContexts(graphs, env_.stub_ort_api, ORT_TSTR("model.onnx"),
+                                        backend_manager_.GetMutable(), env_.logger,
+                                        qnn::EpContextIoDispatch(), main_context_pos_list, group_size)
+                  .IsOK());
+
+  EXPECT_EQ(group_size, 300);
+  EXPECT_EQ(main_context_pos_list, (std::vector<int>{2, 0}));
+  EXPECT_EQ(get_binary_info_buffers.size(), 2u);
+  EXPECT_EQ(backend_manager_.GetMutable()->GetQnnContextSize(), 0u);
+}
+
+TEST_F(QnnUnit_BackendSystemDlcPluginTest, PreflightQnnContexts_StaleSecondDeclarationFailsBeforeCreatingContext) {
+  InstallFakeGraphApiStubs(env_.stub_ort_api);
+  OrtGlobalApiOverride api_override(&env_.stub_ort_api);
+  GraphSpec graph;
+  graph.spill_fill_buffer_size = 300;
+  AddRecord({graph});
+
+  FakeOpAttr binary = FakeOpAttr::MakeString(qnn::EP_CACHE_CONTEXT,
+                                             std::string(static_cast<const char*>(RecordData(0)), RecordSize(0)));
+  FakeOpAttr stale_size = FakeOpAttr::MakeInt64(qnn::MAX_SIZE, 200);
+  FakeNode first_node{"first", "EPContext", "", 1, {}, {}};
+  first_node.attrs[qnn::EP_CACHE_CONTEXT] = &binary;
+  FakeNode second_node{"second", "EPContext", "", 1, {}, {}};
+  second_node.attrs[qnn::EP_CACHE_CONTEXT] = &binary;
+  second_node.attrs[qnn::MAX_SIZE] = &stale_size;
+  FakeGraph first_graph{{first_node}, {}, {}, {}};
+  FakeGraph second_graph{{second_node}, {}, {}, {}};
+  const OrtGraph* graphs[] = {first_graph.AsGraph(), second_graph.AsGraph()};
+  std::vector<int> main_context_pos_list{0, 1};
+  int64_t group_size = 0;
+
+  const auto status = qnn::PreflightQnnContexts(graphs, env_.stub_ort_api, ORT_TSTR("model.onnx"),
+                                                backend_manager_.GetMutable(), env_.logger,
+                                                qnn::EpContextIoDispatch(), main_context_pos_list, group_size);
+
+  ExpectErrorContains(status, "does not match the spill-fill size 300");
+  EXPECT_EQ(group_size, 0);
+  EXPECT_EQ(main_context_pos_list, (std::vector<int>{0, 1}));
+  EXPECT_EQ(get_binary_info_buffers.size(), 2u);
+  EXPECT_EQ(backend_manager_.GetMutable()->GetQnnContextSize(), 0u);
+}
+
+TEST_F(QnnUnit_BackendSystemDlcPluginTest,
+       LoadCachedQnnContextFromBuffer_PreflightReturnsDerivedSizeWithoutCreatingContext) {
+  GraphSpec graph;
+  graph.spill_fill_buffer_size = 300;
+  AddRecord({graph});
+
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models;
+  uint64_t derived_max_spill_fill_size = 0;
+  ASSERT_TRUE(backend_manager_.GetMutable()
+                  ->LoadCachedQnnContextFromBuffer(
+                      reinterpret_cast<char*>(const_cast<void*>(RecordData(0))),
+                      RecordSize(0),
+                      "",
+                      "node",
+                      qnn_models,
+                      /*group_max_spill_fill_size=*/0,
+                      /*declared_max_spill_fill_size=*/300,
+                      qnn::EpContextIoDispatch(),
+                      /*is_multi_soc_buffer=*/false,
+                      &derived_max_spill_fill_size)
+                  .IsOK());
+
+  EXPECT_EQ(derived_max_spill_fill_size, 300u);
+  EXPECT_TRUE(qnn_models.empty());
+  EXPECT_EQ(backend_manager_.GetMutable()->GetQnnContextSize(), 0u);
+}
+
+TEST_F(QnnUnit_BackendSystemDlcPluginTest,
+       LoadCachedQnnContextFromBuffer_StandardOversizedMax_ReturnsError) {
+  GraphSpec graph;
+  graph.spill_fill_buffer_size = 300;
+  AddRecord({graph});
+
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models;
+  ExpectErrorContains(
+      backend_manager_.GetMutable()->LoadCachedQnnContextFromBuffer(
+          reinterpret_cast<char*>(const_cast<void*>(RecordData(0))),
+          RecordSize(0),
+          "",
+          "node",
+          qnn_models,
+          301,
+          301,
+          qnn::EpContextIoDispatch(),
+          /*is_multi_soc_buffer=*/false),
+      "does not match the spill-fill size 300");
+
+  ASSERT_EQ(get_binary_info_buffers.size(), 1u);
+  EXPECT_EQ(get_binary_info_buffers[0], RecordData(0));
+}
+
+TEST_F(QnnUnit_BackendSystemDlcPluginTest,
+       LoadCachedQnnContextFromBuffer_StandardUndersizedGroupMax_ReturnsError) {
+  GraphSpec graph;
+  graph.spill_fill_buffer_size = 300;
+  AddRecord({graph});
+
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models;
+  ExpectErrorContains(
+      backend_manager_.GetMutable()->LoadCachedQnnContextFromBuffer(
+          reinterpret_cast<char*>(const_cast<void*>(RecordData(0))),
+          RecordSize(0),
+          "",
+          "node",
+          qnn_models,
+          299,
+          300,
+          qnn::EpContextIoDispatch(),
+          /*is_multi_soc_buffer=*/false),
+      "exceeds the EPContext group max_size 299");
+
+  ASSERT_EQ(get_binary_info_buffers.size(), 1u);
+  EXPECT_EQ(get_binary_info_buffers[0], RecordData(0));
+}
+#endif  // QNN_HTP_SPILL_FILL_BUFFER_AVAILABLE
 
 // ---------------------------------------------------------------------------
 // Release / destructor — nothing created
@@ -922,6 +1118,37 @@ TEST_F(QnnUnit_BackendSystemDlcPluginTest, GetDlcMaxSpillFillBufferSize_NoHtpGra
   uint64_t max_size = 12345;
   ASSERT_TRUE(Plugin().GetDlcMaxSpillFillBufferSize(max_size).IsOK());
   EXPECT_EQ(max_size, 0u);
+}
+
+// The validation must not be skipped merely because another context already exists.
+// This also proves multi-SoC validation derives the maximum across every DLC record,
+// rather than only the record selected for deserialization.
+TEST_F(QnnUnit_BackendSystemDlcPluginTest,
+       LoadCachedQnnContextFromBuffer_MultiSocOversizedMaxWithExistingContext_ReturnsError) {
+  uint8_t dlc[4] = {0};
+  GraphSpec first_record_graph;
+  first_record_graph.spill_fill_buffer_size = 100;
+  AddRecord({first_record_graph});
+  GraphSpec second_record_graph;
+  second_record_graph.spill_fill_buffer_size = 300;
+  AddRecord({second_record_graph});
+
+  ASSERT_TRUE(backend_manager_.GetMutable()->AddQnnContextHandle(FakeContextHandle()).IsOK());
+  ASSERT_EQ(backend_manager_.GetMutable()->GetQnnContextSize(), 1u);
+
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models;
+  ExpectErrorContains(
+      backend_manager_.GetMutable()->LoadCachedQnnContextFromBuffer(
+          reinterpret_cast<char*>(dlc),
+          sizeof(dlc),
+          "",
+          "node",
+          qnn_models,
+          301,
+          301,
+          qnn::EpContextIoDispatch(),
+          /*is_multi_soc_buffer=*/true),
+      "does not match the spill-fill size 300");
 }
 
 #else  // !QNN_SYSTEM_DLC_API_ENABLED

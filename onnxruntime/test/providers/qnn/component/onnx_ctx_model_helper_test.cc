@@ -60,7 +60,6 @@ using qnn::MAX_SIZE;
 using qnn::ParseIoNameOverrides;
 using qnn::QnnModelLookupTable;
 using qnn::SOURCE;
-using qnn::TryGetMaxSpillFillSize;
 
 namespace {
 
@@ -357,112 +356,6 @@ TEST(QnnUnit_OnnxCtxModelHelperTest, GetEpContextDlcPath_SecondGraphHasDlcNode_R
   auto status = GetEpContextDlcPath(graphs, 2, ctx.api, dlc_path);
   EXPECT_TRUE(status.IsOK());
   EXPECT_EQ(dlc_path, "model.dlc");
-}
-
-// =============================================================================
-// TryGetMaxSpillFillSize
-//
-// Iterates main_context_pos_list, reads MAX_SIZE from each EPContext node, and
-// swaps the largest to position 0 in main_context_pos_list.
-// =============================================================================
-
-TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_ZeroContexts_ReturnsOk) {
-  CtxHelperTestContext ctx;
-  FakeGraph g{{}, {}, {}, {}};
-  const OrtGraph* graphs[] = {g.AsGraph()};
-  std::vector<int> pos_list;
-  int64_t max_size = 0;
-  auto status = TryGetMaxSpillFillSize(graphs, ctx.api, 0, max_size, pos_list);
-  EXPECT_TRUE(status.IsOK());
-  EXPECT_EQ(max_size, 0);
-}
-
-TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_SingleContext_NoSwap) {
-  CtxHelperTestContext ctx;
-  FakeOpAttr max_size_attr = FakeOpAttr::MakeInt64(MAX_SIZE, 100);
-  FakeNode ep_ctx{"e", "EPContext", "", 1, {}, {}};
-  ep_ctx.attrs[MAX_SIZE] = &max_size_attr;
-  FakeGraph g{{ep_ctx}, {}, {}, {}};
-  const OrtGraph* graphs[] = {g.AsGraph()};
-  std::vector<int> pos_list = {0};
-  int64_t max_size = 0;
-  auto status = TryGetMaxSpillFillSize(graphs, ctx.api, 1, max_size, pos_list);
-  EXPECT_TRUE(status.IsOK());
-  EXPECT_EQ(max_size, 100);
-  EXPECT_EQ(pos_list[0], 0);  // no swap needed
-}
-
-TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_SecondContextLarger_SwapsToFront) {
-  CtxHelperTestContext ctx;
-  // g0: MAX_SIZE=50, g1: MAX_SIZE=200. pos_list=[0,1] → after swap: [1,0].
-  FakeOpAttr size0 = FakeOpAttr::MakeInt64(MAX_SIZE, 50);
-  FakeNode ep0{"e0", "EPContext", "", 1, {}, {}};
-  ep0.attrs[MAX_SIZE] = &size0;
-  FakeGraph g0{{ep0}, {}, {}, {}};
-
-  FakeOpAttr size1 = FakeOpAttr::MakeInt64(MAX_SIZE, 200);
-  FakeNode ep1{"e1", "EPContext", "", 1, {}, {}};
-  ep1.attrs[MAX_SIZE] = &size1;
-  FakeGraph g1{{ep1}, {}, {}, {}};
-
-  const OrtGraph* graphs[] = {g0.AsGraph(), g1.AsGraph()};
-  std::vector<int> pos_list = {0, 1};
-  int64_t max_size = 0;
-  auto status = TryGetMaxSpillFillSize(graphs, ctx.api, 2, max_size, pos_list);
-  EXPECT_TRUE(status.IsOK());
-  EXPECT_EQ(max_size, 200);
-  EXPECT_EQ(pos_list[0], 1);  // swapped: largest is now first
-  EXPECT_EQ(pos_list[1], 0);
-}
-
-TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_NonConsecutivePosList_IndexesThroughPosList) {
-  // Regression guard for the `graphs[main_context_pos_list[idx]]` indirection.
-  // pos_list is non-identity ({2, 0}) and graph 1 — which the
-  // pos_list never references — carries the largest MAX_SIZE as a trap.
-  // Correct code reads graphs 2 then 0 (max=500, already at front → no swap).
-  // A mutation to `graphs[idx]` would instead read graphs 0 then 1, pick up the
-  // 999 trap, and swap the pos_list — so both the returned size and the final
-  // pos_list order diverge, catching the regression.
-  CtxHelperTestContext ctx;
-  FakeOpAttr size0 = FakeOpAttr::MakeInt64(MAX_SIZE, 100);
-  FakeNode ep0{"e0", "EPContext", "", 1, {}, {}};
-  ep0.attrs[MAX_SIZE] = &size0;
-  FakeGraph g0{{ep0}, {}, {}, {}};
-
-  FakeOpAttr size1 = FakeOpAttr::MakeInt64(MAX_SIZE, 999);  // trap: only reachable via graphs[idx]
-  FakeNode ep1{"e1", "EPContext", "", 1, {}, {}};
-  ep1.attrs[MAX_SIZE] = &size1;
-  FakeGraph g1{{ep1}, {}, {}, {}};
-
-  FakeOpAttr size2 = FakeOpAttr::MakeInt64(MAX_SIZE, 500);
-  FakeNode ep2{"e2", "EPContext", "", 1, {}, {}};
-  ep2.attrs[MAX_SIZE] = &size2;
-  FakeGraph g2{{ep2}, {}, {}, {}};
-
-  const OrtGraph* graphs[] = {g0.AsGraph(), g1.AsGraph(), g2.AsGraph()};
-  std::vector<int> pos_list = {2, 0};
-  int64_t max_size = 0;
-  auto status = TryGetMaxSpillFillSize(graphs, ctx.api, 2, max_size, pos_list);
-  EXPECT_TRUE(status.IsOK());
-  EXPECT_EQ(max_size, 500);   // graphs[2], NOT the graphs[1] trap (999)
-  EXPECT_EQ(pos_list[0], 2);  // largest already at front → no swap
-  EXPECT_EQ(pos_list[1], 0);
-}
-
-TEST(QnnUnit_OnnxCtxModelHelperTest, TryGetMaxSpillFillSize_GraphWithMultipleNodes_ReturnsError) {
-  // Each main-context graph must contain exactly one EPContext node; a graph
-  // whose node count is not 1 is rejected before any MAX_SIZE read. Two nodes
-  // exercises that guard (ZeroContexts_ReturnsOk above instead skips the loop
-  // via count=0, so it never reaches this check).
-  CtxHelperTestContext ctx;
-  FakeNode n0{"n0", "EPContext", "", 1, {}, {}};
-  FakeNode n1{"n1", "EPContext", "", 1, {}, {}};
-  FakeGraph g{{n0, n1}, {}, {}, {}};
-  const OrtGraph* graphs[] = {g.AsGraph()};
-  std::vector<int> pos_list = {0};
-  int64_t max_size = 0;
-  auto status = TryGetMaxSpillFillSize(graphs, ctx.api, 1, max_size, pos_list);
-  EXPECT_FALSE(status.IsOK());
 }
 
 // =============================================================================
