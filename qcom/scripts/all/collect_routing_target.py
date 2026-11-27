@@ -17,6 +17,7 @@ def identity() -> dict:
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     return {
         "source_commit_sha": commit,
+        "workflow_sha": os.environ.get("GITHUB_SHA"),
         "repository": os.environ.get("GITHUB_REPOSITORY"),
         "workflow_ref": os.environ.get("GITHUB_WORKFLOW_REF"),
         "run_id": os.environ.get("GITHUB_RUN_ID"),
@@ -27,7 +28,7 @@ def identity() -> dict:
 def collect_build(bin_dir: Path) -> dict:
     resolver = Path(__file__).with_name("resolve_tool_versions.sh")
     process = subprocess.run(
-        ["bash", str(resolver), f"--bin-dir={bin_dir}"], capture_output=True, text=True, check=False
+        ["bash", str(resolver), f"--bin-dir={bin_dir}", "both"], capture_output=True, text=True, check=False
     )
     versions = dict(line.split("=", 1) for line in process.stdout.splitlines() if "=" in line)
     return {

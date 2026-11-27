@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 SCRIPT = Path(__file__).resolve().parents[1] / "consume_accuracy_routing.py"
 SPEC = importlib.util.spec_from_file_location("routing_consumer", SCRIPT)
@@ -22,6 +23,7 @@ CASE = "QnnAcc_Clip_AccuracyTest.Case"
 SNAPSHOT = "QnnSnapshot_Clip_OpBuilderTest.Case"
 IDENTITY = {
     "source_commit_sha": "a" * 40,
+    "workflow_sha": "a" * 40,
     "repository": "owner/repo",
     "workflow_ref": "owner/repo/workflow@refs/pull/1/merge",
     "run_id": "10",
@@ -39,7 +41,7 @@ def sign(artifact):
 @pytest.fixture
 def inputs():
     artifact = {
-        "schema_version": 1,
+        "evidence_granularity": "testcase",
         "decision_granularity": "operator_group",
         "producer": {
             **IDENTITY,
@@ -88,10 +90,117 @@ def inputs():
 
 
 def test_match_proposes_skip_without_changing_execution(inputs):
+    assert "schema_version" not in inputs[0]
     result = CONSUMER.select_shadow(*inputs, IDENTITY)
     assert result["would_skip"] == 1
     assert not result["target_execution_changed"]
     assert result["false_skip_candidates"] == 0
+
+
+def test_provider_observation_never_authorizes_skip(inputs):
+    artifact, target, policy = inputs
+    artifact.update(mode="provider_observation", decision_granularity="none", selection_complete=False)
+    sign(artifact)
+
+    result = CONSUMER.select_shadow(artifact, target, policy, IDENTITY)
+
+    assert result["would_skip"] == 0
+    assert result["would_run"] == 1
+    assert "provider_observation_does_not_authorize_skips" in result["fallback_reasons"]
+    assert "invalid_artifact_contract" not in result["fallback_reasons"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX Linux producer fixture")
+def test_actual_provider_observation_contract_is_consumed(inputs, tmp_path):
+    repo = SCRIPT.parents[3]
+    build = tmp_path / "build"
+    build.mkdir()
+    sdk = tmp_path / "sdk"
+    sdk.mkdir()
+    (sdk / "sdk.yaml").write_text("version: 2.52.0\n")
+    ort = tmp_path / "ort"
+    ort.mkdir()
+    (ort / "VERSION_NUMBER").write_text("1.30.0\n")
+    (build / "CMakeCache.txt").write_text(f"onnxruntime_QNN_HOME:PATH={sdk}\nonnxruntime_ORT_HOME:PATH={ort}\n")
+    (build / "onnxruntime_provider_test.Release.results.xml").write_text(
+        '<testsuites><testsuite name="QnnSnapshot_Clip_OpBuilderTest">'
+        '<testcase name="Case" status="run" result="completed" /></testsuite></testsuites>'
+    )
+    binary = build / "onnxruntime_provider_test"
+    binary.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "assert '--gtest_list_tests' in sys.argv\n"
+        "if any('QnnSnapshot_' in arg for arg in sys.argv):\n"
+        " print('QnnSnapshot_Clip_OpBuilderTest.\\n  Case')\n"
+        "else:\n print('QnnAcc_Clip_AccuracyTest.\\n  Case')\n"
+    )
+    binary.chmod(0o755)
+    source = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    expected = IDENTITY | {"source_commit_sha": source, "workflow_sha": source}
+    env = os.environ | {
+        "GITHUB_SHA": source,
+        "GITHUB_REPOSITORY": expected["repository"],
+        "GITHUB_WORKFLOW_REF": expected["workflow_ref"],
+        "GITHUB_RUN_ID": expected["run_id"],
+        "GITHUB_RUN_ATTEMPT": expected["run_attempt"],
+        "GITHUB_JOB": "build",
+    }
+    env.pop("QNN_UT_SNAPSHOT_GOLDEN_DIR", None)
+    output = tmp_path / "observation.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT.with_name("observe_provider_routing.py")),
+            f"--build-dir={build}",
+            "--config=Release",
+            f"--output={output}",
+            "--validation-exit=0",
+        ],
+        cwd=repo,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    artifact = json.loads(output.read_text())
+    _, target, policy = inputs
+    target["identity"] = expected
+    target["build"].update(identity=expected, qairt_version="2.52.0", ort_version="1.30.0")
+
+    result = CONSUMER.select_shadow(artifact, target, policy, expected)
+
+    assert artifact["mode"] == "provider_observation"
+    assert "schema_version" not in artifact
+    assert result["would_skip"] == 0
+    assert result["would_run"] == 1
+    assert "provider_observation_does_not_authorize_skips" in result["fallback_reasons"]
+    assert "artifact_integrity_failure" not in result["fallback_reasons"]
+    assert "invalid_artifact_contract" not in result["fallback_reasons"]
+    assert not any("identity_mismatch" in reason for reason in result["fallback_reasons"])
+
+
+def test_shadow_workflow_uses_existing_jobs_and_active_producer_artifact():
+    repo = SCRIPT.parents[3]
+    workflow = yaml.safe_load((repo / ".github/workflows/qualcomm-internal-build-and-test.yml").read_text())
+    jobs = workflow["jobs"]
+    shadow = jobs["windows-arm64-v73-routing-shadow"]
+    assert all(name in jobs for name in shadow["needs"])
+    assert "build-and-test-linux-x86_64-ubuntu-22-04" in shadow["needs"]
+    linux = next(step for step in shadow["steps"] if step.get("name") == "Download Linux routing result")
+    single_os = yaml.safe_load((repo / ".github/workflows/qualcomm-internal-build-and-test-single-os.yml").read_text())
+    producer = next(
+        step
+        for step in single_os["jobs"]["build"]["steps"]
+        if step.get("name") == "Upload Linux snapshot routing result"
+    )
+    name = producer["with"]["name"].replace("${{ inputs.target_os }}", "linux")
+    name = name.replace("${{ inputs.target_arch }}", "x86_64_ubuntu_22_04")
+    name = name.replace("${{ inputs.build_config }}", "Release")
+    assert linux["with"]["name"] == name
+    windows = jobs["build-and-test-windows-arm64-internal-symbols"]["with"]
+    assert windows["qnn_internal_test_symbols"] is True
+    assert windows["run_tests"] is True
+    assert windows["build_test_same_runner"] is False
 
 
 @pytest.mark.parametrize(
@@ -101,7 +210,8 @@ def test_match_proposes_skip_without_changing_execution(inputs):
         "attempt",
         "workflow",
         "integrity",
-        "schema",
+        "contract",
+        "workflow_sha",
         "profile",
         "architecture",
         "qairt",
@@ -126,8 +236,10 @@ def test_uncertainty_proposes_run(inputs, change):
     if change in ("commit", "attempt", "workflow"):
         key = {"commit": "source_commit_sha", "attempt": "run_attempt", "workflow": "workflow_ref"}[change]
         artifact["producer"][key] = "other"
-    elif change == "schema":
-        artifact["schema_version"] = 2
+    elif change == "contract":
+        artifact["evidence_granularity"] = "unknown"
+    elif change == "workflow_sha":
+        artifact["producer"]["workflow_sha"] = "other"
     elif change == "profile":
         artifact["producer"]["golden_profile"] = "other"
     elif change == "architecture":
@@ -224,6 +336,7 @@ def test_cli_valid_artifact_and_unresolved_policy(inputs, tmp_path):
         | {
             "GITHUB_REPOSITORY": IDENTITY["repository"],
             "GITHUB_WORKFLOW_REF": IDENTITY["workflow_ref"],
+            "GITHUB_SHA": IDENTITY["workflow_sha"],
             "GITHUB_RUN_ID": "10",
             "GITHUB_RUN_ATTEMPT": "1",
         },

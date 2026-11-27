@@ -1,9 +1,16 @@
 # Windows ARM64 v73 Accuracy Routing Shadow
 
 The per-PR `Windows ARM64 v73 routing shadow` job observes routing after both the
-Linux internal-symbol Snapshot producer and Windows ARM64 full test lane finish.
+active Ubuntu internal-symbol producer and Windows ARM64 internal-symbol test lane finish.
 The existing build/test jobs run in parallel. The observer reads artifacts and
 publishes `observation.json`; it never writes test filters or invokes inference.
+
+The Linux dependency is `build-and-test-linux-x86_64-ubuntu-22-04`, and the
+producer retains the `qnn-routing-linux-x86_64` artifact namespace; the
+download name includes Release, the caller's Python
+version, and run attempt. Main still has the Windows internal-symbol shadow
+caller; its full Accuracy execution supplies the target evidence. If #932
+removes that caller, this observer must be retargeted to its replacement.
 
 ## Target Evidence
 
@@ -38,15 +45,20 @@ The alternative responsibilities are `always_run_platform_specific` and
 `unresolved`. Both propose running on the target regardless of graph match.
 
 The selector proposes a skip only when producer, target evidence, and target
-build match the expected repository, commit, workflow, run ID, and attempt;
-the artifact schema, payload digest, successful runner outcome, and comparison
+build match the expected repository, checkout commit, workflow SHA/ref, run ID, and attempt;
+the artifact's required fields, payload digest, successful runner outcome, and comparison
 mode are valid; versions and an explicit v73 profile agree; and the exact
 reviewed mapping connects matched Snapshot evidence to the observed target
 Accuracy testcase. A mismatch or missing input proposes run/fallback.
 
-The initial producer records unknown architecture, so current artifacts fall
-back. An architecture-aligned producer and reviewed equivalence evidence are
-required before real input can yield a skip proposal.
+Producer and consumer scripts must come from the same checkout/run; the Linux
+artifact has no `schema_version` field. Target evidence and policy retain their
+own local format markers. The merged #1141 producer exports
+`mode: provider_observation`, `decision_granularity: none`, incomplete selection,
+unknown runner actions and unknown target architecture. These are valid
+observations but never authorize skips. A routing-capable, architecture-aligned
+producer and reviewed equivalence evidence are required before real input can
+yield a skip proposal; adaptation to #1156's producer is separate.
 
 ## Observation Report
 

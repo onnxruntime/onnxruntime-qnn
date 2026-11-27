@@ -217,7 +217,7 @@ jobs:
   windows-arm64-v73-routing-shadow:
     name: Windows ARM64 v73 routing shadow
     if: ${{ !cancelled() && inputs.do_all && github.event_name == 'pull_request' && needs['path-filter'].outputs.code == 'true' && github.event.pull_request.head.repo.fork != true }}
-    needs: [path-filter, build-and-test-linux-x86_64-internal-symbols, build-and-test-windows-arm64-internal-symbols]
+    needs: [path-filter, build-and-test-linux-x86_64-ubuntu-22-04, build-and-test-windows-arm64-internal-symbols]
     runs-on: ["self-hosted", "Windows", "ARM64", "Test"]
     timeout-minutes: 10
     continue-on-error: true
@@ -232,7 +232,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: qnn-routing-linux-x86_64-Release-pyNone-${{ github.run_attempt }}
+          name: qnn-routing-linux-x86_64-Release-py${{ inputs.target_py_vsn }}-${{ github.run_attempt }}
           path: routing-shadow/linux
 
       - name: Download Windows ARM64 target evidence

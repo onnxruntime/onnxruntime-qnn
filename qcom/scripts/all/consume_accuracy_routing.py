@@ -11,13 +11,20 @@ import json
 import os
 from pathlib import Path
 
-IDENTITY_FIELDS = ("source_commit_sha", "repository", "workflow_ref", "run_id", "run_attempt")
+IDENTITY_FIELDS = ("source_commit_sha", "workflow_sha", "repository", "workflow_ref", "run_id", "run_attempt")
 
 
 def validate_inputs(artifact: dict, target: dict, policy: dict, expected: dict) -> list[str]:
     reasons = []
-    if artifact.get("schema_version") != 1 or artifact.get("decision_granularity") != "operator_group":
-        reasons.append("unsupported_artifact_schema")
+    # Producer and consumer come from the same checkout/run. Validate fields,
+    # rather than requiring the schema_version removed by the Linux producer.
+    if (
+        artifact.get("evidence_granularity") != "testcase"
+        or artifact.get("decision_granularity") not in ("none", "operator_group", "testcase")
+        or not isinstance(artifact.get("snapshots"), list)
+        or not isinstance(artifact.get("accuracy_decisions"), list)
+    ):
+        reasons.append("invalid_artifact_contract")
     payload = {key: value for key, value in artifact.items() if key != "payload_sha256"}
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if artifact.get("payload_sha256") != digest:
@@ -34,6 +41,10 @@ def validate_inputs(artifact: dict, target: dict, policy: dict, expected: dict) 
         reasons.append("unexpected_producer_job")
     if artifact.get("mode") != "compare" or artifact.get("selection_complete") is not True:
         reasons.append("incomplete_or_noncompare_selection")
+    if artifact.get("mode") == "provider_observation":
+        reasons.append("provider_observation_does_not_authorize_skips")
+    if artifact.get("decision_granularity") == "none":
+        reasons.append("no_routing_decision")
     if artifact.get("runner_exit_code") != 0:
         reasons.append("producer_run_failed")
     if target.get("schema_version") != 1 or target.get("build", {}).get("schema_version") != 1:
@@ -127,6 +138,7 @@ def main() -> None:
     args = parser.parse_args()
     expected = {
         "source_commit_sha": args.source_commit,
+        "workflow_sha": os.environ.get("GITHUB_SHA"),
         "repository": os.environ.get("GITHUB_REPOSITORY"),
         "workflow_ref": os.environ.get("GITHUB_WORKFLOW_REF"),
         "run_id": os.environ.get("GITHUB_RUN_ID"),
