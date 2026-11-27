@@ -201,10 +201,10 @@ jobs:
 
       # The build task already created this ZIP, including the MSVC runtime DLLs.
       - name: Upload Windows internal-symbol test inputs
-        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
+        if: ${{ inputs.has_code_changes && inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.qnn_internal_test_symbols && inputs.run_tests && !inputs.build_test_same_runner }}
         uses: actions/upload-artifact@v7
         with:
-          name: qnn-internal-windows-arm64-test-inputs
+          name: qnn-internal-${{ inputs.target_os }}-${{ inputs.target_arch }}-test-inputs
           retention-days: 1
           path: ${{ github.workspace }}/build/onnxruntime-tests-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}windows-${{ env.BUILD_DIR_ARCH }}.zip
           if-no-files-found: error
@@ -379,9 +379,7 @@ jobs:
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.target_os == 'windows' && inputs.target_arch == 'arm64' && inputs.run_tests && inputs.upload_test_archive && !inputs.build_test_same_runner && '-self-hosted' || '' }}${{ inputs.qnn_internal_test_symbols && inputs.target_os != 'linux' && '-internal-symbols' || '' }}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     # Cross-runner tests also consume shared testdata from Artifactory; skip on fork PRs where secrets are unavailable.
-    if: >-
-      ${{ !cancelled() && inputs.run_tests && !inputs.build_test_same_runner &&
-          github.event.pull_request.head.repo.fork != true && needs.build.result == 'success' }}
+    if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
     needs: [build]
     runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Test"]
     defaults:
