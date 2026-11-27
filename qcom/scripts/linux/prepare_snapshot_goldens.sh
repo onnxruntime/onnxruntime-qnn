@@ -5,7 +5,7 @@
 # Download and enable the latest QNN snapshot-golden store for a QNN EP
 # internal-symbol test run.
 # A missing, corrupt, or version-mismatched store deliberately leaves
-# QNN_UT_SNAPSHOT_GOLDEN_DIR unset, so accuracy_gate.py runs full accuracy.
+# QNN_UT_SNAPSHOT_GOLDEN_DIR unset, so the shared selector runs full accuracy.
 
 set -euo pipefail
 

@@ -2,33 +2,44 @@
 
 The standalone internal-symbol Snapshot runner exports `accuracy_routing.json` by passing
 `--emit-routing-result=<path>` to `run_snapshot_accuracy.sh`. The runner exports
-its existing operator-group selection on exit. Exporting does not change its
+its testcase-level selection on exit. Exporting does not change its
 test filter or exit code. Output preparation and export failures log a warning
 and retain the original test execution. Reused local output files are cleared
 when preparation succeeds, and new results are replaced atomically.
 
-The active `x86_64_ubuntu_22_04` internal-symbol CI caller uses ordinary provider
-CTest validation. The unused Linux-only `x86_64` shadow preparation and two-pass
-execution branches have been removed from the single-os workflow; standalone
-build/test commands and the separate golden producer remain supported. Its publisher
-reads the newly generated `onnxruntime_provider_test.<config>.results.xml` through
-`observe_provider_routing.py`; it does not execute Snapshot or Accuracy tests
-again. The previous report is removed before validation so an interrupted
-invocation cannot publish stale evidence. Missing or malformed reports and
-export failures warn without changing the validation verdict.
+## Shared Linux CI and coverage flow
 
-This producer records `mode: provider_observation`,
-`decision_granularity: none`, `selection_complete: false`, and Accuracy
-`runner_action: unknown`. It observes Snapshot evidence, not a routing decision.
-`snapshot_exit_code` is null because the provider exit is aggregate;
-`provider_validation_exit_code` and `runner_exit_code` record the validation
-command outcome. It does not enable golden preflight or alter the current
-CTest filter. Without explicit golden metadata, Accuracy evidence remains
-untrusted. Consumers must retain target execution for this observation mode.
-Enabling active testcase routing is separate from publishing its observations.
+The active Ubuntu internal-symbol caller and instrumented coverage job share
+`qnn_test_stages.sh` for provider execution, tier scopes, version resolution,
+verdict export, and Accuracy selection:
+
+```text
+Aligned golden preparation
+  -> Non-Snapshot/Accuracy provider tests (legacy, Component, Integration)
+  -> Snapshot / Session Snapshot
+  -> Verdict JSON
+  -> Testcase-level Accuracy selection
+  -> Selected Accuracy execution
+```
+
+The ordinary Linux job retains its existing model suites between baseline
+validation and the dedicated Snapshot/Accuracy runner. Its baseline filter
+excludes both routed tiers, which the dedicated runner owns. Coverage retains
+its QNN-only baseline scope and executes every stage using its instrumented
+binary, without resetting counters between stages; coverage collection follows
+all test phases. The baseline scopes differ intentionally, while both use the
+same tier exclusions and the same selector.
+
+`export_accuracy_routing.py` builds evidence and `select_accuracy_from_routing.py`
+validates the current invocation's verdict, full registered Accuracy inventory,
+versions, source SHA, and required Snapshot pairs before emitting a filter.
+Neither job routes from operator groups or copies `runner_action` blindly.
+The XML-only observation publisher and coverage-specific gate have been
+replaced by this shared flow. Windows jobs and production artifact validation
+remain on their existing paths.
 
 CI creates a directory under `RUNNER_TEMP`, named `qnn-routing-<run-id>-<attempt>`.
-If that path already exists, preparation warns and disables observation rather
+If that path already exists, preparation warns and disables publication rather
 than reusing or deleting it. Normal validation still runs. Only a successful export emits the
 `routing_result_path` step output used by the upload action. Preparation or
 export failure therefore cannot publish a previous result. An `always()` cleanup
@@ -45,13 +56,13 @@ run ID, and attempt against the expected producer run.
 | Field | Meaning |
 |---|---|
 | `evidence_granularity` | `testcase`; evidence is paired by exact suite variant and testcase name |
-| `decision_granularity` | `operator_group` for the legacy two-pass runner, `none` for active provider observation; neither grants target skip authorization |
+| `decision_granularity` | `testcase`; describes local selection, not target eligibility |
 | `producer` | Checkout SHA, Actions identity, actual build QAIRT/ORT versions, and downloaded golden profile |
 | `golden_manifest` | Versions and profile read from the golden store; missing data is represented by null |
 | `versions_match` | Both build versions match the manifest and the manifest supplies a profile |
-| `mode` | `compare`, `force_accuracy`, `generate_goldens`, or `provider_observation`; observation cannot authorize target skips |
-| `selection_complete` | Whether the runner completed its group selection |
-| `runner_exit_code`, `snapshot_exit_code` | Actual execution outcomes; Snapshot exit is null when only an aggregate provider verdict is available |
+| `mode` | `compare`, `force_accuracy`, or `generate_goldens` |
+| `selection_complete` | Whether the runner completed trusted testcase selection; false on selection failure |
+| `runner_exit_code`, `snapshot_exit_code` | Actual execution outcomes; baseline failure also invalidates the published CI result |
 | `snapshots` | Registered in-scope Snapshot identities and observed `match`, `drift`, or `untrusted` status |
 | `accuracy_decisions` | Accuracy identity, paired Snapshot identities with the same suite variant and testcase name, evidence status, and observed runner action |
 | `payload_sha256` | SHA-256 of UTF-8 compact JSON for all other fields, with keys sorted recursively |
@@ -62,16 +73,16 @@ suite by preserving the variant suffix and exact testcase name. If both tiers
 contain that same case, both identities are listed. Cases without an exact
 pair are `unmapped`; another case or variant cannot supply their evidence.
 
-`accuracy_decisions[].runner_action` is `run`, `skip`, `unknown` (selection did not
-complete), or `out_of_scope` (no in-scope Snapshot group). It describes observed
-Linux group selection. A paired case may match while its group still runs due
-to drift in another case. It does not grant target-platform eligibility. Evidence status
+`accuracy_decisions[].runner_action` is `run`, `skip`, or `unknown` (selection did not
+complete). It describes observed Linux testcase selection. An independently
+matched case can skip even when another case in the same operator drifts.
+Unpaired Accuracy cases remain in the full scoped run set. It does not grant target-platform eligibility. Evidence status
 is independently `match`, `drift`, `untrusted`, or `unmapped`; a Linux skip with
 missing or incompatible metadata remains untrusted for consumption.
 
 The digest detects payload corruption. It does not authenticate a producer.
 Consumers must obtain artifacts from the expected trusted workflow run.
-Both entry points use `write_routing_result` for canonical JSON, digest generation,
+Both job paths use `write_routing_result` for canonical JSON, digest generation,
 staging-file naming, and atomic replacement.
 
 Manifest versions must be nonempty strings, and the profile must be a valid
@@ -82,7 +93,7 @@ the independently observed runner action.
 
 ## Initial Consumer Boundary
 
-This change publishes results only. It supplies no Windows consumer or target
+This flow routes local Linux Accuracy tests. It supplies no Windows consumer or target
 skip policy. A later consumer must validate identity, required fields and types, mode, successful
 execution, complete selection, versions, profile, and the registered target
 universe, then join evidence to a reviewed target policy. Missing or incompatible
@@ -111,6 +122,24 @@ consumer reports this proposed skip list while all target Accuracy tests run;
 enforcement is a separate change.
 
 This exporter supplies testcase evidence, not a target-authorized skip list.
+
+## Local execution policy
+
+The shared runner starts from all registered Accuracy cases in the requested
+operator filter. Compare mode skips a case only when every registered exact
+Snapshot pair is a trusted match and the golden versions/profile are valid.
+Missing, skipped, malformed, or unmapped evidence retains execution. Selection
+failure falls back to the full scoped Accuracy filter. Artifact publication
+failure does not change selection. `--force-accuracy` and `--generate-goldens`
+always run the full scoped Accuracy universe.
+
+Coverage uses the same exporter and selector as the ordinary runner. Its
+`generate_coverage.sh --force-accuracy` option retains Snapshot execution and
+runs the full Accuracy universe for coverage baselines. Explicit skip and
+single-filter diagnostic modes remain available. Golden drift is a routing
+signal; genuine Snapshot failures retain full Accuracy fallback and fail the
+job after the coverage report is generated. Operator filters remain scope
+selectors.
 
 The current `linux-x86_64-htp-simulator` namespace does not establish a v73
 execution profile. `producer.target_htp_arch` is therefore null. Windows ARM64

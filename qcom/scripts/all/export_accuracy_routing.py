@@ -34,6 +34,8 @@ def parse_test_list(text: str) -> list[tuple[str, str]]:
 
 
 def snapshot_status(case: dict) -> str:
+    if case.get("errors") not in (None, [], 0):
+        return "untrusted"
     failures = case.get("failures", [])
     if not isinstance(failures, list) or any(
         not isinstance(failure, dict) or not isinstance(failure.get("failure"), str) for failure in failures
@@ -53,6 +55,8 @@ def load_snapshot_cases(path: Path) -> dict[tuple[str, str], str]:
     result = {}
     data = json.loads(path.read_text(encoding="utf-8"))
     for suite in data["testsuites"]:
+        if suite.get("errors", 0):
+            raise ValueError("Snapshot suite contains errors")
         for case in suite.get("testsuite", []):
             identity = (suite["name"], case["name"])
             if identity in result:
@@ -87,6 +91,10 @@ def export_result(args: argparse.Namespace) -> dict:
         statuses = load_snapshot_cases(args.snapshot_json)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         statuses = {}
+    # A nonzero process exit without any recorded failed case is incomplete
+    # execution evidence, even if the report contains some passing cases.
+    if args.snapshot_exit and not any(status != "match" for status in statuses.values()):
+        statuses = {}
 
     manifest = read_manifest(args.manifest)
     versions_match = bool(
@@ -96,9 +104,7 @@ def export_result(args: argparse.Namespace) -> dict:
         and args.ort_version == manifest.get("ort_version")
         and manifest.get("golden_profile")
     )
-    target_groups = set(filter(None, args.target_groups.split(",")))
     snapshots = []
-    groups = set()
     paired_snapshots: dict[tuple[str, str], list[dict]] = {}
     for suite, name in snapshot_cases:
         match = SNAPSHOT_GROUP.fullmatch(suite)
@@ -106,7 +112,6 @@ def export_result(args: argparse.Namespace) -> dict:
             raise ValueError(f"Unrecognized Snapshot suite: {suite}")
         record = {"test_id": f"{suite}.{name}", "status": statuses.get((suite, name), "untrusted")}
         snapshots.append(record)
-        groups.add(match[1])
         accuracy_suite = f"QnnAcc_{match[1]}_Accuracy{match[2] or ''}Test"
         paired_snapshots.setdefault((accuracy_suite, name), []).append(record)
 
@@ -115,7 +120,6 @@ def export_result(args: argparse.Namespace) -> dict:
         match = ACCURACY_GROUP.fullmatch(suite)
         if not match:
             raise ValueError(f"Unrecognized Accuracy suite: {suite}")
-        group = match[1]
         evidence = paired_snapshots.get((suite, name), [])
         if not evidence:
             status = "unmapped"
@@ -125,13 +129,9 @@ def export_result(args: argparse.Namespace) -> dict:
             status = "match"
         else:
             status = "untrusted"
-        # This records Linux group selection only. Target consumers use exact
-        # testcase evidence and reviewed policy, not this action, to allow skips.
-        action = "run" if group in target_groups else "skip"
+        action = "skip" if status == "match" and args.mode == "compare" else "run"
         if not args.selection_complete:
             action = "unknown"
-        elif group not in groups:
-            action = "out_of_scope"
         decisions.append(
             {
                 "accuracy_test_id": f"{suite}.{name}",
@@ -143,7 +143,7 @@ def export_result(args: argparse.Namespace) -> dict:
 
     return {
         "evidence_granularity": "testcase",
-        "decision_granularity": "operator_group",
+        "decision_granularity": "testcase",
         "producer": {
             "source_commit_sha": args.source_commit,
             "repository": os.environ.get("GITHUB_REPOSITORY"),
@@ -168,10 +168,15 @@ def export_result(args: argparse.Namespace) -> dict:
     }
 
 
+def routing_payload_sha256(result: dict) -> str:
+    payload = {key: value for key, value in result.items() if key != "payload_sha256"}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def write_routing_result(result: dict, output: Path) -> None:
     """Finalize the artifact digest and atomically publish its JSON."""
-    payload = json.dumps(result, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    result["payload_sha256"] = hashlib.sha256(payload).hexdigest()
+    result["payload_sha256"] = routing_payload_sha256(result)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
     temporary.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -185,7 +190,6 @@ def main() -> None:
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--qairt-version", default="")
     parser.add_argument("--ort-version", default="")
-    parser.add_argument("--target-groups", default="")
     parser.add_argument("--mode", choices=("compare", "force_accuracy", "generate_goldens"), required=True)
     parser.add_argument("--selection-complete", action="store_true")
     parser.add_argument("--runner-exit", type=int, required=True)

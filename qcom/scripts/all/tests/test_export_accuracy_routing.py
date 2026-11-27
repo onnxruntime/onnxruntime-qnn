@@ -71,17 +71,17 @@ PASS = {"status": "RUN", "result": "COMPLETED"}
     ],
 )
 def test_evidence_status_is_separate_from_observed_selection(tmp_path, case, manifest, targets, expected):
-    result = export(tmp_path, snapshot(case), manifest, ("--selection-complete", f"--target-groups={targets}"))
+    result = export(tmp_path, snapshot(case), manifest, ("--selection-complete",))
     decision, unmapped = result["accuracy_decisions"]
     assert "schema_version" not in result
     assert decision["status"] == expected
-    assert decision["runner_action"] == ("run" if targets else "skip")
+    assert decision["runner_action"] == ("skip" if expected == "match" else "run")
     assert decision["snapshot_test_ids"] == [SNAPSHOT + ".Case"]
-    assert unmapped["runner_action"] == "out_of_scope"
+    assert unmapped["runner_action"] == "run"
     assert unmapped["status"] == "unmapped"
     assert result["producer"]["target_htp_arch"] is None
     assert result["evidence_granularity"] == "testcase"
-    assert result["decision_granularity"] == "operator_group"
+    assert result["decision_granularity"] == "testcase"
     digest = result.pop("payload_sha256")
     assert digest == hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -118,13 +118,13 @@ def test_invalid_manifest_profile_cannot_supply_match(tmp_path, profile, targets
         tmp_path,
         snapshot(PASS),
         {**MANIFEST, "golden_profile": profile},
-        ("--selection-complete", f"--target-groups={targets}"),
+        ("--selection-complete",),
     )
     assert not result["versions_match"]
     assert result["producer"]["golden_profile"] is None
     assert result["golden_manifest"]["golden_profile"] is None
     assert result["accuracy_decisions"][0]["status"] == "untrusted"
-    assert result["accuracy_decisions"][0]["runner_action"] == ("run" if targets else "skip")
+    assert result["accuracy_decisions"][0]["runner_action"] == "run"
 
 
 @pytest.mark.parametrize(
@@ -136,11 +136,11 @@ def test_invalid_nested_failures_cannot_supply_match(tmp_path, failures, targets
         tmp_path,
         snapshot({**PASS, "failures": failures}),
         MANIFEST,
-        ("--selection-complete", f"--target-groups={targets}"),
+        ("--selection-complete",),
     )
     assert result["snapshots"][0]["status"] == "untrusted"
     assert result["accuracy_decisions"][0]["status"] == "untrusted"
-    assert result["accuracy_decisions"][0]["runner_action"] == ("run" if targets else "skip")
+    assert result["accuracy_decisions"][0]["runner_action"] == "run"
 
 
 @pytest.mark.parametrize("field", ["qairt_version", "ort_version"])
@@ -169,13 +169,13 @@ def test_pairing_excludes_other_cases_and_variants(tmp_path):
         tmp_path,
         data,
         MANIFEST,
-        ("--selection-complete", "--target-groups=Clip"),
+        ("--selection-complete",),
         snapshot_list=f"{SNAPSHOT}.\n  Case\n  Other\n{other_variant}.\n  Case\n",
     )
     decision = result["accuracy_decisions"][0]
     assert decision["snapshot_test_ids"] == [SNAPSHOT + ".Case"]
     assert decision["status"] == "match"
-    assert decision["runner_action"] == "run"
+    assert decision["runner_action"] == "skip"
 
 
 @pytest.mark.parametrize(
@@ -211,7 +211,7 @@ def test_partial_group_drift_preserves_independent_testcase_evidence(tmp_path):
         tmp_path,
         data,
         MANIFEST,
-        ("--selection-complete", "--target-groups=Clip"),
+        ("--selection-complete",),
         snapshot_list=f"{SNAPSHOT}.\n  Case\n  Other\n",
         accuracy_list=f"{ACCURACY}.\n  Case\n  Other\n  Unpaired\n",
     )
@@ -220,7 +220,9 @@ def test_partial_group_drift_preserves_independent_testcase_evidence(tmp_path):
     assert decisions[ACCURACY + ".Other"]["status"] == "drift"
     assert decisions[ACCURACY + ".Unpaired"]["status"] == "unmapped"
     assert decisions[ACCURACY + ".Unpaired"]["snapshot_test_ids"] == []
-    assert all(case["runner_action"] == "run" for case in decisions.values())
+    assert decisions[ACCURACY + ".Case"]["runner_action"] == "skip"
+    assert decisions[ACCURACY + ".Other"]["runner_action"] == "run"
+    assert decisions[ACCURACY + ".Unpaired"]["runner_action"] == "run"
 
 
 def test_same_group_without_exact_pair_is_unmapped(tmp_path):
@@ -229,13 +231,62 @@ def test_same_group_without_exact_pair_is_unmapped(tmp_path):
         tmp_path,
         data,
         MANIFEST,
-        ("--selection-complete", "--target-groups=Clip"),
+        ("--selection-complete",),
         snapshot_list=f"{SNAPSHOT}.\n  Other\n",
     )
     decision = result["accuracy_decisions"][0]
     assert decision["snapshot_test_ids"] == []
     assert decision["status"] == "unmapped"
     assert decision["runner_action"] == "run"
+
+
+@pytest.mark.parametrize("mode", ["force_accuracy", "generate_goldens"])
+def test_full_execution_modes_never_skip_matches(tmp_path, mode):
+    result = export(tmp_path, snapshot(PASS), MANIFEST, ("--selection-complete", f"--mode={mode}"))
+    assert result["accuracy_decisions"][0]["status"] == "match"
+    assert all(case["runner_action"] == "run" for case in result["accuracy_decisions"])
+
+
+def test_nonzero_snapshot_exit_without_recorded_failure_cannot_skip(tmp_path):
+    result = export(tmp_path, snapshot(PASS), MANIFEST, ("--selection-complete", "--snapshot-exit=2"))
+    assert all(case["runner_action"] == "run" for case in result["accuracy_decisions"])
+
+
+def test_selected_filter_contains_drift_and_unmapped_but_not_match(tmp_path):
+    data = {
+        "testsuites": [
+            {
+                "name": SNAPSHOT,
+                "testsuite": [
+                    {"name": "Case", **PASS},
+                    {"name": "Other", **PASS, "failures": [{"failure": "QNN_SNAPSHOT_DRIFT"}]},
+                ],
+            }
+        ]
+    }
+    filter_file = tmp_path / "filter.txt"
+    export(
+        tmp_path,
+        data,
+        MANIFEST,
+        ("--selection-complete",),
+        snapshot_list=f"{SNAPSHOT}.\n  Case\n  Other\n",
+        accuracy_list=f"{ACCURACY}.\n  Case\n  Other\n  Unpaired\n",
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT.with_name("select_accuracy_from_routing.py")),
+            f"--verdict={tmp_path / 'result.json'}",
+            f"--accuracy-list={tmp_path / 'accuracy.txt'}",
+            f"--output={filter_file}",
+            "--source-commit=" + "a" * 40,
+            "--qairt-version=2.52",
+            "--ort-version=1.30",
+        ],
+        check=True,
+    )
+    assert filter_file.read_text().split(":") == [ACCURACY + ".Other", ACCURACY + ".Unpaired"]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fake executable fixture")
@@ -274,10 +325,21 @@ raise SystemExit(int({drift!r}) if is_snapshot else {accuracy_exit})
     command = ["bash", str(RUNNER), f"--build-dir={binary_dir}"]
     execution_log = tmp_path / "executions.log"
     github_output = tmp_path / "github_output"
+    sdk = tmp_path / "sdk"
+    sdk.mkdir()
+    (sdk / "sdk.yaml").write_text("version: 2.52\n")
+    (binary_dir / "CMakeCache.txt").write_text(f"onnxruntime_QNN_HOME:PATH={sdk}\n")
+    ort = binary_dir / "_deps/ort_core-src"
+    ort.mkdir(parents=True)
+    (ort / "VERSION_NUMBER").write_text("1.30\n")
+    golden = tmp_path / "goldens"
+    golden.mkdir()
+    (golden / "manifest.json").write_text(json.dumps(MANIFEST))
     env = os.environ | {
         "PYTHON_BIN": sys.executable,
         "FAKE_EXECUTION_LOG": str(execution_log),
         "GITHUB_OUTPUT": str(github_output),
+        "QNN_UT_SNAPSHOT_GOLDEN_DIR": str(golden),
     }
     baseline = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
     baseline_execution = execution_log.read_text()
@@ -363,7 +425,7 @@ def test_ci_observation_directory_preparation_and_scoped_cleanup(tmp_path, prepa
     step = next(item for item in steps if item.get("id") == "linux_observation_directory")
     upload = next(item for item in steps if item.get("name") == "Upload Linux snapshot routing result")
     cleanup = next(item for item in steps if item.get("name") == "Clean up routing output directory")
-    assert upload["with"]["path"] == "${{ steps.linux_provider_observation.outputs.routing_result_path }}"
+    assert upload["with"]["path"] == "${{ steps.linux_snapshot_routing.outputs.routing_result_path }}"
     assert "outputs.routing_result_path != ''" in upload["if"]
     assert "always()" in cleanup["if"]
 

@@ -137,15 +137,18 @@ fi
 log_info "-=-=-=- Running ctests -=-=-=-"
 exclude_args=()
 if [ -n "${QNN_UT_TWO_PASS_SNAPSHOT_ACCURACY:-}" ]; then
+    source "${REPO_ROOT}/qcom/scripts/all/qnn_test_stages.sh"
     # Snapshot drift is a routing signal, not a failure: the CI workflow runs
     # the two-pass runner after this baseline suite to verify only the paired
     # accuracy cases. Keep the ordinary provider tests in this step, but leave
     # both snapshot and accuracy tiers to that runner.
     count_errors ./ctest --verbose --timeout 10800 --stop-on-failure \
         --exclude-regex '^onnxruntime_provider_test$' "${exclude_args[@]}"
-    count_errors ./onnxruntime_provider_test \
-        --gtest_filter='-QnnSnapshot_*:QnnAcc_*' \
-        --gtest_output="xml:${build_dir}/onnxruntime_provider_test.results.xml"
+    provider_report="${build_dir}/onnxruntime_provider_test.${BUILD_CONFIG_DIR:-$(basename "${build_dir}")}.results.xml"
+    rm -f -- "${build_dir}/onnxruntime_provider_test.results.xml" "${provider_report}"
+    count_errors qnn_run_provider "${build_dir}/onnxruntime_provider_test" "${build_dir}" \
+        --gtest_filter="-${QNN_NON_ROUTED_EXCLUSIONS}" \
+        --gtest_output="xml:${provider_report}"
 else
     count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"
 fi
