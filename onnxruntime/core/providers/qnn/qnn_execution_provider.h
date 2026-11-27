@@ -207,6 +207,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   void GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
                                    const ::OrtRunOptions* run_options);
 
+  OrtStatus* ValidatePersistentKvRunOptions(const ::OrtRunOptions* run_options) const;
+
   void CreateHtpPowerConfigId() const;
   // Will return false if htp_power_config_id_ has no value
   bool GetHtpPowerConfigId(uint32_t& htp_power_config_id);

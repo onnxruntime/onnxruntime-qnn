@@ -738,6 +738,11 @@ TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_Basic_PopulatesInputsOutputs) {
   QnnModelMinimalTestContext ctx;
   ASSERT_TRUE(ctx.IsValid());
   InstallFakeGraphApiStubs(ctx.stub_ort_api);
+  const OrtApi* real_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
+  ctx.stub_ort_api.CreateStatus = real_api->CreateStatus;
+  ctx.stub_ort_api.ReleaseStatus = real_api->ReleaseStatus;
+  ctx.stub_ort_api.GetErrorCode = real_api->GetErrorCode;
+  ctx.stub_ort_api.GetErrorMessage = real_api->GetErrorMessage;
   // Make Ort::ConstNode / Ort::ConstValueInfo wrappers route through our stub
   // instead of the real ORT runtime, which would SIGSEGV on our fake pointers.
   OrtGlobalApiOverride api_override(&ctx.stub_ort_api);
@@ -757,6 +762,13 @@ TEST(QnnUnit_ModelTest, SetGraphInputOutputInfo_Basic_PopulatesInputsOutputs) {
 
   auto status = ctx.model->SetGraphInputOutputInfo(mc);
   EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_FALSE(ctx.model->UsesHtpPersistentBuffer());
+  settings.enable_htp_persistent_buffer = true;
+  ASSERT_TRUE(ctx.model->SetGraphInputOutputInfo(mc).IsOK());
+  EXPECT_TRUE(ctx.model->UsesHtpPersistentBuffer());
+  qnn::EpContextIoDispatch io_dispatch;
+  auto execute_status = ctx.model->ExecuteGraph(nullptr, ctx.logger, io_dispatch);
+  EXPECT_EQ(execute_status.GetErrorCode(), ORT_NOT_IMPLEMENTED);
 }
 
 TEST(QnnUnit_ModelTest, SetupTensors_SparseOutputIndex_ReturnsCompactedTensorInfo) {

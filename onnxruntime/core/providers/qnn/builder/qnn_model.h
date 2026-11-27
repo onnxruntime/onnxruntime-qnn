@@ -89,6 +89,8 @@ class QnnModel {
 
   Ort::Status SetGraphInputOutputInfo(const QnnModelContext& context);
 
+  bool UsesHtpPersistentBuffer() const { return enable_htp_persistent_buffer_; }
+
   // Input index within ORT graph (includes initializers in count)
   size_t GetOrtInputIndex(const std::string& name) const {
     return GetInputOutputIndex(name, graph_inputs_.tensors);
@@ -219,6 +221,7 @@ class QnnModel {
 
  private:
   std::unique_ptr<GraphInfo> graph_info_;
+  bool enable_htp_persistent_buffer_ = false;
   QnnBackendManager* qnn_backend_manager_ = nullptr;
   std::unique_ptr<QnnGraphEmitter> qnn_graph_emitter_;
   GraphInputOutputInfo graph_inputs_;

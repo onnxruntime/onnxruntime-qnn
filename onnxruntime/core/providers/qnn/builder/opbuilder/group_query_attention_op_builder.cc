@@ -17,6 +17,9 @@ namespace onnxruntime {
 namespace qnn {
 
 #ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+// shortcut: engineering backend tensor type 14, replace with the SDK enum when published.
+constexpr Qnn_TensorType_t kPersistentTensorType = static_cast<Qnn_TensorType_t>(14);
+
 static Ort::Status GetGqaCacheCapacity(QnnModelWrapper& qnn_model_wrapper,
                                        const OrtNodeUnit& node_unit,
                                        uint32_t& cache_capacity) {
@@ -76,6 +79,20 @@ Ort::Status GroupQueryAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mod
 
   const size_t num_outputs = node_unit.Outputs().size();
   const auto& outputs = node_unit.Outputs();
+
+  if (qnn_model_wrapper.GetModelSettings().enable_htp_persistent_buffer) {
+    RETURN_IF_NOT(backend_type == QnnBackendType::HTP, "Persistent GQA buffers require the HTP backend");
+    const bool has_past_key = num_inputs > 3 && inputs[3].Exists();
+    const bool has_past_value = num_inputs > 4 && inputs[4].Exists();
+    RETURN_IF_NOT(has_past_key == has_past_value, "Persistent GQA requires both past KV inputs or neither");
+    if (has_past_key) {
+      RETURN_IF_NOT(qnn_model_wrapper.IsGraphInput(inputs[3].name) &&
+                        qnn_model_wrapper.IsGraphInput(inputs[4].name),
+                    "Persistent GQA past KV tensors must be graph inputs");
+    }
+    RETURN_IF_NOT(num_outputs >= 3 && outputs[1].Exists() && outputs[2].Exists(),
+                  "Persistent GQA requires present_key and present_value outputs with shape information");
+  }
 
   uint32_t cache_capacity = 0;
   RETURN_IF_ERROR(GetGqaCacheCapacity(qnn_model_wrapper, node_unit, cache_capacity));
@@ -190,7 +207,28 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_mod
 
   for (size_t qnn_idx = 0; qnn_idx < qnn_input_count; ++qnn_idx) {
     const auto onnx_idx = qnn_idx_to_onnx[qnn_idx];
-    if (onnx_idx.has_value() && onnx_inputs.size() > *onnx_idx && onnx_inputs[*onnx_idx].Exists()) {
+    if (qnn_model_wrapper.GetModelSettings().enable_htp_persistent_buffer &&
+        onnx_idx.has_value() && (*onnx_idx == 3 || *onnx_idx == 4)) {
+      const auto& output = node_unit.Outputs()[*onnx_idx - 2];
+      const bool has_input = onnx_inputs.size() > *onnx_idx && onnx_inputs[*onnx_idx].Exists();
+      const auto& cache = has_input ? onnx_inputs[*onnx_idx] : output;
+      TensorInfo tensor_info = {};
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(cache, tensor_info));
+      RETURN_IF_NOT(!tensor_info.is_initializer, "Persistent GQA cache cannot be an initializer");
+      RETURN_IF_NOT(tensor_info.shape.size() == 4, "Persistent GQA cache must have rank 4");
+      RETURN_IF_NOT(tensor_info.qnn_data_type == QNN_DATATYPE_FLOAT_16,
+                    "Engineering persistent GQA buffers require FP16 cache tensors");
+      TensorInfo output_info = {};
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, output_info));
+      RETURN_IF_NOT(tensor_info.shape == output_info.shape && tensor_info.qnn_data_type == output_info.qnn_data_type,
+                    "Persistent GQA past and present cache shapes and types must match");
+      const std::string tensor_name = has_input ? cache.name : output.name + "_persistent";
+      QnnTensorWrapper tensor_wrapper(tensor_name, kPersistentTensorType, tensor_info.qnn_data_type,
+                                      std::move(tensor_info.quant_param), std::move(tensor_info.shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tensor_wrapper)),
+                    "Failed to add persistent GQA cache tensor");
+      input_names.push_back(tensor_name);
+    } else if (onnx_idx.has_value() && onnx_inputs.size() > *onnx_idx && onnx_inputs[*onnx_idx].Exists()) {
       const auto& onnx_input = onnx_inputs[*onnx_idx];
       // QNN requires total_sequence_length as a 0D scalar, but ONNX provides it as shape [1].
       // Build the tensor wrapper directly with an empty shape to avoid a Reshape.
@@ -326,7 +364,9 @@ Ort::Status GroupQueryAttentionOpBuilder::ProcessAttributesAndOutputs(QnnModelWr
       TensorInfo output_info = {};
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[output_idx], output_info));
 
-      bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+      const bool persistent_cache = qnn_model_wrapper.GetModelSettings().enable_htp_persistent_buffer &&
+                                    (output_idx == 1 || output_idx == 2);
+      bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name) && !persistent_cache;
       Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
       QnnTensorWrapper output_tensorwrapper(output_name,

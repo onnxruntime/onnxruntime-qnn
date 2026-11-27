@@ -351,6 +351,62 @@ TEST_F(QnnUnit_ExecutionProviderTest, DefaultCtor_Succeeds) {
   ASSERT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
 }
 
+TEST_F(QnnUnit_ExecutionProviderTest, PersistentKvRunOptions_RejectInvalidValuesBeforeExecution) {
+  for (const char* value : {"", "true", "false", "2", " 1", "1x"}) {
+    SCOPED_TRACE(value);
+    EpStubContext ctx;
+    ctx.run_config["qnn.persistent_kv_write"] = value;
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    UseGlobalEpStubs use(ctx);
+    Ort::Status status(ep->OnRunStart(ep.get(), reinterpret_cast<OrtRunOptions*>(kFakeToken)));
+    EXPECT_EQ(status.GetErrorCode(), ORT_INVALID_ARGUMENT);
+    EXPECT_NE(status.GetErrorMessage().find("must be '0' or '1'"), std::string::npos);
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, PersistentKvRunOptions_WriteRequiresPersistentMode) {
+  EpStubContext ctx;
+  ctx.run_config["qnn.persistent_kv_write"] = "1";
+  auto factory = MakeFactory(ctx);
+  auto ep = MakeEp(*factory, ctx);
+  UseGlobalEpStubs use(ctx);
+  Ort::Status status(ep->OnRunStart(ep.get(), reinterpret_cast<OrtRunOptions*>(kFakeToken)));
+  EXPECT_EQ(status.GetErrorCode(), ORT_INVALID_ARGUMENT);
+  EXPECT_NE(status.GetErrorMessage().find("requires enable_htp_persistent_buffer=1"), std::string::npos);
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, PersistentKvRunOptions_NoWriteKeepsOrdinaryMode) {
+  for (const char* value : std::array<const char*, 2>{nullptr, "0"}) {
+    EpStubContext ctx;
+    if (value) {
+      ctx.run_config["qnn.persistent_kv_write"] = value;
+    }
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    UseGlobalEpStubs use(ctx);
+    Ort::Status status(ep->OnRunStart(ep.get(), reinterpret_cast<OrtRunOptions*>(kFakeToken)));
+    EXPECT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, PersistentKvRunOptions_FailClosedUntilBackendInitializationIsWired) {
+  for (const char* value : std::array<const char*, 3>{nullptr, "0", "1"}) {
+    SCOPED_TRACE(value ? value : "omitted");
+    EpStubContext ctx;
+    ctx.session_config[EPKey("enable_htp_persistent_buffer")] = "1";
+    if (value) {
+      ctx.run_config["qnn.persistent_kv_write"] = value;
+    }
+    auto factory = MakeFactory(ctx);
+    auto ep = MakeEp(*factory, ctx);
+    UseGlobalEpStubs use(ctx);
+    Ort::Status status(ep->OnRunStart(ep.get(), reinterpret_cast<OrtRunOptions*>(kFakeToken)));
+    EXPECT_EQ(status.GetErrorCode(), ORT_NOT_IMPLEMENTED);
+    EXPECT_NE(status.GetErrorMessage().find("not implemented"), std::string::npos);
+  }
+}
+
 TEST_F(QnnUnit_ExecutionProviderTest, CreateAllocator_NullMemoryInfo_ReturnsNullAllocator) {
   EpStubContext ctx;
   auto factory = MakeFactory(ctx);

@@ -17,6 +17,7 @@
 #include "QnnTypes.h"
 
 #include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_graph_emitter.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
@@ -219,6 +220,75 @@ TEST(QnnUnit_ModelWrapperTest, ComposeQnnGraph_EmptyOpList_ReturnsFalse) {
 // ── GetGraphInputTensorWrappers / GetGraphOutputTensorWrappers ────────────
 
 // When input_info.names is empty, GetGraphInputTensorWrappers returns an empty vector.
+#ifdef QNN_GROUP_QUERY_ATTENTION_AVAILABLE
+TEST(QnnUnit_ModelWrapperTest, PersistentGqa_RetainedOnnxKVBecomesBackendState) {
+  const auto* builder = qnn::GetOpBuilder("GroupQueryAttention");
+  ASSERT_NE(builder, nullptr);
+  for (bool persistent : {false, true}) {
+    QnnModelWrapperTestContext ctx;
+    ctx.input_info.names = {"query", "past_key", "past_value", "seqlens_k", "total_sequence_length"};
+    ctx.output_info.names = {"output", "present_key", "present_value"};
+    for (size_t i = 0; i < ctx.input_info.names.size(); ++i) {
+      ctx.input_info.indices.emplace(ctx.input_info.names[i], i);
+    }
+    for (size_t i = 0; i < ctx.output_info.names.size(); ++i) {
+      ctx.output_info.indices.emplace(ctx.output_info.names[i], i);
+    }
+    qnn::ModelSettings settings;
+    settings.enable_htp_persistent_buffer = persistent;
+    auto wrapper = ctx.CreateWrapper(settings);
+    const std::vector<int64_t> cache_shape{1, 4, 128, 32};
+    auto absent = MakeMockIODef("", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED);
+    auto node = MakeMockNodeUnit(
+        "GroupQueryAttention",
+        {MakeMockIODef("query", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, std::vector<int64_t>{1, 1, 512}),
+         absent, absent,
+         MakeMockIODef("past_key", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, cache_shape),
+         MakeMockIODef("past_value", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, cache_shape),
+         MakeMockIODef("seqlens_k", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, std::vector<int64_t>{1}),
+         MakeMockIODef("total_sequence_length", ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, std::vector<int64_t>{1})},
+        {MakeMockIODef("output", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, std::vector<int64_t>{1, 1, 256}),
+         MakeMockIODef("present_key", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, cache_shape),
+         MakeMockIODef("present_value", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, cache_shape)},
+        "gqa", "com.microsoft", 1, 0,
+        {FakeOpAttr::MakeInt64("num_heads", 8), FakeOpAttr::MakeInt64("kv_num_heads", 4)});
+    auto status = builder->AddToModelBuilder(*wrapper, node, ctx.null_logger_, false);
+    ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+    for (const char* name : {"past_key", "past_value"}) {
+      EXPECT_EQ(wrapper->GetQnnTensorWrapper(name).GetTensorType(),
+                persistent ? static_cast<Qnn_TensorType_t>(14) : QNN_TENSOR_TYPE_APP_WRITE);
+    }
+    for (const char* name : {"present_key", "present_value"}) {
+      EXPECT_EQ(wrapper->GetQnnTensorWrapper(name).GetTensorType(),
+                persistent ? QNN_TENSOR_TYPE_NATIVE : QNN_TENSOR_TYPE_APP_READ);
+    }
+  }
+}
+#endif
+
+TEST(QnnUnit_ModelWrapperTest, PersistentKvWrappers_ExcludeBackendStateFromOrdinaryExecuteIO) {
+  QnnModelWrapperTestContext ctx;
+  ctx.input_info.names = {"query", "past_key"};
+  ctx.input_info.indices = {{"query", 0}, {"past_key", 1}};
+  ctx.output_info.names = {"output", "present_key"};
+  ctx.output_info.indices = {{"output", 0}, {"present_key", 1}};
+  qnn::ModelSettings settings;
+  settings.enable_htp_persistent_buffer = true;
+  auto wrapper = ctx.CreateWrapper(settings);
+  // Same engineering enum value as the GQA builder; no public SDK enum yet.
+  for (const auto& [name, type] : std::vector<std::pair<std::string, Qnn_TensorType_t>>{
+           {"query", QNN_TENSOR_TYPE_APP_WRITE}, {"past_key", static_cast<Qnn_TensorType_t>(14)}, {"output", QNN_TENSOR_TYPE_APP_READ}, {"present_key", QNN_TENSOR_TYPE_NATIVE}}) {
+    ASSERT_TRUE(wrapper->AddTensorWrapper(qnn::QnnTensorWrapper(
+        name, type, QNN_DATATYPE_FLOAT_16, qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1})));
+  }
+  std::vector<qnn::QnnTensorWrapper> inputs = wrapper->GetGraphInputTensorWrappers();
+  std::vector<qnn::QnnTensorWrapper> outputs = wrapper->GetGraphOutputTensorWrappers();
+  ASSERT_EQ(inputs.size(), 1u);
+  ASSERT_EQ(outputs.size(), 1u);
+  EXPECT_EQ(inputs[0].GetName(), "query");
+  EXPECT_EQ(outputs[0].GetName(), "output");
+}
+
 TEST(QnnUnit_ModelWrapperTest, GetGraphInputTensorWrappers_EmptyNames_ReturnsEmpty) {
   QnnModelWrapperTestContext ctx;
   qnn::ModelSettings settings{};

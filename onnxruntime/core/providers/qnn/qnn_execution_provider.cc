@@ -4,6 +4,7 @@
 #include "core/providers/qnn/qnn_execution_provider.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cctype>
 #include <charconv>
 #include <filesystem>
@@ -1018,6 +1019,13 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
                                                                   false,
                                                                   logger_);
   model_settings_.enable_htp_monolithic_lstm = htp_graph_configs_.enable_htp_monolithic_lstm;
+
+  static constexpr const char* kEnableHtpPersistentBuffer = "enable_htp_persistent_buffer";
+  model_settings_.enable_htp_persistent_buffer = ParseBoolOption(ort_api,
+                                                                 session_options_,
+                                                                 FormatEPConfigKey(kEnableHtpPersistentBuffer),
+                                                                 false,
+                                                                 logger_);
 
   // HTP fp16 clamp overflow. Default false. On HTP Arch v79+ (e.g. Glymur/v81),
   // fp16 Conv accumulator overflow becomes NaN and propagates to the output
@@ -3602,6 +3610,32 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
   }
 }
 
+OrtStatus* QnnEp::ValidatePersistentKvRunOptions(const ::OrtRunOptions* run_options) const {
+  const char* value = run_options ? ort_api.GetRunConfigEntry(run_options, "qnn.persistent_kv_write") : nullptr;
+  if (value != nullptr && std::strcmp(value, "0") != 0 && std::strcmp(value, "1") != 0) {
+    return ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "qnn.persistent_kv_write must be '0' or '1'.");
+  }
+
+  const bool write = value != nullptr && std::strcmp(value, "1") == 0;
+  const bool persistent = model_settings_.enable_htp_persistent_buffer ||
+                          std::any_of(qnn_models_.begin(), qnn_models_.end(), [](const auto& entry) {
+                            return entry.second->UsesHtpPersistentBuffer();
+                          });
+  if (write && !persistent) {
+    return ort_api.CreateStatus(ORT_INVALID_ARGUMENT,
+                                "qnn.persistent_kv_write=1 requires enable_htp_persistent_buffer=1.");
+  }
+  if (!persistent) {
+    return nullptr;
+  }
+
+  // shortcut: fail closed until the engineering backend's write/initialization recipe is confirmed.
+  return ort_api.CreateStatus(
+      ORT_NOT_IMPLEMENTED,
+      write ? "Persistent KV write is not implemented: the backend initialization recipe is not wired."
+            : "Persistent KV execution is not implemented: the cache cannot be used before initialization.");
+}
+
 OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const ::OrtRunOptions* run_options) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
@@ -3610,6 +3644,8 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const :
                 "Skipping OnRunStart in enable_htp_prepare_only mode.");
     return nullptr;
   }
+
+  RETURN_IF_NOT_NULL(ep->ValidatePersistentKvRunOptions(run_options));
 
   auto backend_type = ep->qnn_backend_manager_->GetQnnBackendType();
   if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
