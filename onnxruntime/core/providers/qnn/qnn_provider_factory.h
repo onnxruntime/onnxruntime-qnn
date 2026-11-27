@@ -18,6 +18,8 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
   QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
 
+  SharedContext& GetSharedContext() const { return shared_context_; }
+
   const OrtMemoryInfo* GetHostAccessibleMemoryInfo() const {
     return host_accessible_memory_info_.get();
   }
@@ -97,6 +99,9 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   std::vector<std::unique_ptr<qnn::QnnUdoPlaceholderOp>> custom_op_objects_;
   // Placeholder ops for the qti_aisw block ops.
   std::vector<std::unique_ptr<qnn::QtiAiswPlaceholderOp>> qti_aisw_op_objects_;
+
+  // Pending loaded models outlive sessions and are released with their factory.
+  mutable SharedContext shared_context_;
 };
 
 }  // namespace onnxruntime

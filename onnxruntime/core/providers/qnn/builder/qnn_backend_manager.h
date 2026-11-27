@@ -13,12 +13,14 @@
 #endif
 
 #include <cstdint>
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -154,8 +156,22 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
  private:
   // private tag to pass to constructor to ensure that constructor cannot be directly called externally
   struct PrivateConstructorTag {};
+  struct QnnContextHandleRecord;
 
  public:
+  class ContextHandleLease {
+   public:
+    ContextHandleLease() = default;
+    explicit operator bool() const noexcept { return context_handle_record_ != nullptr; }
+
+   private:
+    explicit ContextHandleLease(std::shared_ptr<QnnContextHandleRecord> context_handle_record)
+        : context_handle_record_(std::move(context_handle_record)) {}
+
+    std::shared_ptr<QnnContextHandleRecord> context_handle_record_;
+    friend class QnnBackendManager;
+  };
+
   static std::shared_ptr<QnnBackendManager> Create(const QnnBackendManagerConfig& config,
                                                    const ApiPtrs& api_ptrs,
                                                    const Ort::Logger& logger) {
@@ -185,6 +201,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         configure_host_mode_(config.configure_host_mode),
         htp_power_config_manager_(power::HtpPowerConfigManager()),
         api_ptrs_(api_ptrs),
+        context_sharing_config_(config),
         logger_ptr_(&logger) {}
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnBackendManager);
@@ -250,9 +267,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                             Qnn_ProfileHandle_t profile_handle,
                                             Qnn_ContextHandle_t& context);
 
-  // Returns true if the given context handle is still tracked (not yet freed).
+  // Returns an owning lease for a tracked context handle, or an empty lease if it is stale.
+  ContextHandleLease GetContextHandleLease(Qnn_ContextHandle_t context_handle) const;
+
   bool HasContextHandle(Qnn_ContextHandle_t context_handle) const {
-    return context_map_.find(context_handle) != context_map_.end();
+    return static_cast<bool>(GetContextHandleLease(context_handle));
   }
 
   // Returns the mutex that serializes SSR context recovery across models sharing this backend.
@@ -377,7 +396,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Gets an existing QNN mem handle or registers a new one.
   // `mem_handle` is set to the QNN mem handle.
-  Ort::Status GetOrRegisterContextMemHandle(Qnn_ContextHandle_t context, void* shared_memory_address,
+  Ort::Status GetOrRegisterContextMemHandle(const ContextHandleLease& context_handle_lease, void* shared_memory_address,
                                             const Qnn_Tensor_t& qnn_tensor,
                                             Qnn_MemHandle_t& mem_handle);
 
@@ -435,7 +454,40 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #endif
 
   void ResetLogger(const Ort::Logger& logger) {
-    logger_ptr_ = &logger;
+    if (!shared_logger_) {
+      logger_ptr_ = &logger;
+    }
+  }
+
+  void UseLoggerForSharedContexts() {
+    if (!shared_logger_) {
+      shared_logger_.emplace(OrtLoggingManager::HasDefaultLogger()
+                                 ? Ort::Logger(OrtLoggingManager::GetDefaultLoggerPtr())
+                                 : OrtLoggingManager::GetDefaultLogger());
+      logger_ptr_ = &*shared_logger_;
+    }
+  }
+
+  bool IsContextSharingCompatible(const QnnBackendManager& other) const {
+    const auto settings = [](const QnnBackendManagerConfig& c) {
+      return std::tie(c.backend_path, c.profiling_level, c.profiling_level_etw, c.profiling_file_path,
+                      c.context_priority, c.qnn_serializer_config, c.device_id, c.htp_num_cores,
+                      c.htp_arch, c.soc_model, c.skip_qnn_version_check, c.enable_framework_op_trace,
+                      c.skip_backend_op_validation, c.reused_io_limit_mb, c.configure_host_mode,
+                      c.htp_context_init_acceleration);
+    };
+    const auto& packages = context_sharing_config_.op_packages;
+    const auto& other_packages = other.context_sharing_config_.op_packages;
+    return settings(context_sharing_config_) == settings(other.context_sharing_config_) &&
+           std::equal(packages.begin(), packages.end(), other_packages.begin(), other_packages.end(),
+                      [](const OpPackage& a, const OpPackage& b) {
+                        return std::tie(a.op_type, a.path, a.interface, a.target) ==
+                               std::tie(b.op_type, b.path, b.interface, b.target);
+                      }) &&
+           qnn_allocator_type_ == other.qnn_allocator_type_ &&
+           &api_ptrs_.ort_api == &other.api_ptrs_.ort_api &&
+           &api_ptrs_.ep_api == &other.api_ptrs_.ep_api &&
+           &api_ptrs_.model_editor_api == &other.api_ptrs_.model_editor_api;
   }
 
   // Release the current QNN context handles (frees HW resources).
@@ -720,6 +772,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
            (act_ver.major == min_ver.major && act_ver.minor == min_ver.minor && act_ver.patch >= min_ver.patch);
   }
 
+  // Keep the logger wrapper alive until all QNN resources have been released.
+  std::optional<Ort::Logger> shared_logger_;
   const std::string backend_path_;
   std::recursive_mutex logger_recursive_mutex_;
   QNN_INTERFACE_VER_TYPE qnn_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
@@ -745,10 +799,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Qnn_DeviceHandle_t validator_device_handle_ = nullptr;
 
   // Map of Qnn_ContextHandle_t to QnnContextHandleRecord.
+  mutable std::mutex context_map_mutex_;
   // The QnnContextHandleRecord has ownership of the Qnn_ContextHandle_t.
   // Note: Using shared_ptr<QnnContextHandleRecord> so that we can refer to it with a weak_ptr from a
   // HtpSharedMemoryAllocator allocation cleanup callback.
-  std::unordered_map<Qnn_ContextHandle_t, std::shared_ptr<QnnContextHandleRecord>> context_map_;
+  std::unordered_map<Qnn_ContextHandle_t, std::shared_ptr<QnnContextHandleRecord>> context_handle_record_map_;
 
   // Serializes the check → release → create → register sequence in RecoverFromSSR().
   // In weight-sharing scenarios multiple QnnModel instances may detect an SSR event
@@ -761,7 +816,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::mutex ep_context_handle_map_mutex_;
   std::unordered_map<std::string, Qnn_ContextHandle_t> ep_context_handle_map_;
 
-  // Vector of Qnn_ContextHandle_t. The context handles are owned by context_map_.
+  // Vector of Qnn_ContextHandle_t. The context handles are owned by context_handle_record_map_.
   std::vector<Qnn_ContextHandle_t> contexts_;
 
   bool backend_lib_loaded_ = false;
@@ -834,6 +889,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::shared_ptr<QnnBackendSystemDlcPlugin> system_dlc_plugin_ = nullptr;
 
   const ApiPtrs api_ptrs_;
+  const QnnBackendManagerConfig context_sharing_config_;
   const Ort::Logger* logger_ptr_;
 };
 

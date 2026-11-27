@@ -2337,8 +2337,14 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   std::string ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
   std::string ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
 #endif
-  ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_model_file1.c_str(), so1));
-  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);  // session2 borrows the EP device from scoped1; must be declared after scoped1.
+  {
+    Ort::Session session1(*ort_env, ctx_model_file1.c_str(), so1);
+  }
+
+  // Pending graphs and their backend must survive the first loading session.
+  // The second session consumes its graph before stop_share_ep_contexts clears
+  // pending models. Component tests additionally assert a single native context load.
+  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
 
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
@@ -2362,8 +2368,8 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
     output_names_c.push_back(output_names[i].c_str());
   }
 
-  auto ort_outputs1 = scoped1.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                            output_names_c.data(), 1);
+  auto ort_outputs2 = session2.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                   output_names_c.data(), 1);
 #endif
 
   for (auto model_path : onnx_model_paths) {

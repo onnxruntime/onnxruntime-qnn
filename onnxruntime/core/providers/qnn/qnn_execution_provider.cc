@@ -8,10 +8,12 @@
 #include <charconv>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -1597,6 +1599,10 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
         static_cast<const ApiPtrs&>(*this), logger_);
   }
 
+  if (share_ep_contexts_) {
+    qnn_backend_manager_->UseLoggerForSharedContexts();
+  }
+
   // Initialize compatibility manager with backend manager.
   qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
 
@@ -1704,6 +1710,9 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
             ULONGLONG MatchAllKeyword,
             PEVENT_FILTER_DESCRIPTOR FilterData,
             PVOID CallbackContext) {
+          // GetCapability can adopt a cached group's manager while ETW callbacks
+          // run on another thread. Retain one atomic snapshot for this callback.
+          const auto backend_manager = std::atomic_load(&qnn_backend_manager_);
           ORT_UNUSED_PARAMETER(SourceId);
           ORT_UNUSED_PARAMETER(MatchAnyKeyword);
           ORT_UNUSED_PARAMETER(MatchAllKeyword);
@@ -1713,7 +1722,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
           if (IsEnabled == EVENT_CONTROL_CODE_ENABLE_PROVIDER) {
             if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Logs)) != 0) {
               auto ortETWSeverity = etwRegistrationManager.MapLevelToOrtLoggingLevel();
-              (void)qnn_backend_manager_->ResetQnnLogLevel(ortETWSeverity);
+              (void)backend_manager->ResetQnnLogLevel(ortETWSeverity);
             }
             if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Profiling)) != 0) {
               if (Level != 0) {
@@ -1734,7 +1743,7 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
           if (IsEnabled == EVENT_CONTROL_CODE_DISABLE_PROVIDER) {
             // (void)qnn_backend_manager_->GetProfilingManager().SetProfilingLevelETW(qnn::ProfilingLevel::INVALID,
             //                                                                        logger_);
-            (void)qnn_backend_manager_->ResetQnnLogLevel(std::nullopt);
+            (void)backend_manager->ResetQnnLogLevel(std::nullopt);
           }
         });
     etwRegistrationManager.RegisterInternalCallback(callback_ETWSink_provider_);
@@ -1756,6 +1765,8 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
 }
 
 QnnEp::~QnnEp() {
+  shared_context_lock_ = {};
+
   if (qnn_backend_manager_) {
     auto thread_id = std::this_thread::get_id();
     qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
@@ -2024,47 +2035,6 @@ OrtStatus* QnnEp::GetMultiSocSupportedNodes(const OrtGraph* graph,
   return nullptr;
 }
 
-static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& ort_api, const Ort::Logger& logger) {
-  size_t num_nodes = 0;
-  if (ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
-    return false;
-  }
-
-  std::vector<const OrtNode*> graph_nodes(num_nodes);
-  if (ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()) != nullptr) {
-    return false;
-  }
-
-  for (const OrtNode* node : graph_nodes) {
-    const char* op_type = nullptr;
-    if (ort_api.Node_GetOperatorType(node, &op_type) != nullptr) {
-      return false;
-    }
-
-    OrtNodeAttrHelper node_helper(*node);
-    std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(qnn::SOURCE, ""));
-
-    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
-      const char* node_name = nullptr;
-      if (ort_api.Node_GetName(node, &node_name) != nullptr) {
-        return false;
-      }
-
-      if (!SharedContext::GetInstance().HasQnnModel(node_name)) {
-        ORT_CXX_LOG(logger,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("Graph: " +
-                     std::string(node_name) +
-                     " from EpContext node not found from shared EP contexts.")
-                        .c_str());
-        return false;
-      }
-    }
-  }
-
-  return true;
-}
-
 static void GetMainEPCtxNodes(const OrtGraph* graph,
                               const OrtApi& ort_api,
                               std::unordered_set<const OrtNode*>& ep_context_nodes,
@@ -2187,6 +2157,81 @@ static void GetContextOnnxModelFilePath(const std::string& user_context_cache_pa
   }
 }
 
+void QnnEp::AcquireSharedContext(const OrtGraph* graph) {
+  // Callback contents have no disk identity. Flexible binaries are selected per SoC.
+  if (io_dispatch_->HasReadCallback() || enable_multi_soc_ep_context_) {
+    return;
+  }
+
+  std::basic_string<ORTCHAR_T> context_model_path;
+  GetContextOnnxModelFilePath(context_cache_path_cfg_, GetModelPathString(graph, ort_api), context_model_path);
+  const auto parent = std::filesystem::path(context_model_path).parent_path();
+  std::set<std::string> binaries;
+  std::vector<std::string> graph_names;
+  Ort::ConstGraph ort_graph{graph};
+  for (const auto& node : ort_graph.GetNodes()) {
+    OrtNodeAttrHelper attrs(*node);
+    const auto source = qnn::utils::GetLowercaseString(attrs.Get(qnn::SOURCE, ""));
+    if (node.GetOperatorType() != qnn::EPCONTEXT_OP ||
+        (source != "qnn" && source != "qnnexecutionprovider" && source != "qairtexport")) {
+      continue;
+    }
+    graph_names.emplace_back(node.GetName());
+    if (attrs.Get(qnn::EMBED_MODE, int64_t{1}) != 0) {
+      return;
+    }
+    if (attrs.Get(qnn::MAIN_CONTEXT, int64_t{1}) == 0) {
+      continue;
+    }
+    auto relative = attrs.Get(qnn::EP_CACHE_CONTEXT, "");
+#ifdef _WIN32
+    relative = std::filesystem::path(relative).lexically_normal().generic_string();
+#endif
+    // Keep the same external-path restrictions as LoadQnnCtxFromOnnxGraph.
+    if (relative.empty() || std::filesystem::path(relative).is_absolute() ||
+        relative.find("..") != std::string::npos) {
+      return;
+    }
+    std::error_code ec;
+    const auto path = std::filesystem::canonical(parent / relative, ec);
+    if (ec || !std::filesystem::is_regular_file(path, ec) || ec) {
+      return;
+    }
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) {
+      return;
+    }
+    const auto modified = std::filesystem::last_write_time(path, ec);
+    if (ec) {
+      return;
+    }
+    std::ostringstream binary;
+    binary << std::quoted(path.generic_u8string()) << ' ' << size << ' '
+           << modified.time_since_epoch().count();
+    binaries.insert(binary.str());
+  }
+  if (graph_names.empty() || binaries.empty()) {
+    return;
+  }
+  std::ostringstream identity;
+  identity << context_cache_enabled_ << ' ' << prepare_and_load_ << ' ' << prepare_only_ << ' '
+           << static_cast<int>(htp_share_resource_optimization_) << ' '
+           << enable_file_mapped_weights_ << ' ' << enable_htp_extended_udma_mode_ << ' '
+           << enable_htp_graph_splitting_ << ' ' << htp_graph_splitting_num_prepare_threads_;
+  for (const auto& binary : binaries) {
+    identity << ' ' << std::quoted(binary);
+  }
+  shared_context_key_ = identity.str();
+  auto& shared = factory_.GetSharedContext();
+  shared_context_lock_ = shared.GetInitializationLock();
+  const auto producer = shared.FindSharedQnnBackendManager(shared_context_key_, graph_names, qnn_backend_manager_);
+  if (producer && producer != qnn_backend_manager_) {
+    std::atomic_store(&qnn_backend_manager_, producer);
+    // The compatibility helper holds a raw pointer to the manager.
+    qnn_cache_compatibility_manager_ = std::make_shared<qnn::QnnCacheCompatibilityManager>(qnn_backend_manager_.get());
+  }
+}
+
 OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
                                                   const OrtGraph* graph,
                                                   OrtEpGraphSupportInfo* graph_support_info) {
@@ -2297,11 +2342,16 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     ep->qnn_backend_manager_->ReleaseResources();
   }
 
-  if (is_qnn_ctx_model && ep->share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
-    if (EpSharedContextsHasAllGraphs(graph, ep->ort_api, ep->logger_)) {
-      ep->PartitionCtxModel(graph, graph_support_info);
-      return nullptr;
+  // Hold the initialization lock through Compile. Every return before
+  // successful partitioning releases it so failed capability checks cannot block peers.
+  bool retain_shared_context = false;
+  auto release_shared_context = gsl::finally([&] {
+    if (!retain_shared_context) {
+      ep->shared_context_lock_ = {};
     }
+  });
+  if (is_qnn_ctx_model && ep->share_ep_contexts_ && !ep->shared_context_lock_.owns_lock()) {
+    ep->AcquireSharedContext(graph);
   }
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> context_bin_map;
@@ -2409,6 +2459,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   if (is_qnn_ctx_model) {
     ep->PartitionCtxModel(graph, graph_support_info);
+    retain_shared_context = true;
     return nullptr;
   }
 
@@ -2625,7 +2676,7 @@ OrtStatus* QnnEp::CompileOnnxModel(const OrtGraph** graphs,
     const std::string fused_node_name = Ort::ConstNode(fused_node).GetName();
 
     std::unique_ptr<qnn::QnnModel> qnn_model = std::make_unique<qnn::QnnModel>(
-        qnn_backend_manager_.get(), static_cast<const ApiPtrs&>(*this));
+        qnn_backend_manager_, static_cast<const ApiPtrs&>(*this));
 
     qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> htp_graph_configs_builder(
         QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
@@ -2898,11 +2949,13 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
     io_name_overrides_per_graph[graph_idx] = qnn::ParseIoNameOverrides(ep_context_node);
   }
 
+  auto& shared = factory_.GetSharedContext();
+
   // Get QnnModel from EP shared contexts
-  if (share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
+  if (shared_context_lock_.owns_lock() && shared.HasSharedQnnModels(qnn_backend_manager_)) {
     bool has_all_graphs = true;
     for (const auto& name_pair : names) {
-      if (!SharedContext::GetInstance().HasQnnModel(name_pair.second)) {
+      if (!shared.HasSharedQnnModel(name_pair.second, qnn_backend_manager_, shared_context_key_)) {
         has_all_graphs = false;
         ORT_CXX_LOG(logger_,
                     ORT_LOGGING_LEVEL_VERBOSE,
@@ -2912,8 +2965,13 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
     }
 
     if (has_all_graphs) {
+      std::unordered_set<std::string> selected_names;
       for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
-        auto qnn_model_shared = SharedContext::GetInstance().GetSharedQnnModel(names[graph_idx].second);
+        if (!selected_names.insert(names[graph_idx].second).second) {
+          return ort_api.CreateStatus(ORT_EP_FAIL, "Duplicate graph names in shared EP contexts.");
+        }
+        auto qnn_model_shared =
+            shared.PeekSharedQnnModel(names[graph_idx].second, qnn_backend_manager_, shared_context_key_);
         if (qnn_model_shared == nullptr) {
           return ort_api.CreateStatus(ORT_EP_FAIL,
                                       ("Graph: " + names[graph_idx].second +
@@ -2936,12 +2994,19 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
         RETURN_IF_NOT_OK(qnn_model_shared->SetGraphInputOutputInfo(context));
         RETURN_IF_NOT_OK(qnn_model_shared->SetupQnnInputOutput(logger_));
         RETURN_IF_NOT_OK(qnn_model_shared->ApplyRuntimeGraphConfigs(htp_graph_configs_, logger_));
+      }
+      // Consume only after every partition has completed its I/O setup.
+      for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
+        auto qnn_model_shared = shared.GetSharedQnnModel(names[graph_idx].second, qnn_backend_manager_, shared_context_key_);
         qnn_models_.emplace(names[graph_idx].first, std::move(qnn_model_shared));
 
         auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*this);
         node_compute_infos[graph_idx] = node_compute_info.release();
       }
 
+      if (stop_share_ep_contexts_) {
+        shared.RemoveSharedQnnModels(qnn_backend_manager_, shared_context_key_);
+      }
       return nullptr;
     }
   }
@@ -3050,18 +3115,24 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
     node_compute_infos[graph_idx] = node_compute_info.release();
   }
 
-  if (share_ep_contexts_ && qnn_models.size() > 0) {
+  if (shared_context_lock_.owns_lock() && !stop_share_ep_contexts_ && !qnn_models.empty()) {
     std::vector<std::unique_ptr<qnn::QnnModel>> shared_qnn_models;
     for (auto& [key, value] : qnn_models) {
       shared_qnn_models.push_back(std::move(qnn_models[key]));
     }
     std::string duplicate_graph_names;
-    bool has_duplicate_graph = SharedContext::GetInstance().SetSharedQnnModel(std::move(shared_qnn_models),
-                                                                              duplicate_graph_names);
+    bool has_duplicate_graph = shared.SetSharedQnnModel(std::move(shared_qnn_models),
+                                                        qnn_backend_manager_,
+                                                        shared_context_key_,
+                                                        duplicate_graph_names);
     if (has_duplicate_graph) {
       return ort_api.CreateStatus(ORT_EP_FAIL,
                                   ("Duplicate graph names detect across sessions: " + duplicate_graph_names).c_str());
     }
+  }
+
+  if (shared_context_lock_.owns_lock() && stop_share_ep_contexts_) {
+    shared.RemoveSharedQnnModels(qnn_backend_manager_, shared_context_key_);
   }
 
   return nullptr;
@@ -3228,6 +3299,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  auto release_shared_context = gsl::finally([ep] { ep->shared_context_lock_ = {}; });
 
   // Early fail without actual compile and make session initialization immediately terminate.
   if (ep->has_unsupported_nodes_wo_cpu_fallback_) {

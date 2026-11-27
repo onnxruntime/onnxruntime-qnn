@@ -28,6 +28,9 @@
 
 #include <array>
 #include <cstring>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -44,6 +47,7 @@
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
 #include "test/providers/qnn/infra/qnn_unit_test_utils.h"
+#include "test/providers/qnn/infra/qnn_fake_ort_graph.h"
 
 namespace onnxruntime {
 namespace test {
@@ -2086,6 +2090,308 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, FullRoundTrip_AllValues) {
   ASSERT_NE(lstm, nullptr);
   EXPECT_EQ(lstm->monolithicLstm, true);
 }
+
+namespace {
+
+struct SharedLoadManagerTag {
+  using type = std::shared_ptr<qnn::QnnBackendManager> QnnEp::*;
+  friend type GetQnnEpPrivateMember(SharedLoadManagerTag);
+};
+template struct QnnEpPrivateMember<SharedLoadManagerTag, &QnnEp::qnn_backend_manager_>;
+
+template <typename Tag, typename Tag::type Member>
+struct SharedLoadBackendMember {
+  friend typename Tag::type GetSharedLoadBackendMember(Tag) { return Member; }
+};
+struct SharedLoadSetupTag {
+  using type = bool qnn::QnnBackendManager::*;
+  friend type GetSharedLoadBackendMember(SharedLoadSetupTag);
+};
+template struct SharedLoadBackendMember<SharedLoadSetupTag, &qnn::QnnBackendManager::backend_setup_completed_>;
+struct SharedLoadInterfaceTag {
+  using type = QNN_INTERFACE_VER_TYPE qnn::QnnBackendManager::*;
+  friend type GetSharedLoadBackendMember(SharedLoadInterfaceTag);
+};
+template struct SharedLoadBackendMember<SharedLoadInterfaceTag, &qnn::QnnBackendManager::qnn_interface_>;
+struct SharedLoadSystemTag {
+  using type = QNN_SYSTEM_INTERFACE_VER_TYPE qnn::QnnBackendManager::*;
+  friend type GetSharedLoadBackendMember(SharedLoadSystemTag);
+};
+template struct SharedLoadBackendMember<SharedLoadSystemTag, &qnn::QnnBackendManager::qnn_sys_interface_>;
+struct SharedLoadBackendTag {
+  using type = Qnn_BackendHandle_t qnn::QnnBackendManager::*;
+  friend type GetSharedLoadBackendMember(SharedLoadBackendTag);
+};
+template struct SharedLoadBackendMember<SharedLoadBackendTag, &qnn::QnnBackendManager::backend_handle_>;
+struct SharedLoadTypeTag {
+  using type = qnn::QnnBackendType qnn::QnnBackendManager::*;
+  friend type GetSharedLoadBackendMember(SharedLoadTypeTag);
+};
+template struct SharedLoadBackendMember<SharedLoadTypeTag, &qnn::QnnBackendManager::qnn_backend_type_>;
+
+// Runs the production GetCapability and Compile entry points with native QNN
+// callbacks, including graph deserialization and tensor binding. No hardware is needed.
+class SharedContextLoadTest : public QnnUnit_ExecutionProviderTest {
+ protected:
+  ScopedProviderModuleOrtApiOverride provider_api_override_{&Ort::GetApi()};
+  EpStubContext ctx_;
+  std::unique_ptr<QnnEpFactory> factory_;
+  std::filesystem::path directory_;
+  FakeValueInfo input_{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  FakeValueInfo output_{"y", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {1}};
+  qnn::QnnTensorWrapper qnn_input_{"x", QNN_TENSOR_TYPE_APP_WRITE, QNN_DATATYPE_FLOAT_32,
+                                   qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1}};
+  qnn::QnnTensorWrapper qnn_output_{"y", QNN_TENSOR_TYPE_APP_READ, QNN_DATATYPE_FLOAT_32,
+                                    qnn::QnnQuantParamsWrapper(), std::vector<uint32_t>{1}};
+  Qnn_Tensor_t input_tensor_{};
+  Qnn_Tensor_t output_tensor_{};
+  std::array<QnnSystemContext_GraphInfo_t, 3> graphs_{};
+  QnnSystemContext_BinaryInfo_t binary_info_{};
+  size_t loads_ = 0;
+  size_t frees_ = 0;
+  static SharedContextLoadTest* current_load_;
+
+  void SetUp() override {
+    QnnUnit_ExecutionProviderTest::SetUp();
+    current_load_ = this;
+    InstallFakeGraphApiStubs(ctx_.stub_ort_api);
+    ctx_.stub_ort_api.Graph_GetModelPath = [](const OrtGraph*, const ORTCHAR_T** path) noexcept -> OrtStatus* {
+      *path = ORT_TSTR("");
+      return nullptr;
+    };
+    ctx_.stub_ep_api.EpGraphSupportInfo_AddNodesToFuse =
+        [](OrtEpGraphSupportInfo*, const OrtNode* const*, size_t, const OrtNodeFusionOptions*) noexcept -> OrtStatus* {
+      return nullptr;
+    };
+    directory_ = std::filesystem::temp_directory_path() /
+                 ("qnn_shared_context_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory_);
+    std::ofstream(directory_ / "shared.bin", std::ios::binary).put('1');
+    ctx_.session_config["ep.share_ep_contexts"] = "1";
+    ctx_.session_config["ep.context_enable"] = "0";
+    ctx_.session_config["ep.context_embed_mode"] = "0";
+    ctx_.session_config["ep.context_file_path"] = (directory_ / "model_ctx.onnx").string();
+    ctx_.session_config[EPKey("enable_file_mapped_weights")] = "0";
+    ctx_.session_config[EPKey("htp_share_resource_optimization")] = "0";
+    factory_ = MakeFactory(ctx_);
+    input_tensor_ = qnn_input_.GetQnnTensor();
+    output_tensor_ = qnn_output_.GetQnnTensor();
+    const std::array<const char*, 3> names{"a", "b", "c"};
+    for (size_t i = 0; i < graphs_.size(); ++i) {
+      graphs_[i].version = QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1;
+      auto& info = graphs_[i].graphInfoV1;
+      info.graphName = const_cast<char*>(names[i]);
+      info.numGraphInputs = 1;
+      info.graphInputs = &input_tensor_;
+      info.numGraphOutputs = 1;
+      info.graphOutputs = &output_tensor_;
+    }
+    binary_info_.version = QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1;
+    binary_info_.contextBinaryInfoV1.numGraphs = static_cast<uint32_t>(graphs_.size());
+    binary_info_.contextBinaryInfoV1.graphs = graphs_.data();
+    binary_info_.contextBinaryInfoV1.contextBlobVersion = {3, 0, 0};
+  }
+
+  void TearDown() override {
+    // Factory teardown releases parked graphs before the API tables and logger.
+    factory_.reset();
+    current_load_ = nullptr;
+    std::error_code ec;
+    std::filesystem::remove_all(directory_, ec);
+    QnnUnit_ExecutionProviderTest::TearDown();
+  }
+
+  static std::shared_ptr<qnn::QnnBackendManager> Manager(QnnEp& ep) {
+    return ep.*GetQnnEpPrivateMember(SharedLoadManagerTag{});
+  }
+
+  std::unique_ptr<QnnEp> NewEp() {
+    auto ep = MakeEp(*factory_, ctx_);
+    auto manager = Manager(*ep);
+    manager.get()->*GetSharedLoadBackendMember(SharedLoadSetupTag{}) = true;
+    manager.get()->*GetSharedLoadBackendMember(SharedLoadTypeTag{}) = qnn::QnnBackendType::GPU;
+    manager.get()->*GetSharedLoadBackendMember(SharedLoadBackendTag{}) = this;
+    auto& api = manager.get()->*GetSharedLoadBackendMember(SharedLoadInterfaceTag{});
+    api.contextCreateFromBinary = [](Qnn_BackendHandle_t backend, Qnn_DeviceHandle_t,
+                                     const QnnContext_Config_t**, const void*, Qnn_ContextBinarySize_t,
+                                     Qnn_ContextHandle_t* context, Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+      auto& test = *static_cast<SharedContextLoadTest*>(backend);
+      ++test.loads_;
+      *context = new SharedContextLoadTest*(&test);
+      return QNN_SUCCESS;
+    };
+    api.contextFree = [](Qnn_ContextHandle_t context, Qnn_ProfileHandle_t) -> Qnn_ErrorHandle_t {
+      auto* owner = static_cast<SharedContextLoadTest**>(context);
+      ++(*owner)->frees_;
+      delete owner;
+      return QNN_SUCCESS;
+    };
+    api.graphRetrieve = [](Qnn_ContextHandle_t context, const char*, Qnn_GraphHandle_t* graph) -> Qnn_ErrorHandle_t {
+      *graph = context;
+      return QNN_SUCCESS;
+    };
+    auto& system = manager.get()->*GetSharedLoadBackendMember(SharedLoadSystemTag{});
+    system.systemContextCreate = [](QnnSystemContext_Handle_t* context) -> Qnn_ErrorHandle_t {
+      *context = current_load_;
+      return QNN_SUCCESS;
+    };
+    system.systemContextGetBinaryInfo = [](QnnSystemContext_Handle_t context, void*, uint64_t,
+                                           const QnnSystemContext_BinaryInfo_t** info,
+                                           Qnn_ContextBinarySize_t* size) -> Qnn_ErrorHandle_t {
+      *info = &static_cast<SharedContextLoadTest*>(context)->binary_info_;
+      *size = sizeof(QnnSystemContext_BinaryInfo_t);
+      return QNN_SUCCESS;
+    };
+    system.systemContextFree = [](QnnSystemContext_Handle_t) -> Qnn_ErrorHandle_t { return QNN_SUCCESS; };
+    return ep;
+  }
+
+  struct ContextGraph {
+    FakeOpAttr source = FakeOpAttr::MakeString("source", "QNN");
+    FakeOpAttr embed = FakeOpAttr::MakeInt64("embed_mode", 0);
+    FakeOpAttr main = FakeOpAttr::MakeInt64("main_context", 1);
+    FakeOpAttr binary = FakeOpAttr::MakeString("ep_cache_context", "shared.bin");
+    FakeGraph graph;
+    FakeNode fused;
+    ContextGraph(const std::string& name, FakeValueInfo& input, FakeValueInfo& output)
+        : graph{{FakeNode{name, "EPContext", "com.microsoft", 1, {&input}, {&output}, {{"source", &source}, {"embed_mode", &embed}, {"main_context", &main}, {"ep_cache_context", &binary}}}},
+                {&input},
+                {&output},
+                {}},
+          fused{"fused_" + name, "EPContext", "com.microsoft", 1, {&input}, {&output}} {}
+    ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ContextGraph);
+  };
+
+  void Capability(QnnEp& ep, ContextGraph& graph) {
+    // MakeFactory/MakeEp have their own nested overrides of the TLS stubs.
+    UseGlobalEpStubs use(ctx_);
+    auto* status = ep.GetCapability(&ep, graph.graph.AsGraph(), reinterpret_cast<OrtEpGraphSupportInfo*>(kFakeToken));
+    ASSERT_EQ(status, nullptr) << (status ? ctx_.stub_ort_api.GetErrorMessage(status) : "");
+  }
+
+  OrtStatus* Compile(QnnEp& ep, ContextGraph& graph) {
+    UseGlobalEpStubs use(ctx_);
+    const OrtGraph* raw_graph = graph.graph.AsGraph();
+    const OrtNode* node = graph.fused.AsNode();
+    OrtNodeComputeInfo* info = nullptr;
+    OrtNode* context_node = nullptr;
+    auto* status = ep.Compile(&ep, &raw_graph, &node, 1, &info, &context_node);
+    if (info) ep.ReleaseNodeComputeInfos(&ep, &info, 1);
+    return status;
+  }
+};
+SharedContextLoadTest* SharedContextLoadTest::current_load_ = nullptr;
+
+TEST_F(SharedContextLoadTest, LiveSessionsUseOneNativeContextLoad) {
+  ContextGraph a("a", input_, output_), b("b", input_, output_);
+  auto ep_a = NewEp();
+  Capability(*ep_a, a);
+  ASSERT_EQ(Compile(*ep_a, a), nullptr);
+  auto ep_b = NewEp();
+  EXPECT_NE(Manager(*ep_a), Manager(*ep_b));
+  Capability(*ep_b, b);
+  EXPECT_EQ(Manager(*ep_a), Manager(*ep_b));
+  ASSERT_EQ(Compile(*ep_b, b), nullptr);
+  EXPECT_EQ(loads_, 1u);
+  EXPECT_EQ(frees_, 0u);
+}
+
+TEST_F(SharedContextLoadTest, ProducerCanEndBeforeNextConsumer) {
+  ContextGraph a("a", input_, output_), b("b", input_, output_);
+  auto ep_a = NewEp();
+  Capability(*ep_a, a);
+  ASSERT_EQ(Compile(*ep_a, a), nullptr);
+  std::weak_ptr<qnn::QnnBackendManager> manager = Manager(*ep_a);
+  ep_a.reset();
+  EXPECT_FALSE(manager.expired());
+  FakeValueInfo dynamic_input{"x", ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, {-1}};
+  ContextGraph invalid_b("b", dynamic_input, output_);
+  auto rejected = NewEp();
+  Capability(*rejected, invalid_b);
+  auto* status = Compile(*rejected, invalid_b);
+  ASSERT_NE(status, nullptr);
+  ctx_.stub_ort_api.ReleaseStatus(status);
+  rejected.reset();
+#ifdef _WIN32
+  b.binary.string_value = "tmp/../shared.bin";
+#endif
+  auto ep_b = NewEp();
+  Capability(*ep_b, b);
+  EXPECT_EQ(Manager(*ep_b), manager.lock());
+  ASSERT_EQ(Compile(*ep_b, b), nullptr);
+  EXPECT_EQ(loads_, 1u);
+  EXPECT_EQ(frees_, 0u);
+}
+
+TEST_F(SharedContextLoadTest, DifferentBinariesWithSameNamesDoNotMatch) {
+  ContextGraph a("a", input_, output_), b("b", input_, output_);
+  auto ep_a = NewEp();
+  Capability(*ep_a, a);
+  ASSERT_EQ(Compile(*ep_a, a), nullptr);
+  std::ofstream(directory_ / "other.bin", std::ios::binary).put('2');
+  b.binary.string_value = "other.bin";
+  auto ep_b = NewEp();
+  Capability(*ep_b, b);
+  ASSERT_EQ(Compile(*ep_b, b), nullptr);
+  EXPECT_NE(Manager(*ep_a), Manager(*ep_b));
+  EXPECT_EQ(loads_, 2u);
+}
+
+TEST_F(SharedContextLoadTest, IncompatibleManagerSettingsDoNotMatch) {
+  ContextGraph a("a", input_, output_), b("b", input_, output_);
+  auto ep_a = NewEp();
+  Capability(*ep_a, a);
+  ASSERT_EQ(Compile(*ep_a, a), nullptr);
+  ctx_.session_config[EPKey("device_id")] = "1";
+  auto ep_b = NewEp();
+  Capability(*ep_b, b);
+  ASSERT_EQ(Compile(*ep_b, b), nullptr);
+  EXPECT_NE(Manager(*ep_a), Manager(*ep_b));
+  EXPECT_EQ(loads_, 2u);
+#ifdef QNN_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE
+  ctx_.session_config.erase(EPKey("device_id"));
+  ctx_.session_config[EPKey("htp_context_init_acceleration")] = "1";
+  ContextGraph c("c", input_, output_);
+  auto ep_c = NewEp();
+  Capability(*ep_c, c);
+  ASSERT_EQ(Compile(*ep_c, c), nullptr);
+  EXPECT_NE(Manager(*ep_a), Manager(*ep_c));
+  EXPECT_EQ(loads_, 3u);
+#endif
+}
+
+TEST_F(SharedContextLoadTest, StopSharingConsumesBeforeClearingAndKeepsActivePeers) {
+  ContextGraph a("a", input_, output_), b("b", input_, output_), c("c", input_, output_);
+  auto ep_a = NewEp();
+  Capability(*ep_a, a);
+  ASSERT_EQ(Compile(*ep_a, a), nullptr);
+  ctx_.session_config["ep.stop_share_ep_contexts"] = "1";
+  auto ep_b = NewEp();
+  Capability(*ep_b, b);
+  ASSERT_EQ(Compile(*ep_b, b), nullptr);
+  EXPECT_EQ(loads_, 1u);
+  EXPECT_EQ(frees_, 0u);
+  ctx_.session_config["ep.stop_share_ep_contexts"] = "0";
+  auto ep_c = NewEp();
+  Capability(*ep_c, c);
+  ASSERT_EQ(Compile(*ep_c, c), nullptr);
+  EXPECT_EQ(loads_, 2u);
+}
+
+TEST_F(SharedContextLoadTest, FactoryReleasesUnusedModels) {
+  ContextGraph a("a", input_, output_);
+  auto ep = NewEp();
+  Capability(*ep, a);
+  ASSERT_EQ(Compile(*ep, a), nullptr);
+  std::weak_ptr<qnn::QnnBackendManager> manager = Manager(*ep);
+  ep.reset();
+  EXPECT_FALSE(manager.expired());
+  factory_.reset();
+  EXPECT_TRUE(manager.expired());
+  EXPECT_EQ(frees_, 1u);
+}
+
+}  // namespace
 
 }  // namespace test
 }  // namespace onnxruntime
