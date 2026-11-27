@@ -38,38 +38,7 @@ namespace {
 // of BindQnnTensorMemoryToOrtValueMemory was taken at runtime (see
 // onnxruntime/core/providers/qnn/builder/qnn_model.cc), and on WARNINGs that
 // later PRs will emit.
-struct LogCapture {
-  mutable std::mutex mtx;
-  std::vector<std::string> messages;
-
-  void Push(const char* message) {
-    std::lock_guard<std::mutex> g{mtx};
-    messages.emplace_back(message);
-  }
-
-  size_t CountContaining(std::string_view needle) const {
-    std::lock_guard<std::mutex> g{mtx};
-    size_t n = 0;
-    for (const auto& m : messages) {
-      if (m.find(needle) != std::string_view::npos) ++n;
-    }
-    return n;
-  }
-};
-
-extern "C" void ORT_API_CALL LogCaptureCallback(void* param,
-                                                OrtLoggingLevel /*severity*/,
-                                                const char* /*category*/,
-                                                const char* /*logid*/,
-                                                const char* /*code_location*/,
-                                                const char* message) {
-  static_cast<LogCapture*>(param)->Push(message);
-}
-
-void AttachLogCapture(Ort::SessionOptions& so, LogCapture& capture) {
-  Ort::ThrowOnError(Ort::GetApi().SetUserLoggingFunction(so, LogCaptureCallback, &capture));
-  so.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
-}
+using LogCapture = QnnTestLogCapture;
 
 // Log substrings from BindQnnTensorMemoryToOrtValueMemory (one per bound tensor per Run).
 constexpr std::string_view kLogSubstrMemHandle = "Setting Qnn_Tensor_t memHandle";
@@ -137,7 +106,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_output_uses_memhandle_branch) {
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -172,7 +141,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_output_uses_memhandle_branch) {
   // is easy to diagnose (which of the bound I/O tensors took which branch).
   auto scoped_dump = gsl::finally([&]() {
     if (::testing::Test::HasFailure()) {
-      std::lock_guard<std::mutex> g{capture.mtx};
+      std::lock_guard<std::mutex> g{capture.mutex};
       std::cerr << "--- captured tensor-binding log messages ---\n";
       for (const auto& m : capture.messages) {
         if (m.find("Qnn_Tensor_t") != std::string::npos) {
@@ -193,7 +162,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_input_uses_memhandle_branch) {
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -238,7 +207,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_silent_fallback_warning) {
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -281,7 +250,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_factory_allocator_pre_session) {
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -506,7 +475,7 @@ TEST_F(QnnHTPBackendTests, shared_session_followed_by_plain_session_uses_clientb
   LogCapture plain_capture;
   Ort::SessionOptions plain_so;
   plain_so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");
-  AttachLogCapture(plain_so, plain_capture);
+  AttachQnnTestLogCapture(plain_so, plain_capture);
   plain_so.AppendExecutionProvider_V2(
       *ort_env,
       {Ort::ConstEpDevice(registered_ep_device.get())},
@@ -602,7 +571,7 @@ TEST_F(QnnHTPBackendTests, shared_ortvalue_without_session_allocator_falls_back_
   LogCapture capture;
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -682,7 +651,7 @@ TEST_F(QnnHTPBackendTests, shared_ortvalue_without_session_allocator_falls_back_
 
   auto scoped_dump = gsl::finally([&]() {
     if (::testing::Test::HasFailure()) {
-      std::lock_guard<std::mutex> g{capture.mtx};
+      std::lock_guard<std::mutex> g{capture.mutex};
       for (const auto& message : capture.messages) {
         std::cerr << message << "\n";
       }
@@ -701,7 +670,7 @@ TEST_F(QnnHTPBackendTests, untracked_host_accessible_memory_falls_back_to_client
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -761,7 +730,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_partition_automatic_allocations_use
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
   so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -852,7 +821,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_inference_correct) 
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -908,7 +877,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_cross_partition_zero_copy) {
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -981,7 +950,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_multi_io) {
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -1057,7 +1026,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_mixed_bindings) {
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);
@@ -1126,7 +1095,7 @@ TEST_F(QnnHTPBackendTests, htp_shared_memory_fallback_warning_once) {
 
   LogCapture capture;
   Ort::SessionOptions so;
-  AttachLogCapture(so, capture);
+  AttachQnnTestLogCapture(so, capture);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnHtpSharedMemoryEp(registered_ep_device, so, options);

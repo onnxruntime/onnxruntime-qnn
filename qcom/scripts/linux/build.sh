@@ -139,7 +139,17 @@ internal_symbols_cmake_value=OFF
 if [ -n "${enable_coverage}" ] || [ -n "${enable_qnn_internal_test_symbols}" ]; then
   internal_symbols_cmake_value=ON
 fi
-qnn_build_mode="coverage=${coverage_cmake_value};internal_symbols=${internal_symbols_cmake_value}"
+udo_packages=OFF
+if [[ "${target_platform}" == "linux" &&
+      ( "${target_arch}" == "x86_64" || "${target_arch}" == "x86_64_ubuntu_22_04" ) ]]; then
+  udo_packages=ON
+fi
+udo_packages="${ORT_QNN_BUILD_UDO_OP_PACKAGES:-${udo_packages}}"
+if [[ "${udo_packages}" != "ON" && "${udo_packages}" != "OFF" ]]; then
+  die "ORT_QNN_BUILD_UDO_OP_PACKAGES must be ON or OFF"
+fi
+udo_generator_python="$(command -v python)"
+qnn_build_mode="coverage=${coverage_cmake_value};internal_symbols=${internal_symbols_cmake_value};udo=${udo_packages}"
 
 build_root="${REPO_ROOT}/build"
 build_dir_name="${target_platform}-${target_arch}"
@@ -158,14 +168,14 @@ if [ -z "${qairt_sdk_root}" ]; then
 fi
 
 cmake_bindir="$(get_cmake_bindir)"
-llvm_contentdir="$(get_llvm_contentdir)"
-# Trigger Hexagon SDK download/extract; cmake discovers the path via ORT_BUILD_TOOLS_PATH.
-get_hexagon_sdk_contentdir > /dev/null
-# Surface the canonical tools dir to cmake so onnxruntime_unittests_udo.cmake can locate
-# LLVM / Hexagon SDK without relying on a CMAKE_*_BINARY_DIR-relative fallback (which can
-# resolve outside ${REPO_ROOT}/build/tools depending on where the cmake file is included).
+# Download package-only toolchains only for an enabled fixture build.
 export ORT_BUILD_TOOLS_PATH="$(get_tools_dir)"
-PATH="${cmake_bindir}:$(get_ninja_bindir):${llvm_contentdir}/bin:${PATH}"
+PATH="${cmake_bindir}:$(get_ninja_bindir):${PATH}"
+if [[ "${udo_packages}" == "ON" ]]; then
+  llvm_contentdir="$(get_llvm_contentdir)"
+  get_hexagon_sdk_contentdir > /dev/null
+  PATH="${llvm_contentdir}/bin:${PATH}"
+fi
 
 mkdir -p "${build_dir}/${config}"
 
@@ -179,6 +189,9 @@ common_args=(--cmake_generator "${cmake_generator}" \
              --parallel \
              --build_dir "${build_dir}" \
 )
+
+common_args+=(--cmake_extra_defines "onnxruntime_QNN_BUILD_UDO_OP_PACKAGES:BOOL=${udo_packages}"
+              "onnxruntime_QNN_UDO_GENERATOR_PYTHON:FILEPATH=${udo_generator_python}")
 
 if [ -n "${qnn_arch_abi}" ]; then
   common_args+=(--cmake_extra_defines "QNN_ARCH_ABI=${qnn_arch_abi}")

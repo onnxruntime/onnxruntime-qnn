@@ -1,8 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 """
-Generate two ONNX models containing a single MyAdd UDO node:
-  - myadd_fp32.onnx  : float32 model (for QNN CPU backend)
+Generate an ONNX model containing a single MyAdd UDO node:
   - myadd_qdq.onnx   : uint8 QDQ model  (DQ -> MyAdd -> Q, for QNN HTP backend)
 
 MyAdd computes: output = input + constant
@@ -24,23 +23,6 @@ from onnx import TensorProto, helper, numpy_helper
 DOMAIN = "example"
 OP_TYPE = "MyAdd"
 INPUT_SHAPE = [1, 32]
-
-
-def make_fp32_model(constant: float) -> onnx.ModelProto:
-    """Float32 model: input -> MyAdd -> output."""
-    input_vi = helper.make_tensor_value_info("input", TensorProto.FLOAT, INPUT_SHAPE)
-    output_vi = helper.make_tensor_value_info("output", TensorProto.FLOAT, INPUT_SHAPE)
-
-    constant_attr = helper.make_attribute("constant", constant)
-    node = helper.make_node(OP_TYPE, inputs=["input"], outputs=["output"], domain=DOMAIN)
-    node.attribute.append(constant_attr)
-
-    graph = helper.make_graph([node], "myadd_fp32", [input_vi], [output_vi])
-    opset = helper.make_opsetid(DOMAIN, 1)
-    model = helper.make_model(graph, opset_imports=[opset])
-    model.ir_version = 8
-    onnx.checker.check_model(model, full_check=False)
-    return model
 
 
 def make_qdq_model(constant: float) -> onnx.ModelProto:
@@ -121,11 +103,7 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    fp32_path = outdir / "myadd_fp32.onnx"
     qdq_path = outdir / "myadd_qdq.onnx"
-
-    onnx.save(make_fp32_model(args.constant), fp32_path)
-    print(f"Saved {fp32_path}")
 
     onnx.save(make_qdq_model(args.constant), qdq_path)
     print(f"Saved {qdq_path}")

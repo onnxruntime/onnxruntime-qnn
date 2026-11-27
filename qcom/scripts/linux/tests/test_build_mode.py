@@ -88,7 +88,7 @@ if args.update:
     definitions = dict(
         arg.split("=", 1)
         for arg in sys.argv[1:]
-        if arg.startswith(("ENABLE_COVERAGE:BOOL=", "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS:BOOL="))
+        if arg.startswith(("ENABLE_COVERAGE:BOOL=", "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS:BOOL=", "onnxruntime_QNN_BUILD_UDO_OP_PACKAGES:BOOL="))
     )
     configured.write_text(json.dumps(definitions))
     (config_dir / "build.ninja").touch()
@@ -108,6 +108,8 @@ def run_build(
     fail: bool = False,
     build_dir_suffix: str | None = None,
     task_mode: str = "build",
+    target_arch: str = "x86_64",
+    udo_packages: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ | {
         "PATH": f"{repo / 'fake-tools'}{os.pathsep}{os.environ['PATH']}",
@@ -117,11 +119,14 @@ def run_build(
         "ORT_VERSION_SUFFIX": "",
         "FAKE_BUILD_FAIL": "1" if fail else "0",
     }
+    env.pop("ORT_QNN_BUILD_UDO_OP_PACKAGES", None)
+    if udo_packages is not None:
+        env["ORT_QNN_BUILD_UDO_OP_PACKAGES"] = udo_packages
     args = [
         "bash",
         str(SCRIPT),
         "--target-platform=linux",
-        "--target-arch=x86_64",
+        f"--target-arch={target_arch}",
         "--config=RelWithDebInfo",
         f"--mode={task_mode}",
         "--no-use-cache",
@@ -149,11 +154,12 @@ def assert_built_mode(repo: Path, mode: str) -> None:
     expected = {
         "ENABLE_COVERAGE:BOOL": coverage,
         "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS:BOOL": symbols,
+        "onnxruntime_QNN_BUILD_UDO_OP_PACKAGES:BOOL": "ON",
     }
     for name in ("configured-mode.json", "built-mode.json"):
         assert json.loads((root / "RelWithDebInfo" / name).read_text()) == expected
     assert (root / "qnn-build-mode-RelWithDebInfo.txt").read_text().strip() == (
-        f"coverage={coverage};internal_symbols={symbols}"
+        f"coverage={coverage};internal_symbols={symbols};udo=ON"
     )
 
 
@@ -197,6 +203,7 @@ def test_failed_switch_forces_reconfigure_on_retry(
     assert json.loads((root / "RelWithDebInfo/configured-mode.json").read_text()) == {
         "ENABLE_COVERAGE:BOOL": "OFF",
         "onnxruntime_QNN_ENABLE_INTERNAL_TEST_SYMBOLS:BOOL": "ON",
+        "onnxruntime_QNN_BUILD_UDO_OP_PACKAGES:BOOL": "ON",
     }
 
     retry_mode = initial_mode if retry_original_mode else "internal"
@@ -325,3 +332,33 @@ def test_build_dir_suffix_rejects_unsafe_values(build_repo: Path, suffix: str) -
     assert result.returncode != 0
     assert f"Invalid --build-dir-suffix: {suffix}" in result.stderr
     assert not (build_repo / "build").exists()
+
+
+@pytest.mark.parametrize(
+    "target_arch,override,expected",
+    [
+        ("x86_64", None, "ON"),
+        ("x86_64_ubuntu_22_04", None, "ON"),
+        ("aarch64", None, "OFF"),
+        ("x86_64_ubuntu_22_04", "OFF", "OFF"),
+        ("x86_64_ubuntu_22_04", "ON", "ON"),
+    ],
+)
+def test_custom_op_package_mode(build_repo: Path, target_arch: str, override: str | None, expected: str) -> None:
+    result = run_build(build_repo, "normal", target_arch=target_arch, udo_packages=override)
+    assert result.returncode == 0, result.stderr
+    root = build_repo / f"build/linux-{target_arch}"
+    definitions = json.loads((root / "RelWithDebInfo/built-mode.json").read_text())
+    assert definitions["onnxruntime_QNN_BUILD_UDO_OP_PACKAGES:BOOL"] == expected
+    assert (root / "qnn-build-mode-RelWithDebInfo.txt").read_text().strip().endswith(f";udo={expected}")
+
+
+def test_ubuntu_custom_op_opt_in_reconfigures(build_repo: Path) -> None:
+    for override in ("OFF", None):
+        result = run_build(build_repo, "normal", target_arch="x86_64_ubuntu_22_04", udo_packages=override)
+        assert result.returncode == 0, result.stderr
+    root = build_repo / "build/linux-x86_64_ubuntu_22_04"
+    calls = [json.loads(line) for line in (root / "calls.jsonl").read_text().splitlines()]
+    assert all(call["update"] for call in calls)
+    definitions = json.loads((root / "RelWithDebInfo/built-mode.json").read_text())
+    assert definitions["onnxruntime_QNN_BUILD_UDO_OP_PACKAGES:BOOL"] == "ON"
