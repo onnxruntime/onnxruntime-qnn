@@ -18,6 +18,7 @@
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
+#include "core/providers/qnn/genie/genie_output_shape.h"
 
 namespace onnxruntime {
 namespace test {
@@ -138,6 +139,33 @@ class GenieApiLoaderTest : public GenieBackendTests {};
 
 // "Unit" suffix distinguishes from the integration fixture in genie_integration_test.cc.
 class GenieBackendManagerUnitTest : public GenieBackendTests {};
+
+TEST(GenieOutputShapeTest, ParsesPositiveDimensionsAndAddsSequenceDimension) {
+  std::vector<int64_t> shape;
+  EXPECT_TRUE(ParseGenieOutputShape("{\"dimensions\": [2, 3]}", shape));
+  EXPECT_EQ(shape, (std::vector<int64_t>{2, 1, 3}));
+}
+
+TEST(GenieOutputShapeTest, ParsesSingleDimensionAndInt64Values) {
+  std::vector<int64_t> shape;
+  EXPECT_TRUE(ParseGenieOutputShape("{\"dimensions\": [ 2147483648 ]}", shape));
+  EXPECT_EQ(shape, (std::vector<int64_t>{2147483648LL, 1}));
+}
+
+TEST(GenieOutputShapeTest, RejectsMalformedDimensionsWithoutThrowing) {
+  const std::vector<const char*> malformed_configs{
+      nullptr, "{}", "{\"dimensions\": []}", "{\"dimensions\": [x]}",
+      "{\"dimensions\": [0]}", "{\"dimensions\": [-1]}",
+      "{\"dimensions\": [ ]}", "{\"dimensions\": [1,]}",
+      "{\"dimensions\": [1,,2]}", "{\"dimensions\": [1,x]}",
+      "{\"dimensions\": [1x]}", "{\"dimensions\": [1,2}",
+      "{\"dimensions\": [9223372036854775808]}"};
+  for (const char* config : malformed_configs) {
+    std::vector<int64_t> shape{7};
+    EXPECT_FALSE(ParseGenieOutputShape(config, shape));
+    EXPECT_TRUE(shape.empty());
+  }
+}
 
 // Passing nullptr to the deleter should not crash.
 TEST_F(GenieNodeStateDeleterTest, NullState_DoesNothing) {

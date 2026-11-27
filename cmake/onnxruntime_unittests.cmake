@@ -329,12 +329,13 @@ block()
     # shared library. Re-compiling them directly here is the least-invasive way to make
     # those symbols accessible to genie_unit_test.cc without changing the EP's public ABI.
     # Note: genie_node_compute_info.cc is intentionally excluded because it depends on
-    # qnn_utils.cc symbols that are not available to the test binary and none of the
-    # unit tests in genie_unit_test.cc exercise GenieNodeComputeInfo.
+    # qnn_utils.cc symbols that are not available to the test binary. The output-shape
+    # parser is compiled separately so its tests do not need GenieNodeComputeInfo.
     list(APPEND onnxruntime_provider_test_srcs
       ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_api_loader.cc
       ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_backend_manager.cc
       ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_node.cc
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_output_shape.cc
       # Stub for OrtGetRuntimePath (defined in ort_api.cc, which is EP DLL only).
       ${ONNXRUNTIME_ROOT}/test/providers/qnn/genie_test_stubs.cc
     )
