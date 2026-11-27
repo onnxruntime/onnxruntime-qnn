@@ -6,7 +6,8 @@
 // Two groups of tests live here, both gated on QNN_EP_INTERNAL_SYMBOL_ACCESS:
 //
 //   1. Stub-based tests (no real QNN library) — QnnSerializerConfig, SetupBackend
-//      load-failure paths, and before-setup early returns. These always run.
+//      load-failure paths, before-setup early returns, and multi-SoC lifecycle.
+//      These always run.
 //   2. Real-HTP-backend tests (QnnUnit_BackendManagerHtpTest) — load the platform
 //      HTP backend (and QnnIr / QnnSaver) and drive SetupBackend directly, with no
 //      ORT session. The fixture GTEST_SKIP()s when the backend is unavailable,
@@ -20,11 +21,16 @@
 //   - ResetQnnLogLevel (before setup + after setup)
 //   - GetContextBinaryBuffer (before setup + after setup) / LoadCachedQnnContextFromBuffer
 //   - ParseLoraConfig file I/O error paths
+//   - Multi-SoC setup / reuse / selection / serialization / partial-failure cleanup
 
 #include "gtest/gtest.h"
 
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -32,10 +38,13 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <vector>
 
 #include "test/providers/qnn/infra/qnn_test_windows_compat.h"
 
+#include "QnnCommon.h"
 #include "HTP/QnnHtpCommon.h"
+#include "HTP/QnnHtpContext.h"
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_model.h"
@@ -330,7 +339,7 @@ static std::shared_ptr<qnn::QnnBackendManager> MakeManagerWithHtpArch(
 }
 
 // A user-provided htp_arch alone does NOT make GetHtpArch() report it — the internal
-// holder stays NONE until SetupDeviceAndContext runs. soc_model has no such split and
+// holder stays NONE until backend setup or a target is selected. soc_model has no such split and
 // is readable straight from the config.
 TEST(QnnUnit_BackendManagerTest, GetHtpArch_UserProvidedArchBeforeSetup_ReturnsNone) {
   StubApiEnv env;
@@ -342,15 +351,15 @@ TEST(QnnUnit_BackendManagerTest, GetHtpArch_UserProvidedArchBeforeSetup_ReturnsN
   EXPECT_EQ(manager->GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_SM8550));
 }
 
-// SetupDeviceAndContext is guarded by backend_partial_setup_completed_, so calling it
+// SetupDevicesAndContexts is guarded by backend_partial_setup_completed_, so calling it
 // without SetupBackendExceptDeviceAndContext first must fail and must not publish the
 // requested arch to the internal holder.
-TEST(QnnUnit_BackendManagerTest, SetupDeviceAndContext_WithoutPartialSetup_ReturnsErrorAndLeavesArchNone) {
+TEST(QnnUnit_BackendManagerTest, SetupDevicesAndContexts_WithoutPartialSetup_ReturnsErrorAndLeavesArchNone) {
   StubApiEnv env;
   auto manager = MakeManager(QnnHtpBackendLibraryName(), env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
 
-  auto status = manager->SetupDeviceAndContext(QNN_HTP_DEVICE_ARCH_V79, QNN_SOC_MODEL_SM8550);
+  auto status = manager->SetupDevicesAndContexts({QNN_HTP_DEVICE_ARCH_V79}, {QNN_SOC_MODEL_SM8550});
 
   EXPECT_FALSE(status.IsOK());
   EXPECT_NE(std::string(status.GetErrorMessage()).find("partially setup"), std::string::npos)
@@ -425,6 +434,572 @@ TEST(QnnUnit_BackendManagerTest, ConstGetters_CallableOnConstManager) {
             const_manager.GetQnnValidatorInterface().backendCreate);
   // qnn_sys_interface_ is only bound by SetupBackend, so every entry is still NULL here.
   EXPECT_EQ(const_manager.GetQnnSystemInterface().systemContextCreate, nullptr);
+}
+
+// ===========================================================================
+// Stub-based multi-SoC lifecycle tests
+// ===========================================================================
+
+// Simulates the completed backend/DLC setup through the existing test-only
+// private-member access mechanism. Device/context creation and ownership are
+// exercised through the manager's public APIs, with recording QNN callbacks.
+class QnnUnit_BackendManagerMultiSocTest : public ::testing::Test {
+ protected:
+  struct DeviceConfig {
+    QnnHtpDevice_Arch_t arch = QNN_HTP_DEVICE_ARCH_NONE;
+    uint32_t soc = QNN_SOC_MODEL_UNKNOWN;
+    bool has_soc_config = false;
+  };
+
+  struct ContextConfig {
+    Qnn_BackendHandle_t backend = nullptr;
+    Qnn_DeviceHandle_t device = nullptr;
+    Qnn_Priority_t priority = QNN_PRIORITY_UNDEFINED;
+    bool weight_sharing = false;
+    bool extended_udma = false;
+    bool prepare_only = false;
+    bool graph_splitting = false;
+    uint32_t num_prepare_threads = UINT32_MAX;
+  };
+
+  void SetUp() override {
+    current_ = this;
+    backend_manager_ = std::make_unique<StubBackendManager>(env_.api_ptrs, env_.logger);
+    backend_manager_->BackendType() = qnn::QnnBackendType::HTP;
+    backend_manager_->BackendHandle() = &backend_token_;
+    backend_manager_->BackendPartialSetupCompleted() = true;
+    backend_manager_->SystemDlcCreated() = true;
+
+    auto& interface = backend_manager_->QnnInterface();
+    interface.deviceCreate = DeviceCreate;
+    interface.deviceFree = DeviceFree;
+    interface.contextCreate = ContextCreate;
+    interface.contextFree = ContextFree;
+  }
+
+  void TearDown() override {
+    // DLC readiness was simulated without creating a plugin to release.
+    backend_manager_->SystemDlcCreated() = false;
+    // Destruction invokes the recording callbacks, so keep the fixture and
+    // handle tokens alive until the manager has released its resources.
+    backend_manager_.reset();
+    current_ = nullptr;
+  }
+
+  qnn::QnnBackendManager& Manager() { return *backend_manager_->GetMutable(); }
+
+  void ExpectNoResources() {
+    EXPECT_FALSE(Manager().IsBackendSetup());
+    EXPECT_EQ(Manager().GetQnnContextSize(), 0u);
+    EXPECT_FALSE(Manager().SetActiveSoc(0).IsOK());
+    EXPECT_TRUE(Manager().SetActiveSoc(-1).IsOK());
+    EXPECT_EQ(Manager().GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+    EXPECT_EQ(Manager().GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_UNKNOWN));
+    EXPECT_THROW(Manager().GetQnnContext(), Ort::Exception);
+  }
+
+  void ExpectAllContextsFreedOnce() {
+    // Context ownership is held in an unordered_map, so destruction order can
+    // differ across platforms. Every created context must still be freed once.
+    ASSERT_EQ(freed_contexts_.size(), created_contexts_.size());
+    for (auto context : created_contexts_) {
+      EXPECT_EQ(std::count(freed_contexts_.begin(), freed_contexts_.end(), context), 1) << context;
+    }
+  }
+
+  const std::vector<QnnHtpDevice_Arch_t> archs_{QNN_HTP_DEVICE_ARCH_V68,
+                                                QNN_HTP_DEVICE_ARCH_V73,
+                                                QNN_HTP_DEVICE_ARCH_V73};
+  const std::vector<uint32_t> socs_{QNN_SOC_MODEL_SM8350, QNN_SOC_MODEL_SM8550, QNN_SOC_MODEL_UNKNOWN};
+  StubApiEnv env_;
+  std::unique_ptr<StubBackendManager> backend_manager_;
+  std::vector<DeviceConfig> device_configs_;
+  std::vector<ContextConfig> context_configs_;
+  std::vector<Qnn_DeviceHandle_t> created_devices_;
+  std::vector<Qnn_ContextHandle_t> created_contexts_;
+  std::vector<Qnn_DeviceHandle_t> freed_devices_;
+  std::vector<Qnn_ContextHandle_t> freed_contexts_;
+  std::vector<std::string> calls_;
+  std::optional<size_t> device_create_failure_;
+  std::optional<size_t> context_create_failure_;
+  Qnn_DeviceHandle_t device_free_failure_ = nullptr;
+  std::vector<Qnn_ContextHandle_t> binary_size_contexts_;
+  std::vector<Qnn_ContextHandle_t> binary_contexts_;
+
+  static Qnn_ErrorHandle_t ContextGetBinarySize(Qnn_ContextHandle_t context,
+                                                Qnn_ContextBinarySize_t* size) {
+    current_->binary_size_contexts_.push_back(context);
+    *size = sizeof(kBinaryPayload);
+    return QNN_SUCCESS;
+  }
+
+  static Qnn_ErrorHandle_t ContextGetBinary(Qnn_ContextHandle_t context, void* buffer,
+                                            Qnn_ContextBinarySize_t size,
+                                            Qnn_ContextBinarySize_t* written) {
+    current_->binary_contexts_.push_back(context);
+    if (size < sizeof(kBinaryPayload)) {
+      return QNN_COMMON_ERROR_INVALID_ARGUMENT;
+    }
+    std::memcpy(buffer, kBinaryPayload, sizeof(kBinaryPayload));
+    *written = sizeof(kBinaryPayload);
+    return QNN_SUCCESS;
+  }
+
+  inline static constexpr unsigned char kBinaryPayload[] = {0x12, 0x34, 0x56};
+
+ private:
+  static Qnn_ErrorHandle_t DeviceCreate(Qnn_LogHandle_t /*logger*/,
+                                        const QnnDevice_Config_t** configs,
+                                        Qnn_DeviceHandle_t* device) {
+    current_->calls_.push_back("deviceCreate");
+    DeviceConfig recorded;
+    for (size_t i = 0; configs != nullptr && configs[i] != nullptr; ++i) {
+      if (configs[i]->option != QNN_DEVICE_CONFIG_OPTION_CUSTOM) {
+        continue;
+      }
+      const auto* custom = static_cast<const QnnHtpDevice_CustomConfig_t*>(configs[i]->customConfig);
+      if (custom->option == QNN_HTP_DEVICE_CONFIG_OPTION_ARCH) {
+        recorded.arch = custom->arch.arch;
+      } else if (custom->option == QNN_HTP_DEVICE_CONFIG_OPTION_SOC) {
+        recorded.soc = custom->socModel;
+        recorded.has_soc_config = true;
+      }
+    }
+    const size_t index = current_->device_configs_.size();
+    current_->device_configs_.push_back(recorded);
+    if (current_->device_create_failure_ == index) {
+      return QNN_COMMON_ERROR_GENERAL;
+    }
+    current_->device_tokens_.push_back(0);
+    *device = &current_->device_tokens_.back();
+    current_->created_devices_.push_back(*device);
+    return QNN_SUCCESS;
+  }
+
+  static Qnn_ErrorHandle_t ContextCreate(Qnn_BackendHandle_t backend, Qnn_DeviceHandle_t device,
+                                         const QnnContext_Config_t** configs,
+                                         Qnn_ContextHandle_t* context) {
+    current_->calls_.push_back("contextCreate");
+    ContextConfig recorded;
+    recorded.backend = backend;
+    recorded.device = device;
+    for (size_t i = 0; configs != nullptr && configs[i] != nullptr; ++i) {
+      if (configs[i]->option == QNN_CONTEXT_CONFIG_OPTION_PRIORITY) {
+        recorded.priority = configs[i]->priority;
+      } else if (configs[i]->option == QNN_CONTEXT_CONFIG_OPTION_CUSTOM) {
+        const auto* custom = static_cast<const QnnHtpContext_CustomConfig_t*>(configs[i]->customConfig);
+        switch (custom->option) {
+          case QNN_HTP_CONTEXT_CONFIG_OPTION_WEIGHT_SHARING_ENABLED:
+            recorded.weight_sharing = custom->weightSharingEnabled;
+            break;
+          case QNN_HTP_CONTEXT_CONFIG_OPTION_USE_EXTENDED_UDMA:
+            recorded.extended_udma = custom->useExtendedUdma;
+            break;
+          case QNN_HTP_CONTEXT_CONFIG_OPTION_PREPARE_ONLY:
+            recorded.prepare_only = custom->isPrepareOnly;
+            break;
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+          case QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_CONFIGS:
+            recorded.graph_splitting = custom->graphSplittingConfigs.graphSplittingEnabled;
+            break;
+#endif
+#ifdef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
+          case QNN_HTP_CONTEXT_CONFIG_OPTION_GRAPH_SPLITTING_NUM_PREPARE_THREADS:
+            recorded.num_prepare_threads = custom->numPrepareThreads;
+            break;
+#endif
+          default:
+            break;
+        }
+      }
+    }
+    const size_t index = current_->context_configs_.size();
+    current_->context_configs_.push_back(recorded);
+    if (current_->context_create_failure_ == index) {
+      return QNN_COMMON_ERROR_GENERAL;
+    }
+    current_->context_tokens_.push_back(0);
+    *context = &current_->context_tokens_.back();
+    current_->created_contexts_.push_back(*context);
+    return QNN_SUCCESS;
+  }
+
+  static Qnn_ErrorHandle_t ContextFree(Qnn_ContextHandle_t context, Qnn_ProfileHandle_t /*profile*/) {
+    current_->calls_.push_back("contextFree");
+    current_->freed_contexts_.push_back(context);
+    return QNN_SUCCESS;
+  }
+
+  static Qnn_ErrorHandle_t DeviceFree(Qnn_DeviceHandle_t device) {
+    current_->calls_.push_back("deviceFree");
+    current_->freed_devices_.push_back(device);
+    return device == current_->device_free_failure_ ? QNN_COMMON_ERROR_GENERAL : QNN_SUCCESS;
+  }
+
+  inline static QnnUnit_BackendManagerMultiSocTest* current_ = nullptr;
+  uint8_t backend_token_ = 0;
+  std::deque<uint8_t> device_tokens_;
+  std::deque<uint8_t> context_tokens_;
+};
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_WithoutPartialSetup_ReturnsError) {
+  backend_manager_->BackendPartialSetupCompleted() = false;
+  const auto status = Manager().SetupDevicesAndContexts(archs_, socs_);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("partially setup"), std::string::npos);
+  EXPECT_TRUE(calls_.empty());
+  ExpectNoResources();
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_WithoutDlc_ReturnsError) {
+  backend_manager_->SystemDlcCreated() = false;
+  const auto status = Manager().SetupDevicesAndContexts(archs_, socs_);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("DLC"), std::string::npos);
+  EXPECT_TRUE(calls_.empty());
+  ExpectNoResources();
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_EmptyTargets_ReturnsError) {
+  const auto status = Manager().SetupDevicesAndContexts({}, {});
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("at least one pair"), std::string::npos);
+  EXPECT_TRUE(calls_.empty());
+  ExpectNoResources();
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_UnequalTargetCounts_ReturnsError) {
+  const auto status = Manager().SetupDevicesAndContexts(archs_, {QNN_SOC_MODEL_SM8350});
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("equal length"), std::string::npos);
+  EXPECT_TRUE(calls_.empty());
+  ExpectNoResources();
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_CreatesAndSelectsEachTargetInOrder) {
+  const auto status = Manager().SetupDevicesAndContexts(archs_, socs_,
+                                                        /*enable_htp_weight_sharing=*/true,
+                                                        /*enable_htp_extended_udma_mode=*/true,
+                                                        /*enable_htp_prepare_only=*/true);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  ASSERT_EQ(device_configs_.size(), archs_.size());
+  ASSERT_EQ(context_configs_.size(), archs_.size());
+  ASSERT_EQ(created_devices_.size(), archs_.size());
+  ASSERT_EQ(created_contexts_.size(), archs_.size());
+  EXPECT_EQ(Manager().GetQnnContextSize(), archs_.size());
+  EXPECT_TRUE(Manager().IsBackendSetup());
+  EXPECT_EQ(calls_, (std::vector<std::string>{"deviceCreate", "deviceCreate", "deviceCreate",
+                                              "contextCreate", "contextCreate", "contextCreate"}));
+  EXPECT_THROW(Manager().GetQnnContext(), Ort::Exception);
+
+  const qnn::QnnBackendManager& const_manager = Manager();
+  for (size_t i = 0; i < archs_.size(); ++i) {
+    SCOPED_TRACE(i);
+    EXPECT_EQ(device_configs_[i].arch, archs_[i]);
+    EXPECT_EQ(device_configs_[i].soc, socs_[i]);
+    EXPECT_EQ(device_configs_[i].has_soc_config, socs_[i] != QNN_SOC_MODEL_UNKNOWN);
+    EXPECT_EQ(context_configs_[i].backend, backend_manager_->BackendHandle());
+    EXPECT_EQ(context_configs_[i].device, created_devices_[i]);
+    EXPECT_EQ(context_configs_[i].priority, QNN_PRIORITY_NORMAL);
+    EXPECT_TRUE(context_configs_[i].weight_sharing);
+    EXPECT_TRUE(context_configs_[i].extended_udma);
+    EXPECT_TRUE(context_configs_[i].prepare_only);
+    ASSERT_TRUE(Manager().SetActiveSoc(static_cast<int32_t>(i)).IsOK());
+    EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[i]);
+    EXPECT_EQ(const_manager.GetHtpArch(), archs_[i]);
+    EXPECT_EQ(const_manager.GetSocModel(), socs_[i]);
+  }
+
+  ASSERT_TRUE(Manager().SetActiveSoc(-1).IsOK());
+  EXPECT_EQ(const_manager.GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+  EXPECT_EQ(const_manager.GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_UNKNOWN));
+  for (size_t i = 0; i < created_contexts_.size(); ++i) {
+    EXPECT_THROW(Manager().GetQnnContext(static_cast<int>(i)), Ort::Exception);
+  }
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_ArchOnlyTargetsRemainDistinct) {
+  const std::vector<QnnHtpDevice_Arch_t> archs{QNN_HTP_DEVICE_ARCH_V68, QNN_HTP_DEVICE_ARCH_V73};
+  const std::vector<uint32_t> socs{QNN_SOC_MODEL_UNKNOWN, QNN_SOC_MODEL_UNKNOWN};
+  const auto status = Manager().SetupDevicesAndContexts(archs, socs);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  ASSERT_EQ(created_contexts_.size(), 2u);
+  EXPECT_NE(created_contexts_[0], created_contexts_[1]);
+  for (size_t i = 0; i < archs.size(); ++i) {
+    SCOPED_TRACE(i);
+    EXPECT_FALSE(device_configs_[i].has_soc_config);
+    ASSERT_TRUE(Manager().SetActiveSoc(static_cast<int32_t>(i)).IsOK());
+    EXPECT_EQ(Manager().GetHtpArch(), archs[i]);
+    EXPECT_EQ(Manager().GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_UNKNOWN));
+    EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[i]);
+  }
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_SameTargets_ReusesAllHandles) {
+  ASSERT_TRUE(Manager().SetupDevicesAndContexts(archs_, socs_).IsOK());
+  ASSERT_TRUE(Manager().SetActiveSoc(1).IsOK());
+  const auto original_calls = calls_;
+  const auto status = Manager().SetupDevicesAndContexts(archs_, socs_);
+  ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+  EXPECT_EQ(calls_, original_calls);
+  EXPECT_EQ(Manager().GetQnnContextSize(), created_contexts_.size());
+  EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[1]);
+  ASSERT_TRUE(Manager().SetActiveSoc(-1).IsOK());
+  EXPECT_THROW(Manager().GetQnnContext(), Ort::Exception);
+  for (size_t i = 0; i < created_contexts_.size(); ++i) {
+    ASSERT_TRUE(Manager().SetActiveSoc(static_cast<int32_t>(i)).IsOK());
+    EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[i]);
+  }
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_ChangedTargets_RejectsWithoutChangingResources) {
+  ASSERT_TRUE(Manager().SetupDevicesAndContexts(archs_, socs_).IsOK());
+  ASSERT_TRUE(Manager().SetActiveSoc(1).IsOK());
+  const auto original_calls = calls_;
+  auto expect_rejected = [&](const std::vector<QnnHtpDevice_Arch_t>& archs,
+                             const std::vector<uint32_t>& socs) {
+    const auto status = Manager().SetupDevicesAndContexts(archs, socs);
+    ASSERT_FALSE(status.IsOK());
+    EXPECT_NE(status.GetErrorMessage().find("Mismatched"), std::string::npos);
+    EXPECT_EQ(calls_, original_calls);
+    EXPECT_TRUE(Manager().IsBackendSetup());
+    EXPECT_EQ(Manager().GetQnnContextSize(), created_contexts_.size());
+    EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[1]);
+    EXPECT_EQ(Manager().GetHtpArch(), archs_[1]);
+    EXPECT_EQ(Manager().GetSocModel(), socs_[1]);
+  };
+
+  auto changed_archs = archs_;
+  changed_archs[0] = QNN_HTP_DEVICE_ARCH_V73;
+  expect_rejected(changed_archs, socs_);
+  auto changed_socs = socs_;
+  changed_socs[0] = QNN_SOC_MODEL_SM8550;
+  expect_rejected(archs_, changed_socs);
+  expect_rejected({archs_[0]}, {socs_[0]});
+  expect_rejected({archs_[1], archs_[0], archs_[2]}, {socs_[1], socs_[0], socs_[2]});
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetActiveSoc_WithoutTargets_AcceptsResetAndRejectsIndices) {
+  EXPECT_TRUE(Manager().SetActiveSoc(-1).IsOK());
+  EXPECT_FALSE(Manager().SetActiveSoc(-2).IsOK());
+  EXPECT_FALSE(Manager().SetActiveSoc(0).IsOK());
+  ExpectNoResources();
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetActiveSoc_InvalidIndex_PreservesSelectedTarget) {
+  ASSERT_TRUE(Manager().SetupDevicesAndContexts(archs_, socs_).IsOK());
+  ASSERT_TRUE(Manager().SetActiveSoc(1).IsOK());
+  for (int32_t index : {-2, static_cast<int32_t>(archs_.size())}) {
+    SCOPED_TRACE(index);
+    EXPECT_FALSE(Manager().SetActiveSoc(index).IsOK());
+    EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[1]);
+    EXPECT_EQ(Manager().GetHtpArch(), archs_[1]);
+    EXPECT_EQ(Manager().GetSocModel(), socs_[1]);
+  }
+  for (int index : {-1, 1, static_cast<int>(archs_.size())}) {
+    SCOPED_TRACE(index);
+    EXPECT_THROW(Manager().GetQnnContext(index), Ort::Exception);
+    EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[1]);
+  }
+  ASSERT_TRUE(Manager().SetActiveSoc(-1).IsOK());
+  EXPECT_THROW(Manager().GetQnnContext(), Ort::Exception);
+  ASSERT_TRUE(Manager().SetActiveSoc(0).IsOK());
+  EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[0]);
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, GetQnnContext_WithoutActiveSoc_ThrowsAndPreservesContexts) {
+  ASSERT_TRUE(Manager().SetupDevicesAndContexts(archs_, socs_).IsOK());
+  const auto original_calls = calls_;
+  auto expect_missing_active_soc = [&]() {
+    for (int index : {-1, 0, 1, static_cast<int>(archs_.size())}) {
+      SCOPED_TRACE(index);
+      try {
+        (void)Manager().GetQnnContext(index);
+        FAIL() << "Expected GetQnnContext to require an active SoC";
+      } catch (const Ort::Exception& ex) {
+        EXPECT_EQ(ex.GetOrtErrorCode(), ORT_EP_FAIL);
+        EXPECT_STREQ(ex.what(), "Unexpected usage of getting QNN context without active SoC set.");
+      }
+    }
+    EXPECT_EQ(calls_, original_calls);
+    EXPECT_EQ(Manager().GetQnnContextSize(), created_contexts_.size());
+    EXPECT_TRUE(Manager().IsBackendSetup());
+    EXPECT_TRUE(freed_contexts_.empty());
+    EXPECT_TRUE(freed_devices_.empty());
+  };
+
+  expect_missing_active_soc();
+  ASSERT_TRUE(Manager().SetActiveSoc(1).IsOK());
+  EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[1]);
+  ASSERT_TRUE(Manager().SetActiveSoc(-1).IsOK());
+  expect_missing_active_soc();
+  // Rejecting access preserves every context for subsequent target selection.
+  for (size_t i = 0; i < created_contexts_.size(); ++i) {
+    ASSERT_TRUE(Manager().SetActiveSoc(static_cast<int32_t>(i)).IsOK());
+    EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[i]);
+  }
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, GetContextBinaryBuffer_ActiveTarget_UsesSelectedContextForBothCalls) {
+  backend_manager_->QnnInterface().contextGetBinarySize = ContextGetBinarySize;
+  backend_manager_->QnnInterface().contextGetBinary = ContextGetBinary;
+  ASSERT_TRUE(Manager().SetupDevicesAndContexts(archs_, socs_).IsOK());
+  for (size_t i = 0; i < archs_.size(); ++i) {
+    SCOPED_TRACE(i);
+    ASSERT_TRUE(Manager().SetActiveSoc(static_cast<int32_t>(i)).IsOK());
+    unsigned char* raw_buffer = nullptr;
+    uint64_t written_size = 0;
+    const auto status = Manager().GetContextBinaryBuffer(false, &raw_buffer, written_size);
+    std::unique_ptr<unsigned char[]> buffer(raw_buffer);
+    ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+    ASSERT_NE(buffer, nullptr);
+    ASSERT_EQ(written_size, sizeof(kBinaryPayload));
+    EXPECT_TRUE(std::equal(kBinaryPayload, kBinaryPayload + sizeof(kBinaryPayload), buffer.get()));
+  }
+  EXPECT_EQ(binary_size_contexts_, created_contexts_);
+  EXPECT_EQ(binary_contexts_, created_contexts_);
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_UnexpectedSetup_RejectsWithoutChangingResources) {
+  ASSERT_TRUE(Manager().SetupDevicesAndContexts(archs_, socs_).IsOK());
+  ASSERT_TRUE(Manager().SetActiveSoc(1).IsOK());
+  // Simulate existing target records without a completed backend setup.
+  backend_manager_->BackendSetupCompleted() = false;
+  const auto original_calls = calls_;
+
+  const auto status = Manager().SetupDevicesAndContexts(archs_, socs_);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("unexpected device/context setup"), std::string::npos);
+  EXPECT_EQ(calls_, original_calls);
+  EXPECT_FALSE(Manager().IsBackendSetup());
+  EXPECT_EQ(Manager().GetQnnContextSize(), created_contexts_.size());
+  EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[1]);
+  EXPECT_EQ(Manager().GetHtpArch(), archs_[1]);
+  EXPECT_EQ(Manager().GetSocModel(), socs_[1]);
+  EXPECT_TRUE(freed_devices_.empty());
+  EXPECT_TRUE(freed_contexts_.empty());
+
+  Manager().ReleaseDeviceAndContext();
+  EXPECT_EQ(freed_devices_, created_devices_);
+  ExpectAllContextsFreedOnce();
+  ExpectNoResources();
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_SequentialSingleTargets_SelectsAndReleasesEachTarget) {
+  for (size_t i = 0; i < archs_.size(); ++i) {
+    SCOPED_TRACE(i);
+    const bool extended_udma = i == 0;
+    const bool prepare_only = i == 1;
+    const bool graph_splitting = i == 2;
+    const auto status = Manager().SetupDevicesAndContexts({archs_[i]}, {socs_[i]},
+                                                          /*enable_htp_weight_sharing=*/false,
+                                                          extended_udma, prepare_only,
+                                                          /*enable_htp_ref_weight_sharing=*/false,
+                                                          graph_splitting,
+                                                          /*htp_graph_splitting_num_prepare_threads=*/4);
+    ASSERT_TRUE(status.IsOK()) << status.GetErrorMessage();
+    ASSERT_EQ(created_devices_.size(), i + 1);
+    ASSERT_EQ(created_contexts_.size(), i + 1);
+    EXPECT_TRUE(Manager().IsBackendSetup());
+    EXPECT_EQ(Manager().GetQnnContextSize(), 1u);
+    EXPECT_EQ(device_configs_[i].arch, archs_[i]);
+    EXPECT_EQ(device_configs_[i].soc, socs_[i]);
+    EXPECT_EQ(context_configs_[i].device, created_devices_[i]);
+    EXPECT_FALSE(context_configs_[i].weight_sharing);
+    EXPECT_EQ(context_configs_[i].extended_udma, extended_udma);
+    EXPECT_EQ(context_configs_[i].prepare_only, prepare_only);
+#ifdef QNN_HTP_GRAPH_SPLITTING_AVAILABLE
+    EXPECT_EQ(context_configs_[i].graph_splitting, graph_splitting);
+#endif
+#ifdef QNN_HTP_GRAPH_SPLITTING_NUM_THREADS_AVAILABLE
+    EXPECT_EQ(context_configs_[i].num_prepare_threads, graph_splitting ? 4u : UINT32_MAX);
+#endif
+    // Each offline target has its own one-element setup, so its active index is
+    // always zero even when the outer compilation loop is on a later target.
+    EXPECT_EQ(Manager().GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+    EXPECT_EQ(Manager().GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_UNKNOWN));
+    EXPECT_THROW(Manager().GetQnnContext(), Ort::Exception);
+    ASSERT_TRUE(Manager().SetActiveSoc(0).IsOK());
+    EXPECT_EQ(Manager().GetQnnContext(), created_contexts_[i]);
+    EXPECT_EQ(Manager().GetHtpArch(), archs_[i]);
+    EXPECT_EQ(Manager().GetSocModel(), socs_[i]);
+
+    calls_.clear();
+    Manager().ReleaseDeviceAndContext();
+    EXPECT_EQ(calls_, (std::vector<std::string>{"contextFree", "deviceFree"}));
+    EXPECT_EQ(freed_devices_, created_devices_);
+    ExpectAllContextsFreedOnce();
+    ExpectNoResources();
+  }
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_DeviceCreationFailure_FreesEarlierDevices) {
+  device_create_failure_ = 1;
+  const auto status = Manager().SetupDevicesAndContexts(archs_, socs_);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("Failed to create device"), std::string::npos);
+  EXPECT_EQ(device_configs_.size(), 2u);
+  ASSERT_EQ(created_devices_.size(), 1u);
+  EXPECT_EQ(freed_devices_, created_devices_);
+  EXPECT_TRUE(context_configs_.empty());
+  EXPECT_TRUE(freed_contexts_.empty());
+  ExpectNoResources();
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, SetupDevicesAndContexts_ContextCreationFailure_FreesPartialResources) {
+  context_create_failure_ = 1;
+  const auto status = Manager().SetupDevicesAndContexts(archs_, socs_);
+  ASSERT_FALSE(status.IsOK());
+  EXPECT_NE(status.GetErrorMessage().find("Failed to create context"), std::string::npos);
+  EXPECT_EQ(created_devices_.size(), archs_.size());
+  EXPECT_EQ(context_configs_.size(), 2u);
+  ASSERT_EQ(created_contexts_.size(), 1u);
+  ExpectAllContextsFreedOnce();
+  EXPECT_EQ(freed_devices_, created_devices_);
+  EXPECT_EQ(calls_, (std::vector<std::string>{"deviceCreate", "deviceCreate", "deviceCreate",
+                                              "contextCreate", "contextCreate", "contextFree",
+                                              "deviceFree", "deviceFree", "deviceFree"}));
+  ExpectNoResources();
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, ReleaseDeviceAndContext_FreesAllResourcesOnceAndResetsSelection) {
+  ASSERT_TRUE(Manager().SetupDevicesAndContexts(archs_, socs_).IsOK());
+  ASSERT_TRUE(Manager().SetActiveSoc(2).IsOK());
+  calls_.clear();
+  Manager().ReleaseDeviceAndContext();
+  EXPECT_EQ(calls_, (std::vector<std::string>{"contextFree", "contextFree", "contextFree",
+                                              "deviceFree", "deviceFree", "deviceFree"}));
+  EXPECT_EQ(freed_devices_, created_devices_);
+  ExpectAllContextsFreedOnce();
+  ExpectNoResources();
+  calls_.clear();
+  Manager().ReleaseDeviceAndContext();
+  EXPECT_TRUE(calls_.empty());
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, ReleaseContext_KeepsDevicesUntilDeviceCleanup) {
+  ASSERT_TRUE(Manager().SetupDevicesAndContexts(archs_, socs_).IsOK());
+  ASSERT_TRUE(Manager().ReleaseContext().IsOK());
+  EXPECT_EQ(Manager().GetQnnContextSize(), 0u);
+  ExpectAllContextsFreedOnce();
+  EXPECT_TRUE(freed_devices_.empty());
+  Manager().ReleaseDeviceAndContext();
+  ExpectAllContextsFreedOnce();
+  EXPECT_EQ(freed_devices_, created_devices_);
+  ExpectNoResources();
+}
+
+TEST_F(QnnUnit_BackendManagerMultiSocTest, ReleaseDeviceAndContext_DeviceFreeFailure_AttemptsRemainingDevices) {
+  ASSERT_TRUE(Manager().SetupDevicesAndContexts(archs_, socs_).IsOK());
+  ASSERT_TRUE(Manager().SetActiveSoc(1).IsOK());
+  device_free_failure_ = created_devices_[0];
+  Manager().ReleaseDeviceAndContext();
+  EXPECT_EQ(freed_devices_, created_devices_);
+  ExpectAllContextsFreedOnce();
+  EXPECT_FALSE(Manager().IsBackendSetup());
+  EXPECT_EQ(Manager().GetQnnContextSize(), 0u);
+  EXPECT_EQ(Manager().GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+  EXPECT_EQ(Manager().GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_UNKNOWN));
 }
 
 // ===========================================================================
@@ -908,15 +1483,14 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupBackend_HTP_WithQnnIrSerializer_Cover
 }
 
 // ---------------------------------------------------------------------------
-// HTP backend — SetupDeviceAndContext publishes the HTP arch to op builders
+// HTP backend — selecting a setup target publishes the HTP arch to op builders
 // ---------------------------------------------------------------------------
 
 // The multi-SoC EP-context entry points, driven in order: partial setup, then
-// SetupDeviceAndContext with an explicit arch + SoC model. SetupDeviceAndContext is
-// what copies the caller-supplied arch into the internal holder GetHtpArch() reads,
-// which is how an op builder sees a user-provided htp_arch on x86. Then
-// ReleaseDeviceAndContext must put both holders back to their defaults.
-TEST_F(QnnUnit_BackendManagerHtpTest, SetupDeviceAndContext_HTP_PublishesHtpArchThenResetsOnRelease) {
+// SetupDevicesAndContexts with an explicit arch + SoC model, then SetActiveSoc(0).
+// Selecting the target makes GetHtpArch() report the caller-supplied arch to op
+// builders. ReleaseDeviceAndContext must clear the target and reset the getters.
+TEST_F(QnnUnit_BackendManagerHtpTest, SetupDevicesAndContexts_HTP_SelectsHtpArchThenResetsOnRelease) {
   StubApiEnv env;
   auto manager = MakeHTPManager(env.api_ptrs, env.logger);
   ASSERT_NE(manager, nullptr);
@@ -928,8 +1502,14 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupDeviceAndContext_HTP_PublishesHtpArch
   ASSERT_TRUE(partial.IsOK()) << "SetupBackendExceptDeviceAndContext failed: "
                               << partial.GetErrorMessage();
 
-  auto status = manager->SetupDeviceAndContext(QNN_HTP_DEVICE_ARCH_V73, QNN_SOC_MODEL_SM8550);
-  ASSERT_TRUE(status.IsOK()) << "SetupDeviceAndContext failed: " << status.GetErrorMessage();
+  auto status = manager->SetupDevicesAndContexts({QNN_HTP_DEVICE_ARCH_V73}, {QNN_SOC_MODEL_SM8550});
+  ASSERT_TRUE(status.IsOK()) << "SetupDevicesAndContexts failed: " << status.GetErrorMessage();
+  EXPECT_TRUE(manager->IsBackendSetup());
+  EXPECT_EQ(manager->GetQnnContextSize(), 1u);
+  EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
+  EXPECT_THROW(manager->GetQnnContext(), Ort::Exception);
+  ASSERT_TRUE(manager->SetActiveSoc(0).IsOK());
+  EXPECT_NE(manager->GetQnnContext(), nullptr);
 
   EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_V73);
   EXPECT_EQ(manager->GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_SM8550));
@@ -938,6 +1518,9 @@ TEST_F(QnnUnit_BackendManagerHtpTest, SetupDeviceAndContext_HTP_PublishesHtpArch
 
   EXPECT_EQ(manager->GetHtpArch(), QNN_HTP_DEVICE_ARCH_NONE);
   EXPECT_EQ(manager->GetSocModel(), static_cast<uint32_t>(QNN_SOC_MODEL_UNKNOWN));
+  EXPECT_FALSE(manager->IsBackendSetup());
+  EXPECT_EQ(manager->GetQnnContextSize(), 0u);
+  EXPECT_FALSE(manager->SetActiveSoc(0).IsOK());
 }
 
 // Smoke-tests that SetupBackend accepts enable_htp_graph_splitting=true and

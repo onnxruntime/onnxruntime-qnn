@@ -288,7 +288,7 @@ static void ExpectLogged(const EpStubContext& ctx, OrtLoggingLevel severity,
 
 namespace {
 
-// Exposes one private method for focused component coverage without changing
+// Exposes private members for focused component coverage without changing
 // QnnEp's production interface. Access checking does not apply to the member
 // named by an explicit-instantiation template argument (C++17 [temp.spec]/6).
 template <typename Tag, typename Tag::type Member>
@@ -322,6 +322,18 @@ uint8_t GetGraphPrepareThreadsForTest(const QnnEp& ep) {
   return ep.*GetQnnEpPrivateMember(GraphPrepareThreadsTag{});
 }
 #endif
+
+struct PerSocHtpGraphConfigsTag {
+  using type = std::vector<qnn::HtpGraphConfigs_t> QnnEp::*;
+  friend type GetQnnEpPrivateMember(PerSocHtpGraphConfigsTag);
+};
+
+template struct QnnEpPrivateMember<PerSocHtpGraphConfigsTag,
+                                   &QnnEp::htp_graph_configs_per_soc_>;
+
+const std::vector<qnn::HtpGraphConfigs_t>& GetPerSocHtpGraphConfigsForTest(const QnnEp& ep) {
+  return ep.*GetQnnEpPrivateMember(PerSocHtpGraphConfigsTag{});
+}
 
 }  // namespace
 
@@ -1615,14 +1627,63 @@ TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithoutContextCache_Throws) {
   EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
 }
 
-TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithShareEpContexts_Throws) {
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocWithShareEpContexts_Succeeds) {
+#if QNN_ARCH_ARM64 && !defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
+  GTEST_SKIP() << "Multi-SoC context generation requires cross-device prepare on ARM64.";
+#endif
+  // Both intermediate and final weight-sharing sessions accept multi-SoC options.
+  for (const char* stop_share_ep_contexts : {"0", "1"}) {
+    SCOPED_TRACE(stop_share_ep_contexts);
+    EpStubContext ctx;
+    ctx.session_config[EPKey("soc_model")] = "60,73";
+    ctx.session_config[EPKey("htp_arch")] = "73,75";
+    ctx.session_config["ep.context_enable"] = "1";
+    ctx.session_config["ep.context_embed_mode"] = "0";
+    ctx.session_config["ep.share_ep_contexts"] = "1";
+    ctx.session_config["ep.stop_share_ep_contexts"] = stop_share_ep_contexts;
+#ifdef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+    ctx.session_config[EPKey("enable_htp_cross_device_prepare")] = "1";
+#endif
+    auto factory = MakeFactory(ctx);
+    EXPECT_NO_THROW({ auto ep = MakeEp(*factory, ctx); });
+  }
+}
+
+TEST_F(QnnUnit_ExecutionProviderTest, Ctor_MultiSocHtpConfigs_PreservesCommonFieldsAndPerSocVtcm) {
+#if QNN_ARCH_ARM64 && !defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
+  GTEST_SKIP() << "Multi-SoC context generation requires cross-device prepare on ARM64.";
+#endif
   EpStubContext ctx;
   ctx.session_config[EPKey("soc_model")] = "60,73";
   ctx.session_config[EPKey("htp_arch")] = "73,75";
   ctx.session_config["ep.context_enable"] = "1";
-  ctx.session_config["ep.share_ep_contexts"] = "1";
+  ctx.session_config[EPKey("vtcm_mb")] = "4,8";
+  ctx.session_config[EPKey("htp_graph_finalization_optimization_mode")] = "1";
+  ctx.session_config[EPKey("enable_htp_fp16_precision")] = "1";
+  ctx.session_config[EPKey("enable_htp_monolithic_lstm")] = "1";
+  ctx.session_config[EPKey("enable_htp_fp16_clamp_overflow")] = "1";
+  ctx.session_config[EPKey("enable_htp_matmul_lut")] = "0";
+  ctx.session_config[EPKey("htp_num_cores")] = "3";
+#ifdef QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+  ctx.session_config[EPKey("enable_htp_cross_device_prepare")] = "1";
+#endif
   auto factory = MakeFactory(ctx);
-  EXPECT_THROW({ auto ep = MakeEp(*factory, ctx); }, std::runtime_error);
+  auto ep = MakeEp(*factory, ctx);
+
+  // Inspect ParsePerSocHtpConfigs output rather than reproducing its initialization.
+  const auto& configs = GetPerSocHtpGraphConfigsForTest(*ep);
+  constexpr std::array<int32_t, 2> expected_vtcm = {4, 8};
+  ASSERT_EQ(configs.size(), expected_vtcm.size());
+  for (size_t i = 0; i < configs.size(); ++i) {
+    SCOPED_TRACE(i);
+    EXPECT_EQ(configs[i].vtcm_size_in_mb, expected_vtcm[i]);
+    EXPECT_EQ(configs[i].htp_graph_finalization_opt_mode, qnn::HtpGraphFinalizationOptimizationMode::kMode1);
+    EXPECT_TRUE(configs[i].enable_htp_fp16_precision);
+    EXPECT_TRUE(configs[i].enable_htp_monolithic_lstm);
+    EXPECT_TRUE(configs[i].enable_htp_fp16_clamp_overflow);
+    EXPECT_FALSE(configs[i].enable_htp_matmul_lut);
+    EXPECT_EQ(configs[i].htp_num_cores, 3u);
+  }
 }
 
 // ===========================================================================
@@ -2004,40 +2065,6 @@ TEST(QnnUnit_PopulateHtpGraphConfigsTest, MultipleConfigs_AllPushed) {
   EXPECT_NE(FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_PRECISION), nullptr);
   EXPECT_NE(FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_MONOLITHIC_LSTM), nullptr);
   EXPECT_GE(builder.GetSize(), 4u);
-}
-
-// Mirrors aggregate init in ParsePerSocHtpConfigs - catches field reordering or omission.
-TEST(QnnUnit_PopulateHtpGraphConfigsTest, AggregateInit_PreservesAllFields) {
-  // Mirror aggregate init order from ParsePerSocHtpConfigs.
-  qnn::HtpGraphConfigs_t source{};
-  source.vtcm_size_in_mb = 4;
-  source.htp_graph_finalization_opt_mode = qnn::HtpGraphFinalizationOptimizationMode::kMode1;
-  source.enable_htp_fp16_precision = true;
-  source.enable_htp_monolithic_lstm = false;
-  source.enable_htp_fp16_clamp_overflow = false;
-  source.enable_htp_matmul_lut = false;
-  source.htp_num_cores = 3;
-
-  // Aggregate init - same order as struct definition.
-  qnn::HtpGraphConfigs_t copy{source.vtcm_size_in_mb,
-                              source.htp_graph_finalization_opt_mode,
-                              source.enable_htp_fp16_precision,
-                              source.enable_htp_monolithic_lstm,
-                              source.enable_htp_fp16_clamp_overflow,
-                              source.enable_htp_matmul_lut,
-                              source.htp_num_cores};
-
-  EXPECT_EQ(copy.htp_num_cores, 3u);
-  EXPECT_EQ(copy.vtcm_size_in_mb, 4);
-  EXPECT_EQ(copy.enable_htp_fp16_precision, true);
-
-  // Verify copy + round-trip through PopulateHtpGraphConfigs.
-  qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t> builder(
-      QNN_GRAPH_CONFIG_INIT, QNN_HTP_GRAPH_CUSTOM_CONFIG_INIT);
-  qnn::PopulateHtpGraphConfigs(qnn::QnnBackendType::HTP, copy, builder);
-  auto* found = FindHtpGraphOption(builder, QNN_HTP_GRAPH_CONFIG_OPTION_NUM_CORES);
-  ASSERT_NE(found, nullptr);
-  EXPECT_EQ(found->numCores, 3u);
 }
 
 // New field added to HtpGraphConfigs_t without updating aggregate init sites will break this.

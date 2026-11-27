@@ -6,18 +6,16 @@
 #include <cstddef>
 #include <filesystem>
 #include <string>
-#include <unordered_map>
+#include <vector>
 
-#include "gsl/gsl"
-#include "gtest/gtest.h"
+#include <gsl/gsl>
+#include <gtest/gtest.h>
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
 #include "onnxruntime_session_options_config_keys.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/model_test_builder.h"
-#include "test/util/include/api_asserts.h"
-#include "test/util/include/asserts.h"
 
 #define ORT_MODEL_FOLDER ORT_TSTR("testdata/")
 
@@ -33,36 +31,187 @@ namespace {
 
 void CompileModelWithPerSocOptions(const ProviderOptions& per_soc_options,
                                    bool is_embed_mode = true) {
-  ProviderOptions provider_options(per_soc_options);
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";  // Avoid IO QDQ CPU fallback.
-  provider_options["num_graph_prepare_threads"] = "1";
+  const std::filesystem::path input_model_file(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx");
+  const std::filesystem::path output_model_file("model_ctx.onnx");
+  const std::filesystem::path output_bin_file("model_ctx_qnn.bin");
+  std::filesystem::remove(output_model_file);
+  std::filesystem::remove(output_bin_file);
+  auto cleanup = gsl::finally([&output_model_file, &output_bin_file]() {
+    std::filesystem::remove(output_model_file);
+    std::filesystem::remove(output_bin_file);
+  });
+
+  {
+    ProviderOptions provider_options(per_soc_options);
+    provider_options["backend_type"] = "htp";
+    provider_options["offload_graph_io_quantization"] = "0";  // Avoid IO QDQ CPU fallback.
+    provider_options["num_graph_prepare_threads"] = "1";
 #if defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
-  provider_options["enable_htp_cross_device_prepare"] = "1";
+    provider_options["enable_htp_cross_device_prepare"] = "1";
 #endif
 
-  const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
-  std::filesystem::path output_model_file("model_ctx.onnx");
-  std::filesystem::path output_bin_file("model_ctx_qnn.bin");
-  std::filesystem::remove(output_model_file);
-  std::filesystem::remove(output_bin_file);
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, is_embed_mode ? "1" : "0");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.string().c_str());
 
-  Ort::SessionOptions so;
-  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
-  so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, is_embed_mode ? "1" : "0");
-  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.string().c_str());
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
-
-  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
-  ASSERT_TRUE(std::filesystem::exists(output_model_file));
-  if (!is_embed_mode) {
-    ASSERT_TRUE(std::filesystem::exists(output_bin_file));
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file.c_str(), so));
+    ASSERT_TRUE(std::filesystem::exists(output_model_file));
+    if (!is_embed_mode) {
+      ASSERT_TRUE(std::filesystem::exists(output_bin_file));
+    }
   }
 
-  std::filesystem::remove(output_model_file);
-  std::filesystem::remove(output_bin_file);
+#if defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
+  {
+    ProviderOptions provider_options = {{"backend_type", "htp"}, {"disable_file_mapped_weights", "1"}};
+    Ort::SessionOptions so;
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, output_model_file.c_str(), so));
+  }
+#endif  // defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
+}
+
+void CompileModelWithWeightSharing(const std::vector<ProviderOptions>& per_soc_options) {
+  ASSERT_FALSE(per_soc_options.empty()) << "At least one set of per-SoC options is required.";
+  const size_t num_models = per_soc_options.size();
+
+  const std::filesystem::path input_model_file(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx");
+  const std::string context_model_prefix("model_ctx");
+
+  std::vector<std::filesystem::path> input_model_files;
+  std::vector<std::filesystem::path> output_model_files;
+  std::vector<std::filesystem::path> output_bin_files;
+  input_model_files.reserve(num_models);
+  output_model_files.reserve(num_models);
+  output_bin_files.reserve(num_models);
+  for (size_t model_idx = 0; model_idx < num_models; ++model_idx) {
+    const std::string model_number = std::to_string(model_idx + 1);
+    if (model_idx == 0) {
+      input_model_files.push_back(input_model_file);
+    } else {
+      input_model_files.push_back("input_model_file" + model_number + ".onnx");
+    }
+    output_model_files.push_back(context_model_prefix + model_number + ".onnx");
+    output_bin_files.push_back(context_model_prefix + model_number + "_qnn.bin");
+  }
+
+  auto cleanup = gsl::finally([&input_model_files, &output_model_files, &output_bin_files]() {
+    for (size_t model_idx = 1; model_idx < input_model_files.size(); ++model_idx) {
+      std::filesystem::remove(input_model_files[model_idx]);
+    }
+    for (const auto& output_model_file : output_model_files) {
+      std::filesystem::remove(output_model_file);
+    }
+    for (const auto& output_bin_file : output_bin_files) {
+      std::filesystem::remove(output_bin_file);
+    }
+  });
+
+  for (size_t model_idx = 0; model_idx < num_models; ++model_idx) {
+    std::filesystem::remove(output_model_files[model_idx]);
+    std::filesystem::remove(output_bin_files[model_idx]);
+    if (model_idx > 0) {
+      // Distinct model paths avoid duplicate graph names in the shared QNN context.
+      ASSERT_TRUE(std::filesystem::copy_file(input_model_file,
+                                             input_model_files[model_idx],
+                                             std::filesystem::copy_options::overwrite_existing));
+    }
+  }
+
+  auto get_provider_options = [](const ProviderOptions& soc_options) {
+    ProviderOptions provider_options(soc_options);
+    provider_options["backend_type"] = "htp";
+    provider_options["offload_graph_io_quantization"] = "0";  // Avoid IO QDQ CPU fallback.
+    provider_options["num_graph_prepare_threads"] = "1";
+#if defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
+    provider_options["enable_htp_cross_device_prepare"] = "1";
+#endif
+
+    return provider_options;
+  };
+
+  {
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    for (size_t model_idx = 0; model_idx < num_models; ++model_idx) {
+      const ProviderOptions provider_options = get_provider_options(per_soc_options[model_idx]);
+
+      Ort::SessionOptions so;
+      so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+      so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
+      so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_files[model_idx].string().c_str());
+      so.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+      if (model_idx + 1 == num_models) {
+        so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
+      }
+
+      if (registered_ep_device == nullptr) {
+        RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+      } else {
+        so.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+      }
+
+      Ort::Session session(*ort_env, input_model_files[model_idx].c_str(), so);
+    }
+
+    ASSERT_TRUE(std::filesystem::is_regular_file(output_bin_files.front()));
+    for (size_t model_idx = 0; model_idx < num_models; ++model_idx) {
+      ASSERT_TRUE(std::filesystem::exists(output_model_files[model_idx]));
+      if (model_idx != 0) {
+        ASSERT_FALSE(std::filesystem::exists(output_bin_files[model_idx]));
+      }
+
+      ONNX_NAMESPACE::ModelProto context_model;
+      std::ifstream stream(output_model_files[model_idx], std::ios::binary);
+      ASSERT_TRUE(stream.good());
+      ASSERT_TRUE(context_model.ParseFromIstream(&stream));
+      bool references_shared_binary = false;
+      for (const auto& node : context_model.graph().node()) {
+        if (node.op_type() != "EPContext") {
+          continue;
+        }
+        for (const auto& attr : node.attribute()) {
+          if (attr.name() == "ep_cache_context") {
+            EXPECT_EQ(attr.s(), output_bin_files.front().filename().string());
+            references_shared_binary = true;
+          }
+        }
+      }
+      ASSERT_TRUE(references_shared_binary);
+    }
+  }
+
+#if defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
+  {
+    ProviderOptions provider_options = {{"backend_type", "htp"}, {"disable_file_mapped_weights", "1"}};
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+
+    std::vector<Ort::Session> sessions;
+    sessions.reserve(num_models);
+
+    for (size_t model_idx = 0; model_idx < num_models; ++model_idx) {
+      Ort::SessionOptions so;
+      so.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
+      if (model_idx + 1 == num_models) {
+        so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
+      }
+
+      if (registered_ep_device == nullptr) {
+        RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
+        ASSERT_NE(registered_ep_device.get(), nullptr);
+      } else {
+        so.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
+      }
+
+      sessions.emplace_back(*ort_env, output_model_files[model_idx].c_str(), so);
+    }
+  }
+#endif  // defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
 }
 
 }  // namespace
@@ -263,8 +412,7 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpArch_68_73_81_NotAllArchSupporte
   }
 }
 
-#if defined(QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE) && \
-    defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
+#if defined(QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE) && defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
 TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpInitAcceleration_LoadsSucceeds) {
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
   const std::filesystem::path output_model_file("model_ctx.onnx");
@@ -310,9 +458,46 @@ TEST_F(QnnHTPBackendTests, EPContextMultiSoc_HtpInitAcceleration_LoadsSucceeds) 
   std::filesystem::remove(output_model_file);
   std::filesystem::remove(output_bin_file);
 }
-#endif  // QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE && QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE
+#endif  // defined(QNN_TEST_HTP_CONTEXT_INIT_ACCELERATION_AVAILABLE) && defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
 
-#endif  // !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_WeightSharing_DefaultHtpConfigs) {
+  ProviderOptions per_soc_options;
+  per_soc_options["htp_arch"] = "68,73,81";
+#ifdef _WIN32
+  per_soc_options["soc_model"] = "37,60,88";
+#else
+  per_soc_options["soc_model"] = "30,43,87";
+#endif
+
+  CompileModelWithWeightSharing({per_soc_options, per_soc_options});
+}
+
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_WeightSharing_DefaultHtpConfigs_ThreeSessions) {
+  ProviderOptions per_soc_options;
+  per_soc_options["htp_arch"] = "68,73,81";
+#ifdef _WIN32
+  per_soc_options["soc_model"] = "37,60,88";
+#else
+  per_soc_options["soc_model"] = "30,43,87";
+#endif
+
+  CompileModelWithWeightSharing({per_soc_options, per_soc_options, per_soc_options});
+}
+
+TEST_F(QnnHTPBackendTests, EPContextMultiSoc_WeightSharing_SpillFill) {
+  ProviderOptions per_soc_options;
+  per_soc_options["htp_arch"] = "68,73,81";
+#ifdef _WIN32
+  per_soc_options["soc_model"] = "37,60,88";
+#else
+  per_soc_options["soc_model"] = "30,43,87";
+#endif
+  per_soc_options["enable_htp_spill_fill_buffer"] = "1";
+
+  CompileModelWithWeightSharing({per_soc_options, per_soc_options});
+}
+
+#endif  // !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)  || defined(QNN_HTP_CROSS_DEVICE_PREPARE_AVAILABLE)
 
 }  // namespace test
 }  // namespace onnxruntime

@@ -540,13 +540,8 @@ void QnnEp::ParsePerSocHtpConfigs() {
   // Construct Per-SoC HTP configs.
   htp_graph_configs_per_soc_.reserve(num_socs);
   for (size_t idx = 0; idx < num_socs; ++idx) {
-    qnn::HtpGraphConfigs_t config{vtcm_size_in_mb_per_soc[idx],
-                                  htp_graph_configs_.htp_graph_finalization_opt_mode,
-                                  htp_graph_configs_.enable_htp_fp16_precision,
-                                  htp_graph_configs_.enable_htp_monolithic_lstm,
-                                  htp_graph_configs_.enable_htp_fp16_clamp_overflow,
-                                  htp_graph_configs_.enable_htp_matmul_lut,
-                                  htp_graph_configs_.htp_num_cores};
+    qnn::HtpGraphConfigs_t config = htp_graph_configs_;
+    config.vtcm_size_in_mb = vtcm_size_in_mb_per_soc[idx];
     htp_graph_configs_per_soc_.push_back(std::move(config));
   }
 
@@ -1090,9 +1085,6 @@ QnnEp::QnnEp(const QnnEpFactory& factory,
 #endif  // QNN_ARCH_ARM64
     if (!context_cache_enabled_) {
       LOG_AND_THROW_ERROR(logger_, "Per-SoC configurations are only supported for EP context enabled.");
-    }
-    if ((share_ep_contexts_ || stop_share_ep_contexts_)) {
-      LOG_AND_THROW_ERROR(logger_, "Multi-SoC EP context is currently unsupported with shared EP context usage.");
     }
 
     // Exploit prepare-only flag to avoid unexpected usage in overall workflow (e.g., no execution).
@@ -2360,6 +2352,18 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                 ep->htp_graph_splitting_num_prepare_threads_);
   } else {
     rt = ep->qnn_backend_manager_->SetupBackendExceptDeviceAndContext();
+    if (rt.IsOK() && ep->share_ep_contexts_) {
+      // In multi-SoC weight sharing usage, setup now with all devices and contexts created for target SoCs.
+      // These devices and contexts are shared with later sessions, where following models will be compiled into.
+      rt = ep->qnn_backend_manager_->SetupDevicesAndContexts(ep->htp_arch_per_soc_,
+                                                             ep->soc_model_per_soc_,
+                                                             ep->share_ep_contexts_,
+                                                             ep->enable_htp_extended_udma_mode_,
+                                                             ep->prepare_only_,
+                                                             ep->enable_htp_ref_weight_sharing_,
+                                                             ep->enable_htp_graph_splitting_,
+                                                             ep->htp_graph_splitting_num_prepare_threads_);
+    }
   }
 
   context_bin_map.clear();
@@ -2386,7 +2390,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->enable_multi_soc_ep_context_) {
+  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) &&
+      (!ep->enable_multi_soc_ep_context_ || ep->share_ep_contexts_)) {
     // Create the HTP power config id (and its release timer) for the main thread.
     // The perf mode itself is not voted here: it is applied around graph compile
     // via the INIT_START/INIT_DONE power guard in CompileImpl, and per run via
@@ -2843,7 +2848,11 @@ OrtStatus* QnnEp::CompileMultiSocOnnxModel(const OrtGraph** graphs,
         qnn_models_.clear();
       }
     }
-    RETURN_IF_NOT_NULL(qnn_backend_manager_->AddContextToDlc());
+
+    // In multi-SoC weight sharing scenario, only add to DLC at the last session (i.e., `stop_share_ep_contexts_=1`).
+    if (!share_ep_contexts_ || stop_share_ep_contexts_) {
+      RETURN_IF_NOT_NULL(qnn_backend_manager_->AddContextToDlc());
+    }
   }
 
   return nullptr;
@@ -3071,20 +3080,55 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                        const OrtNode** fused_nodes,
                                        size_t count,
                                        OrtNode** ep_context_nodes) {
-  // All partitioned graph share single QNN context, included in the same context binary
-  unsigned char* raw_context_buffer = nullptr;
+  std::unique_ptr<unsigned char[]> context_buffer = nullptr;
   uint64_t buffer_size = 0;
-  RETURN_IF_NOT_OK(qnn_backend_manager_->GetContextBinaryBuffer(enable_multi_soc_ep_context_,
-                                                                &raw_context_buffer,
-                                                                buffer_size));
-  std::unique_ptr<unsigned char[]> context_buffer(raw_context_buffer);
-  // Get max spill fill buffer size
   uint64_t max_spill_fill_buffer_size = 0;
-  if (enable_spill_fill_buffer_) {
-    RETURN_IF_NOT_OK(qnn_backend_manager_->GetMaxSpillFillBufferSize(context_buffer.get(),
+
+  auto get_buffer_and_spill_fill_size = [&qnn_backend_manager = qnn_backend_manager_,
+                                         &enable_spill_fill_buffer = enable_spill_fill_buffer_](
+                                            bool is_multi_soc_buffer,
+                                            std::unique_ptr<unsigned char[]>& buffer,
+                                            uint64_t& buffer_size,
+                                            uint64_t& spill_fill_size) {
+    unsigned char* raw_buffer = nullptr;
+    RETURN_IF_ERROR(qnn_backend_manager->GetContextBinaryBuffer(is_multi_soc_buffer,
+                                                                &raw_buffer,
+                                                                buffer_size));
+    buffer.reset(raw_buffer);
+    if (enable_spill_fill_buffer) {
+      RETURN_IF_ERROR(qnn_backend_manager->GetMaxSpillFillBufferSize(buffer.get(),
                                                                      buffer_size,
-                                                                     enable_multi_soc_ep_context_,
-                                                                     max_spill_fill_buffer_size));
+                                                                     is_multi_soc_buffer,
+                                                                     spill_fill_size));
+    }
+
+    return Ort::Status();
+  };
+
+  if (enable_multi_soc_ep_context_ && share_ep_contexts_ && !stop_share_ep_contexts_) {
+    // In non-last session multi-SoC weight sharing, contexts are not yet added to DLC and thus no DLC buffer to get
+    // max spill-fill size from. Manually iterate through all contexts here instead.
+    if (enable_spill_fill_buffer_) {
+      for (size_t idx = 0; idx < htp_arch_per_soc_.size(); ++idx) {
+        ScopedPerSocQnnBackendSetup scoped_backend_setup(*this);
+        RETURN_IF_NOT_OK(scoped_backend_setup.Init(idx));
+
+        std::unique_ptr<unsigned char[]> per_soc_buffer = nullptr;
+        uint64_t per_soc_buffer_size = 0;
+        uint64_t per_soc_spill_fill_size = 0;
+        RETURN_IF_NOT_OK(get_buffer_and_spill_fill_size(/*is_multi_soc_buffer=*/false,
+                                                        per_soc_buffer,
+                                                        per_soc_buffer_size,
+                                                        per_soc_spill_fill_size));
+
+        max_spill_fill_buffer_size = std::max(per_soc_spill_fill_size, max_spill_fill_buffer_size);
+      }
+    }
+  } else {
+    RETURN_IF_NOT_OK(get_buffer_and_spill_fill_size(enable_multi_soc_ep_context_,
+                                                    context_buffer,
+                                                    buffer_size,
+                                                    max_spill_fill_buffer_size));
   }
 
   // Figure out the EP context model path from session option
@@ -4075,31 +4119,42 @@ void QnnEp::QnnNodeComputeInfo::ReleaseStateImpl(OrtNodeComputeInfo* this_ptr, v
 }
 
 Ort::Status QnnEp::ScopedPerSocQnnBackendSetup::Init(size_t per_soc_idx) {
-  RETURN_IF_ERROR(ep_.qnn_backend_manager_->SetupDeviceAndContext(ep_.htp_arch_per_soc_[per_soc_idx],
-                                                                  ep_.soc_model_per_soc_[per_soc_idx],
-                                                                  ep_.enable_htp_extended_udma_mode_,
-                                                                  ep_.prepare_only_,
-                                                                  ep_.enable_htp_ref_weight_sharing_,
-                                                                  ep_.enable_htp_graph_splitting_,
-                                                                  ep_.htp_graph_splitting_num_prepare_threads_));
+  if (ep_.share_ep_contexts_) {
+    RETURN_IF_ERROR(ep_.qnn_backend_manager_->SetActiveSoc(static_cast<int32_t>(per_soc_idx)));
+  } else {
+    RETURN_IF_ERROR(ep_.qnn_backend_manager_->SetupDevicesAndContexts({ep_.htp_arch_per_soc_[per_soc_idx]},
+                                                                      {ep_.soc_model_per_soc_[per_soc_idx]},
+                                                                      /*enable_htp_weight_sharing=*/false,
+                                                                      ep_.enable_htp_extended_udma_mode_,
+                                                                      ep_.prepare_only_,
+                                                                      ep_.enable_htp_ref_weight_sharing_,
+                                                                      ep_.enable_htp_graph_splitting_,
+                                                                      ep_.htp_graph_splitting_num_prepare_threads_));
+    RETURN_IF_ERROR(ep_.qnn_backend_manager_->SetActiveSoc(0));
 
-  if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType())) {
-    ep_.CreateHtpPowerConfigId();
+    if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType())) {
+      ep_.CreateHtpPowerConfigId();
+    }
   }
 
   return Ort::Status();
 }
 
 QnnEp::ScopedPerSocQnnBackendSetup::~ScopedPerSocQnnBackendSetup() {
-  // Safe to run even if Init() was never called or failed partway: the power config release is guarded by
-  // has_value(), and ReleaseDeviceAndContext() is idempotent (SetupDeviceAndContext() also self-cleans on failure).
-  // Hence no separate "initialized" flag is needed here.
-  if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType()) && ep_.htp_power_config_id_.has_value()) {
-    ep_.qnn_backend_manager_->DropBoostedPowerConfigId(*ep_.htp_power_config_id_);
-    ep_.qnn_backend_manager_->DestroyHtpPowerConfigId(*ep_.htp_power_config_id_);
-    ep_.htp_power_config_id_.reset();
+  if (ep_.share_ep_contexts_) {
+    if (Ort::Status status = ep_.qnn_backend_manager_->SetActiveSoc(-1); !status.IsOK()) {
+      ORT_CXX_LOG(ep_.logger_,
+                  ORT_LOGGING_LEVEL_ERROR,
+                  ("Failed to reset active SoC. Error: " + status.GetErrorMessage()).c_str());
+    }
+  } else {
+    if (qnn::IsNpuBackend(ep_.qnn_backend_manager_->GetQnnBackendType()) && ep_.htp_power_config_id_.has_value()) {
+      ep_.qnn_backend_manager_->DropBoostedPowerConfigId(*ep_.htp_power_config_id_);
+      ep_.qnn_backend_manager_->DestroyHtpPowerConfigId(*ep_.htp_power_config_id_);
+      ep_.htp_power_config_id_.reset();
+    }
+    ep_.qnn_backend_manager_->ReleaseDeviceAndContext();
   }
-  ep_.qnn_backend_manager_->ReleaseDeviceAndContext();
 }
 
 }  // namespace onnxruntime
