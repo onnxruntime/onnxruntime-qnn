@@ -35,6 +35,10 @@ on:
         description: "Name of the build for QA purposes; leave blank to generate one based on today's date."
         type: string
         default: ''
+      qnn_ep_size_growth_limit_mb:
+        description: "Maximum nightly EP binary growth in MB per platform; larger increases fail a check after publishing."
+        type: number
+        default: 0.5
   workflow_dispatch:
     inputs: *common_inputs
 
@@ -113,6 +117,8 @@ jobs:
     name: "Publish QA artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
+    outputs:
+      size_threshold_exceeded: ${{ steps.size_report.outputs.size_threshold_exceeded }}
 
     steps:
       - uses: actions/checkout@v6
@@ -519,6 +525,32 @@ jobs:
             echo "QA_TAG=${{ inputs.qa_tag }}" >> ${GITHUB_ENV}
           fi
 
+      - name: Report nightly QNN EP binary sizes
+        id: size_report
+        if: github.event_name == 'schedule' && inputs.nightly_build
+        env:
+          SIZE_GROWTH_LIMIT_MB: ${{ inputs.qnn_ep_size_growth_limit_mb }}
+        run: |
+          baseline_args=()
+          current_report="${BUILD_ARTIFACTORY_REPO}/qa/${QA_TAG}/qnn-ep-sizes.json"
+          if inventory=$(jf rt search "${BUILD_ARTIFACTORY_REPO}/qa/nightly-*/qnn-ep-sizes.json" \
+              --sort-by=created --sort-order=desc); then
+            previous_report=$(printf '%s' "$inventory" | jq -r --arg current "$current_report" \
+              '[.[] | select(.path != $current)][0].path // empty')
+            if [ -n "$previous_report" ]; then
+              baseline_dir=$(mktemp -d)
+              if jf rt download "$previous_report" "$baseline_dir/" --flat --fail-no-op; then
+                baseline_args=(--baseline "$baseline_dir/qnn-ep-sizes.json")
+              else
+                echo "::warning::Could not download the previous size snapshot; reporting absolute sizes only."
+              fi
+            fi
+          else
+            echo "::warning::Could not find the previous size snapshot; reporting absolute sizes only."
+          fi
+          python3 qcom/scripts/all/report_qnn_ep_sizes.py \
+            --qa-tag "$QA_TAG" --growth-limit-mb "$SIZE_GROWTH_LIMIT_MB" "${baseline_args[@]}"
+
       - name: Collect Test Archives
         # cp (not mv): archives must remain in build/ so the Upload Artifacts to QA Artifactory
         # step below also publishes them individually alongside the combined test_package.zip.
@@ -546,3 +578,19 @@ jobs:
         with:
           src_pattern: "*.*"
           qa_tag: ${{ env.QA_TAG }}
+
+  check-qnn-ep-size:
+    name: Check nightly QNN EP size growth
+    needs: publish-qa-artifacts
+    if: needs.publish-qa-artifacts.outputs.size_threshold_exceeded != ''
+    runs-on: [Linux, self-hosted, Build]
+    steps:
+      - name: Enforce size growth limit after publishing
+        env:
+          SIZE_THRESHOLD_EXCEEDED: ${{ needs.publish-qa-artifacts.outputs.size_threshold_exceeded }}
+          SIZE_GROWTH_LIMIT_MB: ${{ inputs.qnn_ep_size_growth_limit_mb }}
+        run: |
+          if [ "$SIZE_THRESHOLD_EXCEEDED" = "true" ]; then
+            echo "::error::QNN EP binary growth exceeded ${SIZE_GROWTH_LIMIT_MB} MB. See the publishing job summary for platforms and sizes. Artifacts have already been published."
+            exit 1
+          fi
