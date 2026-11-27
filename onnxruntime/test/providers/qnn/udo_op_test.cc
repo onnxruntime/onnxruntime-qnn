@@ -247,13 +247,13 @@ class QnnHTPUdoTests : public QnnHTPBackendTests {
   std::filesystem::path dsp_path_;
 };
 
-class QnnHTPUdoNegativeTests : public QnnHTPBackendTests {
+class QnnHTPUdoConfigurationErrorTests : public QnnHTPBackendTests {
  protected:
   void SetUp() override {
     QnnHTPBackendTests::SetUp();
     if (HasFatalFailure() || IsSkipped()) return;
 #if !((defined(__linux__) && defined(__x86_64__)) || (defined(__ANDROID__) && defined(__aarch64__)))
-    if (::testing::internal::AlwaysTrue()) GTEST_SKIP() << "Custom Op negative tests are not validated on this platform";
+    if (::testing::internal::AlwaysTrue()) GTEST_SKIP() << "Custom Op configuration error tests are not validated on this platform";
 #endif
   }
 };
@@ -349,7 +349,7 @@ TEST_F(QnnHTPUdoTests, UDO_Op_MyAdd_ManualPlusAutoDomain) {
                  UdoProviderOptions(package_path(), dsp_path()), 11, ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnHTPUdoNegativeTests, UDO_Op_MyAdd_InvalidOpPackagePath) {
+TEST_F(QnnHTPUdoConfigurationErrorTests, UDO_Op_MyAdd_InvalidOpPackagePath) {
   ScopedUdoDomain env("udo_domain:MyAdd");
   ModelTestBuilder builder;
   MakeUdoModel(builder);
@@ -372,7 +372,7 @@ TEST_F(QnnHTPUdoNegativeTests, UDO_Op_MyAdd_InvalidOpPackagePath) {
   EXPECT_GT(diagnostics.CountContaining(missing.string()), 0u);
 }
 
-TEST_F(QnnHTPUdoNegativeTests, UDO_Op_MyAdd_EnvVarUnset) {
+TEST_F(QnnHTPUdoConfigurationErrorTests, UDO_Op_MyAdd_CustomDomainEnvVarUnset) {
   ScopedUdoDomain env(nullptr);
   ModelTestBuilder builder;
   MakeUdoModel(builder);

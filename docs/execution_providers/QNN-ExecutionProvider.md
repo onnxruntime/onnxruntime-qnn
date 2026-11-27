@@ -1812,8 +1812,11 @@ Op-package generation and the Hexagon toolchain require a Linux x86_64 build
 host and a Python 3.10 or 3.12 generator interpreter. The generator interpreter
 is selected independently of the wheel's target Python version.
 Linux x86_64 simulator tests and Android aarch64 JIT/context execution on HTP V81
-with QAIRT 2.52 were manually validated. Android Custom Op tests are not yet run in CI. Windows builds, Linux ARM64 device execution,
-and signed DSP skel EPContext loading on Windows ARM64 remain unvalidated.
+with QAIRT 2.52 were manually validated. Android Custom Op tests are not yet run in CI.
+Windows HTP Custom Op support is not claimed by these examples or tests: Windows
+package builds and HTP Custom Op execution remain unvalidated. Windows ARM64 AOT
+execution, including signed DSP skel EPContext loading, is deferred.
+Linux ARM64 device execution also remains unvalidated.
 The `onnxruntime_QNN_BUILD_UDO_OP_PACKAGES` CMake option defaults to ON for
 Linux x86_64 and OFF for Android. With the wrapper, set
 `ORT_QNN_BUILD_UDO_OP_PACKAGES=ON` to enable Android packages or `OFF` to skip
