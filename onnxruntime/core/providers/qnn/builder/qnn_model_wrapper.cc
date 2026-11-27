@@ -139,6 +139,10 @@ Ort::Status QnnModelWrapper::MakeTensorWrapper(const TensorInfo& tensor_info,
 
 void QnnModelWrapper::SetTensorMemTypeFromSettings(QnnTensorWrapper& tensor_wrapper,
                                                    const std::string& tensor_name) {
+  // This is only the build-time default. QnnModel::BindQnnTensorMemoryToOrtValueMemory sets each graph I/O tensor's
+  // memType per Run: MEMHANDLE for QNN shared or imported memory (including imported host allocations when this
+  // option is off, so a RAW-built tensor is executed as MEMHANDLE), and RAW (clientBuf) for anything else. This relies
+  // on QNN honoring the memType of the tensors passed to graphExecute rather than the one used at graph build time.
   Qnn_TensorMemType_t mem_type = QNN_TENSORMEMTYPE_RAW;
   if (true == model_settings_.htp_shared_memory && (IsGraphInput(tensor_name) || IsGraphOutput(tensor_name))) {
     mem_type = QNN_TENSORMEMTYPE_MEMHANDLE;

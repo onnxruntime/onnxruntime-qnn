@@ -2966,6 +2966,45 @@ Ort::Status QnnBackendManager::AddQnnContextHandle(Qnn_ContextHandle_t raw_conte
   return Ort::Status();
 }
 
+Ort::Status QnnBackendManager::AttachContextMemHandleCleanUp(QnnContextMemHandleManager& context_mem_handle_manager,
+                                                             void* memory_address) {
+  // Clean up hook for the backing memory (import or shared-memory allocation): deregister this QNN mem handle when
+  // the memory goes away. It refers to the registration, not to the backend manager or context record: those expire
+  // as soon as their destruction starts, before the context has deregistered its handles, so a hook that depended on
+  // them could let the memory be unmapped while QNN still has it registered. The context owns the registration and
+  // drops it only after deregistering it, so the weak reference expires only once deregistration is complete; until
+  // then this hook deregisters it (or waits for the context to finish doing so).
+  const std::shared_ptr<QnnMemHandleRegistration> registration =
+      context_mem_handle_manager.GetRegistration(memory_address);
+  RETURN_IF(registration == nullptr, "QNN mem handle registration not found.");
+  const std::weak_ptr<QnnMemHandleRegistration> weak_registration = registration;
+  auto unregister_mem_handle = [weak_registration](void* /* allocation_base_address */) {
+    if (auto live_registration = weak_registration.lock()) {
+      live_registration->Deregister();
+    }
+  };
+
+#ifdef _WIN32
+  if (QnnExternalResourceImporterImpl::FindImportMemory(memory_address) ||
+      QnnExternalResourceImporterImpl::FindImportedHostMemory(memory_address).has_value()) {
+    // Imports are long-lived and may be used by many sessions; the hook is pruned once its registration has been
+    // deregistered and dropped.
+    return QnnExternalResourceImporterImpl::AddImportMemoryCleanUp(
+        memory_address, QnnExternalResourceImporterImpl::ImportResourceCleanUpFn{std::move(unregister_mem_handle)},
+        std::weak_ptr<void>{weak_registration});
+  }
+  if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
+    return Dx12SharedMemoryAllocator::AddAllocationCleanUp(
+        memory_address, Dx12SharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)});
+  }
+#endif  // _WIN32
+  if (IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
+    return HtpSharedMemoryAllocator::AddAllocationCleanUp(
+        memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)});
+  }
+  return MAKE_EP_FAIL("Cannot add allocation clean up function for unsupported backend.");
+}
+
 Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t context_handle,
                                                              void* memory_address,
                                                              const Qnn_Tensor_t& qnn_tensor,
@@ -2974,10 +3013,10 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
   // 1) Shared memory allocation is being freed in another thread while we are processing `memory_address`.
   //    This implies incorrect usage as the memory is being freed while it is still in use. Let's assume this won't
   //    happen.
-  // 2) The shared memory allocation clean up function is being run from another thread while the
-  //    QnnContextHandleRecord or QnnBackendManager objects are being destroyed.
-  //    Usage of weak_ptrs from the clean up function should ensure that those objects are only accessed while they are
-  //    in scope.
+  // 2) The memory's clean up function is being run from another thread while the QnnContextHandleRecord or
+  //    QnnBackendManager objects are being destroyed. The clean up function only touches the shared
+  //    QnnMemHandleRegistration, which is deregistered exactly once, so QNN deregistration still completes before the
+  //    memory is unmapped or freed.
 
   const auto context_handle_record_it = context_map_.find(context_handle);
   RETURN_IF_NOT(context_handle_record_it != context_map_.end(), "QNN context not found.");
@@ -2993,52 +3032,32 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
                                                             *logger_ptr_));
 
   if (did_register) {
-    // The cleanup lambda is the same for both HTP and DX12: unregister the QNN mem handle when the allocation is freed.
-    auto unregister_mem_handle =
-        [memory_address,
-         weak_backend_manager = weak_from_this(),
-         weak_context_handle_record = std::weak_ptr{context_handle_record}](
-            void* /* allocation_base_address  */) {
-          // Lock QnnBackendManager shared_ptr to ensure that QNN interface is still valid.
-          auto backend_manager = weak_backend_manager.lock();
-          if (!backend_manager) {
-            return;
-          }
-
-          // Lock QnnContextHandleRecord shared_ptr to ensure that QNN context handle is still valid.
-          auto context_handle_record = weak_context_handle_record.lock();
-          if (!context_handle_record) {
-            return;
-          }
-
-          auto& context_mem_handle_manager = context_handle_record->mem_handles;
-
-          auto unregister_status = context_mem_handle_manager->Unregister(memory_address);
-          if (!unregister_status.IsOK()) {
-            std::ostringstream oss;
-            oss << "Failed to unregister mem handle for address: "
-                << memory_address
-                << ", error: "
-                << unregister_status.GetErrorMessage();
-            ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-          }
-        };
-
-#ifdef _WIN32
-    if (QnnExternalResourceImporterImpl::FindImportMemory(memory_address)) {
-      RETURN_IF_ERROR(QnnExternalResourceImporterImpl::AddImportMemoryCleanUp(
-          memory_address, QnnExternalResourceImporterImpl::ImportResourceCleanUpFn{std::move(unregister_mem_handle)}));
-    } else if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
-      RETURN_IF_ERROR(Dx12SharedMemoryAllocator::AddAllocationCleanUp(
-          memory_address, Dx12SharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
-    } else
-#endif  // _WIN32
-      if (IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
-        RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(
-            memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
-      } else {
-        return MAKE_EP_FAIL("Cannot add allocation clean up function for unsupported backend.");
+    // The registration is provisional until its clean up hook is attached: a cached handle without a hook would
+    // outlive the memory and be reused, with a stale mapping, by a later allocation or import at the same address.
+    // The guard discards it on every other exit, including exceptions, before any diagnostic is built.
+    struct ProvisionalRegistration {
+      QnnContextMemHandleManager& manager;
+      void* address;
+      Qnn_MemHandle_t& handle;
+      bool committed = false;
+      ~ProvisionalRegistration() {
+        if (!committed) {
+          manager.Discard(address);
+          handle = nullptr;
+        }
       }
+    };
+
+    try {
+      ProvisionalRegistration provisional{*context_mem_handle_manager, memory_address, mem_handle};
+      RETURN_IF_ERROR(AttachContextMemHandleCleanUp(*context_mem_handle_manager, memory_address));
+      provisional.committed = true;
+    } catch (const std::exception& e) {
+      // Already rolled back while the try block unwound.
+      return MAKE_EP_FAIL((std::string("Failed to attach QNN mem handle clean up: ") + e.what()).c_str());
+    } catch (...) {
+      return MAKE_EP_FAIL("Failed to attach QNN mem handle clean up.");
+    }
   }
 
   return Ort::Status();

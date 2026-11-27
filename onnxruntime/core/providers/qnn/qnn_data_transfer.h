@@ -14,6 +14,20 @@ namespace qnn {
 // from QnnEpFactory::vendor_id_, which is the ACPI "QCOM" code.
 inline constexpr uint32_t kQualcommPciVendorId = 0x5143;
 
+// Creates the "QnnHtpShared" memory info: CPU-addressable, HOST_ACCESSIBLE memory that QNN binds by mem handle.
+// The shared-memory allocator and imported host allocations must use this exact definition for ORT to treat their
+// tensors as the same memory device (and as CPU-compatible, so no copy is inserted).
+inline OrtStatus* CreateHtpSharedMemoryInfo(const OrtApi& ort_api, OrtMemoryInfo** memory_info) {
+  return ort_api.CreateMemoryInfo_V2("QnnHtpShared",
+                                     OrtMemoryInfoDeviceType_CPU,
+                                     kQualcommPciVendorId,
+                                     /*device_id*/ 0,
+                                     OrtDeviceMemoryType_HOST_ACCESSIBLE,
+                                     /*alignment*/ 0,
+                                     OrtDeviceAllocator,
+                                     memory_info);
+}
+
 // QNN shared-memory allocators expose CPU-addressable memory with the
 // Qualcomm vendor ID and HOST_ACCESSIBLE memory type. ORT still treats this
 // as a distinct memory device, so it needs an EP data transfer to stage

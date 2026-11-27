@@ -6,6 +6,7 @@
 #if !defined(ORT_MINIMAL_BUILD) && QNN_EP_INTERNAL_SYMBOL_ACCESS
 
 #include <memory>
+#include <mutex>
 
 #include "test/providers/qnn/infra/qnn_test_windows_compat.h"
 
@@ -66,6 +67,11 @@ class StubBackendManager {
   Qnn_BackendHandle_t& ValidatorBackendHandle();
   qnn::QnnBackendType& BackendType();
   QnnHtpDevice_Arch_t& HtpArch();
+  // QnnBackendManager::ReleaseContext() takes this lock first, so holding it pauses manager destruction before any
+  // QNN context is released.
+  std::mutex& EpContextHandleMapMutex();
+
+  std::weak_ptr<qnn::QnnBackendManager> Weak() const { return manager_; }
 
  private:
   std::shared_ptr<qnn::QnnBackendManager> manager_;
