@@ -68,6 +68,16 @@ void AssertTensorShapeInQnnGraph(const std::filesystem::path& dump_dir,
                                  const std::string& tensor_name,
                                  const std::vector<uint32_t>& expected_dims);
 
+// Asserts that the tensor `tensor_name` in the compiled QNN graph JSON has a per-tensor
+// SCALE_OFFSET quantization encoding with the given scale/offset. QNN's offset is the
+// negative ONNX zero point. Use to verify a static tensor's encoding directly by name,
+// e.g. that a builder's re-encode of a weight produced the expected scale/offset, or
+// that a pass-through path left an existing tensor's encoding untouched.
+void AssertTensorQuantParamsInQnnGraph(const std::filesystem::path& dump_dir,
+                                       const std::string& tensor_name,
+                                       float expected_scale,
+                                       int32_t expected_offset);
+
 // Asserts that the tensor at `input_index` of every node of type `op` has the expected
 // QNN quantization encoding.
 void AssertOpInputQuantizationEncodingInQnnGraph(const std::filesystem::path& dump_dir,
